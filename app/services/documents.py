@@ -1149,7 +1149,8 @@ async def get_document(
         if shared is None:
             raise
         return provenance.apply_taint_mode(shared, await _taint_mode(principal, taint_mode))
-    ensure_namespace(principal, document.namespace)
+    if not onboarding.is_required_reading(principal, document.doc_key):
+        ensure_namespace(principal, document.namespace)
     await _ensure_visible(
         session,
         principal,
@@ -1991,7 +1992,8 @@ async def dereference(
             uri=uri, document=provenance.apply_taint_mode(
                 shared, await _taint_mode(principal, taint_mode)),
             content_total_bytes=len((shared.content or "").encode("utf-8")))
-    ensure_namespace(principal, document.namespace)
+    if not onboarding.is_required_reading(principal, document.doc_key):
+        ensure_namespace(principal, document.namespace)
     await _ensure_visible(
         session,
         principal,
