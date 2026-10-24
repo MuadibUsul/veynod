@@ -274,11 +274,13 @@ async def _reach(session: AsyncSession, principal: Principal,
         "AND is_default LIMIT 1"),
         {"ws": principal.workspace.id, "o": principal.agent_signature})
     reach = {key: value for key, value in (given or {}).items()
-             if key in ("webhook", "note") and value is not None}
+             if key in ("webhook", "note", "inbox_hints") and value is not None}
     if "note" in reach:
         reach["note"] = str(reach["note"])[:200]
     if "webhook" in reach:
         reach["webhook"] = bool(reach["webhook"])
+    if "inbox_hints" in reach:
+        reach["inbox_hints"] = bool(reach["inbox_hints"])
     reach["default_subscription_id"] = str(subscription) if subscription else None
     return reach
 

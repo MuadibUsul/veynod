@@ -105,7 +105,9 @@ class NextTaskSpec(StrictModel):
     title: str = Field(min_length=1, max_length=256)
     assigned_role: RoleName | None = None
     priority: int = Field(default=0, ge=-100, le=100)
-    namespace: Namespace = Field(default="default", pattern=_NAMESPACE_PATTERN + "$")
+    namespace: Namespace | None = Field(
+        default=None, pattern=_NAMESPACE_PATTERN + "$",
+        description="Omit to keep the handed-off task's namespace")
     input_context: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -164,7 +166,10 @@ class TaskCreateRequest(StrictModel):
     status: Literal["TODO", "READY"] = "READY"
     priority: int = Field(default=0, ge=-100, le=100)
     assigned_role: RoleName | None = None
-    namespace: Namespace = Field(default="default", pattern=_NAMESPACE_PATTERN + "$")
+    namespace: Namespace | None = Field(
+        default=None, pattern=_NAMESPACE_PATTERN + "$",
+        description="Omit to infer: parent task, context documents, the assignee's or "
+                    "creator's only namespace; else 'default'")
     input_context: dict[str, Any] = Field(default_factory=dict)
     max_retries: int = Field(default=settings.default_max_retries, ge=1, le=20)
     depends_on: list[str] = Field(default_factory=list, max_length=50)

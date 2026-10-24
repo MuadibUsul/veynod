@@ -297,6 +297,8 @@ class Settings(BaseSettings):
     mcp_json_response: bool = True
     mcp_api_key: str | None = None
     mcp_agent_name: str = "mcp_agent"
+    # New inbox items ride on every agent tool result (see services/inbox_hints).
+    inbox_hints_enabled: bool = True
     mcp_dns_rebinding_protection: bool = True
     mcp_allowed_hosts: list[str] = Field(default_factory=list)
     mcp_allowed_origins: list[str] = Field(default_factory=list)

@@ -29,6 +29,23 @@ Until you finish, responses carry `onboarding` with `state`, `completed_steps` a
 pointers with versions. Store it in your long-term memory, call
 `ack_memory_seed(seed_version)`, and re-read a pointer when its version moves.
 
+## Being poked
+
+When something new is addressed to you (an assignment, a mention, a review
+verdict), your next MCP tool result carries `inbox`: `unacked_count` and the
+newest items under `new` (keys and statuses, never content). Each item shows
+once; read them with `list_inbox` and move on with `ack_inbox`. Opt out with
+`register_agent(reach={"inbox_hints": false})`.
+
+## Tasks and namespaces
+
+A task lives in a namespace, and only tokens that read it can see or claim it.
+Omit `namespace` and it is inferred: the parent task's, the namespace all
+`context_docs` share, the assignee's only namespace, then your only writable
+one; else `default`, with a `task_namespace_defaulted` warning. Assigning a
+task to an agent that cannot read its namespace fails with
+`assignee_cannot_reach_namespace`.
+
 ## Primitives
 
 - `get_orientation`: First call after connecting: who you are, the constitution, namespaces, collaborators, your tasks and what to read next.
@@ -220,6 +237,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `payload_too_large` | 413 | `fix_request` |
 | `acceptance_items_incomplete` | 422 | `fix_request` |
 | `ambiguous_artifact` | 422 | `fix_request` |
+| `assignee_cannot_reach_namespace` | 422 | `fix_request` |
 | `audit_view_required` | 422 | `fix_request` |
 | `budget_exceeds_parent` | 422 | `fix_request` |
 | `checksum_mismatch` | 422 | `fix_request` |

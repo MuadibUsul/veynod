@@ -388,6 +388,7 @@ const ZH: Record<string, string> = {
   "Any role": "任意角色",
   Priority: "优先级",
   Namespace: "命名空间",
+  Automatic: "自动",
   "Claim / lease": "认领 / 租约",
   "Ping-pong": "乒乓计数",
   "L1 handoff brief": "L1 交接简报",

@@ -90,6 +90,7 @@ do not edit by hand. Every error body is
 | `payload_too_large` | 413 | `fix_request` | `fix_request_then_resend` | Send a smaller archive (details.limit_bytes). |
 | `acceptance_items_incomplete` | 422 | `fix_request` | `fix_request_then_resend` | Give a PASS result for every acceptance item. |
 | `ambiguous_artifact` | 422 | `fix_request` | `fix_request_then_resend` | Provide artifact_text or artifact_uri, not both. |
+| `assignee_cannot_reach_namespace` | 422 | `fix_request` | `fix_request_then_resend` | Use a namespace the assignee reads, or widen its token. |
 | `audit_view_required` | 422 | `fix_request` | `fix_request_then_resend` | Call get_audit_view, then resend. |
 | `budget_exceeds_parent` | 422 | `fix_request` | `fix_request_then_resend` | Lower the budget per details. |
 | `checksum_mismatch` | 422 | `fix_request` | `fix_request_then_resend` | Download the export again, then import. |
@@ -222,6 +223,9 @@ Soft constraints reported in `warnings[]`; the request still succeeds.
 
 | code | meaning |
 |---|---|
+| `task_namespace_inferred` | The task namespace was taken from its parent, context, assignee or creator; pass namespace to choose. |
+| `task_namespace_defaulted` | No namespace was given or inferable; the task went to 'default'. |
+| `assigned_tasks_out_of_reach` | Open tasks assigned to you are in namespaces your token cannot read; ask an owner to move them. |
 | `promotion_below_threshold` | The domain was promoted below the promotion threshold. |
 | `gate_source_downgraded` | Only a trusted runner reports RUNNER results; recorded as AGENT_CLAIM. |
 | `secrets_not_imported` | Imported tokens must be rotated and users must reset passwords. |

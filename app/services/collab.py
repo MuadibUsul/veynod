@@ -120,6 +120,95 @@ async def principal_exists(session: AsyncSession, workspace_id: Any, ref: str) -
     return False
 
 
+async def reachable_namespaces(session: AsyncSession, workspace_id: Any,
+                               ref: str) -> list[str] | None:
+    """Namespaces an assignee's active tokens may read; None means all (or unknown).
+
+    People see every namespace of their workspace. An agent is matched by its
+    directory entry's tokens, or by its token label when it never registered.
+    """
+    kind, _, ident = ref.partition(":")
+    if kind != "agent" or not ident:
+        return None
+    entry = await _directory_entry(session, workspace_id, ident)
+    rows = (await session.execute(text(
+        "SELECT COALESCE(read_namespaces, allowed_namespaces) AS names FROM agent_tokens "
+        "WHERE workspace_id = :ws AND is_active AND revoked_at IS NULL "
+        "AND (expires_at IS NULL OR expires_at > NOW()) "
+        "AND (canonical_id = ANY(CAST(:ids AS text[])) OR agent_signature = :a)"),
+        {"ws": workspace_id, "ids": list((entry or {}).get("token_ids") or []),
+         "a": ident})).all()
+    if not rows:
+        return None
+    names: list[str] = []
+    for (row_names,) in rows:
+        for name in row_names or ["*"]:
+            if name == "*":
+                return None
+            if name not in names:
+                names.append(name)
+    return names
+
+
+def _writable(principal: Principal) -> list[str] | None:
+    if principal.is_commander or principal.auth_kind is not AuthKind.AGENT:
+        return None
+    names = (principal.write_namespaces if principal.write_namespaces is not None
+             else principal.allowed_namespaces)
+    return None if "*" in names else list(names)
+
+
+async def infer_namespace(session: AsyncSession, principal: Principal, request: Any,
+                          parent: Any = None) -> tuple[str, str]:
+    """Where a new task lives when the caller did not say (2026-10-24).
+
+    The explicit namespace wins; then the parent task's; then the one namespace
+    all context documents share; then the assignee's only namespace; then the
+    creator's only writable namespace. "default" is the last resort, and the
+    response says so in a warning.
+    """
+    if request.namespace:
+        return request.namespace, "explicit"
+    if parent is not None:
+        return parent.namespace, "parent"
+    found = set()
+    for ref in request.context_docs or []:
+        document = await resolve_ref(session, principal.workspace.id, ref.model_dump())
+        found.add(document.namespace if document is not None else ref.namespace)
+    found.discard(None)
+    if len(found) == 1:
+        return found.pop(), "context_docs"
+    writable = _writable(principal)
+    if request.assignee:
+        reach = await reachable_namespaces(session, principal.workspace.id, request.assignee)
+        if reach is not None:
+            usable = [name for name in reach if writable is None or name in writable]
+            if len(usable) == 1:
+                return usable[0], "assignee"
+    if writable is not None and len(writable) == 1:
+        return writable[0], "creator"
+    return "default", "default"
+
+
+async def ensure_assignee_reaches(session: AsyncSession, principal: Principal,
+                                  assignee: str | None, namespace: str) -> None:
+    """An assignee that cannot read the task's namespace could never see or claim it."""
+    if not assignee:
+        return
+    reach = await reachable_namespaces(session, principal.workspace.id, assignee)
+    if reach is None or namespace in reach:
+        return
+    raise ApiError(
+        422, "assignee_cannot_reach_namespace",
+        f"{assignee} cannot read namespace '{namespace}', so it could never see or claim "
+        "this task",
+        details={"assignee": assignee, "namespace": namespace,
+                 "assignee_namespaces": reach,
+                 "fix": "create the task in one of assignee_namespaces, or have an owner "
+                        "add this namespace to the assignee's token"},
+    )
+
+
 # --------------------------------------------------------------- creation
 
 

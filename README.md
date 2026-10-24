@@ -538,6 +538,15 @@ creates or claims a task, AUDITOR reviews, EXECUTOR claims. Progress lives in
 as `agent.oriented`, `agent.acknowledged`, `agent.namespace_read`,
 `agent.first_action` and `agent.onboarded`. See `/docs/agent-quickstart/`.
 
+New inbox items also ride along: when something is addressed to an agent, its
+next MCP tool result carries an `inbox` block (`unacked_count`, the newest items
+under `new`, each shown once per server process; `services/inbox_hints.py`). An
+agent opts out with `reach.inbox_hints=false`; `INBOX_HINTS_ENABLED=false` turns
+it off for the server. A task created without a namespace takes the parent's,
+its context documents', the assignee's or the creator's only namespace before
+falling back to `default` (with a warning), and an assignee that cannot read the
+task's namespace is refused with `assignee_cannot_reach_namespace`.
+
 The console is a Next.js 14 static export. The production image builds it in a
 multi-stage Docker build and FastAPI serves it at `/dashboard/`.
 
