@@ -875,7 +875,16 @@ class WhoAmIResponse(BaseModel):
     agent_signature: str
     auth_kind: str
     allowed_namespaces: list[str]
-    permissions: list[str] = Field(default_factory=list)
+    permissions: list[str] = Field(
+        default_factory=list,
+        description="Fine-grained permissions in force (role package, deltas and scopes)")
+    namespaces: dict[str, list[str]] = Field(
+        default_factory=dict, description="read / write namespaces; ['*'] means all")
+    scopes: list[str] | None = Field(
+        default=None,
+        description="Coarse token scopes as issued (docs:read …); each grants the "
+                    "permissions listed in scope_permissions")
+    scope_permissions: dict[str, list[str]] = Field(default_factory=dict)
     default_lease_seconds: int
     embedding_model: str
     embedding_dimensions: int
@@ -1652,6 +1661,10 @@ class DocumentMutationResponse(BaseModel):
     usage: dict[str, Any] | None = Field(
         default=None, description="embedding_tokens spent by this request, quota_remaining"
     )
+    read_with: dict[str, Any] | None = Field(
+        default=None,
+        description="How another agent reads this version back: the uri and the flags "
+                    "its default trust filter needs")
 
 
 class DocumentBatchUpsertResult(BaseModel):

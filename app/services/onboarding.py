@@ -554,17 +554,23 @@ async def namespace_overview(
     }
     from app.auth import can
 
+    writes = (principal.write_namespaces if principal.write_namespaces is not None
+              else principal.allowed_namespaces)
     entries = []
     for record in records:
         allowed = principal.is_commander or "*" in principal.allowed_namespaces or (
             record.namespace in principal.allowed_namespaces
         )
         readme = readmes.get(readme_key(record.namespace))
+        # 2026-10-24 #13: "write" only when a write would pass: the role and
+        # this token's write namespaces (not just the readable ones).
+        may_write = (principal.is_commander or "*" in writes or record.namespace in writes) and (
+            can(principal, "doc:write") or can(principal, "doc:create"))
         if record.namespace == SYSTEM_NAMESPACE:
             access = "write" if principal.is_human else "read"
         elif not allowed:
             access = "none"
-        elif can(principal, "doc:write") or can(principal, "doc:create"):
+        elif may_write:
             access = "write"
         else:
             access = "read"

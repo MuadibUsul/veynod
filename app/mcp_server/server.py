@@ -2172,7 +2172,7 @@ async def upsert_shared_doc(
             key: document.get(key)
             for key in (
                 "id", "doc_key", "version", "content_hash",
-                "verification_status", "trust_level", "namespace", "updated_at",
+                "verification_status", "trust_level", "tainted", "namespace", "updated_at",
             )
         }
     return _compact(payload)

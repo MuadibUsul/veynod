@@ -13,9 +13,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import (
-    PERMISSIONS,
+    SCOPE_PERMISSIONS,
     Principal,
     can,
+    effective_permissions,
     generate_agent_key,
     generate_api_key,
     hash_api_key,
@@ -76,7 +77,16 @@ async def whoami(principal: Principal) -> WhoAmIResponse:
         agent_signature=principal.agent_signature,
         auth_kind=principal.auth_kind.value,
         allowed_namespaces=principal.allowed_namespaces,
-        permissions=sorted(PERMISSIONS.get(principal.role, set())),
+        # 2026-10-24 #13/#14: what is actually in force, per namespace and with
+        # the coarse scope names mapped to the fine permissions they grant.
+        permissions=effective_permissions(principal),
+        namespaces={"read": list(principal.allowed_namespaces),
+                    "write": list(principal.write_namespaces
+                                  if principal.write_namespaces is not None
+                                  else principal.allowed_namespaces)},
+        scopes=sorted(principal.scopes) if principal.scopes is not None else None,
+        scope_permissions={scope: sorted(SCOPE_PERMISSIONS.get(scope, ()))
+                           for scope in sorted(principal.scopes or ())},
         default_lease_seconds=settings.default_task_lease_seconds,
         embedding_model=configured_embedding_model(),
         embedding_dimensions=settings.embedding_dimensions,
@@ -117,7 +127,7 @@ def _document_visibility(
     if not include_unverified and not can(principal, "doc:verify"):
         conditions.append(
             (SharedDocument.verification_status == "VERIFIED")
-            | (SharedDocument.created_by == principal.agent_signature)
+            | (SharedDocument.created_by.in_(principal.own_names))
             | (
                 SharedDocument.namespace.in_(PLATFORM_DOC_NAMESPACES)
                 & (SharedDocument.created_by == "system")
@@ -126,7 +136,7 @@ def _document_visibility(
     if not include_tainted:
         conditions.append(
             SharedDocument.tainted.is_(False)
-            | (SharedDocument.created_by == principal.agent_signature)
+            | (SharedDocument.created_by.in_(principal.own_names))
             | (
                 SharedDocument.namespace.in_(PLATFORM_DOC_NAMESPACES)
                 & (SharedDocument.created_by == "system")

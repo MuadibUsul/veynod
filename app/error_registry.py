@@ -110,6 +110,7 @@ REGISTRY: dict[str, ErrorSpec] = {
     ),
     "sse_capacity": _spec(429, RETRY_AFTER, "Too many event streams; reconnect later."),
     "backup_in_progress": _spec(409, RETRY_AFTER, "Another backup is running; retry later."),
+    "namespace_not_empty": _spec(409, ESCALATE_HUMAN, "Archive its documents and close its tasks."),
     # --- retry_backoff
     "internal_error": _spec(
         500, RETRY_BACKOFF, "Back off and retry at most 5 times, then escalate_human."
@@ -196,6 +197,7 @@ REGISTRY: dict[str, ErrorSpec] = {
     "task_tree_too_deep": _spec(422, FIX_REQUEST, "Split under a shallower task."),
     "ttl_exceeds_parent": _spec(422, FIX_REQUEST, "Lower the TTL per details."),
     "unknown_principal": _spec(422, FIX_REQUEST, "Fix the principal reference per details."),
+    "namespace_protected": _spec(422, FIX_REQUEST, "default and reserved namespaces stay."),
     "assignee_cannot_reach_namespace": _spec(
         422, FIX_REQUEST, "Use a namespace the assignee reads, or widen its token."),
     "url_not_allowed": _spec(422, FIX_REQUEST, "Use an allowed URL per details."),
@@ -277,6 +279,8 @@ REGISTRY: dict[str, ErrorSpec] = {
     "feature_disabled": _spec(
         403, ESCALATE_HUMAN, "Switched off here; ask an operator (details.setting)."),
     "issue_not_permitted": _spec(403, ABANDON, "Give up this action."),
+    "namespace_register_not_permitted": _spec(
+        403, ABANDON, "Ask the token's issuer to register the namespace."),
     "not_assignee": _spec(403, ABANDON, "Give up this action."),
     "not_lease_holder": _spec(403, ABANDON, "Give up; do not preempt."),
     "review_sealed": _spec(403, ABANDON, "Give up this action."),
@@ -384,6 +388,9 @@ REGISTRY: dict[str, ErrorSpec] = {
 
 # Soft-constraint warnings (PRD §6 warnings[]): never errors, never rejections.
 WARNING_CODES: dict[str, str] = {
+    "uri_namespace_prefix": "The address carried a namespace prefix; use doc://<doc_key>.",
+    "document_namespace_inferred": "The new document's namespace came from its key prefix or "
+                                   "the token's only writable namespace.",
     "task_namespace_inferred": "The task namespace was taken from its parent, context, "
                                "assignee or creator; pass namespace to choose.",
     "task_namespace_defaulted": "No namespace was given or inferable; the task went to "

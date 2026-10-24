@@ -105,6 +105,18 @@ async def list_human_namespaces(
     return await address_service.list_namespaces(session, principal)
 
 
+@router.delete(
+    "/namespaces/{namespace}",
+    summary="Remove an empty namespace (no live documents, no open tasks)",
+)
+async def delete_human_namespace(
+    namespace: str,
+    principal: Principal = Depends(_owner),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await address_service.delete_namespace(session, principal, namespace)
+
+
 @router.get(
     "/agent-tokens",
     response_model=AgentTokenListResponse,

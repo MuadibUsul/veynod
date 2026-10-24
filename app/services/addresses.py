@@ -11,12 +11,12 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import addresses
-from app.auth import Principal, can, require_permission
+from app.auth import AuthKind, Principal, can, ensure_namespace, require_permission
 from app.errors import ApiError, NotFound
 from app.models import (
     AgentToken,
@@ -162,8 +162,23 @@ async def resolve_document(
     session: AsyncSession, workspace_id: uuid.UUID, ref: str, *, for_update: bool = False
 ) -> SharedDocument:
     document = await find_document(session, workspace_id, ref, for_update=for_update)
+    if document is None and "/" in ref:
+        # doc://<namespace>/<doc_key> (2026-10-24 #6): the namespace is not part
+        # of the address, but the long form is what people write; accept it.
+        namespace, _, key = ref.partition("/")
+        statement = select(SharedDocument).where(
+            SharedDocument.workspace_id == workspace_id,
+            SharedDocument.namespace == namespace, SharedDocument.doc_key == key)
+        document = await session.scalar(
+            statement.with_for_update() if for_update else statement)
+        if document is not None:
+            add_warning("uri_namespace_prefix",
+                        f"'{ref}' was read as namespace '{namespace}' + doc_key '{key}'; "
+                        f"the address is doc://{key}", uri=f"doc://{key}")
     if document is None:
-        raise NotFound("shared_document", f"document '{ref}' not found")
+        raise NotFound("shared_document",
+                       f"document '{ref}' not found; addresses are doc://<doc_key> "
+                       "(the namespace is a parameter, not part of the uri)")
     return document
 
 
@@ -332,6 +347,15 @@ async def register_namespace(
     if violation is not None:
         raise invalid_address(violation)
     existing = await _namespace(session, principal.workspace.id, namespace)
+    if existing is None and principal.auth_kind is AuthKind.AGENT:
+        # 2026-10-24 #19 / decision 2: a token registers only namespaces it may
+        # write, and delegated tokens (depth 2+) do not create namespaces at all.
+        if principal.token_depth >= 2:
+            raise ApiError(403, "namespace_register_not_permitted",
+                           "delegated tokens do not create namespaces; ask the agent or "
+                           "person that issued this token",
+                           details={"namespace": namespace, "token_depth": principal.token_depth})
+        ensure_namespace(principal, namespace, write=True)
     if existing is not None:
         if purpose and not existing.purpose:
             existing.purpose = purpose
@@ -580,3 +604,45 @@ async def tombstone_document(
     )
     session.add(tombstone)
     return tombstone
+
+
+async def delete_namespace(session: AsyncSession, principal: Principal,
+                           namespace: str) -> dict[str, Any]:
+    """Remove an empty namespace (2026-10-24 decision 1; people only).
+
+    Empty means no live document and no open task: archived documents stay
+    archived where they are. The readme is archived with it, so the namespace
+    disappears from every map, and an event records who removed it.
+    """
+    from app.services.common import append_event
+    from app.services.onboarding import readme_key
+
+    if namespace == "default" or namespace in addresses.RESERVED_NAMESPACES:
+        raise ApiError(422, "namespace_protected", f"'{namespace}' cannot be removed",
+                       details={"namespace": namespace})
+    record = await _namespace(session, principal.workspace.id, namespace)
+    if record is None:
+        raise NotFound("namespace", f"namespace '{namespace}' is not registered")
+    counts = (await session.execute(text(
+        "SELECT (SELECT count(*) FROM shared_documents WHERE workspace_id = :ws "
+        "AND namespace = :ns AND archived_at IS NULL) AS documents, "
+        "(SELECT count(*) FROM collab_tasks WHERE workspace_id = :ws AND namespace = :ns "
+        "AND status NOT IN ('DONE', 'FAILED', 'CANCELLED')) AS open_tasks"),
+        {"ws": principal.workspace.id, "ns": namespace})).mappings().one()
+    if counts["documents"] or counts["open_tasks"]:
+        raise ApiError(409, "namespace_not_empty",
+                       f"'{namespace}' still holds live documents or open tasks",
+                       details={"namespace": namespace, **dict(counts),
+                                "fix": "archive the documents and close the tasks first"})
+    await session.execute(text(
+        "UPDATE shared_documents SET archived_at = NOW(), archived_by = :who, "
+        "archive_reason = :why WHERE workspace_id = :ws AND doc_key = :key "
+        "AND archived_at IS NULL"),
+        {"ws": principal.workspace.id, "key": readme_key(namespace),
+         "who": principal.agent_signature, "why": f"namespace {namespace} removed"})
+    await session.delete(record)
+    await append_event(session, workspace_id=principal.workspace.id,
+                       agent=principal.agent_signature, event_type="NAMESPACE_DELETED",
+                       payload={"namespace": namespace}, namespace=namespace)
+    await session.commit()
+    return {"namespace": namespace, "deleted": True}

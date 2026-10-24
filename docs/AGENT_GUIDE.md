@@ -37,6 +37,17 @@ newest items under `new` (keys and statuses, never content). Each item shows
 once; read them with `list_inbox` and move on with `ack_inbox`. Opt out with
 `register_agent(reach={"inbox_hints": false})`.
 
+## Reading drafts and tainted documents
+
+Agent writes start as DRAFT/UNTRUSTED. By default you see verified documents plus
+your own and those of the tokens above you; anything else needs
+`include_unverified=true`, and tainted documents also `include_tainted=true`.
+A hidden document answers 404 with `details.retry_with` naming the flags, and
+every write's receipt carries `read_with` (uri + flags a reader needs).
+Addresses are `doc://<doc_key>`; `doc://<namespace>/<doc_key>` also resolves,
+with a `uri_namespace_prefix` warning. Citing a teammate's internal draft does
+not taint your document; citing external or tainted content does.
+
 ## Tasks and namespaces
 
 A task lives in a namespace, and only tokens that read it can see or claim it.
@@ -263,6 +274,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `invalid_verification_status` | 422 | `fix_request` |
 | `limit_too_large` | 422 | `fix_request` |
 | `namespace_not_registered` | 422 | `fix_request` |
+| `namespace_protected` | 422 | `fix_request` |
 | `notice_template_incomplete` | 422 | `fix_request` |
 | `offset_not_supported` | 422 | `fix_request` |
 | `policy_loosening_not_allowed` | 422 | `fix_request` |
@@ -300,6 +312,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `depth_limit_exceeded` | 403 | `abandon` |
 | `forbidden` | 403 | `abandon` |
 | `issue_not_permitted` | 403 | `abandon` |
+| `namespace_register_not_permitted` | 403 | `abandon` |
 | `not_assignee` | 403 | `abandon` |
 | `not_lease_holder` | 403 | `abandon` |
 | `review_sealed` | 403 | `abandon` |
@@ -355,6 +368,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `confirmation_required` | 409 | `escalate_human` |
 | `escalated_to_human` | 409 | `escalate_human` |
 | `incident_not_confirmed` | 409 | `escalate_human` |
+| `namespace_not_empty` | 409 | `escalate_human` |
 | `staging_not_configured` | 409 | `escalate_human` |
 | `taint_blocked` | 409 | `escalate_human` |
 | `tree_quota_exceeded` | 409 | `escalate_human` |
