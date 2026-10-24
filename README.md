@@ -1244,3 +1244,21 @@ content.
   database access to the server is outside it; keep that access to as few
   people as possible and audited at the infrastructure level.
 
+## OAuth for MCP clients (v3.36)
+
+claude.ai custom connectors (and other MCP clients that speak OAuth) connect in
+one click: add `https://<your host>/mcp/` as a connector and press Connect.
+
+- Discovery: `/.well-known/oauth-protected-resource` (RFC 9728) and
+  `/.well-known/oauth-authorization-server` (RFC 8414); a 401 from `/mcp/`
+  carries `resource_metadata`.
+- Dynamic registration (`POST /oauth/register`, public clients only),
+  `GET /oauth/authorize` (authorization code, PKCE S256 required) and
+  `POST /oauth/token`.
+- Consent happens in the console (`/dashboard/oauth/`): an owner approves and
+  picks the agent's name and role. The access token is an ordinary agent key,
+  so it shows up under Agents and is revoked there. The server stores it only
+  encrypted under the one-time code until the client exchanges it.
+- `PUBLIC_BASE_URL` overrides the issuer origin when the proxy does not pass
+  the public scheme and host.
+

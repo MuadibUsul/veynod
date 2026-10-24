@@ -309,6 +309,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `lineage_unavailable` | 409 | `abandon` |
 | `link_exists` | 409 | `abandon` |
 | `nothing_to_probe` | 409 | `abandon` |
+| `oauth_request_decided` | 409 | `abandon` |
 | `proposal_not_pending` | 409 | `abandon` |
 | `queue_ticket_expired` | 409 | `abandon` |
 | `request_closed` | 409 | `abandon` |
@@ -320,6 +321,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `cli_session_consumed` | 410 | `abandon` |
 | `cli_session_expired` | 410 | `abandon` |
 | `gone` | 410 | `abandon` |
+| `oauth_request_expired` | 410 | `abandon` |
 | `reviewer_conflict` | 422 | `abandon` |
 | `share_cross_root_not_allowed` | 422 | `abandon` |
 | `budget_exceeded` | 402 | `escalate_human` |

@@ -28,6 +28,8 @@ EVENT_NAMES = frozenset(
         "human_decision",      # approve / reject / verify / undo / apply
         "upgrade_intent",      # a click on Upgrade (props.source, props.plan)
         "upgrade_viewed",      # the upgrade dialog was opened
+        "oauth_approved",      # an owner connected an MCP client over OAuth
+        "oauth_token_issued",  # the client exchanged its code
     }
 )
 _MAX_PROP_LEN = 64

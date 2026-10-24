@@ -207,6 +207,8 @@ REGISTRY: dict[str, ErrorSpec] = {
         409, FIX_REQUEST, "Sign in with the password, then link Google."
     ),
     "agent_token_exists": _spec(409, FIX_REQUEST, "Use another agent signature."),
+    "oauth_request_decided": _spec(409, ABANDON, "Start the connection again from your client."),
+    "oauth_request_expired": _spec(410, ABANDON, "Start the connection again from your client."),
     "operator_content_denied": _spec(
         403, ESCALATE_HUMAN, "Ask the workspace owner to open support access in the console."),
     "operator_write_denied": _spec(

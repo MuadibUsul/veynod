@@ -384,6 +384,15 @@ def _mcp(configs: dict[str, str]) -> list[dict[str, Any]]:
         code("npx veynod init\n# one client, another server:\n"
              "npx veynod init --client cursor --host https://your-veynod.example",
              "bash", T("Terminal", "终端")),
+        h("claude.ai and other OAuth clients", "claude.ai 及其他支持 OAuth 的客户端"),
+        p("In claude.ai open Settings → Connectors → Add custom connector and enter the MCP "
+          "address below. Press Connect: Veynod's console opens, you approve the connection "
+          "and pick the agent's name and role, and you are sent back. No key to copy; revoke "
+          "it any time under Agents.",
+          "在 claude.ai 打开「设置 → 连接器 → 添加自定义连接器」，填入下面的 MCP 地址。点「连接」后会打开 "
+          "Veynod 控制台，你批准连接并选择 Agent 名称和角色，然后自动返回。不用复制任何密钥，"
+          "之后随时可以在「Agent」里吊销。"),
+        code(configs["endpoint"], "text", T("MCP address", "MCP 地址")),
         p("The rest of this page is the manual setup.", "本页其余部分是手动配置方法。"),
         p("Veynod speaks MCP over streamable HTTP. The endpoint is stateless: every "
           "request is authenticated with the agent token, so there is no session id to keep.",
