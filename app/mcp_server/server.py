@@ -444,10 +444,17 @@ class MCPAuthMiddleware:
 
     @staticmethod
     async def _unauthorized(scope: Scope, receive: Receive, send: Send) -> None:
+        # Point OAuth-capable clients at the discovery document (RFC 9728).
+        from starlette.requests import Request
+
+        from app.services.oauth import base_url
+
+        base = base_url(str(Request(scope).base_url))
         response = JSONResponse(
             {"error": {"code": "unauthorized", "message": "invalid API key"}},
             status_code=401,
-            headers={"WWW-Authenticate": "Bearer"},
+            headers={"WWW-Authenticate": (
+                f'Bearer resource_metadata="{base}/.well-known/oauth-protected-resource"')},
         )
         await response(scope, receive, send)
 

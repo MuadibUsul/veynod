@@ -179,6 +179,7 @@ do not edit by hand. Every error body is
 | `lineage_unavailable` | 409 | `abandon` | `abandon_and_release_local_state` | This subject has no signed lineage; give up. |
 | `link_exists` | 409 | `abandon` | `abandon_and_release_local_state` | The link already exists. |
 | `nothing_to_probe` | 409 | `abandon` | `abandon_and_release_local_state` | Write and index documents first. |
+| `oauth_request_decided` | 409 | `abandon` | `abandon_and_release_local_state` | Start the connection again from your client. |
 | `proposal_not_pending` | 409 | `abandon` | `abandon_and_release_local_state` | The proposal was already decided. |
 | `queue_ticket_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Call acquire_resource again to re-queue. |
 | `request_closed` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
@@ -190,6 +191,7 @@ do not edit by hand. Every error body is
 | `cli_session_consumed` | 410 | `abandon` | `abandon_and_release_local_state` | The key was collected once; start a new setup. |
 | `cli_session_expired` | 410 | `abandon` | `abandon_and_release_local_state` | Run `npx veynod init` again for a new code. |
 | `gone` | 410 | `abandon` | `abandon_and_release_local_state` | Give up; details carry the tombstone. |
+| `oauth_request_expired` | 410 | `abandon` | `abandon_and_release_local_state` | Start the connection again from your client. |
 | `reviewer_conflict` | 422 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `share_cross_root_not_allowed` | 422 | `abandon` | `abandon_and_release_local_state` | Use cross-tree collaboration instead. |
 | `budget_exceeded` | 402 | `escalate_human` | `stop_and_escalate_to_human` | Ask a human to raise the budget. |

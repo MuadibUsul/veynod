@@ -182,6 +182,31 @@ def _public_view(row: Any) -> dict[str, Any]:
     }
 
 
+async def mint_unique(scoped, workspace, base: str, role: str, namespaces: list[str], *,
+                      purpose: str):
+    """Mint an agent key named ``base`` (or ``base-2``, ``-3``… when taken)."""
+    from app import services
+
+    base = base.strip()
+    for attempt in range(1, 21):
+        name = base if attempt == 1 else f"{base}-{attempt}"
+        try:
+            return await services.create_agent_token(
+                scoped,
+                workspace,
+                AgentTokenCreateRequest(
+                    agent_signature=name,
+                    role_scope=role,
+                    allowed_namespaces=namespaces,
+                    purpose=purpose[:200],
+                ),
+            )
+        except ApiError as exc:
+            if exc.code != "agent_token_exists":
+                raise
+    raise ApiError(409, "agent_token_exists", f"pick another name than '{base}'")
+
+
 async def describe(unscoped: AsyncSession, user_code: str) -> dict[str, Any]:
     return _public_view(await _row_by_user_code(unscoped, user_code))
 
@@ -198,7 +223,6 @@ async def approve(
     user_code: str,
     request: CliSessionApproveRequest,
 ) -> dict[str, Any]:
-    from app import services
 
     _require_owner(principal)
     row = await _row_by_user_code(unscoped, user_code, lock=True)
@@ -207,27 +231,11 @@ async def approve(
     if row["expires_at"] <= _now():
         raise ApiError(410, "cli_session_expired",
                        "this code expired; run `npx veynod init` again")
-    base = request.agent_signature.strip()
-    created = None
-    for attempt in range(1, 21):
-        name = base if attempt == 1 else f"{base}-{attempt}"
-        try:
-            created = await services.create_agent_token(
-                scoped,
-                principal.workspace,
-                AgentTokenCreateRequest(
-                    agent_signature=name,
-                    role_scope=request.role_scope,
-                    allowed_namespaces=request.allowed_namespaces,
-                    purpose=f"npx veynod init ({row['client_label'] or 'terminal'})"[:200],
-                ),
-            )
-            break
-        except ApiError as exc:
-            if exc.code != "agent_token_exists":
-                raise
-    if created is None:
-        raise ApiError(409, "agent_token_exists", f"pick another name than '{base}'")
+    created = await mint_unique(
+        scoped, principal.workspace, request.agent_signature, request.role_scope,
+        request.allowed_namespaces,
+        purpose=f"npx veynod init ({row['client_label'] or 'terminal'})",
+    )
     sealed = seal(created.api_key, base64.b64decode(row["client_public_key"]))
     await unscoped.execute(
         text(

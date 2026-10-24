@@ -265,3 +265,54 @@ async def deny_cli_session(
 
     async with async_session_factory() as unscoped:
         return await cli_setup.deny(unscoped, principal, user_code)
+
+
+# ------------------------------------------------ OAuth for MCP (v3.36)
+
+
+@router.get("/oauth/requests/{request_id}", summary="What an MCP client's connection asks for")
+async def describe_oauth_request(
+    request_id: str,
+    principal: Principal = Depends(get_human_account),
+) -> dict:
+    from app.database import async_session_factory
+    from app.services import oauth
+
+    async with async_session_factory() as unscoped:
+        view = await oauth.describe(unscoped, request_id)
+    view["workspace"] = {"id": str(principal.workspace.id), "name": principal.workspace.name}
+    view["can_approve"] = principal.human_role in ("OWNER", "ADMIN")
+    return view
+
+
+@router.post("/oauth/requests/{request_id}/approve",
+             summary="Connect an MCP client: mint its agent key and return the redirect")
+async def approve_oauth_request(
+    request_id: str,
+    body: CliSessionApproveRequest,
+    request: Request,
+    principal: Principal = Depends(get_human_account),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.database import async_session_factory
+    from app.services import oauth
+
+    async with async_session_factory() as unscoped:
+        return await oauth.approve(
+            session, unscoped, principal, request_id,
+            agent_signature=body.agent_signature, role=body.role_scope,
+            namespaces=body.allowed_namespaces,
+            issuer=oauth.base_url(str(request.base_url)))
+
+
+@router.post("/oauth/requests/{request_id}/deny", summary="Refuse an MCP client's connection")
+async def deny_oauth_request(
+    request_id: str,
+    principal: Principal = Depends(get_human_account),
+) -> dict:
+    from app.database import async_session_factory
+    from app.services import oauth
+
+    async with async_session_factory() as unscoped:
+        return await oauth.deny(unscoped, principal, request_id)
+

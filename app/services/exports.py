@@ -127,6 +127,8 @@ EPHEMERAL = frozenset({
     "product_events", "cli_sessions",
     # Support-access windows describe the operator, not the tenant's data.
     "support_access_grants",
+    # OAuth clients and pending authorizations (v3.36) are operator-side.
+    "oauth_clients", "oauth_requests",
     # Conflict counters, per-minute metrics and situation alerts (R2.3).
     "doc_contention", "principal_metrics", "situation_alerts",
     # Tree governance (R2.4): policies, confirmations, shares and admin access

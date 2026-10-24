@@ -192,6 +192,10 @@ class Settings(BaseSettings):
     delegated_token_default_ttl_seconds: int = Field(default=3_600, ge=60, le=72 * 3_600)
     delegated_token_retention_days: int = Field(default=7, ge=1, le=365)
 
+    # OAuth for MCP clients (v3.36). The public origin used as the OAuth issuer
+    # and in discovery documents; derived from the request when unset.
+    public_base_url: str | None = None
+
     # ---------------------------------------------------------- row security
     rls_enabled: bool = True
     rls_role: str = "agentgraph_app"
