@@ -384,6 +384,12 @@ REGISTRY: dict[str, ErrorSpec] = {
 
 # Soft-constraint warnings (PRD §6 warnings[]): never errors, never rejections.
 WARNING_CODES: dict[str, str] = {
+    "task_namespace_inferred": "The task namespace was taken from its parent, context, "
+                               "assignee or creator; pass namespace to choose.",
+    "task_namespace_defaulted": "No namespace was given or inferable; the task went to "
+                                "'default'.",
+    "assigned_tasks_out_of_reach": "Open tasks assigned to you are in namespaces your token "
+                                   "cannot read; ask an owner to move them.",
     "promotion_below_threshold": "The domain was promoted below the promotion threshold.",
     "gate_source_downgraded": "Only a trusted runner reports RUNNER results; recorded as "
                               "AGENT_CLAIM.",

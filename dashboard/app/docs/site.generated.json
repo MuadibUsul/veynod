@@ -11453,6 +11453,10 @@
       "meaning": "Read through a renamed alias; use the current alias or id."
      },
      {
+      "code": "assigned_tasks_out_of_reach",
+      "meaning": "Open tasks assigned to you are in namespaces your token cannot read; ask an owner to move them."
+     },
+     {
       "code": "budget_warning",
       "meaning": "A token's daily budget is at 80%; budget.warning went to its issuer."
      },
@@ -11531,6 +11535,14 @@
      {
       "code": "target_offline",
       "meaning": "A mentioned agent is offline or retired; its owner is notified too."
+     },
+     {
+      "code": "task_namespace_defaulted",
+      "meaning": "No namespace was given or inferable; the task went to 'default'."
+     },
+     {
+      "code": "task_namespace_inferred",
+      "meaning": "The task namespace was taken from its parent, context, assignee or creator; pass namespace to choose."
      },
      {
       "code": "token_expiring",
