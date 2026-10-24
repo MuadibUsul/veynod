@@ -51,6 +51,20 @@ def is_system_address(namespace: str | None, doc_key: str) -> bool:
     return namespace == SYSTEM_NAMESPACE or doc_key == "system" or doc_key.startswith("system/")
 
 
+def is_required_reading(principal: Principal, doc_key: str) -> bool:
+    """The constitution and the readmes of the token's own namespaces.
+
+    Orientation sends every agent to read these first, so a token limited to
+    a few namespaces still reads them; the rest of system/* stays out of reach.
+    """
+    if doc_key == CONSTITUTION_KEY:
+        return True
+    if not doc_key.startswith(NAMESPACE_README_PREFIX):
+        return False
+    names = principal.allowed_namespaces or []
+    return "*" in names or doc_key[len(NAMESPACE_README_PREFIX):] in names
+
+
 def ensure_system_writable(principal: Principal, namespace: str | None, doc_key: str) -> None:
     """Agents change system documents through proposals, never directly."""
     if is_system_address(namespace, doc_key) and not principal.is_human:

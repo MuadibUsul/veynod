@@ -177,6 +177,17 @@ async def test_restricted_token_gets_its_own_readme(client, admin_headers, works
     block = (await client.get("/v1/orientation", headers=agent)).json()["onboarding"]
     uris = [item["uri"] for item in block["required_reading"]]
     assert "doc://system/namespaces/ideas" in uris
+    await client.put("/v1/documents/elsewhere", headers=workspace["headers"],
+                     json={"namespace": "private-ns", "content": "x", "expected_version": 0})
+
+    # A narrowed token still reads its required reading, and nothing else in system/*.
+    for uri in ("doc://system/constitution", "doc://system/namespaces/ideas"):
+        read = await client.post("/v1/dereference", headers=agent,
+                                 json={"uri": uri, "include_unverified": True})
+        assert read.status_code == 200, (uri, read.text)
+    other = await client.post("/v1/dereference", headers=agent, json={
+        "uri": "doc://system/namespaces/private-ns", "include_unverified": True})
+    assert other.status_code == 403 and other.json()["error"]["code"] == "NAMESPACE_FORBIDDEN"
 
 
 async def test_mcp_instructions_order_and_hints(client, admin_headers, workspace, api_base_url):
