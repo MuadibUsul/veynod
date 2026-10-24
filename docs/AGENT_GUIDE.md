@@ -393,6 +393,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `namespace_not_empty` | 409 | `escalate_human` |
 | `staging_not_configured` | 409 | `escalate_human` |
 | `taint_blocked` | 409 | `escalate_human` |
+| `task_claimed` | 409 | `escalate_human` |
 | `tree_quota_exceeded` | 409 | `escalate_human` |
 | `budget_exhausted` | 429 | `escalate_human` |
 | `circuit_open` | 429 | `escalate_human` |

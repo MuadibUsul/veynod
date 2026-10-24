@@ -111,6 +111,7 @@ REGISTRY: dict[str, ErrorSpec] = {
     "sse_capacity": _spec(429, RETRY_AFTER, "Too many event streams; reconnect later."),
     "backup_in_progress": _spec(409, RETRY_AFTER, "Another backup is running; retry later."),
     "not_registered": _spec(409, FIX_REQUEST, "Call register_agent, then retry."),
+    "task_claimed": _spec(409, ESCALATE_HUMAN, "Ask the holder or a person to cancel it."),
     "namespace_not_empty": _spec(409, ESCALATE_HUMAN, "Archive its documents and close its tasks."),
     # --- retry_backoff
     "internal_error": _spec(
@@ -390,6 +391,9 @@ REGISTRY: dict[str, ErrorSpec] = {
 
 # Soft-constraint warnings (PRD §6 warnings[]): never errors, never rejections.
 WARNING_CODES: dict[str, str] = {
+    "duplicate_content": "Another document in the namespace already holds exactly this text.",
+    "listing_hides_documents": "The legacy listing hides drafts and tainted documents; the "
+                               "warning says how many and which flags show them.",
     "uri_namespace_prefix": "The address carried a namespace prefix; use doc://<doc_key>.",
     "document_namespace_inferred": "The new document's namespace came from its key prefix or "
                                    "the token's only writable namespace.",

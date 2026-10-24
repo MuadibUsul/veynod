@@ -103,7 +103,10 @@ def state_of(row: dict[str, Any] | None, constitution_version: int | None) -> st
     if row.get("completed_at") is not None:
         return "active"
     acked = row.get("constitution_version_acked")
-    if acked is None or (constitution_version is not None and acked < constitution_version):
+    # STUB_CONSTITUTION: the generated template has no rules to acknowledge yet
+    # (2026-10-24 decision 4), so step 2 does not hold anyone up.
+    if constitution_version != STUB_CONSTITUTION and (acked is None or (
+            constitution_version is not None and acked < constitution_version)):
         return "needs_ack" if row.get("constitution_read_at") else "oriented"
     if row.get("namespace_readme_read_at") is None:
         return "needs_namespace_readme"
@@ -118,8 +121,7 @@ def completed_steps(row: dict[str, Any] | None, state: str) -> list[int]:
     steps = []
     if row and row.get("oriented_at"):
         steps.append(1)
-    if row and row.get("constitution_version_acked") is not None and state not in (
-            "oriented", "needs_ack"):
+    if row and row.get("oriented_at") and state not in ("new", "oriented", "needs_ack"):
         steps.append(2)
     if row and row.get("namespace_readme_read_at"):
         steps.append(3)
@@ -212,12 +214,19 @@ def light(principal: Principal, row: dict[str, Any] | None,
 # ------------------------------------------------------------------ storage
 
 
+STUB_CONSTITUTION = 0  # "version" of a constitution that is still the template
+
+
 async def _constitution_version(session, workspace_id) -> int | None:
-    return await session.scalar(
-        text("SELECT version FROM shared_documents WHERE workspace_id = :ws "
+    row = (await session.execute(
+        text("SELECT version, COALESCE(frontmatter->>'stub', 'false') = 'true' AS stub "
+             "FROM shared_documents WHERE workspace_id = :ws "
              "AND doc_key = 'system/constitution'"),
         {"ws": workspace_id},
-    )
+    )).one_or_none()
+    if row is None:
+        return None
+    return STUB_CONSTITUTION if row.stub else row.version
 
 
 async def _load(session, principal: Principal) -> dict[str, Any] | None:
@@ -438,7 +447,8 @@ async def orientation_block(
     """The onboarding section of get_orientation (records step 1 for agents)."""
     if not tracked(principal):
         return None
-    version = (constitution or {}).get("version")
+    version = (STUB_CONSTITUTION if (constitution or {}).get("stub")
+               else (constitution or {}).get("version"))
     previous = await _load(session, principal)
     first_time = previous is None or previous.get("oriented_at") is None
     await observe(principal, "oriented", attach=False)
@@ -580,7 +590,9 @@ async def memory_seed(session, principal: Principal, constitution_version: int |
     namespace = primary_namespace(principal) or "default"
     readme_key = f"system/namespaces/{namespace}"
     readme_version = await _doc_version(session, principal.workspace.id, readme_key)
-    constitution = int(constitution_version or 0)
+    # The document's own version: constitution_version may be STUB_CONSTITUTION.
+    del constitution_version
+    constitution = await _doc_version(session, principal.workspace.id, "system/constitution")
     pointers = [
         {"uri": "doc://system/constitution", "version": constitution,
          "purpose": "The workspace rules; re-read when the version changes."},

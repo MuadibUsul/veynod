@@ -31,6 +31,20 @@ async def _agent(client, admin_headers, workspace, role, namespaces=None):
     return {"Authorization": f"Bearer {response.json()['api_key']}"}, signature
 
 
+async def _real_constitution(client, admin_headers, workspace) -> None:
+    """A written constitution (not the generated stub) is what agents acknowledge;
+    a stub is skipped (decision 4, 2026-10-24)."""
+    wid = workspace["workspace"]["id"]
+    path = f"/v1/admin/workspaces/{wid}/documents/system/constitution"
+    current = (await client.get(path, headers=admin_headers)).json()
+    if not (current.get("frontmatter") or {}).get("stub"):
+        return
+    written = await client.put(path, headers=admin_headers, json={
+        "content": "# Rules\n\nHand work to REVIEWING; people mark it DONE.\n",
+        "frontmatter": {"kind": "constitution"}, "expected_version": current["version"]})
+    assert written.status_code == 200, written.text
+
+
 async def _audits(workspace_id: str, signature: str) -> list[str]:
     conn = await asyncpg.connect(_db())
     try:
@@ -68,6 +82,7 @@ async def _steps_to_first_action(client, agent):
 
 
 async def test_executor_path_and_idempotence(client, admin_headers, workspace):
+    await _real_constitution(client, admin_headers, workspace)
     agent, signature = await _agent(client, admin_headers, workspace, "EXECUTOR")
     first = await client.get("/v1/orientation", headers=agent)
     pack = first.json()
@@ -126,6 +141,7 @@ async def test_executor_path_and_idempotence(client, admin_headers, workspace):
 
 
 async def test_scout_analyst_and_auditor_paths(client, admin_headers, workspace):
+    await _real_constitution(client, admin_headers, workspace)
     scout, _ = await _agent(client, admin_headers, workspace, "SCOUT")
     hint = await _steps_to_first_action(client, scout)
     assert hint["next_call"] == {"tool": "list_documents", "args": {"namespace": "raw_inbox"},
@@ -191,6 +207,7 @@ async def test_restricted_token_gets_its_own_readme(client, admin_headers, works
 
 
 async def test_mcp_instructions_order_and_hints(client, admin_headers, workspace, api_base_url):
+    await _real_constitution(client, admin_headers, workspace)
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
 
@@ -215,6 +232,7 @@ async def test_mcp_instructions_order_and_hints(client, admin_headers, workspace
 
 
 async def test_console_sees_agent_onboarding_without_secrets(client, admin_headers, workspace):
+    await _real_constitution(client, admin_headers, workspace)
     agent, signature = await _agent(client, admin_headers, workspace, "EXECUTOR")
     idle, idle_signature = await _agent(client, admin_headers, workspace, "SCOUT")
     del idle
@@ -245,3 +263,18 @@ async def test_console_sees_agent_onboarding_without_secrets(client, admin_heade
     assert admin_view.status_code == 200
     assert (await client.get("/v1/human/agent-onboarding", headers=agent)).status_code in (
         401, 403)
+
+
+async def test_a_stub_constitution_is_not_acknowledged(client, admin_headers):
+    """Decision 4: the generated template has no rules; onboarding skips step 2."""
+    created = await client.post("/v1/admin/workspaces", headers=admin_headers,
+                                json={"name": f"stub-{uuid.uuid4().hex[:6]}", "tier": "pro"})
+    workspace = {"workspace": created.json()["workspace"]}
+    agent, _ = await _agent(client, admin_headers, workspace, "EXECUTOR")
+    first = (await client.get("/v1/orientation", headers=agent)).json()
+    assert first["constitution"]["stub"] is True
+    assert first["constitution"]["ack_required"] is False
+    block = first["onboarding"]
+    assert block["next_call"]["tool"] != "ack_constitution"
+    again = (await client.get("/v1/documents", headers=agent)).json()["onboarding"]
+    assert again["state"] == "needs_namespace_readme" and 2 in again["completed_steps"]

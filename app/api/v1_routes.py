@@ -395,6 +395,8 @@ async def list_tasks(
     kind: str | None = Query(default=None, max_length=16),
     claimable_by_me: bool = Query(default=False,
                                   description="claimable now by the caller (role, assignee)"),
+    task_key: str | None = Query(default=None, max_length=2_000,
+                                 description="Comma-separated task keys or ids"),
     detail: Literal["summary", "standard", "full"] = Query(
         default="full", description="summary: short task cards (the MCP default)"),
     principal: Principal = Depends(get_principal),
@@ -412,6 +414,7 @@ async def list_tasks(
         parent=parent,
         kind=kind,
         claimable_by_me=claimable_by_me,
+        task_keys=[item.strip() for item in (task_key or "").split(",") if item.strip()],
     )
     if detail == "full":
         return result
@@ -1266,6 +1269,22 @@ async def set_wake_url(
         raise ApiError(422, "validation_error", "url is a string or null",
                        details={"field": "url"})
     return await pokes.set_wake_url(session, principal, url)
+
+
+@router.post("/tasks/{task_key}/cancel",
+             summary="Withdraw a task (its creator while unclaimed, or a person)")
+async def cancel_task(
+    task_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services.tasks import cancel_own_task
+
+    result = await cancel_own_task(session, principal, task_key,
+                                   reason=str(body.get("reason") or ""),
+                                   expected_version=body.get("expected_version"))
+    return result.model_dump(mode="json")
 
 
 @router.get("/pokes/receipts",

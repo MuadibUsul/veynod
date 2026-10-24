@@ -784,6 +784,7 @@ async def list_documents(
         conditions.extend(_frontmatter_conditions(filters))
     if not include_archived:
         conditions.append(SharedDocument.archived_at.is_(None))
+    unfiltered = list(conditions)  # before the trust filters, for the hidden count
     granted: frozenset[str] = frozenset()
     if not (include_unverified or principal.is_commander or can(principal, "doc:verify")):
         from app.services.collab import context_grants
@@ -852,6 +853,17 @@ async def list_documents(
         )
         or 0
     )
+    if not (include_unverified and include_tainted) and not principal.is_commander:
+        # 2026-10-24 #7: the legacy listing hides drafts and tainted documents;
+        # say how many, so an empty page is not read as "nothing is there".
+        everything = int(await session.scalar(
+            select(func.count(SharedDocument.id)).where(*unfiltered)) or 0)
+        if everything > total:
+            add_warning("listing_hides_documents",
+                        f"{everything - total} document(s) here are hidden by the default "
+                        "trust filter; pass include_unverified=true and include_tainted=true "
+                        "(or order=doc_key_asc for the full census)",
+                        hidden=everything - total)
     query = select(SharedDocument).where(*conditions)
     page_size = limit
     if cursor:
@@ -1294,6 +1306,17 @@ async def upsert_document(
         await onboarding.check_conventions(
             session, principal, namespace, doc_key, frontmatter_in
         )
+        twin = await session.scalar(select(SharedDocument.doc_key).where(
+            SharedDocument.workspace_id == principal.workspace.id,
+            SharedDocument.namespace == namespace,
+            SharedDocument.content_hash == content_hash(content),
+            SharedDocument.archived_at.is_(None)).limit(1))
+        if twin:
+            # 2026-10-24 #18: the same text under a second key is usually a key slip.
+            add_warning("duplicate_content",
+                        f"'{twin}' in {namespace} already has exactly this content; "
+                        "update it instead of creating a second copy",
+                        existing=twin, uri=f"doc://{twin}")
         policy = await enforce_policy(
             session,
             principal,

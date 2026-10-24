@@ -518,11 +518,16 @@ async def list_tasks(
     parent: str | None = None,
     kind: str | None = None,
     claimable_by_me: bool = False,
+    task_keys: list[str] | None = None,
 ) -> TaskListResponse:
     require_permission(principal, "task:read")
     query = select(CollabTask).where(
         CollabTask.workspace_id == principal.workspace.id
     )
+    if task_keys:
+        # 2026-10-24 #11: ?task_key= used to be ignored and return the whole board.
+        query = query.where(CollabTask.task_key.in_(task_keys)
+                            | CollabTask.canonical_id.in_(task_keys))
     if assignee == "me":
         mine = await collab.my_refs(session, principal)
         query = query.where(CollabTask.assignee.in_(mine))
@@ -536,17 +541,7 @@ async def list_tasks(
     if kind:
         query = query.where(CollabTask.kind == kind)
     if claimable_by_me:
-        mine = await collab.my_refs(session, principal)
-        entry = await collab.my_directory_entry(session, principal)
-        query = query.where(
-            CollabTask.status.in_(list(_CLAIMABLE)),
-            (CollabTask.assignee.is_(None)) | (CollabTask.assignee.in_(mine)),
-            (CollabTask.required_role.is_(None))
-            | (CollabTask.required_role == ((entry or {}).get("role") or "")),
-            CollabTask.required_capabilities.contained_by(
-                list((entry or {}).get("capabilities") or [])
-            ),
-        )
+        query = query.where(*await claimable_conditions(session, principal))
     if statuses:
         query = query.where(CollabTask.status.in_(statuses))
     if assigned_role:
@@ -566,6 +561,32 @@ async def list_tasks(
         )
     ).scalars().all()
     return TaskListResponse(items=[task_summary(task) for task in tasks])
+
+
+async def claimable_conditions(session: AsyncSession, principal: Principal) -> list[Any]:
+    """Exactly what claim_task checks, as filters (2026-10-24 #12: orientation and
+    list_tasks(claimable_by_me) used to disagree): status, assignee, required
+    role and capabilities, assigned role, and a namespace the token may write."""
+    mine = await collab.my_refs(session, principal)
+    entry = await collab.my_directory_entry(session, principal)
+    conditions: list[Any] = [
+        CollabTask.workspace_id == principal.workspace.id,
+        CollabTask.status.in_(list(_CLAIMABLE)),
+        (CollabTask.assignee.is_(None)) | (CollabTask.assignee.in_(mine)),
+        (CollabTask.required_role.is_(None))
+        | (CollabTask.required_role == ((entry or {}).get("role") or "")),
+        CollabTask.required_capabilities.contained_by(
+            list((entry or {}).get("capabilities") or [])
+        ),
+    ]
+    if not principal.is_commander:
+        conditions.append(CollabTask.assigned_role.is_(None)
+                          | (CollabTask.assigned_role == principal.role.value))
+        writes = (principal.write_namespaces if principal.write_namespaces is not None
+                  else principal.allowed_namespaces)
+        if "*" not in writes:
+            conditions.append(CollabTask.namespace.in_(list(writes)))
+    return conditions
 
 
 async def _warn_out_of_reach(session: AsyncSession, principal: Principal) -> None:
@@ -1398,6 +1419,27 @@ async def cancel_task(
     )
     await session.commit()
     return task_out(task)
+
+
+async def cancel_own_task(session: AsyncSession, principal: Principal, task_key: str, *,
+                          reason: str, expected_version: int | None) -> TaskOut:
+    """Withdraw a task (2026-10-24: there was no cancel outside the admin API).
+    Its creator may, while nobody else holds it; people and commanders always."""
+    task = await _get_task(session, principal.workspace.id, task_key)
+    ensure_namespace(principal, task.namespace, write=True)
+    if not (principal.is_human or principal.is_commander):
+        if task.created_by != principal.agent_signature:
+            raise Forbidden("only the task's creator, or a person, cancels it")
+        if task.claimed_by and task.claimed_by != principal.agent_signature:
+            raise ApiError(409, "task_claimed",
+                           f"{task.claimed_by} holds this task; ask them or a person",
+                           details={"claimed_by": task.claimed_by})
+    if not reason.strip():
+        raise ApiError(422, "validation_error", "a cancel needs a reason",
+                       details={"field": "reason"})
+    return await cancel_task(session, principal.workspace.id, task.task_key, reason=reason,
+                             expected_version=expected_version,
+                             actor=principal.agent_signature)
 
 
 # ------------------------------------------------ collaboration (PRD R2.1)

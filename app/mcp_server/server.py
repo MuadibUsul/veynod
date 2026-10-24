@@ -1197,7 +1197,17 @@ async def agent_handoff_task(
             raise _validation_error(exc) from exc
         except ApiError as exc:
             raise _api_error(exc) from exc
-    return _compact(result.model_dump(mode="json"))
+    payload = result.model_dump(mode="json")
+    if payload.get("status") == "REVIEWING":
+        # 2026-10-24: EXECUTORs asked "what now?" after handing off.
+        payload["next"] = {
+            "you_are_done": True,
+            "waiting_for": "a review by a person or an AUDITOR",
+            "watch": "your inbox (or the next result's inbox block): task.reviewed / "
+                     "task.review_rejected with the verdict note",
+            "do_not": "hand off again, or mark it DONE yourself",
+        }
+    return _compact(payload)
 
 
 @mcp.tool(name="agent_escalate_to_human")
@@ -1868,6 +1878,23 @@ async def ack_inbox(up_to_event_seq: Annotated[int, Field(ge=0)]) -> dict[str, A
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result)
+
+
+@mcp.tool(name="cancel_task")
+async def cancel_task(task_key: str, reason: str,
+                      expected_version: int | None = None) -> dict[str, Any]:
+    """Withdraw a task you created (while nobody else holds it); people may
+    cancel any. Its open subtasks are cancelled too; the reason is recorded."""
+    from app.services.tasks import cancel_own_task
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await cancel_own_task(session, principal, task_key, reason=reason,
+                                           expected_version=expected_version)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result.model_dump(mode="json"))
 
 
 @mcp.tool(name="set_wake_url")

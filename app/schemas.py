@@ -110,6 +110,11 @@ class NextTaskSpec(StrictModel):
         description="Omit to keep the handed-off task's namespace")
     input_context: dict[str, Any] = Field(default_factory=dict)
 
+    @field_validator("task_key")
+    @classmethod
+    def _no_slash(cls, value: str) -> str:
+        return _task_key_without_slash(value)
+
     @model_validator(mode="after")
     def _claimable_role(self) -> NextTaskSpec:
         if self.assigned_role == "SCOUT":
@@ -148,6 +153,13 @@ class AcceptanceItem(StrictModel):
     id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
     text: str = Field(min_length=1, max_length=2_000)
     kind: Literal["AUTO", "MANUAL"] = "MANUAL"
+
+
+def _task_key_without_slash(value: str | None) -> str | None:
+    """2026-10-24 #9: a '/' in a task key breaks REST paths (/v1/tasks/{key}/claim)."""
+    if value and "/" in value:
+        raise ValueError(f"task_key may not contain '/'; try '{value.replace('/', '-')}'")
+    return value
 
 
 def _unique_acceptance(items: list[AcceptanceItem]) -> list[AcceptanceItem]:
@@ -198,6 +210,11 @@ class TaskCreateRequest(StrictModel):
     @classmethod
     def _acceptance(cls, value: list[AcceptanceItem]) -> list[AcceptanceItem]:
         return _unique_acceptance(value)
+
+    @field_validator("task_key")
+    @classmethod
+    def _no_slash(cls, value: str | None) -> str | None:
+        return _task_key_without_slash(value)
 
     @field_validator("mentions")
     @classmethod

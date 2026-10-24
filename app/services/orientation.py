@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import agent_guide
@@ -142,7 +142,9 @@ async def _constitution(session: AsyncSession, principal: Principal) -> dict[str
                       **((document.frontmatter or {}).get("amendment") or {}),
                       "human_approval": "required", "via": "propose_document_change"},
         "updated_at": document.updated_at,
-        "ack_required": ack != document.version,
+        # Decision 4 (2026-10-24): a template with no rules is not acknowledged.
+        "ack_required": ack != document.version
+        and not (document.frontmatter or {}).get("stub"),
         "acked_version": ack,
         # AG-ID-11 point 4: ancestors' sections, each with the node it comes from.
         "inherited": await _inherited_rules(principal),
@@ -309,18 +311,10 @@ async def _tasks(session: AsyncSession, principal: Principal) -> tuple[list, dic
             .limit(50)
         )
     ).scalars().all()
-    claimable_filter = [
-        *scope,
-        CollabTask.status == TaskStatus.READY,
-        CollabTask.claimed_by.is_(None),
-    ]
-    if not principal.is_commander:
-        claimable_filter.append(
-            or_(
-                CollabTask.assigned_role.is_(None),
-                CollabTask.assigned_role == principal.role.value,
-            )
-        )
+    from app.services.tasks import claimable_conditions
+
+    # The same filters as list_tasks(claimable_by_me=true) and claim_task.
+    claimable_filter = [*scope, *await claimable_conditions(session, principal)]
     count = int(
         await session.scalar(select(func.count(CollabTask.id)).where(*claimable_filter)) or 0
     )
@@ -415,6 +409,28 @@ def _conventions(principal: Principal) -> dict[str, Any]:
         "rate_limits": {"requests_per_minute": settings.rate_limit_default_per_minute},
         "retry_policy": RETRY_POLICY,
         "first_reads": ["system/constitution", "system/namespaces/<namespace>"],
+        # 2026-10-24 playtest: the rules every agent tripped over, said up front.
+        "rules_of_thumb": [
+            "Other agents' drafts need include_unverified=true; tainted ones also "
+            "include_tainted=true. A hidden document's 404 names the flags in retry_with.",
+            "Addresses are doc://<doc_key>; the namespace is a parameter.",
+            "Task keys never contain '/'.",
+            "After agent_handoff_task(REVIEWING) you are done: a person (or an AUDITOR) "
+            "reviews; watch your inbox for the verdict instead of retrying.",
+        ],
+        "task_lifecycle_example": [
+            {"tool": "agent_claim_and_read", "args": {"task_key": "<key>"},
+             "keep": "lease.lease_id, lease.fencing_token, lease.heartbeat_interval_s"},
+            {"tool": "heartbeat", "args": {"lease_id": "<lease_id>", "progress": 0.5,
+                                           "note": "halfway"},
+             "every": "heartbeat_interval_s"},
+            {"tool": "agent_handoff_task",
+             "args": {"task_key": "<key>", "next_status": "REVIEWING",
+                      "fencing_token": "<fencing_token>",
+                      "brief": {"summary": "what was done and how it was checked",
+                                "key_metrics": {}, "unverified_hypotheses": [],
+                                "risk_flag": False}}},
+        ],
     }
 
 

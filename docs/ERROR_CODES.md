@@ -215,6 +215,7 @@ do not edit by hand. Every error body is
 | `namespace_not_empty` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Archive its documents and close its tasks. |
 | `staging_not_configured` | 409 | `escalate_human` | `stop_and_escalate_to_human` | An operator must configure a separate staging database. |
 | `taint_blocked` | 409 | `escalate_human` | `stop_and_escalate_to_human` | A human must verify tainted content. |
+| `task_claimed` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Ask the holder or a person to cancel it. |
 | `tree_quota_exceeded` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Revoke unused child tokens or ask a human for more quota. |
 | `budget_exhausted` | 429 | `escalate_human` | `stop_and_escalate_to_human` | Wait for resets_at or ask the issuer for more budget. |
 | `circuit_open` | 429 | `escalate_human` | `stop_and_escalate_to_human` | Stop the loop; call agent_escalate_to_human. |
@@ -228,6 +229,8 @@ Soft constraints reported in `warnings[]`; the request still succeeds.
 
 | code | meaning |
 |---|---|
+| `duplicate_content` | Another document in the namespace already holds exactly this text. |
+| `listing_hides_documents` | The legacy listing hides drafts and tainted documents; the warning says how many and which flags show them. |
 | `uri_namespace_prefix` | The address carried a namespace prefix; use doc://<doc_key>. |
 | `document_namespace_inferred` | The new document's namespace came from its key prefix or the token's only writable namespace. |
 | `task_namespace_inferred` | The task namespace was taken from its parent, context, assignee or creator; pass namespace to choose. |
