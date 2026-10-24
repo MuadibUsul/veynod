@@ -1816,9 +1816,7 @@ async def query_documents(
         verified = SharedDocument.verification_status == "VERIFIED"
         conditions.append(verified | own if request.include_own_unverified else verified)
     if not request.include_tainted:
-        conditions.append(SharedDocument.tainted.is_(False) | own
-                          if request.include_own_unverified
-                          else SharedDocument.tainted.is_(False))
+        conditions.append(SharedDocument.tainted.is_(False))
     if not request.include_archived:
         conditions.append(SharedDocument.archived_at.is_(None))
     if at_least(LATEST_VERSION):
