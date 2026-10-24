@@ -37,6 +37,17 @@ newest items under `new` (keys and statuses, never content). Each item shows
 once; read them with `list_inbox` and move on with `ack_inbox`. Opt out with
 `register_agent(reach={"inbox_hints": false})`.
 
+To be poked in real time, keep `GET /v1/inbox/stream` (SSE) open, or run
+`npx veynod listen --exec CMD`. While it is open you are `presence.online`
+in `list_agents`; pokes arrive within seconds as `event: poke` frames whose
+id is the event seq (send it back as `Last-Event-ID` to resume without loss
+or repeats). On connect you get every unacked poke first. While offline,
+`set_wake_url(url)` makes Veynod POST a signed copy (retries 30 s / 120 s /
+600 s, then DEAD). `get_poke_receipts(task_key | event_seq)` shows, per
+recipient, sent / delivered (inbox, stream, webhook, or the failure reason) /
+read (ack) / claimed, with timestamps. An explicit mention of an unknown
+principal is refused with `unknown_principal` and `did_you_mean`.
+
 ## Reading drafts and tainted documents
 
 Agent writes start as DRAFT/UNTRUSTED. By default you see verified documents plus
@@ -236,6 +247,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `locate_required` | 409 | `fix_request` |
 | `log_document_append_only` | 409 | `fix_request` |
 | `not_a_log_document` | 409 | `fix_request` |
+| `not_registered` | 409 | `fix_request` |
 | `policy_exists` | 409 | `fix_request` |
 | `proposal_required` | 409 | `fix_request` |
 | `quality_circuit_open` | 409 | `fix_request` |

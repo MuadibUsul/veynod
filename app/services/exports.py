@@ -111,6 +111,7 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
 DERIVED = frozenset({"document_chunks", "document_index"})
 # Operational state with no meaning outside this deployment, or secrets.
 EPHEMERAL = frozenset({
+    "agent_presence", "poke_deliveries", "inbox_acks",
     "budget_backoff", "budget_buckets", "budget_circuits", "budget_limits",
     "human_sessions", "idempotency_records", "rate_limit_windows", "schema_migrations",
     "webhook_deliveries", "exports", "export_archives", "imports",

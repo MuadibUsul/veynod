@@ -24,6 +24,7 @@ from app import capabilities
 from app.api.admin_routes import router as admin_router
 from app.api.auth_routes import router as auth_router
 from app.api.human_routes import router as human_router
+from app.api.inbox_stream import router as inbox_stream_router
 from app.api.oauth_routes import router as oauth_router
 from app.api.org_routes import router as org_router
 from app.api.public_docs import router as public_docs_router
@@ -258,6 +259,7 @@ app.include_router(auth_router)
 app.include_router(human_router)
 app.include_router(org_router)
 app.include_router(stream_router)
+app.include_router(inbox_stream_router)
 app.include_router(admin_router)
 app.include_router(admin_stream_router)
 app.include_router(wellknown_router)

@@ -69,6 +69,9 @@ async def lease_reaper_loop() -> None:
                 stale = await purge_stale_delegated()
                 if stale:
                     logger.info("purged %s long-expired delegated token(s)", stale)
+                from app.services.pokes import sweep_presence
+
+                await sweep_presence()
                 from app.services.taint import retighten_internal_taint
 
                 untainted = await retighten_internal_taint()

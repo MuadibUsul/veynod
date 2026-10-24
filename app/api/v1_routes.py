@@ -1243,6 +1243,34 @@ async def ack_inbox(
     return await inbox.ack(session, principal, body.up_to_event_seq)
 
 
+@router.put("/agents/me/wake", summary="Set (or clear) the URL that wakes you while offline")
+async def set_wake_url(
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import pokes
+
+    url = body.get("url")
+    if url is not None and not isinstance(url, str):
+        raise ApiError(422, "validation_error", "url is a string or null",
+                       details={"field": "url"})
+    return await pokes.set_wake_url(session, principal, url)
+
+
+@router.get("/pokes/receipts",
+            summary="Sent / delivered / read receipts of one poke, per recipient")
+async def poke_receipts(
+    event_seq: int | None = Query(default=None, ge=1),
+    task_key: str | None = Query(default=None),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import pokes
+
+    return await pokes.receipts(session, principal, event_seq=event_seq, task_key=task_key)
+
+
 # -------------------------------------------------------- quality control 1.0
 
 

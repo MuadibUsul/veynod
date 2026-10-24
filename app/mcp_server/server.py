@@ -1853,6 +1853,42 @@ async def ack_inbox(up_to_event_seq: Annotated[int, Field(ge=0)]) -> dict[str, A
     return _compact(result)
 
 
+@mcp.tool(name="set_wake_url")
+async def set_wake_url(url: str | None) -> dict[str, Any]:
+    """Where Veynod POSTs (signed) when a poke reaches you while you are offline,
+    i.e. with no open GET /v1/inbox/stream. Retries 30 s / 120 s / 600 s, then
+    DEAD; get_poke_receipts shows each outcome. url=null removes it. The
+    signing secret is returned once."""
+    from app.services import pokes
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await pokes.set_wake_url(session, principal, url)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_poke_receipts")
+async def get_poke_receipts(event_seq: int | None = None,
+                            task_key: str | None = None) -> dict[str, Any]:
+    """Did my poke arrive? Per recipient: sent, delivered (inbox, stream or
+    wake webhook, with times and failure reasons), read (ack) and claimed.
+    Pass the event_seq of an inbox item, or a task_key for its newest
+    addressed event (e.g. the assignment)."""
+    from app.services import pokes
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await pokes.receipts(session, principal, event_seq=event_seq,
+                                          task_key=task_key)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
 BATCH_MAX = 20
 
 
