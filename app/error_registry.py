@@ -280,6 +280,7 @@ REGISTRY: dict[str, ErrorSpec] = {
     "feature_disabled": _spec(
         403, ESCALATE_HUMAN, "Switched off here; ask an operator (details.setting)."),
     "issue_not_permitted": _spec(403, ABANDON, "Give up this action."),
+    "human_endpoint": _spec(403, ABANDON, "Use the agent endpoint named in details."),
     "namespace_register_not_permitted": _spec(
         403, ABANDON, "Ask the token's issuer to register the namespace."),
     "not_assignee": _spec(403, ABANDON, "Give up this action."),

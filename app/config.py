@@ -59,7 +59,8 @@ class Settings(BaseSettings):
     ollama_embedding_model: str = "nomic-embed-text"
 
     # ------------------------------------------------------- blackboard rules
-    default_task_lease_seconds: int = Field(default=60, ge=5, le=86_400)
+    # 2026-10-24 decision 6: 900 s for every API version (60 s stalled long tasks).
+    default_task_lease_seconds: int = Field(default=900, ge=5, le=86_400)
     max_task_lease_seconds: int = Field(default=3_600, ge=5, le=86_400)
     lease_reaper_interval_seconds: int = Field(default=15, ge=5, le=3_600)
     # AG-TC-05: how often the anomaly rules run.

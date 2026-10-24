@@ -855,6 +855,16 @@ async def renew_token(
     return await token_tree.renew_token(session, principal, ref, body.ttl_seconds)
 
 
+@router.post("/tokens/{ref}/rotate",
+             summary="New secret for the same token; the old one works 15 more minutes")
+async def rotate_token_secret(
+    ref: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await token_tree.rotate_secret(session, principal, ref)
+
+
 # --------------------------------------------------------- directory (AG-ID-06)
 
 

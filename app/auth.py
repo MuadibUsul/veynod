@@ -185,6 +185,11 @@ async def _resolve_principal(
         await session.execute(select(AgentToken).where(AgentToken.api_key_hash == key_hash))
     ).scalar_one_or_none()
     now = datetime.now(timezone.utc)
+    if token is None:
+        # Within the grace window after a rotation the previous secret still works.
+        token = (await session.execute(select(AgentToken).where(
+            AgentToken.previous_key_hash == key_hash,
+            AgentToken.previous_key_valid_until > now))).scalar_one_or_none()
     if token is not None:
         if token.revoked_at is not None:
             raise _revoked(token, token.revoked_ancestor or token.canonical_id)
@@ -463,6 +468,13 @@ async def get_human_account(
     principal: Principal = Depends(get_principal),
 ) -> Principal:
     """Require a human account session (not a workspace/commander API key)."""
+    if principal.auth_kind is AuthKind.AGENT:
+        # 2026-10-24 #16: an agent key is valid, just not for this; say where to go
+        # instead of asking it to "sign in again".
+        raise ApiError(403, "human_endpoint",
+                       "this endpoint is for people signed in to the console; agents use "
+                       "GET /v1/whoami (MCP: get_orientation)",
+                       details={"use": "/v1/whoami", "mcp": "get_orientation"})
     if principal.auth_kind is not AuthKind.HUMAN or principal.user_id is None:
         raise ApiError(
             401,

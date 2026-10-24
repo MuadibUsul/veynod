@@ -81,3 +81,11 @@ GRANT USAGE ON SEQUENCE agent_presence_id_seq, poke_deliveries_id_seq, inbox_ack
 -- with set_wake_url; delivery, signing, retries and DEAD are the webhook ones.
 ALTER TABLE webhook_rules ADD COLUMN IF NOT EXISTS targets TEXT[] NOT NULL DEFAULT '{}';
 ALTER TABLE webhook_rules ADD COLUMN IF NOT EXISTS wake_only BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- Token hot swap (2026-10-24 #21 / decision 5): a rotated secret keeps the
+-- token, its agent_id and its tree; the previous secret keeps working for a
+-- short grace window so a long session can switch without a 401 halfway.
+ALTER TABLE agent_tokens ADD COLUMN IF NOT EXISTS previous_key_hash VARCHAR(256);
+ALTER TABLE agent_tokens ADD COLUMN IF NOT EXISTS previous_key_valid_until TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_agent_tokens_previous_key
+    ON agent_tokens (previous_key_hash) WHERE previous_key_hash IS NOT NULL;

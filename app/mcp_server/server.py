@@ -25,6 +25,7 @@ from app.auth import (
     AuthKind,
     Principal,
     ensure_tenant_usable,
+    require_permission,
     resolve_principal,
 )
 from app.config import get_settings
@@ -233,7 +234,7 @@ def _error_envelope(exc: ToolError) -> dict[str, Any]:
         return {
             "code": "validation_error",
             "http_status": 422,
-            "message": "invalid arguments",
+            "message": _validation_summary(cause.errors()),
             "details": [
                 {
                     "loc": list(error.get("loc", ())),
@@ -401,6 +402,8 @@ mcp = AgentGraphFastMCP(
         ],
     ),
 )
+# serverInfo.version is the product version, not the MCP SDK one (2026-10-24 #15).
+mcp._mcp_server.version = settings.app_version
 
 
 class MCPAuthMiddleware:
@@ -558,6 +561,17 @@ def _tool_error(
     return ToolError(json.dumps(error, ensure_ascii=False, default=str))
 
 
+def _validation_summary(errors: list[dict[str, Any]]) -> str:
+    """'invalid arguments: name (missing), ttl (…)': the message names the fields
+    (2026-10-24 #23: a bare 'field required' left agents guessing)."""
+    parts = []
+    for error in errors[:6]:
+        field = ".".join(str(part) for part in error.get("loc", ()) if part != "body")
+        reason = "missing" if error.get("type") == "missing" else error.get("msg", "invalid")
+        parts.append(f"{field or 'arguments'} ({reason})")
+    return "invalid arguments: " + ", ".join(parts) if parts else "invalid arguments"
+
+
 def _validation_error(exc: ValidationError) -> ToolError:
     details = [
         {
@@ -569,7 +583,7 @@ def _validation_error(exc: ValidationError) -> ToolError:
     ]
     return _tool_error(
         "validation_error",
-        "invalid arguments",
+        _validation_summary(details),
         422,
         details,
     )
@@ -890,6 +904,9 @@ async def review_task(
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
         try:
+            if principal.auth_kind is AuthKind.AGENT:
+                # 2026-10-24 #22: who may review is answered before what was sent.
+                require_permission(principal, "task:review")
             body = TaskReviewRequest(
                 decision=decision,
                 feedback=feedback,
@@ -2806,6 +2823,21 @@ async def renew_token(token_id: str, ttl_seconds: int) -> dict[str, Any]:
         principal = await _principal_for_call(session)
         try:
             result = await token_tree.renew_token(session, principal, token_id, ttl_seconds)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="rotate_token_secret")
+async def rotate_token_secret(token_id: str = "self") -> dict[str, Any]:
+    """Hot swap: a new secret for the same token (id, agent_id, grants and
+    tree unchanged). The old secret keeps working for 15 minutes so a running
+    session can switch without a 401. Rotate yourself ("self") or a descendant."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            ref = principal.token_cid if token_id == "self" else token_id
+            result = await token_tree.rotate_secret(session, principal, ref or "")
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result)

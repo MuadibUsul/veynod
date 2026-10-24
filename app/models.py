@@ -279,6 +279,10 @@ class AgentToken(Base):
     )
     agent_signature: Mapped[str] = mapped_column(String(128), nullable=False)
     api_key_hash: Mapped[str] = mapped_column(String(256), unique=True, nullable=False)
+    # v3.37 hot swap: the secret before the last rotation, valid until then.
+    previous_key_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    previous_key_valid_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True)
     role_scope: Mapped[AgentRole] = mapped_column(
         Enum(
             AgentRole,

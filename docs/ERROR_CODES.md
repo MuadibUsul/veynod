@@ -154,6 +154,7 @@ do not edit by hand. Every error body is
 | `acceptance_self_report` | 403 | `abandon` | `abandon_and_release_local_state` | The executor cannot report its own acceptance; another agent or a person must. |
 | `depth_limit_exceeded` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `forbidden` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
+| `human_endpoint` | 403 | `abandon` | `abandon_and_release_local_state` | Use the agent endpoint named in details. |
 | `issue_not_permitted` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `namespace_register_not_permitted` | 403 | `abandon` | `abandon_and_release_local_state` | Ask the token's issuer to register the namespace. |
 | `not_assignee` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
