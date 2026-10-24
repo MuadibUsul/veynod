@@ -25,6 +25,7 @@ from app.auth import (
     AuthKind,
     Principal,
     ensure_tenant_usable,
+    require_permission,
     resolve_principal,
 )
 from app.config import get_settings
@@ -233,7 +234,7 @@ def _error_envelope(exc: ToolError) -> dict[str, Any]:
         return {
             "code": "validation_error",
             "http_status": 422,
-            "message": "invalid arguments",
+            "message": _validation_summary(cause.errors()),
             "details": [
                 {
                     "loc": list(error.get("loc", ())),
@@ -401,6 +402,8 @@ mcp = AgentGraphFastMCP(
         ],
     ),
 )
+# serverInfo.version is the product version, not the MCP SDK one (2026-10-24 #15).
+mcp._mcp_server.version = settings.app_version
 
 
 class MCPAuthMiddleware:
@@ -558,6 +561,17 @@ def _tool_error(
     return ToolError(json.dumps(error, ensure_ascii=False, default=str))
 
 
+def _validation_summary(errors: list[dict[str, Any]]) -> str:
+    """'invalid arguments: name (missing), ttl (…)': the message names the fields
+    (2026-10-24 #23: a bare 'field required' left agents guessing)."""
+    parts = []
+    for error in errors[:6]:
+        field = ".".join(str(part) for part in error.get("loc", ()) if part != "body")
+        reason = "missing" if error.get("type") == "missing" else error.get("msg", "invalid")
+        parts.append(f"{field or 'arguments'} ({reason})")
+    return "invalid arguments: " + ", ".join(parts) if parts else "invalid arguments"
+
+
 def _validation_error(exc: ValidationError) -> ToolError:
     details = [
         {
@@ -569,7 +583,7 @@ def _validation_error(exc: ValidationError) -> ToolError:
     ]
     return _tool_error(
         "validation_error",
-        "invalid arguments",
+        _validation_summary(details),
         422,
         details,
     )
@@ -890,6 +904,9 @@ async def review_task(
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
         try:
+            if principal.auth_kind is AuthKind.AGENT:
+                # 2026-10-24 #22: who may review is answered before what was sent.
+                require_permission(principal, "task:review")
             body = TaskReviewRequest(
                 decision=decision,
                 feedback=feedback,
@@ -1180,7 +1197,17 @@ async def agent_handoff_task(
             raise _validation_error(exc) from exc
         except ApiError as exc:
             raise _api_error(exc) from exc
-    return _compact(result.model_dump(mode="json"))
+    payload = result.model_dump(mode="json")
+    if payload.get("status") == "REVIEWING":
+        # 2026-10-24: EXECUTORs asked "what now?" after handing off.
+        payload["next"] = {
+            "you_are_done": True,
+            "waiting_for": "a review by a person or an AUDITOR",
+            "watch": "your inbox (or the next result's inbox block): task.reviewed / "
+                     "task.review_rejected with the verdict note",
+            "do_not": "hand off again, or mark it DONE yourself",
+        }
+    return _compact(payload)
 
 
 @mcp.tool(name="agent_escalate_to_human")
@@ -1853,6 +1880,59 @@ async def ack_inbox(up_to_event_seq: Annotated[int, Field(ge=0)]) -> dict[str, A
     return _compact(result)
 
 
+@mcp.tool(name="cancel_task")
+async def cancel_task(task_key: str, reason: str,
+                      expected_version: int | None = None) -> dict[str, Any]:
+    """Withdraw a task you created (while nobody else holds it); people may
+    cancel any. Its open subtasks are cancelled too; the reason is recorded."""
+    from app.services.tasks import cancel_own_task
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await cancel_own_task(session, principal, task_key, reason=reason,
+                                           expected_version=expected_version)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result.model_dump(mode="json"))
+
+
+@mcp.tool(name="set_wake_url")
+async def set_wake_url(url: str | None) -> dict[str, Any]:
+    """Where Veynod POSTs (signed) when a poke reaches you while you are offline,
+    i.e. with no open GET /v1/inbox/stream. Retries 30 s / 120 s / 600 s, then
+    DEAD; get_poke_receipts shows each outcome. url=null removes it. The
+    signing secret is returned once."""
+    from app.services import pokes
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await pokes.set_wake_url(session, principal, url)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_poke_receipts")
+async def get_poke_receipts(event_seq: int | None = None,
+                            task_key: str | None = None) -> dict[str, Any]:
+    """Did my poke arrive? Per recipient: sent, delivered (inbox, stream or
+    wake webhook, with times and failure reasons), read (ack) and claimed.
+    Pass the event_seq of an inbox item, or a task_key for its newest
+    addressed event (e.g. the assignment)."""
+    from app.services import pokes
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await pokes.receipts(session, principal, event_seq=event_seq,
+                                          task_key=task_key)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
 BATCH_MAX = 20
 
 
@@ -2172,7 +2252,7 @@ async def upsert_shared_doc(
             key: document.get(key)
             for key in (
                 "id", "doc_key", "version", "content_hash",
-                "verification_status", "trust_level", "namespace", "updated_at",
+                "verification_status", "trust_level", "tainted", "namespace", "updated_at",
             )
         }
     return _compact(payload)
@@ -2770,6 +2850,21 @@ async def renew_token(token_id: str, ttl_seconds: int) -> dict[str, Any]:
         principal = await _principal_for_call(session)
         try:
             result = await token_tree.renew_token(session, principal, token_id, ttl_seconds)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="rotate_token_secret")
+async def rotate_token_secret(token_id: str = "self") -> dict[str, Any]:
+    """Hot swap: a new secret for the same token (id, agent_id, grants and
+    tree unchanged). The old secret keeps working for 15 minutes so a running
+    session can switch without a 401. Rotate yourself ("self") or a descendant."""
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            ref = principal.token_cid if token_id == "self" else token_id
+            result = await token_tree.rotate_secret(session, principal, ref or "")
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result)

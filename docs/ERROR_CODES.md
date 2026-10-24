@@ -78,6 +78,7 @@ do not edit by hand. Every error body is
 | `locate_required` | 409 | `fix_request` | `fix_request_then_resend` | Run locate_personal_data first. |
 | `log_document_append_only` | 409 | `fix_request` | `append_entries` | Use append_entries instead. |
 | `not_a_log_document` | 409 | `fix_request` | `fix_request_then_resend` | Write with upsert_shared_doc instead. |
+| `not_registered` | 409 | `fix_request` | `fix_request_then_resend` | Call register_agent, then retry. |
 | `policy_exists` | 409 | `fix_request` | `fix_request_then_resend` | Update the existing policy instead. |
 | `proposal_required` | 409 | `fix_request` | `propose_document_change` | Submit propose_document_change instead. |
 | `quality_circuit_open` | 409 | `fix_request` | `fix_request_then_resend` | The domain's circuit is open: hand off to REVIEWING. |
@@ -116,6 +117,7 @@ do not edit by hand. Every error body is
 | `invalid_verification_status` | 422 | `fix_request` | `fix_request_then_resend` | Use a valid status. |
 | `limit_too_large` | 422 | `fix_request` | `fix_request_then_resend` | Lower limit to the documented maximum. |
 | `namespace_not_registered` | 422 | `fix_request` | `register_namespace` | Call register_namespace, then resend. |
+| `namespace_protected` | 422 | `fix_request` | `fix_request_then_resend` | default and reserved namespaces stay. |
 | `notice_template_incomplete` | 422 | `fix_request` | `fix_request_then_resend` | Fill details.missing fields. |
 | `offset_not_supported` | 422 | `fix_request` | `fix_request_then_resend` | Use cursor pagination. |
 | `policy_loosening_not_allowed` | 422 | `fix_request` | `fix_request_then_resend` | Use a value no looser than the ancestor's. |
@@ -152,7 +154,9 @@ do not edit by hand. Every error body is
 | `acceptance_self_report` | 403 | `abandon` | `abandon_and_release_local_state` | The executor cannot report its own acceptance; another agent or a person must. |
 | `depth_limit_exceeded` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `forbidden` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
+| `human_endpoint` | 403 | `abandon` | `abandon_and_release_local_state` | Use the agent endpoint named in details. |
 | `issue_not_permitted` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
+| `namespace_register_not_permitted` | 403 | `abandon` | `abandon_and_release_local_state` | Ask the token's issuer to register the namespace. |
 | `not_assignee` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `not_lease_holder` | 403 | `abandon` | `abandon_and_release_local_state` | Give up; do not preempt. |
 | `review_sealed` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
@@ -208,8 +212,10 @@ do not edit by hand. Every error body is
 | `confirmation_required` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Wait for details.pending_confirmations. |
 | `escalated_to_human` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Wait for the human decision. |
 | `incident_not_confirmed` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Confirm the incident first. |
+| `namespace_not_empty` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Archive its documents and close its tasks. |
 | `staging_not_configured` | 409 | `escalate_human` | `stop_and_escalate_to_human` | An operator must configure a separate staging database. |
 | `taint_blocked` | 409 | `escalate_human` | `stop_and_escalate_to_human` | A human must verify tainted content. |
+| `task_claimed` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Ask the holder or a person to cancel it. |
 | `tree_quota_exceeded` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Revoke unused child tokens or ask a human for more quota. |
 | `budget_exhausted` | 429 | `escalate_human` | `stop_and_escalate_to_human` | Wait for resets_at or ask the issuer for more budget. |
 | `circuit_open` | 429 | `escalate_human` | `stop_and_escalate_to_human` | Stop the loop; call agent_escalate_to_human. |
@@ -223,6 +229,10 @@ Soft constraints reported in `warnings[]`; the request still succeeds.
 
 | code | meaning |
 |---|---|
+| `duplicate_content` | Another document in the namespace already holds exactly this text. |
+| `listing_hides_documents` | The legacy listing hides drafts and tainted documents; the warning says how many and which flags show them. |
+| `uri_namespace_prefix` | The address carried a namespace prefix; use doc://<doc_key>. |
+| `document_namespace_inferred` | The new document's namespace came from its key prefix or the token's only writable namespace. |
 | `task_namespace_inferred` | The task namespace was taken from its parent, context, assignee or creator; pass namespace to choose. |
 | `task_namespace_defaulted` | No namespace was given or inferable; the task went to 'default'. |
 | `assigned_tasks_out_of_reach` | Open tasks assigned to you are in namespaces your token cannot read; ask an owner to move them. |

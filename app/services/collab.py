@@ -245,6 +245,15 @@ async def validate_new_task(session: AsyncSession, principal: Principal, request
                        details={"assignee": request.assignee,
                                 "did_you_mean": await suggest_principal(
                                     session, principal.workspace.id, request.assignee)})
+    for ref in getattr(request, "mentions", None) or []:
+        # R-5 (TASK-72A59BD9): an explicit mention of nobody is refused, not dropped.
+        if not await principal_exists(session, principal.workspace.id, ref):
+            raise ApiError(422, "unknown_principal",
+                           "a mentioned principal is not in the directory (labels are "
+                           "case-sensitive)",
+                           details={"field": "mentions", "mention": ref,
+                                    "did_you_mean": await suggest_principal(
+                                        session, principal.workspace.id, ref)})
     missing = []
     for ref in request.context_docs or []:
         document = await resolve_ref(session, principal.workspace.id, ref.model_dump())

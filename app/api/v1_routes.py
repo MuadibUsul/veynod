@@ -395,6 +395,8 @@ async def list_tasks(
     kind: str | None = Query(default=None, max_length=16),
     claimable_by_me: bool = Query(default=False,
                                   description="claimable now by the caller (role, assignee)"),
+    task_key: str | None = Query(default=None, max_length=2_000,
+                                 description="Comma-separated task keys or ids"),
     detail: Literal["summary", "standard", "full"] = Query(
         default="full", description="summary: short task cards (the MCP default)"),
     principal: Principal = Depends(get_principal),
@@ -412,6 +414,7 @@ async def list_tasks(
         parent=parent,
         kind=kind,
         claimable_by_me=claimable_by_me,
+        task_keys=[item.strip() for item in (task_key or "").split(",") if item.strip()],
     )
     if detail == "full":
         return result
@@ -855,6 +858,16 @@ async def renew_token(
     return await token_tree.renew_token(session, principal, ref, body.ttl_seconds)
 
 
+@router.post("/tokens/{ref}/rotate",
+             summary="New secret for the same token; the old one works 15 more minutes")
+async def rotate_token_secret(
+    ref: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await token_tree.rotate_secret(session, principal, ref)
+
+
 # --------------------------------------------------------- directory (AG-ID-06)
 
 
@@ -1241,6 +1254,50 @@ async def ack_inbox(
     from app.services import inbox
 
     return await inbox.ack(session, principal, body.up_to_event_seq)
+
+
+@router.put("/agents/me/wake", summary="Set (or clear) the URL that wakes you while offline")
+async def set_wake_url(
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import pokes
+
+    url = body.get("url")
+    if url is not None and not isinstance(url, str):
+        raise ApiError(422, "validation_error", "url is a string or null",
+                       details={"field": "url"})
+    return await pokes.set_wake_url(session, principal, url)
+
+
+@router.post("/tasks/{task_key}/cancel",
+             summary="Withdraw a task (its creator while unclaimed, or a person)")
+async def cancel_task(
+    task_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services.tasks import cancel_own_task
+
+    result = await cancel_own_task(session, principal, task_key,
+                                   reason=str(body.get("reason") or ""),
+                                   expected_version=body.get("expected_version"))
+    return result.model_dump(mode="json")
+
+
+@router.get("/pokes/receipts",
+            summary="Sent / delivered / read receipts of one poke, per recipient")
+async def poke_receipts(
+    event_seq: int | None = Query(default=None, ge=1),
+    task_key: str | None = Query(default=None),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import pokes
+
+    return await pokes.receipts(session, principal, event_seq=event_seq, task_key=task_key)
 
 
 # -------------------------------------------------------- quality control 1.0

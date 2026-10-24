@@ -77,6 +77,24 @@ def extract_references(content: str, frontmatter: dict[str, Any]) -> tuple[set[s
     return keys, external
 
 
+RAW_NAMESPACES = frozenset({"raw_inbox"})
+_OUTSIDE_SOURCES = frozenset({"web", "external", "email", "scrape", "upload", "untrusted"})
+
+
+def is_outside_content(document: SharedDocument) -> bool:
+    """Content that came from outside the team: a declared origin, the raw
+    intake namespace, or a frontmatter source that is a URL or names the web."""
+    if (document.content_origin or "internal") != "internal":
+        return True
+    if document.namespace in RAW_NAMESPACES:
+        return True
+    source = (document.frontmatter or {}).get("source")
+    if isinstance(source, str):
+        value = source.strip().lower()
+        return value in _OUTSIDE_SOURCES or _EXTERNAL.match(value) is not None
+    return False
+
+
 async def compute_document_taint(
     session: AsyncSession,
     document: SharedDocument,
@@ -110,10 +128,15 @@ async def compute_document_taint(
             if source.id == document.id:
                 continue
             source_tainted = bool(source.tainted)
+            # An unverified draft another agent wrote is unverified, not hostile:
+            # only content that came from outside (content_origin) taints what
+            # cites it (2026-10-24; citing a teammate's DRAFT used to hide the
+            # whole citing document).
             source_untrusted = (
                 settings.taint_untrusted_source_default
                 and source.trust_level == "UNTRUSTED"
                 and source.verification_status != "VERIFIED"
+                and is_outside_content(source)
             )
             if source_tainted or source_untrusted:
                 sources.append(
@@ -175,11 +198,21 @@ async def _replace_edges(
                 source_doc_id=source_id,
                 target_type=target_type,
                 target_id=target_id,
-                reason=(reasons or {}).get(str(source_id), "source"),
+                reason=(reasons or {}).get(str(source_id), "reference"),
                 depth=1,
             )
         )
     await session.flush()
+
+
+async def _referenced_ids(session: AsyncSession, document: SharedDocument) -> set[uuid.UUID]:
+    keys, _ = extract_references(document.content, document.frontmatter or {})
+    if not keys:
+        return set()
+    rows = (await session.execute(select(SharedDocument.id).where(
+        SharedDocument.workspace_id == document.workspace_id,
+        SharedDocument.doc_key.in_(list(keys))))).scalars().all()
+    return {row for row in rows if row != document.id}
 
 
 async def refresh_document_taint(
@@ -187,6 +220,7 @@ async def refresh_document_taint(
     document: SharedDocument,
 ) -> bool:
     tainted, sources = await compute_document_taint(session, document)
+    referenced = await _referenced_ids(session, document)
     document.tainted = tainted
     document.taint_sources = sources
     if tainted:
@@ -195,7 +229,9 @@ async def refresh_document_taint(
         document.trust_level = "TRUSTED"
     elif document.created_by != "human_commander":
         document.trust_level = "UNTRUSTED"
-    source_ids = {
+    # Every cited document gets an edge, tainted or not, so a source that is
+    # tainted later (a revoked writer, a recall) still reaches this document.
+    source_ids = referenced | {
         uuid.UUID(str(item["doc_id"]))
         for item in sources
         if item.get("doc_id")
@@ -250,6 +286,41 @@ async def recompute_downstream_document_taint(
             still_tainted = await refresh_document_taint(session, document)
             if not still_tainted:
                 queue.append(target_id)
+
+
+_last_retighten: datetime | None = None
+
+
+async def retighten_internal_taint(limit: int = 500, *, force: bool = False) -> int:
+    """Recompute documents tainted only by citing internal drafts (the old rule).
+
+    Runs from the reaper; a document that comes out clean clears its
+    downstream too. Idempotent, and quiet once the backlog is gone.
+    """
+    from sqlalchemy import text
+
+    from app.database import async_session_factory
+
+    global _last_retighten
+    now = datetime.now(timezone.utc)
+    if not force and _last_retighten is not None and (now - _last_retighten).total_seconds() < 3600:
+        return 0
+    _last_retighten = now
+    cleared = 0
+    async with async_session_factory() as session:
+        rows = (await session.execute(text(
+            "SELECT id, workspace_id FROM shared_documents WHERE tainted "
+            "AND COALESCE(jsonb_array_length(provenance_taint), 0) = 0 "
+            "AND taint_sources @> '[{\"reason\": \"untrusted_source\"}]'::jsonb "
+            "LIMIT :n"), {"n": limit})).all()
+        for document_id, workspace_id in rows:
+            document = await session.get(SharedDocument, document_id)
+            if document is None or await refresh_document_taint(session, document):
+                continue
+            cleared += 1
+            await recompute_downstream_document_taint(session, workspace_id, document_id)
+        await session.commit()
+    return cleared
 
 
 def _iter_uri_strings(value: Any) -> list[str]:

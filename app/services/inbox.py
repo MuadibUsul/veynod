@@ -100,6 +100,9 @@ async def ack(session: AsyncSession, principal: Principal, up_to: int, *,
     target = max(acked, min(int(up_to), head))
     if target != acked:
         await digest._store(session, principal, WATERMARK, target, commit=False, owner=owner)
+        from app.services.pokes import record_ack
+
+        await record_ack(session, principal.workspace.id, owner, acked, target)
     await session.commit()
     remaining = await summary(session, principal, human=human, limit=1)
     return {"acked_event_seq": target, "unacked_count": remaining["unacked_count"]}

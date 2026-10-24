@@ -12,6 +12,7 @@ import {
   mergeServer,
   openSealed,
   parseArgs,
+  parseSse,
   sealForTest,
 } from "../bin/veynod.mjs";
 
@@ -55,4 +56,21 @@ test("client config shapes", () => {
   assert.equal(desktop.env.VEYNOD_AUTH, "Bearer agt_3");
   assert.ok(claudeDesktopConfigPath("/home/u", "darwin").replaceAll("\\", "/").includes("Application Support/Claude"));
   assert.ok(claudeDesktopConfigPath("/home/u", "linux").replaceAll("\\", "/").endsWith(".config/Claude/claude_desktop_config.json"));
+});
+
+test("parseSse splits frames and keeps the partial tail", () => {
+  const [events, rest] = parseSse(
+    "retry: 3000\nevent: connected\ndata: {}\n\n: keep-alive\n\nid: 7\nevent: poke\ndata: {\"a\":1}\n\nid: 8\nev");
+  assert.deepEqual(events.map((item) => item.event), ["connected", "message", "poke"]);
+  assert.equal(events[2].id, "7");
+  assert.deepEqual(JSON.parse(events[2].data), { a: 1 });
+  assert.equal(rest, "id: 8\nev");
+});
+
+test("listen options parse", () => {
+  const options = parseArgs(["listen", "--key", "agt_x", "--exec", "./hook.sh", "--once"]);
+  assert.equal(options.command, "listen");
+  assert.equal(options.key, "agt_x");
+  assert.equal(options.exec, "./hook.sh");
+  assert.equal(options.once, true);
 });

@@ -69,6 +69,15 @@ async def lease_reaper_loop() -> None:
                 stale = await purge_stale_delegated()
                 if stale:
                     logger.info("purged %s long-expired delegated token(s)", stale)
+                from app.services.pokes import sweep_presence
+
+                await sweep_presence()
+                from app.services.taint import retighten_internal_taint
+
+                untainted = await retighten_internal_taint()
+                if untainted:
+                    logger.info("cleared taint from %s document(s) that only cited "
+                                "internal drafts", untainted)
                 purged = await purge_due_tenants(session)
                 if purged:
                     logger.info("purged %s tenant(s) after the deletion grace period", purged)

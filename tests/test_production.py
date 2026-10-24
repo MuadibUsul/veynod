@@ -1454,7 +1454,10 @@ async def test_backfill_verifies_legacy_artifacts_and_clears_downstream_taint(
     upstream = await client.put(
         f"/v1/documents/{upstream_key}",
         headers=executor["headers"],
-        json={"content": "# Upstream\n\nsource", "expected_version": 0},
+        # Outside content (2026-10-24): citing a teammate's internal draft no
+        # longer taints; citing something fetched from the web does.
+        json={"content": "# Upstream\n\nsource", "frontmatter": {"source": "web"},
+              "expected_version": 0},
     )
     assert upstream.status_code == 200, upstream.text
     downstream = await client.put(

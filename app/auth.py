@@ -73,6 +73,14 @@ class Principal:
     # Token delegation 1.0: permissions added to / removed from the role package.
     perm_add: frozenset[str] = frozenset()
     perm_remove: frozenset[str] = frozenset()
+    # Labels of the tokens above this one (not the workspace root): what they
+    # wrote counts as this agent's own for the default trust filters.
+    ancestor_signatures: frozenset[str] = frozenset()
+
+    @property
+    def own_names(self) -> list[str]:
+        """Authors whose drafts this principal sees without include_* flags."""
+        return [self.agent_signature, *sorted(self.ancestor_signatures - {self.agent_signature})]
 
     @property
     def tenant_id(self) -> str:
@@ -177,6 +185,11 @@ async def _resolve_principal(
         await session.execute(select(AgentToken).where(AgentToken.api_key_hash == key_hash))
     ).scalar_one_or_none()
     now = datetime.now(timezone.utc)
+    if token is None:
+        # Within the grace window after a rotation the previous secret still works.
+        token = (await session.execute(select(AgentToken).where(
+            AgentToken.previous_key_hash == key_hash,
+            AgentToken.previous_key_valid_until > now))).scalar_one_or_none()
     if token is not None:
         if token.revoked_at is not None:
             raise _revoked(token, token.revoked_ancestor or token.canonical_id)
@@ -305,6 +318,8 @@ async def _agent_principal(
         max_descendants=token.max_descendants,
         perm_add=frozenset(token.scope_add or []) - removed,
         perm_remove=removed,
+        ancestor_signatures=frozenset(item.agent_signature for item in ancestors
+                                      if (item.depth or 0) > 0 and item.agent_signature),
     )
 
 
@@ -453,6 +468,13 @@ async def get_human_account(
     principal: Principal = Depends(get_principal),
 ) -> Principal:
     """Require a human account session (not a workspace/commander API key)."""
+    if principal.auth_kind is AuthKind.AGENT:
+        # 2026-10-24 #16: an agent key is valid, just not for this; say where to go
+        # instead of asking it to "sign in again".
+        raise ApiError(403, "human_endpoint",
+                       "this endpoint is for people signed in to the console; agents use "
+                       "GET /v1/whoami (MCP: get_orientation)",
+                       details={"use": "/v1/whoami", "mcp": "get_orientation"})
     if principal.auth_kind is not AuthKind.HUMAN or principal.user_id is None:
         raise ApiError(
             401,

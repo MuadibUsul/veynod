@@ -273,10 +273,22 @@ async def enqueue_deliveries(session: AsyncSession) -> int:
         ).scalars().all()
         if not rows:
             continue
+        online: set[str] | None = None
         for row in rows:
             event = _event_dict(row)
             if not _matches(rule, event):
                 continue
+            if rule.targets:
+                addressed = {str(item) for item in (row.targets or [])}
+                if not addressed.intersection(rule.targets) or row.actor in rule.targets:
+                    continue
+                if rule.wake_only:
+                    if online is None:
+                        from app.services.pokes import online_refs
+
+                        online = await online_refs(session, rule.workspace_id)
+                    if online.intersection(rule.targets):
+                        continue  # pushed over the live stream instead
             statement = (
                 pg_insert(WebhookDelivery)
                 .values(
@@ -345,12 +357,19 @@ async def process_deliveries(session: AsyncSession) -> int:
             rule.consecutive_failures = 0
             rule.failing_since = None
             delivered += 1
+            if rule.targets and event.seq:
+                await _wake_receipt(rule, event.seq, "delivered",
+                                    f"HTTP {result.status_code}")
         else:
             delivery.last_error = result.error or "delivery failed"
             delays = settings.webhook_retry_delays_seconds
             if delivery.attempts > len(delays):
                 # Every retry failed: DEAD, never retried again (poke delivery D-1).
                 delivery.status = "DEAD"
+                if rule.targets and event.seq:
+                    await _wake_receipt(rule, event.seq, "failed",
+                                        f"DEAD after {delivery.attempts} attempts: "
+                                        f"{delivery.last_error}")
                 await append_event(
                     session, workspace_id=rule.workspace_id, agent="webhooks",
                     event_type="WEBHOOK_DEAD",
@@ -375,6 +394,12 @@ async def process_deliveries(session: AsyncSession) -> int:
                                          "failing_since": rule.failing_since.isoformat()}})
     await session.commit()
     return delivered
+
+
+async def _wake_receipt(rule: WebhookRule, seq: int, status: str, detail: str) -> None:
+    from app.services.pokes import record_delivery
+
+    await record_delivery(rule.workspace_id, seq, rule.targets[0], "webhook", status, detail)
 
 
 async def webhook_delivery_loop() -> None:

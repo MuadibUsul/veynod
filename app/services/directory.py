@@ -291,8 +291,20 @@ async def _registered(principal: Principal) -> None:
     await agent_onboarding.observe(principal, "registered")
 
 
+async def _with_presence(session: AsyncSession, workspace_id: Any,
+                         items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """R-1 (TASK-72A59BD9): presence is a live inbox stream, not registration."""
+    from app.services.pokes import presence_for_tokens
+
+    for item in items:
+        item["presence"] = await presence_for_tokens(session, workspace_id,
+                                                     item.get("token_ids") or [])
+    return items
+
+
 async def get_agent(session: AsyncSession, principal: Principal, ref: str) -> dict[str, Any]:
-    return entry_out(await _resolve(session, principal.workspace, ref))
+    entry = entry_out(await _resolve(session, principal.workspace, ref))
+    return (await _with_presence(session, principal.workspace.id, [entry]))[0]
 
 
 async def me(session: AsyncSession, principal: Principal) -> dict[str, Any] | None:
@@ -336,7 +348,8 @@ async def list_agents(session: AsyncSession, principal: Principal, *, role: str 
             params,
         )
     ).mappings().all()
-    items = [entry_out(dict(row)) for row in rows[:limit]]
+    items = await _with_presence(session, principal.workspace.id,
+                                 [entry_out(dict(row)) for row in rows[:limit]])
     next_cursor = None
     if len(rows) > limit:
         next_cursor = base64.urlsafe_b64encode(

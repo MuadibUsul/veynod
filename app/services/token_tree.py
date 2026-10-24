@@ -54,6 +54,8 @@ CHILD_TTL_MAX = 72 * 3_600
 BRANCH_TTL_DEFAULT = 30 * 86_400
 BRANCH_TTL_MAX = 90 * 86_400
 EXPIRING_SECONDS = 600
+# An expired (not revoked) token may be renewed in place for this long.
+RENEW_GRACE = timedelta(days=7)
 AGENT_ID = re.compile(r"^[a-z][a-z0-9-]{2,39}$")
 # What a root token may call (AG-ID-01 point 1).
 ROOT_PATH_PREFIXES = ("/v1/tokens",)
@@ -139,6 +141,8 @@ async def _notify_expiring(principal: Principal) -> None:
             select(AgentToken.agent_signature).where(AgentToken.canonical_id == row[0])
         )
         targets = [f"agent:{parent}"] if parent else await _humans(session, principal.workspace.id)
+        # The token hears it too (decision 5): it can ask for a renewal in time.
+        targets.append(f"agent:{principal.agent_signature}")
         await append_event(session, workspace_id=principal.workspace.id, agent="tokens",
                            event_type="TOKEN_EXPIRING",
                            payload={"token_id": principal.token_cid,
@@ -679,10 +683,14 @@ async def renew_token(session: AsyncSession, principal: Principal, token_id: str
     if target.revoked_at is not None:
         raise ApiError(409, "token_already_expired", "a revoked token cannot be renewed",
                        details={"revoked_at": target.revoked_at.isoformat()})
-    if target.expires_at is not None and target.expires_at <= now:
+    if target.expires_at is not None and target.expires_at <= now - RENEW_GRACE:
         raise ApiError(409, "token_already_expired",
-                       "an expired token cannot be renewed; issue a new one",
-                       details={"expired_at": target.expires_at.isoformat()})
+                       "this token expired too long ago to renew; issue a new one",
+                       details={"expired_at": target.expires_at.isoformat(),
+                                "renewable_for_days": RENEW_GRACE.days})
+    # 2026-10-24 decision 5: a token that just expired is renewed in place, so the
+    # agent keeps its id, its secret and its assignments (no r2 -> r3 -> r4).
+    revived = target.expires_at is not None and target.expires_at <= now
     ceiling = BRANCH_TTL_MAX if target.depth <= 1 else CHILD_TTL_MAX
     if ttl_seconds < 60 or ttl_seconds > ceiling:
         raise ApiError(422, "validation_error", "ttl_seconds is out of range",
@@ -693,7 +701,37 @@ async def renew_token(session: AsyncSession, principal: Principal, token_id: str
     target.expires_at = expires_at
     target.expiring_notified_at = None
     await session.commit()
-    return {"token_id": target.canonical_id, "expires_at": expires_at}
+    return {"token_id": target.canonical_id, "expires_at": expires_at,
+            "renewed_after_expiry": revived}
+
+
+ROTATION_GRACE = timedelta(minutes=15)
+
+
+async def rotate_secret(session: AsyncSession, principal: Principal,
+                        token_id: str) -> dict[str, Any]:
+    """New secret, same token (2026-10-24 #21 hot swap): the id, agent_id, tree
+    and grants stay; the old secret keeps working for ROTATION_GRACE so a
+    running session can switch over without a 401. A token rotates itself, or
+    an ancestor / a person rotates it."""
+    workspace = await session.get(Workspace, principal.workspace.id)
+    target = await _target(session, workspace, token_id)
+    if principal.token_cid != target.canonical_id and not _may_manage(
+            principal, target, allow_self=False):
+        raise Forbidden("a token rotates itself, or an ancestor or a human rotates it")
+    if target.revoked_at is not None:
+        raise ApiError(409, "token_already_expired", "a revoked token cannot be rotated",
+                       details={"revoked_at": target.revoked_at.isoformat()})
+    raw = generate_agent_key()
+    now = _now()
+    target.previous_key_hash = target.api_key_hash
+    target.previous_key_valid_until = now + ROTATION_GRACE
+    target.api_key_hash = hash_api_key(raw)
+    await session.commit()
+    return {"token_id": target.canonical_id, "token": raw,
+            "previous_secret_valid_until": target.previous_key_valid_until,
+            "note": "switch to the new secret; the old one stops working at "
+                    "previous_secret_valid_until"}
 
 
 # ------------------------------------------------------------------ root

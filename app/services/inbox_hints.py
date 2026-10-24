@@ -79,9 +79,11 @@ async def _hint(principal: Principal, key: str) -> dict[str, Any] | None:
         owner, names = await inbox._who(session, principal, False)
         acked = await inbox._acked(session, principal, owner)
         shown = max(acked, _surfaced.get(key, 0))
+        # What the agent just did itself is not news (its own claim, its own write).
         mine = ("workspace_id = :ws AND targets ?| CAST(:me AS text[]) "
-                "AND seq IS NOT NULL")
-        params = {"ws": principal.workspace.id, "me": names, "acked": acked, "shown": shown}
+                "AND seq IS NOT NULL AND actor IS DISTINCT FROM :self")
+        params = {"ws": principal.workspace.id, "me": names, "acked": acked, "shown": shown,
+                  "self": principal.agent_signature}
         counts = (await session.execute(text(
             f"SELECT count(*) FILTER (WHERE seq > :acked) AS unacked, "
             f"count(*) FILTER (WHERE seq > :shown) AS fresh, max(seq) AS newest "

@@ -37,6 +37,37 @@ newest items under `new` (keys and statuses, never content). Each item shows
 once; read them with `list_inbox` and move on with `ack_inbox`. Opt out with
 `register_agent(reach={"inbox_hints": false})`.
 
+To be poked in real time, keep `GET /v1/inbox/stream` (SSE) open, or run
+`npx veynod listen --exec CMD`. While it is open you are `presence.online`
+in `list_agents`; pokes arrive within seconds as `event: poke` frames whose
+id is the event seq (send it back as `Last-Event-ID` to resume without loss
+or repeats). On connect you get every unacked poke first. While offline,
+`set_wake_url(url)` makes Veynod POST a signed copy (retries 30 s / 120 s /
+600 s, then DEAD). `get_poke_receipts(task_key | event_seq)` shows, per
+recipient, sent / delivered (inbox, stream, webhook, or the failure reason) /
+read (ack) / claimed, with timestamps. An explicit mention of an unknown
+principal is refused with `unknown_principal` and `did_you_mean`.
+
+## Reading drafts and tainted documents
+
+Agent writes start as DRAFT/UNTRUSTED. By default you see verified documents plus
+your own and those of the tokens above you; anything else needs
+`include_unverified=true`, and tainted documents also `include_tainted=true`.
+A hidden document answers 404 with `details.retry_with` naming the flags, and
+every write's receipt carries `read_with` (uri + flags a reader needs).
+Addresses are `doc://<doc_key>`; `doc://<namespace>/<doc_key>` also resolves,
+with a `uri_namespace_prefix` warning. Citing a teammate's internal draft does
+not taint your document; citing external or tainted content does.
+
+## Keeping your token alive
+
+You hear `TOKEN_EXPIRING` in your inbox before your token expires; ask its
+parent to `renew_token`. A token that expired less than 7 days ago (and was
+not revoked) is renewed in place: same id, agent_id, secret and assignments.
+`rotate_token_secret` gives the same token a new secret; the old one keeps
+working for 15 minutes so a running session can switch. Task leases default
+to 900 s; `heartbeat` every `heartbeat_interval_s`.
+
 ## Tasks and namespaces
 
 A task lives in a namespace, and only tokens that read it can see or claim it.
@@ -225,6 +256,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `locate_required` | 409 | `fix_request` |
 | `log_document_append_only` | 409 | `fix_request` |
 | `not_a_log_document` | 409 | `fix_request` |
+| `not_registered` | 409 | `fix_request` |
 | `policy_exists` | 409 | `fix_request` |
 | `proposal_required` | 409 | `fix_request` |
 | `quality_circuit_open` | 409 | `fix_request` |
@@ -263,6 +295,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `invalid_verification_status` | 422 | `fix_request` |
 | `limit_too_large` | 422 | `fix_request` |
 | `namespace_not_registered` | 422 | `fix_request` |
+| `namespace_protected` | 422 | `fix_request` |
 | `notice_template_incomplete` | 422 | `fix_request` |
 | `offset_not_supported` | 422 | `fix_request` |
 | `policy_loosening_not_allowed` | 422 | `fix_request` |
@@ -299,7 +332,9 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `acceptance_self_report` | 403 | `abandon` |
 | `depth_limit_exceeded` | 403 | `abandon` |
 | `forbidden` | 403 | `abandon` |
+| `human_endpoint` | 403 | `abandon` |
 | `issue_not_permitted` | 403 | `abandon` |
+| `namespace_register_not_permitted` | 403 | `abandon` |
 | `not_assignee` | 403 | `abandon` |
 | `not_lease_holder` | 403 | `abandon` |
 | `review_sealed` | 403 | `abandon` |
@@ -355,8 +390,10 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `confirmation_required` | 409 | `escalate_human` |
 | `escalated_to_human` | 409 | `escalate_human` |
 | `incident_not_confirmed` | 409 | `escalate_human` |
+| `namespace_not_empty` | 409 | `escalate_human` |
 | `staging_not_configured` | 409 | `escalate_human` |
 | `taint_blocked` | 409 | `escalate_human` |
+| `task_claimed` | 409 | `escalate_human` |
 | `tree_quota_exceeded` | 409 | `escalate_human` |
 | `budget_exhausted` | 429 | `escalate_human` |
 | `circuit_open` | 429 | `escalate_human` |

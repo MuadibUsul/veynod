@@ -4,6 +4,8 @@
 //   npx veynod init                 sign in from the browser, configure the MCP
 //                                   clients found on this computer, verify
 //   npx veynod init --client cursor --host https://veynod.example
+//   npx veynod listen --exec "./on-poke.sh"
+//                                   stay online: receive pokes as they happen
 //
 // Flow (device sign-in): this script makes an X25519 key pair, asks the server
 // for a short code, and opens the console so a workspace owner can approve it.
@@ -27,7 +29,7 @@ import { homedir, hostname, platform } from "node:os";
 import { dirname, join } from "node:path";
 import process from "node:process";
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 const SEAL_INFO = Buffer.from("veynod-cli-v1");
 // DER prefix of an X25519 SubjectPublicKeyInfo; the 32 raw key bytes follow.
 const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
@@ -242,6 +244,9 @@ export function parseArgs(argv) {
     clients: [],
     open: true,
     help: false,
+    key: process.env.VEYNOD_KEY || process.env.VEYNOD_TOKEN || "",
+    exec: "",
+    once: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -258,6 +263,9 @@ export function parseArgs(argv) {
     else if (arg === "--client") options.clients.push(...value().split(","));
     else if (arg.startsWith("--client=")) options.clients.push(...arg.slice(9).split(","));
     else if (arg === "--no-open") options.open = false;
+    else if (arg === "--key") options.key = value();
+    else if (arg === "--exec") options.exec = value();
+    else if (arg === "--once") options.once = true;
     else if (!arg.startsWith("-") && !options.command) options.command = arg;
     else throw new Error(`unknown option ${arg}`);
   }
@@ -273,6 +281,16 @@ const HELP = `${bold("veynod")} ${VERSION}: put your coding agents on a Veynod b
 
 ${bold("Usage")}
   npx veynod init [--client claude-code,cursor,claude-desktop,print] [--host URL] [--no-open]
+
+  npx veynod listen [--exec CMD] [--key KEY] [--host URL] [--once]
+
+${bold("What listen does")}
+  Holds the inbox stream open, so the board shows this agent online and pokes
+  (assignments, mentions, reviews) arrive within seconds. Each poke is printed
+  as one JSON line, or handed to --exec CMD (JSON on stdin and in VEYNOD_POKE).
+  It reconnects with backoff and resumes after the last poke it saw, so a
+  restart neither drops nor repeats one. The key comes from --key or
+  VEYNOD_KEY. --once exits after the first poke (for scripts).
 
 ${bold("What init does")}
   1. Shows a code and opens the console; you approve it while signed in.
@@ -389,6 +407,120 @@ async function init(options) {
   out();
 }
 
+// ------------------------------------------------------------------ listen
+
+export function parseSse(buffer) {
+  // Returns [events, rest]: complete "\n\n"-terminated frames and the remainder.
+  const events = [];
+  let rest = buffer.replace(/\r\n/g, "\n");
+  let cut;
+  while ((cut = rest.indexOf("\n\n")) >= 0) {
+    const block = rest.slice(0, cut);
+    rest = rest.slice(cut + 2);
+    const event = { event: "message", data: "", id: null };
+    for (const line of block.split("\n")) {
+      if (!line || line.startsWith(":")) continue;
+      const at = line.indexOf(":");
+      const field = at < 0 ? line : line.slice(0, at);
+      const value = at < 0 ? "" : line.slice(at + 1).replace(/^ /, "");
+      if (field === "event") event.event = value;
+      else if (field === "data") event.data += (event.data ? "\n" : "") + value;
+      else if (field === "id") event.id = value;
+    }
+    events.push(event);
+  }
+  return [events, rest];
+}
+
+function cursorFile(host, key) {
+  const tag = Buffer.from(`${host}|${key.slice(-12)}`).toString("base64url").slice(0, 24);
+  return join(homedir(), ".veynod", `listen-${tag}.json`);
+}
+
+function loadCursor(path) {
+  try {
+    return Number(JSON.parse(readFileSync(path, "utf8")).last_seq) || null;
+  } catch {
+    return null;
+  }
+}
+
+function saveCursor(path, seq) {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(`${path}.tmp`, JSON.stringify({ last_seq: seq }), { mode: 0o600 });
+  renameSync(`${path}.tmp`, path);
+}
+
+function runHook(command, poke) {
+  return new Promise((resolve) => {
+    const payload = JSON.stringify(poke);
+    const child = spawn(command, {
+      shell: true,
+      stdio: ["pipe", "inherit", "inherit"],
+      env: { ...process.env, VEYNOD_POKE: payload, VEYNOD_EVENT_SEQ: String(poke.event_seq ?? ""),
+        VEYNOD_TASK_KEY: poke.task_key ?? "", VEYNOD_KIND: poke.kind ?? "" },
+    });
+    child.on("error", (error) => {
+      process.stderr.write(`  ${red("✗")} --exec failed: ${error.message}\n`);
+      resolve(1);
+    });
+    child.on("close", (code) => resolve(code ?? 0));
+    child.stdin.end(payload);
+  });
+}
+
+async function listen(options) {
+  if (!options.key) throw new Error("listen needs an agent key: --key or VEYNOD_KEY");
+  const statePath = cursorFile(options.host, options.key);
+  let lastSeq = loadCursor(statePath);
+  let delay = 1000;
+  const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
+  for (;;) {
+    const controller = new AbortController();
+    try {
+      const headers = { Authorization: `Bearer ${options.key}`, Accept: "text/event-stream" };
+      if (lastSeq) headers["Last-Event-ID"] = String(lastSeq);
+      const response = await fetch(`${options.host}/v1/inbox/stream`, { headers, signal: controller.signal });
+      if (response.status === 401 || response.status === 403) {
+        const body = await response.json().catch(() => ({}));
+        throw Object.assign(new Error(body?.error?.message || `refused (${response.status})`), { fatal: true });
+      }
+      if (!response.ok || !response.body) throw new Error(`stream answered ${response.status}`);
+      say(`${green("online")} ${options.host}${lastSeq ? ` (resuming after ${lastSeq})` : ""}`);
+      delay = 1000;
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for await (const chunk of response.body) {
+        buffer += decoder.decode(chunk, { stream: true });
+        const [events, rest] = parseSse(buffer);
+        buffer = rest;
+        for (const event of events) {
+          if (event.event === "closed") throw new Error(`server closed the stream: ${event.data}`);
+          if (event.event !== "poke") continue;
+          const poke = JSON.parse(event.data);
+          const seq = Number(event.id || poke.event_seq);
+          if (lastSeq && seq <= lastSeq) continue; // seen before a reconnect
+          if (options.exec) await runHook(options.exec, poke);
+          else process.stdout.write(`${JSON.stringify(poke)}\n`);
+          lastSeq = seq;
+          saveCursor(statePath, seq);
+          if (options.once) {
+            controller.abort();
+            return 0;
+          }
+        }
+      }
+      throw new Error("stream ended");
+    } catch (error) {
+      if (error.fatal) throw error;
+      if (error.name === "AbortError" && options.once) return 0;
+      say(`${red("offline")} ${error.message}; retrying in ${Math.round(delay / 1000)}s`);
+      await sleep(delay + Math.floor(Math.random() * 500));
+      delay = Math.min(delay * 2, 60_000);
+    }
+  }
+}
+
 export async function main(argv = process.argv.slice(2)) {
   let options;
   try {
@@ -400,6 +532,14 @@ export async function main(argv = process.argv.slice(2)) {
   if (options.command === "version") {
     process.stdout.write(`${VERSION}\n`);
     return 0;
+  }
+  if (options.command === "listen" && !options.help) {
+    try {
+      return await listen(options);
+    } catch (error) {
+      process.stderr.write(`\n  ${red("✗")} ${error.message}\n\n`);
+      return 1;
+    }
   }
   if (options.help || options.command !== "init") {
     process.stdout.write(HELP);
