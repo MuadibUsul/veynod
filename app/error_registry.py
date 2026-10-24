@@ -196,6 +196,8 @@ REGISTRY: dict[str, ErrorSpec] = {
     "task_tree_too_deep": _spec(422, FIX_REQUEST, "Split under a shallower task."),
     "ttl_exceeds_parent": _spec(422, FIX_REQUEST, "Lower the TTL per details."),
     "unknown_principal": _spec(422, FIX_REQUEST, "Fix the principal reference per details."),
+    "assignee_cannot_reach_namespace": _spec(
+        422, FIX_REQUEST, "Use a namespace the assignee reads, or widen its token."),
     "url_not_allowed": _spec(422, FIX_REQUEST, "Use an allowed URL per details."),
     "validation_error": _spec(422, FIX_REQUEST, "Fix the fields listed in details."),
     # --- fix_request (existing 3.2.x codes)

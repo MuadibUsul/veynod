@@ -91,6 +91,8 @@ _request_credential: ContextVar[str | None] = ContextVar(
 )
 _stdio_principal: Principal | None = None
 _current_tool: ContextVar[str | None] = ContextVar("agentgraph_mcp_tool", default=None)
+# The principal the current tool call authenticated as (for the inbox hint).
+_called_as: ContextVar[Principal | None] = ContextVar("agentgraph_mcp_called_as", default=None)
 
 # Write tools that take a generic ``idempotency_key`` (PRD AG-ST-18 point 1).
 # draft_external_action keeps its own action-level idempotency_key.
@@ -274,7 +276,12 @@ class AgentGraphFastMCP(FastMCP):
     ) -> types.CallToolResult | Any:
         _current_tool.set(name)
         collected = warnings_context.begin_collection()
+        _called_as.set(None)
         result = await self._dispatch(name, arguments)
+        if not isinstance(result, types.CallToolResult):
+            from app.services import inbox_hints
+
+            warnings_context.set_inbox(await inbox_hints.hint_for(_called_as.get(), name))
         return _with_warnings(result, collected)
 
     async def _dispatch(self, name: str, arguments: dict[str, Any]) -> Any:
@@ -515,6 +522,7 @@ async def _principal_for_call(session: AsyncSession) -> Principal:
     set_audit_actor(principal)
     await enforce_rate_limit(session, principal)
     set_event_platform("mcp")
+    _called_as.set(principal)
     return principal
 
 
@@ -784,7 +792,7 @@ async def create_task(
     description: str | None = None,
     assigned_role: Literal["ANALYST", "AUDITOR", "EXECUTOR"] | None = None,
     priority: int = 0,
-    namespace: str = "default",
+    namespace: str | None = None,
     input_context: dict[str, Any] | None = None,
     depends_on: list[str] | None = None,
     max_retries: int | None = None,

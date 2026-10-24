@@ -21,9 +21,10 @@ class Collected(list):
     def __init__(self) -> None:
         super().__init__()
         self.onboarding: dict[str, Any] = {}
+        self.inbox: dict[str, Any] = {}
 
     def __bool__(self) -> bool:
-        return bool(len(self)) or bool(self.onboarding)
+        return bool(len(self)) or bool(self.onboarding) or bool(self.inbox)
 
 
 _warnings: ContextVar[Collected | None] = ContextVar("agentgraph_warnings", default=None)
@@ -42,6 +43,15 @@ def set_onboarding(hint: dict[str, Any]) -> None:
         return
     collected.onboarding.clear()
     collected.onboarding.update(hint)
+
+
+def set_inbox(hint: dict[str, Any] | None) -> None:
+    """Attach the agent's new inbox items to this response (services/inbox_hints)."""
+    collected = _warnings.get()
+    if collected is None or not hint:
+        return
+    collected.inbox.clear()
+    collected.inbox.update(hint)
 
 
 def current() -> list[dict[str, Any]]:
@@ -70,4 +80,7 @@ def merge_warnings(payload: Any, collected: list[dict[str, Any]]) -> Any:
     hint = getattr(collected, "onboarding", None)
     if hint and "onboarding" not in payload:
         result["onboarding"] = dict(hint)
+    inbox = getattr(collected, "inbox", None)
+    if inbox and "inbox" not in payload:
+        result["inbox"] = dict(inbox)
     return result

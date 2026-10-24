@@ -338,7 +338,7 @@ export function CreateTaskModal({
   const [title, setTitle] = useState("");
   const [role, setRole] = useState("EXECUTOR");
   const [priority, setPriority] = useState(0);
-  const [namespace, setNamespace] = useState("default");
+  const [namespace, setNamespace] = useState("");
   const [description, setDescription] = useState("");
   const [context, setContext] = useState("{}");
   const [error, setError] = useState<string | null>(null);
@@ -356,7 +356,7 @@ export function CreateTaskModal({
         title: title.trim(),
         assigned_role: role,
         priority,
-        namespace,
+        namespace: namespace.trim() || undefined,
         description: description.trim() || undefined,
         input_context: inputContext,
       });
@@ -411,7 +411,8 @@ export function CreateTaskModal({
           </label>
           <label className="field">
             <span>{t("Namespace")}</span>
-            <input value={namespace} onChange={(e) => setNamespace(e.target.value)} />
+            <input value={namespace} onChange={(e) => setNamespace(e.target.value)}
+              placeholder={t("Automatic")} />
           </label>
         </div>
         <label className="field">

@@ -90,6 +90,7 @@ do not edit by hand. Every error body is
 | `payload_too_large` | 413 | `fix_request` | `fix_request_then_resend` | Send a smaller archive (details.limit_bytes). |
 | `acceptance_items_incomplete` | 422 | `fix_request` | `fix_request_then_resend` | Give a PASS result for every acceptance item. |
 | `ambiguous_artifact` | 422 | `fix_request` | `fix_request_then_resend` | Provide artifact_text or artifact_uri, not both. |
+| `assignee_cannot_reach_namespace` | 422 | `fix_request` | `fix_request_then_resend` | Use a namespace the assignee reads, or widen its token. |
 | `audit_view_required` | 422 | `fix_request` | `fix_request_then_resend` | Call get_audit_view, then resend. |
 | `budget_exceeds_parent` | 422 | `fix_request` | `fix_request_then_resend` | Lower the budget per details. |
 | `checksum_mismatch` | 422 | `fix_request` | `fix_request_then_resend` | Download the export again, then import. |

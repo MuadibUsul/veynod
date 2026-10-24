@@ -8,7 +8,7 @@ from datetime import timedelta
 from functools import wraps
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -83,6 +83,7 @@ from app.services.policies import enforce_policy
 from app.services.taint import refresh_task_taint
 from app.tenant import activate_tenant
 from app.versioning import LATEST_VERSION, at_least
+from app.warnings_context import add_warning
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -362,8 +363,19 @@ async def _create_task_core(
     parent: CollabTask | None = None,
 ) -> CollabTask:
     require_permission(principal, "task:create")
-    namespace = request.namespace or "default"
+    namespace, source = await collab.infer_namespace(session, principal, request, parent)
     ensure_namespace(principal, namespace, write=True)
+    if source == "default":
+        add_warning("task_namespace_defaulted",
+                    "no namespace given or inferable; the task went to 'default'. "
+                    "Pass namespace so the people who should see it can.",
+                    namespace=namespace)
+    elif source != "explicit":
+        add_warning("task_namespace_inferred",
+                    f"namespace '{namespace}' was taken from the {source.replace('_', ' ')}",
+                    namespace=namespace, source=source)
+    await collab.ensure_assignee_reaches(session, principal,
+                                         getattr(request, "assignee", None), namespace)
     await address_service.ensure_namespace_registered(session, principal, namespace)
     task_key = request.task_key or f"TASK-{uuid.uuid4().hex[:8].upper()}"
     await enforce_policy(
@@ -544,6 +556,8 @@ async def list_tasks(
         query = query.where(CollabTask.namespace == namespace)
     elif not principal.is_commander and "*" not in principal.allowed_namespaces:
         query = query.where(CollabTask.namespace.in_(principal.allowed_namespaces))
+        if assignee == "me" or claimable_by_me:
+            await _warn_out_of_reach(session, principal)
     tasks = (
         await session.execute(
             query.order_by(
@@ -552,6 +566,27 @@ async def list_tasks(
         )
     ).scalars().all()
     return TaskListResponse(items=[task_summary(task) for task in tasks])
+
+
+async def _warn_out_of_reach(session: AsyncSession, principal: Principal) -> None:
+    """Tasks assigned to the caller in namespaces its token cannot read: say so."""
+    mine = await collab.my_refs(session, principal)
+    rows = (await session.execute(
+        select(CollabTask.namespace, func.count(CollabTask.id))
+        .where(CollabTask.workspace_id == principal.workspace.id,
+               CollabTask.assignee.in_(mine),
+               CollabTask.status.not_in([TaskStatus.DONE, TaskStatus.FAILED,
+                                         TaskStatus.CANCELLED]),
+               CollabTask.namespace.not_in(list(principal.allowed_namespaces)))
+        .group_by(CollabTask.namespace)
+    )).all()
+    if rows:
+        add_warning(
+            "assigned_tasks_out_of_reach",
+            f"{sum(count for _, count in rows)} open task(s) assigned to you are in "
+            "namespaces your token cannot read; ask an owner to move them or widen "
+            "your token",
+            namespaces={namespace: count for namespace, count in rows})
 
 
 @access_log.reads("task")
@@ -959,7 +994,7 @@ async def handoff_task(
             title=request.create_next.title,
             assigned_role=request.create_next.assigned_role,
             priority=request.create_next.priority,
-            namespace=request.create_next.namespace,
+            namespace=request.create_next.namespace or task.namespace,
             input_context=request.create_next.input_context,
             agent=agent,
             session_batch_id=batch,
