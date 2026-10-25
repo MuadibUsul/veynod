@@ -1000,9 +1000,11 @@ ruff check .
 
 ---
 
-## 12. GitHub R1/R2 增量（schema 3.26.0）
+## 12. 历史记录：GitHub R1/R2 增量（schema 3.26.0）
 
-2026-10-22 合并 `origin/main` 后，代码已包含 GitHub 上的 R1.3–R2.4 能力；产品版本仍统一为 **v3.2.1**，数据库 schema 升至 **3.26.0**。
+> 以下保留 2026-10-22 合并时的版本与工具数量，作为历史记录。当前版本见文首：**v3.6.0 / schema 3.38.0 / 100 个 MCP 工具**。
+
+2026-10-22 合并 `origin/main` 后，代码已包含 GitHub 上的 R1.3–R2.4 能力；当时产品版本统一为 **v3.2.1**，数据库 schema 升至 **3.26.0**。
 
 - **事件与订阅**：`v3_17_events.sql`，`app/services/events.py`，MCP `poll_events` / `subscribe` / `list_subscriptions` / `unsubscribe`。
 - **人类与 Agent 引导**：`v3_18`/`v3_19`，`agent_onboarding.py`、`human_onboarding.py`、`docs_site.py`，控制台 checklist 与公开 docs 站点。
@@ -1018,7 +1020,7 @@ ruff check .
 - **前端新增**：`dashboard/app/docs/` 公开文档站，`components/onboarding.tsx`、`components/situation.tsx`，以及成员/权限、备份与事故相关控制台入口。
 - **MCP 工具**：从 40 增至 **88**；完整名称见 `app/mcp_server/server.py`。
 
-本次本地新增的根页面 JSON-first 视图和命名空间模糊选择器也在此版本内；生产、GitHub、本地应保持同一提交与 `3.2.1` 应用版本。
+本次本地新增的根页面 JSON-first 视图和命名空间模糊选择器也在此版本内；当时要求生产、GitHub、本地保持同一提交与 `3.2.1` 应用版本。
 
 ## 13. 快速索引
 
@@ -1037,7 +1039,7 @@ ruff check .
 | 人类账号 | `app/services/accounts.py`, `app/api/auth_routes.py` |
 | 人类控制台 API | `app/api/human_routes.py` |
 | Operator API | `app/api/admin_routes.py` |
-| MCP 40 工具 | `app/mcp_server/server.py` |
+| MCP 100 工具 | `app/mcp_server/server.py` |
 | 控制台前端 | `dashboard/app/` |
 | 本地设计系统 | `docs/design-system/` |
 | 部署 | `Dockerfile`, `docker-compose.prod.yml` |
@@ -1045,4 +1047,4 @@ ruff check .
 
 ---
 
-*Veynod v3.2.1 · schema 3.26.0 — 共享黑板、租约、人类主权、可追溯文档、提案与污点、租户 RLS、混合检索、签名 Webhook、可补偿外部动作、预算与可重放事件。*
+*Veynod v3.6.0 · schema 3.38.0 — 共享黑板、租约、人类主权、可追溯文档、提案与污点、租户 RLS、混合检索、签名 Webhook、可补偿外部动作、预算与可重放事件。*

@@ -1,4 +1,4 @@
-"""v3.2.1 tenant/agent API: tasks, state grid, documents, links, timeline."""
+"""Veynod tenant/agent API: tasks, state grid, documents, links, timeline."""
 
 from __future__ import annotations
 

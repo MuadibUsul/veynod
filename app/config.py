@@ -1,4 +1,4 @@
-"""Application configuration for Veynod v3.2.1."""
+"""Application configuration for Veynod v3.6.0."""
 
 from __future__ import annotations
 

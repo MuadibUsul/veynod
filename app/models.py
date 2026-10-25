@@ -1,4 +1,4 @@
-"""ORM models for the v3.2.1 shared blackboard workspace."""
+"""ORM models for the Veynod shared blackboard workspace."""
 
 from __future__ import annotations
 

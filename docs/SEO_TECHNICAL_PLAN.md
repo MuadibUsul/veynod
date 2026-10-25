@@ -1,13 +1,15 @@
 # SEO Technical Plan — Global English First
 
-**Status:** Proposed  
+**Status:** Implemented — Phase 0 deployed 2026-10-25  
 **Date:** 2026-10-25  
-**Decisions:** English-first; root `/` defaults to HTML; legacy domain to be retired; technical SEO before content production
+**Decisions:** English-first; HTML for `Accept: text/html` while the agent JSON contract stays on `*/*`; legacy domains removed from the VPS; technical SEO before content production
 
 ## 1. Executive summary
 
-Veynod's public content is technically indexable but the site is missing the
-signals search engines and social platforms need:
+Veynod's public content is technically indexable, but before Phase 0 the site
+was missing the signals search engines and social platforms need. Phase 0 was
+implemented and deployed on 2026-10-25; section 2 records the audit baseline
+before the change:
 
 - `/robots.txt` and `/sitemap.xml` return a JSON 404;
 - `/` returns the API descriptor when a crawler sends `Accept: */*`;
@@ -22,20 +24,20 @@ signals search engines and social platforms need:
 Phase 0 fixes these before any content investment. English is the primary SEO
 market; Chinese URLs and hreflang are a later phase.
 
-## 2. Current state (audit 2026-10-25)
+## 2. Pre-implementation audit (2026-10-25)
 
-| Area | Current | SEO impact |
+| Area | Before | SEO impact |
 | --- | --- | --- |
 | `robots.txt` | 404 JSON | no crawl guidance, no sitemap reference |
 | `sitemap.xml` | 404 JSON | docs pages discovered slowly or not at all |
-| `/` with `Accept: */*` | API JSON descriptor | generic crawlers/link previews see no landing page |
+| `/` with `Accept: */*` | API JSON descriptor | kept intentionally for agents; HTML served on `text/html` |
 | `/` with `text/html` | landing page | content is rendered; title/description present |
 | Canonical | absent | duplicate/query URLs and legacy domain are consolidated poorly |
 | Open Graph / Twitter | absent | poor link previews and no social discovery |
 | JSON-LD | absent | no Organization/SoftwareApplication/Article context |
 | Docs metadata | unique title + description | good, but missing canonical/social/hreflang |
 | Docs content | server-rendered HTML | indexable (good) |
-| Legacy domain | 200 duplicate | splits authority, duplicate content |
+| Legacy domain | 200 duplicate | removed from Caddy and certificates deleted 2026-10-25 |
 | `www` | 301 to apex | correct |
 | HTTP | 308 to HTTPS | correct |
 | `/dashboard/*` | no robots directive | private pages can be indexed |

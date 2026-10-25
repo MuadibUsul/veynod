@@ -1,5 +1,8 @@
 # Design System Acceptance Report — AgentGraph v3.2.1
 
+> Historical snapshot (v3.2.1). Current production is **Veynod v3.6.0** at
+> `https://veynod.com`; the old AgentGraph domains have been removed.
+
 **Project:** AgentGraph
 **Version:** 3.2.1 (v3.3 console refresh, build marker `3.2.1-ui.2`)
 **Style:** quiet high-density dark operations console; flat graphite surfaces, one indigo action accent

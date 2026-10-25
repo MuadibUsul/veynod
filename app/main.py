@@ -234,7 +234,7 @@ _CSP = (
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
-    if request.url.hostname in {"www.veynod.com", "agentgraph.fusionpropulsion.space"}:
+    if request.url.hostname == "www.veynod.com":
         target = f"{SEO_SITE_URL}{request.url.path}"
         if request.url.query:
             target += f"?{request.url.query}"

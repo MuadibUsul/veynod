@@ -596,7 +596,7 @@ multi-stage Docker build and FastAPI serves it at `/dashboard/`.
 | `webhook_rules` / `webhook_deliveries` | Persistent signed webhook subscriptions and retry history |
 | `workspace_budgets` / `usage_ledger` / `rate_limit_windows` | Quotas, usage accounting and fixed-window limits |
 | `workspace_events` | Transactional outbox with monotonic id for SSE replay |
-| `schema_migrations` | Applied schema versions (current `3.26.0`) |
+| `schema_migrations` | Applied schema versions (current `3.38.0`) |
 
 Canonical DDL: [`sql/init.sql`](sql/init.sql).
 
@@ -1194,7 +1194,12 @@ See also: [design audit and acceptance](docs/design-system/ACCEPTANCE_REPORT.md)
 
 ---
 
-**Veynod v3.2.1** — MCP/REST parity, typed handoff briefs, reviewed proposals, tainted-source propagation,
+**Veynod v3.6.0** — playtest merge: incremental chunk re-embedding, write-conflict
+section rebase, 11 KB agent-docs summary with a tool→REST map, realtime pokes,
+OAuth MCP connectors, 900 s lease default, and board columns for `CANCELLED` /
+`WAITING_HUMAN`.
+
+**Earlier: Veynod v3.2.1** — MCP/REST parity, typed handoff briefs, reviewed proposals, tainted-source propagation,
 human accounts with RLS, hybrid retrieval, signed webhooks, compensated external
 actions, budgets, fenced leases, replayable events and conflict-aware time travel.
 

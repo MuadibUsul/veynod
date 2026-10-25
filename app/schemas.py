@@ -1,4 +1,4 @@
-"""Pydantic contracts for the v3.2.1 shared blackboard API."""
+"""Pydantic contracts for the Veynod shared blackboard API."""
 
 from __future__ import annotations
 

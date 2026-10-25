@@ -1,4 +1,4 @@
-"""Native MCP server for the v3.2.1 shared blackboard workspace."""
+"""Native MCP server for the Veynod shared blackboard workspace."""
 
 from __future__ import annotations
 
