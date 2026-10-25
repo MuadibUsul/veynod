@@ -6,8 +6,8 @@
 | 数据库 schema | **3.26.0** |
 | 文档更新时间 | **2026-10-23** |
 | 本地仓库 | `E:\Codes\AgentGraph` |
-| 生产地址 | `https://veynod.com`（旧域名 `agentgraph.fusionpropulsion.space` 保留为备用） |
-| 远程仓库 | `MuadibUsul/AgentGraph`（private，`main`） |
+| 生产地址 | `https://veynod.com`（旧域名已退役并 301） |
+| 远程仓库 | `MuadibUsul/veynod`（public，`main`） |
 
 ---
 

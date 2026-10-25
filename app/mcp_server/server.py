@@ -269,7 +269,7 @@ def _error_envelope(exc: ToolError) -> dict[str, Any]:
     }
 
 
-class AgentGraphFastMCP(FastMCP):
+class VeynodFastMCP(FastMCP):
     """FastMCP with a structured error result for every failed tool call."""
 
     async def call_tool(
@@ -353,7 +353,7 @@ class AgentGraphFastMCP(FastMCP):
         return result
 
 
-mcp = AgentGraphFastMCP(
+mcp = VeynodFastMCP(
     name="Veynod",
     instructions=(
         "Call get_orientation first before any other tool. Read system/constitution, "
