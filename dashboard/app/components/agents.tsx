@@ -122,8 +122,12 @@ export function AgentsView({
   const { t } = useI18n();
   // Live presence (an open inbox stream), keyed by token id.
   const presence = new Map<string, NonNullable<DirectoryEntry["presence"]>>();
+  const displayNames = new Map<string, string>();
   for (const entry of directory) {
-    for (const id of entry.token_ids) if (entry.presence) presence.set(id, entry.presence);
+    for (const id of entry.token_ids) {
+      displayNames.set(id, entry.display_name);
+      if (entry.presence) presence.set(id, entry.presence);
+    }
   }
   const [showCreate, setShowCreate] = useState(false);
   const [progress, setProgress] = useState<AgentOnboardingOverview | null>(null);
@@ -460,7 +464,9 @@ export function AgentsView({
                         <span className="agent-avatar">
                           <IconAgents size={14} />
                         </span>
-                        <span title={token.agent_signature}>{token.agent_signature}</span>
+                        <span title={token.agent_signature}>
+                          {displayNames.get(token.canonical_id ?? "") ?? token.agent_signature}
+                        </span>
                         {(() => {
                           const live = presence.get(token.canonical_id ?? "");
                           if (!live) return null;
