@@ -561,6 +561,74 @@
   overflow: hidden;
 }
 
+/* Board filters: closed and probe tasks are hidden until asked for. */
+.board-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+}
+
+.filter-chip {
+  padding: 4px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.filter-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.filter-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.kanban-assignee {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.kanban-assignee .mono {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kanban-assignee .pill {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Presence: an open inbox stream (GET /v1/inbox/stream). */
+.online-dot {
+  display: inline-block;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--ds-status-success);
+  box-shadow: 0 0 0 2px var(--ds-status-success-soft);
+  vertical-align: middle;
+}
+
+/* A webhook with deliveries that gave up after every retry. */
+.compact-row.dead {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
 .priority-chip,
 .pp-chip {
   padding: 1px 5px;

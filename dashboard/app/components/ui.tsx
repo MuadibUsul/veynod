@@ -234,7 +234,7 @@ export function RolePill({ role }: { role: string | null }) {
 export function statusTone(status: string): string {
   if (status === "DONE") return "mint";
   if (status === "FAILED") return "rose";
-  if (status === "ESCALATED_TO_HUMAN" || status === "AWAITING_HUMAN") return "amber";
+  if (["ESCALATED_TO_HUMAN", "AWAITING_HUMAN", "WAITING_HUMAN"].includes(status)) return "amber";
   if (status === "REVIEWING") return "violet";
   if (status === "IN_PROGRESS") return "sky";
   return "slate";

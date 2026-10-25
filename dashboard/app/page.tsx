@@ -44,6 +44,7 @@ import type {
   AuditPayload,
   AuthSession,
   Budget,
+  DirectoryEntry,
   DocumentDetail,
   DocumentPage,
   DocumentSummary,
@@ -157,6 +158,8 @@ export default function ConsolePage() {
     sort: "updated_desc",
   });
   const [agents, setAgents] = useState<AgentToken[]>([]);
+  // The collaborator directory with presence; people only (operators may not read it).
+  const [directory, setDirectory] = useState<DirectoryEntry[] | null>(null);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [policies, setPolicies] = useState<PathPolicy[]>([]);
   const [budget, setBudget] = useState<Budget | null>(null);
@@ -683,6 +686,13 @@ export default function ConsolePage() {
         ),
         (value) => setAgents(value.items),
       ),
+      sessionMode
+        ? loadOne(
+            "directory",
+            call<{ items: DirectoryEntry[] }>("/v1/agents?limit=200"),
+            (value) => setDirectory(value.items),
+          )
+        : Promise.resolve(setDirectory(null)),
       loadOne(
         "audit",
         call<AuditPayload>(`/v1/admin/workspaces/${id}/audit?limit=20`),
@@ -775,6 +785,14 @@ export default function ConsolePage() {
         `/v1/admin/workspaces/${id}/slots?limit=200`,
       ).then((value) => setSlots(value.items)),
     ];
+    if (sessionMode && (tab === "tasks" || tab === "agents")) {
+      // Presence changes as agents connect and hang up.
+      jobs.push(
+        api<{ items: DirectoryEntry[] }>("/v1/agents?limit=200").then((value) =>
+          setDirectory(value.items),
+        ),
+      );
+    }
     if (tab === "blackboard") {
       jobs.push(
         api<{ items: TimelineItem[] }>(
@@ -1570,6 +1588,7 @@ export default function ConsolePage() {
                   {tab === "tasks" && (
                     <TaskBoard
                       tasks={tasks}
+                      directory={directory}
                       onOpen={openTask}
                       onCreate={() => setShowCreateTask(true)}
                     />
@@ -1609,6 +1628,7 @@ export default function ConsolePage() {
                     <AgentsView
                       workspaceId={selectedWorkspace.id}
                       tokens={agents}
+                      directory={directory}
                       request={api}
                       onRefresh={async () => {
                         await loadWorkspace(selectedWorkspace.id, true);
@@ -1639,6 +1659,7 @@ export default function ConsolePage() {
                       webhooks={webhooks}
                       actions={actions}
                       users={humanUsers}
+                      canRemoveNamespaces={sessionMode}
                       request={api}
                       onRefresh={async () => {
                         await loadWorkspace(selectedWorkspace.id, true);

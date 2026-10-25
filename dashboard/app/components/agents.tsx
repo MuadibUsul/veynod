@@ -3,7 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useI18n } from "../i18n";
-import type { AgentToken, ApiRequest } from "../types";
+import type { AgentToken, ApiRequest, DirectoryEntry } from "../types";
 import { relativeTime } from "../types";
 import { AgentOnboardingBadge } from "./onboarding";
 import {
@@ -103,6 +103,7 @@ const ROLES = [
 export function AgentsView({
   workspaceId,
   tokens,
+  directory = null,
   request,
   onRefresh,
   onKey,
@@ -111,6 +112,8 @@ export function AgentsView({
 }: {
   workspaceId: string;
   tokens: AgentToken[];
+  /** The collaborator directory with presence; null when this console cannot read it. */
+  directory?: DirectoryEntry[] | null;
   request: ApiRequest;
   onRefresh: () => Promise<void>;
   onKey: (key: string, name: string, token?: AgentToken) => void;
@@ -120,6 +123,16 @@ export function AgentsView({
   const { t } = useI18n();
   const [showCreate, setShowCreate] = useState(false);
   const [progress, setProgress] = useState<AgentOnboardingOverview | null>(null);
+  // Token ids with a live inbox stream (presence), from the directory.
+  const onlineTokens = useMemo(
+    () =>
+      new Set(
+        (directory ?? [])
+          .filter((entry) => entry.presence?.online)
+          .flatMap((entry) => entry.token_ids),
+      ),
+    [directory],
+  );
   const requestRef = useRef(request);
   requestRef.current = request;
   const namespaceInputRef = useRef<HTMLInputElement>(null);
@@ -494,6 +507,13 @@ export function AgentsView({
                     <td>
                       <span className={`status-dot-inline ${token.is_active ? "live" : "dead"}`} />
                       {token.is_active ? t("Active") : t("Disabled")}
+                      {token.canonical_id && onlineTokens.has(token.canonical_id) && (
+                        <span className="field-hint" title={t("Online now (inbox stream open)")}>
+                          {" · "}
+                          <span className="online-dot" />
+                          {t("online")}
+                        </span>
+                      )}
                     </td>
                     <td>
                       <AgentOnboardingBadge

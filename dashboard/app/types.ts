@@ -8,8 +8,10 @@ export type TaskStatus =
   | "HANDOFF"
   | "AWAITING_HUMAN"
   | "ESCALATED_TO_HUMAN"
+  | "WAITING_HUMAN"
   | "DONE"
-  | "FAILED";
+  | "FAILED"
+  | "CANCELLED";
 
 export interface WorkspaceSummary {
   id: string;
@@ -81,6 +83,20 @@ export interface TaskSummary {
   tainted: boolean;
   taint_sources: TaintSource[];
   updated_at: string;
+  assignee?: string | null;
+  kind?: string;
+}
+
+/** One collaborator directory entry (GET /v1/agents), with live presence. */
+export interface DirectoryEntry {
+  principal_id: string;
+  agent_id: string;
+  display_name: string | null;
+  source: "auto" | "registered";
+  status: string;
+  token_ids: string[];
+  address: string;
+  presence?: { online: boolean; connections: number; last_seen_at: string | null };
 }
 
 export interface TaskDetail extends TaskSummary {
@@ -363,6 +379,8 @@ export interface WebhookRule {
   active: boolean;
   last_event_id: number;
   consecutive_failures: number;
+  dead_deliveries?: number;
+  last_dead_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -450,8 +468,10 @@ const ZH_STATUS: Record<string, string> = {
   HANDOFF: "交接中",
   AWAITING_HUMAN: "等待人工",
   ESCALATED_TO_HUMAN: "已升级人工",
+  WAITING_HUMAN: "等人答复",
   DONE: "完成",
   FAILED: "失败",
+  CANCELLED: "已取消",
   DRAFT: "草稿",
   PENDING_REVIEW: "待审核",
   VERIFIED: "已验证",
@@ -534,7 +554,7 @@ export function statusLabel(status: string): string {
 export function statusTone(status: string): string {
   if (status === "DONE") return "mint";
   if (status === "FAILED") return "rose";
-  if (status === "ESCALATED_TO_HUMAN" || status === "AWAITING_HUMAN") return "amber";
+  if (["ESCALATED_TO_HUMAN", "AWAITING_HUMAN", "WAITING_HUMAN"].includes(status)) return "amber";
   if (status === "REVIEWING") return "violet";
   if (status === "IN_PROGRESS") return "sky";
   return "slate";

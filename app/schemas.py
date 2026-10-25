@@ -2412,6 +2412,10 @@ class WebhookRuleOut(BaseModel):
     active: bool
     last_event_id: int
     consecutive_failures: int
+    dead_deliveries: int = Field(
+        default=0, description="Deliveries in the last 7 days that failed every retry (DEAD)")
+    last_dead_at: datetime | None = Field(
+        default=None, description="When the latest of those made its last attempt")
     created_at: datetime
     updated_at: datetime
 

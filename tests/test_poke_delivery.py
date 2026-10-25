@@ -185,3 +185,11 @@ async def test_failing_webhooks_retry_three_times_then_die(client, failing_sink)
     assert delivery["attempts"] == 4
     inbox = await client.get("/v1/human/inbox", headers=ws["human"])
     assert "webhook.dead" in [item["kind"] for item in inbox.json()["items"]]
+    # The rule list counts them, so the console can mark the endpoint (R2). The
+    # namespace readme's DOC_CREATED goes to the same sink, so there may be two.
+    for path, headers in ((f"/v1/admin/workspaces/{ws['id']}/webhooks", ADMIN),
+                          ("/v1/human/webhooks", ws["human"])):
+        rules = (await client.get(path, headers=headers)).json()["items"]
+        listed_rule = next(item for item in rules if item["id"] == rule.json()["id"])
+        assert 1 <= listed_rule["dead_deliveries"] <= len(items), listed_rule
+        assert listed_rule["last_dead_at"]
