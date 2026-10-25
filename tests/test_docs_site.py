@@ -92,6 +92,12 @@ def test_fallback_pages_render_both_languages():
         chinese = _render(slug, "zh")
         assert 'lang="en"' in english and 'lang="zh-CN"' in chinese
         assert "/v1/admin" not in english + chinese
+        assert '<meta name="robots" content="index, follow">' in english
+        assert 'property="og:image"' in english
+        assert "application/ld+json" in english
+        expected = ("https://veynod.com/docs/" if slug == "introduction"
+                    else f"https://veynod.com/docs/{slug}/")
+        assert f'<link rel="canonical" href="{expected}">' in english
     assert "快速开始" in _render("quickstart", "zh")
     assert "Agent 快速开始" in _render("agent-quickstart", "zh")
 

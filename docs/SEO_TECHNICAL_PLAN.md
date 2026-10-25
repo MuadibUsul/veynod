@@ -113,7 +113,7 @@ Target behavior:
 | Request | Response |
 | --- | --- |
 | `Accept: text/html` | HTML |
-| `Accept: */*` | **HTML** |
+| `Accept: */*` | **JSON** (product decision: agents call `/` directly) |
 | `Accept: application/json` | JSON |
 | `Accept: text/html, application/json;q=0.9` | HTML |
 | `?format=json` | JSON |
@@ -122,17 +122,19 @@ Implementation:
 
 - Treat an explicit `application/json` (with a higher preference than HTML) or
   `?format=json` as the JSON opt-in.
-- Default to HTML for `*/*` and absent `Accept`.
+- Keep JSON as the default for `*/*` and absent `Accept`: this is an API
+  endpoint for agents, and changing it would break existing clients. Search
+  engines send `text/html` and receive the landing page.
 - Keep `Vary: Accept`.
 - Add `Link: <https://veynod.com/>; rel="canonical"` to HTML.
 - Add `X-Robots-Tag: noindex` to JSON responses.
 - Update Agent docs: use `/v1` or `/mcp/`; if the root descriptor is needed, use
   `?format=json` or explicit `Accept: application/json`.
-- Log or monitor requests that still expect default JSON before switching.
 
-Acceptance: the matrix above is covered by tests; a generic `curl -H 'Accept:
-*/*' https://veynod.com/` returns HTML; the JSON root remains available on the
-explicit path.
+Acceptance: the matrix above is covered by tests; `Accept: text/html` and
+search-engine crawlers receive HTML, while a generic
+`curl -H 'Accept: */*' https://veynod.com/` still receives the JSON root. The
+JSON response is noindex.
 
 ### P0-3. Canonical, Open Graph and Twitter Cards
 
@@ -289,24 +291,26 @@ auto-generated thin pages. Chinese pages come after English pages rank and the
 
 ## 8. Acceptance checklist
 
-- [ ] `/robots.txt` 200, references the sitemap
-- [ ] `/sitemap.xml` 200, only public URLs, all return 200
-- [ ] `Accept: */*` on `/` returns the HTML landing page
-- [ ] JSON root remains available via explicit Accept or `?format=json`
-- [ ] canonical/OG/Twitter on `/` and every docs page
-- [ ] valid JSON-LD on landing, docs and FAQ
-- [ ] noindex headers on dashboard/API/MCP/health pages
-- [ ] legacy domain 301s to veynod.com; no duplicate 200 landing
+- [x] `/robots.txt` 200, references the sitemap
+- [x] `/sitemap.xml` 200, only public URLs, all return 200
+- [x] `Accept: */*` on `/` keeps returning JSON (agent contract; HTML is served
+      for `Accept: text/html`)
+- [x] JSON root remains available via explicit Accept or `?format=json`, and is
+      marked `X-Robots-Tag: noindex`
+- [x] canonical/OG/Twitter on `/` and every docs page
+- [x] valid JSON-LD on landing, docs and FAQ
+- [x] noindex headers on dashboard/API/MCP/health pages
+- [x] legacy domain 301s to veynod.com; no duplicate 200 landing
 - [ ] Search Console verified; sitemap submitted; Bing verified
 - [ ] Lighthouse/CWV baseline recorded; no regression
-- [ ] Agent docs updated for explicit JSON root
-- [ ] No Chinese `/zh/` or hreflang in this phase
+- [x] Agent docs unchanged: root JSON contract retained for agents
+- [x] No Chinese `/zh/` or hreflang in this phase
 
 ## 9. Risks and mitigations
 
 | Risk | Mitigation |
 | --- | --- |
-| Agent clients depend on root JSON with `*/*` | monitor before/after; explicit JSON path; update docs and known configs |
+| Agent clients depend on root JSON with `*/*` | retained unchanged; HTML is content-negotiated on `text/html`; JSON is noindex |
 | Legacy MCP clients cannot follow 301 | inventory first; transitional `/mcp/` proxy window |
 | Sitemap includes private pages | generate from the docs nav allowlist, never from route enumeration |
 | OG image missing/slow | one static 1200×630 PNG served from `/og.png` |
@@ -332,7 +336,8 @@ auto-generated thin pages. Chinese pages come after English pages rank and the
 Phase 0 is done when a search engine can:
 
 1. fetch `robots.txt` and `sitemap.xml`;
-2. crawl the HTML landing page with `Accept: */*`;
+2. crawl the HTML landing page with `Accept: text/html` (what search engine
+   crawlers send) while the `*/*` JSON agent contract stays intact;
 3. discover every public docs page from the sitemap;
 4. read canonical and structured data on each page;
 5. never index dashboard/API/MCP pages;

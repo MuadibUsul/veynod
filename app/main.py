@@ -6,6 +6,7 @@ import asyncio
 import hmac
 import logging
 from contextlib import asynccontextmanager, suppress
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,13 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    Response,
+)
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
@@ -50,6 +57,24 @@ from app.services.webhooks import webhook_delivery_loop
 from app.versioning import BASELINE_VERSION, LATEST_VERSION
 
 settings = get_settings()
+
+# Public origin used in search metadata. Deliberately fixed: a misconfigured
+# deployment must not publish a localhost or staging canonical URL.
+SEO_SITE_URL = "https://veynod.com"
+OG_IMAGE_PATH = Path(__file__).resolve().parent / "static" / "og.png"
+
+
+def _is_private_path(path: str) -> bool:
+    """Customer, operator and protocol surfaces that must never be indexed."""
+    return (
+        path == "/dashboard"
+        or path.startswith("/dashboard/")
+        or path == "/v1"
+        or path.startswith("/v1/")
+        or path == "/mcp"
+        or path.startswith("/mcp/")
+        or path in {"/api-reference", "/openapi.json", "/healthz", "/readyz", "/redoc"}
+    )
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -220,6 +245,16 @@ async def security_headers(request: Request, call_next):
             "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
         )
     path = request.url.path
+    if _is_private_path(path):
+        response.headers.setdefault("X-Robots-Tag", "noindex, nofollow")
+    elif (
+        (path == "/docs" or path.startswith("/docs/"))
+        and response.status_code == 200
+        and response.headers.get("content-type", "").startswith("text/html")
+    ):
+        slug = path.removeprefix("/docs").strip("/")
+        canonical = f"{SEO_SITE_URL}/docs/{slug}/" if slug else f"{SEO_SITE_URL}/docs/"
+        response.headers.setdefault("Link", f'<{canonical}>; rel="canonical"')
     if path.startswith("/dashboard/_next/static/"):
         response.headers.setdefault(
             "Cache-Control", "public, max-age=31536000, immutable"
@@ -282,6 +317,82 @@ if docs_site_dir.is_dir():
     app.mount("/docs", StaticFiles(directory=str(docs_site_dir), html=True), name="docs")
 else:
     app.include_router(public_docs_router)
+
+
+def _sitemap_lastmod() -> str:
+    """Last content change we can prove: the generated docs build stamp."""
+    candidates = (
+        docs_site_dir / "index.html",
+        Path(__file__).resolve().parent / "templates" / "root.html",
+    )
+    for candidate in candidates:
+        try:
+            stamp = candidate.stat().st_mtime
+        except OSError:
+            continue
+        return datetime.fromtimestamp(stamp, tz=timezone.utc).date().isoformat()
+    return datetime.now(tz=timezone.utc).date().isoformat()
+
+
+@app.get("/robots.txt", include_in_schema=False)
+async def robots_txt() -> PlainTextResponse:
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /dashboard/\n"
+        "Disallow: /v1/\n"
+        "Disallow: /mcp/\n"
+        "Disallow: /api-reference\n"
+        "Disallow: /openapi.json\n"
+        "Disallow: /healthz\n"
+        "Disallow: /readyz\n"
+        f"Sitemap: {SEO_SITE_URL}/sitemap.xml\n"
+    )
+    return PlainTextResponse(body, headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+async def sitemap_xml() -> Response:
+    from app.docs_site import NAV
+
+    lastmod = _sitemap_lastmod()
+    urls = [f"{SEO_SITE_URL}/", f"{SEO_SITE_URL}/docs/"]
+    seen = set(urls)
+    for _group_id, _group_title, pages in NAV:
+        for slug, _page_title in pages:
+            # The docs home renders the introduction; /docs/introduction/ 404s.
+            if slug == "introduction":
+                continue
+            url = f"{SEO_SITE_URL}/docs/{slug}/"
+            if url not in seen:
+                seen.add(url)
+                urls.append(url)
+    body = "\n".join(
+        [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+            *[
+                f"<url><loc>{url}</loc><lastmod>{lastmod}</lastmod></url>"
+                for url in urls
+            ],
+            "</urlset>",
+            "",
+        ]
+    )
+    return Response(
+        content=body,
+        media_type="application/xml",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+@app.get("/og.png", include_in_schema=False)
+async def og_image() -> FileResponse:
+    return FileResponse(
+        OG_IMAGE_PATH,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.exception_handler(ApiError)
@@ -448,7 +559,10 @@ async def root(request: Request) -> Any:
     headers = {"Vary": "Accept", "Cache-Control": "no-store"}
     accept = request.headers.get("accept", "").lower()
     if "text/html" in accept and request.query_params.get("format") != "json":
+        headers["Link"] = f'<{SEO_SITE_URL}/>; rel="canonical"'
         return HTMLResponse(render_root_page(descriptor), headers=headers)
+    # The JSON descriptor is an API response, not a second indexable page.
+    headers["X-Robots-Tag"] = "noindex"
     return JSONResponse(descriptor, headers=headers)
 
 

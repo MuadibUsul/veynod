@@ -7,9 +7,12 @@ import "./cult.css";
 import "./brand.css";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://veynod.com"),
   title: "Veynod Console",
   description:
     "Human-in-the-loop shared blackboard for multi-agent teams: tasks, state grid, documents, agents and audit.",
+  // The console is a customer surface. Public docs override this.
+  robots: { index: false, follow: false },
 };
 
 export default function RootLayout({
