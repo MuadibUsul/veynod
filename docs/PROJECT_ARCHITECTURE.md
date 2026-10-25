@@ -893,9 +893,9 @@ OPENAI_BASE_URL=https://api.jina.ai/v1
 
 | 设置 | 当前值 | 影响 |
 |---|---|---|
-| `QUALITY_CONTROL_ENABLED` | 未设置 / false | 自动质量门禁不强制，人工审核仍可用 |
+| `QUALITY_CONTROL` | 未设置 / false | 自动质量门禁不强制，人工审核仍可用 |
 | `BUDGET_MODE` | `shadow` | 预算只记录和告警，不拒绝调用 |
-| `SCHEDULED_EXPORTS_ENABLED` | 未设置 / false | 定时导出关闭 |
+| `SCHEDULED_EXPORTS` | 未设置 / false | 定时导出关闭 |
 | `PG_ARCHIVE_MODE` | 未设置 / off | 只有逻辑备份，没有 WAL PITR |
 | `BACKUP_UPLOAD_COMMAND` | 未设置 | 备份留在 VPS 本地，没有异地副本 |
 
