@@ -4943,3 +4943,45 @@ body::before {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+
+/* ------------------------------------------------ 2026-10-24 playtest */
+
+.compact-row.row-dead {
+  border-color: color-mix(in srgb, var(--danger) 45%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
+.rose-text {
+  color: var(--danger);
+}
+
+.pill.rose {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.pill.amber {
+  color: var(--amber);
+  background: var(--amber-soft);
+}
+
+.pill.violet {
+  color: var(--ds-accent, #a78bfa);
+}
+
+.presence-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--ds-text-muted);
+  opacity: 0.45;
+  vertical-align: middle;
+}
+
+.presence-dot.online {
+  background: #34d399;
+  opacity: 1;
+  box-shadow: 0 0 0 3px rgba(52, 211, 153, 0.18);
+}

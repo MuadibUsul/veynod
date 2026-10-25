@@ -3,7 +3,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useI18n } from "../i18n";
-import type { AgentToken, ApiRequest } from "../types";
+import type { AgentToken, ApiRequest, DirectoryEntry } from "../types";
 import { relativeTime } from "../types";
 import { AgentOnboardingBadge } from "./onboarding";
 import {
@@ -103,6 +103,7 @@ const ROLES = [
 export function AgentsView({
   workspaceId,
   tokens,
+  directory = [],
   request,
   onRefresh,
   onKey,
@@ -111,6 +112,7 @@ export function AgentsView({
 }: {
   workspaceId: string;
   tokens: AgentToken[];
+  directory?: DirectoryEntry[];
   request: ApiRequest;
   onRefresh: () => Promise<void>;
   onKey: (key: string, name: string, token?: AgentToken) => void;
@@ -118,6 +120,11 @@ export function AgentsView({
   openCreateSignal?: number;
 }) {
   const { t } = useI18n();
+  // Live presence (an open inbox stream), keyed by token id.
+  const presence = new Map<string, NonNullable<DirectoryEntry["presence"]>>();
+  for (const entry of directory) {
+    for (const id of entry.token_ids) if (entry.presence) presence.set(id, entry.presence);
+  }
   const [showCreate, setShowCreate] = useState(false);
   const [progress, setProgress] = useState<AgentOnboardingOverview | null>(null);
   const requestRef = useRef(request);
@@ -454,6 +461,20 @@ export function AgentsView({
                           <IconAgents size={14} />
                         </span>
                         <span title={token.agent_signature}>{token.agent_signature}</span>
+                        {(() => {
+                          const live = presence.get(token.canonical_id ?? "");
+                          if (!live) return null;
+                          return (
+                            <span
+                              className={`presence-dot${live.online ? " online" : ""}`}
+                              title={live.online
+                                ? t("Online: holding the inbox stream")
+                                : live.last_seen_at
+                                  ? t("Offline · last connected {when}", { when: relativeTime(live.last_seen_at) })
+                                  : t("Offline")}
+                            />
+                          );
+                        })()}
                         {(token.delegated_total ?? 0) > 0 && (
                           <button
                             type="button"

@@ -67,6 +67,7 @@ export interface TaskSummary {
   assigned_role: string | null;
   namespace: string;
   claimed_by: string | null;
+  assignee?: string | null;
   lease_expires_at: string | null;
   lease_active: boolean;
   handoff_summary: string | null;
@@ -363,8 +364,32 @@ export interface WebhookRule {
   active: boolean;
   last_event_id: number;
   consecutive_failures: number;
+  dead_deliveries?: number;
+  last_error?: string | null;
+  disabled_at?: string | null;
+  wake_for?: string[];
   created_at: string;
   updated_at: string;
+}
+
+export interface DirectoryEntry {
+  agent_id: string;
+  principal_id: string;
+  display_name: string;
+  token_ids: string[];
+  address?: string;
+  presence?: { online: boolean; connections: number; last_seen_at: string | null };
+}
+
+// Refs a task's assignee may use for this directory entry (agent:<id>, agent:<prn>).
+export function directoryRefs(entries: DirectoryEntry[]): Set<string> {
+  const refs = new Set<string>();
+  for (const entry of entries) {
+    refs.add(`agent:${entry.agent_id}`);
+    refs.add(`agent:${entry.principal_id}`);
+    if (entry.address) refs.add(entry.address);
+  }
+  return refs;
 }
 
 export interface WebhookDelivery {

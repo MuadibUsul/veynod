@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 
 import { useI18n } from "../i18n";
-import type { TaskDetail, TaskSummary } from "../types";
-import { formatNumber, pretty, relativeTime } from "../types";
+import type { DirectoryEntry, TaskDetail, TaskSummary } from "../types";
+import { directoryRefs, formatNumber, pretty, relativeTime } from "../types";
 import {
   Empty,
   IconCheck,
@@ -25,16 +25,49 @@ const COLUMNS: Array<{ title: string; detail: string; statuses: string[]; tone: 
   { title: "Closed", detail: "DONE · FAILED", statuses: ["DONE", "FAILED"], tone: "mint" },
 ];
 
+const NOISE_KEY = "veynod.board.hide_noise";
+
+// Board noise (2026-10-24 playtest): failed or cancelled work and probe/test tasks.
+export function isNoise(task: TaskSummary): boolean {
+  if (["FAILED", "CANCELLED"].includes(String(task.status))) return true;
+  return /(^|[-_/: ])(probe|playtest|smoke|ux-probe)([-_/: ]|$)/i.test(`${task.task_key} ${task.title}`);
+}
+
 export function TaskBoard({
-  tasks,
+  tasks: allTasks,
+  directory = [],
   onOpen,
   onCreate,
 }: {
   tasks: TaskSummary[];
+  directory?: DirectoryEntry[];
   onOpen: (task: TaskSummary) => void;
   onCreate: () => void;
 }) {
   const { t } = useI18n();
+  const [hideNoise, setHideNoise] = useState(true);
+  useEffect(() => {
+    try {
+      setHideNoise(localStorage.getItem(NOISE_KEY) !== "0");
+    } catch {
+      // Private mode: keep the default.
+    }
+  }, []);
+  function toggleNoise() {
+    setHideNoise((value) => {
+      try {
+        localStorage.setItem(NOISE_KEY, value ? "0" : "1");
+      } catch {
+        // ignore
+      }
+      return !value;
+    });
+  }
+  const hidden = allTasks.filter(isNoise).length;
+  const tasks = hideNoise ? allTasks.filter((task) => !isNoise(task)) : allTasks;
+  const known = directoryRefs(directory);
+  const unregistered = (task: TaskSummary) =>
+    Boolean(task.assignee?.startsWith("agent:") && directory.length > 0 && !known.has(task.assignee));
   return (
     <div className="tab-stack">
       <div className="board-toolbar">
@@ -44,16 +77,26 @@ export function TaskBoard({
             {t("Claims are lease-based. Rejections increment the ping-pong counter and escalate automatically at the threshold.")}
           </p>
         </div>
-        <button
-          type="button"
-          className="button primary"
-          onClick={onCreate}
-          data-modal-trigger="new-task"
-        >
-          <IconPlus /> {t("New task")}
-        </button>
+        <div className="row-actions">
+          {hidden > 0 && (
+            <button type="button" className="button ghost small" onClick={toggleNoise}
+              title={t("Failed or cancelled tasks, and probe / playtest / smoke tasks")}>
+              {hideNoise
+                ? t("Show {count} hidden", { count: hidden })
+                : t("Hide failed and probe tasks")}
+            </button>
+          )}
+          <button
+            type="button"
+            className="button primary"
+            onClick={onCreate}
+            data-modal-trigger="new-task"
+          >
+            <IconPlus /> {t("New task")}
+          </button>
+        </div>
       </div>
-      {tasks.length === 0 && (
+      {allTasks.length === 0 && (
         <Empty
           title={t("No tasks yet")}
           detail={t("Create a task for your agents, or let an ANALYST agent plan one. Agents claim READY tasks under a lease and hand them back for your review.")}
@@ -107,6 +150,11 @@ export function TaskBoard({
                         <RolePill role={task.assigned_role} />
                         <StatusPill status={task.status} />
                         {task.tainted && <span className="pill rose" title={t("Task input references tainted content")}>{t("Tainted")}</span>}
+                        {unregistered(task) && (
+                          <span className="pill amber" title={t("{who} is not in the agent directory: it may never see this task", { who: task.assignee ?? "" })}>
+                            {t("Assignee not registered")}
+                          </span>
+                        )}
                         {task.ping_pong_count > 0 && (
                           <span className="pp-chip" title={t("Review ping-pong count")}>
                             {task.ping_pong_count}/{task.max_retries}

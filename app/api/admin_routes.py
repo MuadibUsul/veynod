@@ -835,6 +835,18 @@ async def usage(
     return UsageOut(**await services.month_usage(session, workspace_id))
 
 
+@router.get("/workspaces/{workspace_id}/agents",
+            summary="The collaborator directory, with live presence")
+async def list_workspace_agents(
+    workspace_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import directory
+
+    workspace = await services.get_workspace(session, workspace_id)
+    return await directory.list_agents(session, principal_for_admin(workspace), limit=200)
+
+
 @router.get("/workspaces/{workspace_id}/alerts", summary="Situation alerts (AG-TC-05)")
 async def situation_alerts(
     workspace_id: uuid.UUID,

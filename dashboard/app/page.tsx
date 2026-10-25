@@ -61,6 +61,7 @@ import type {
   TimelineItem,
   Usage,
   WebhookRule,
+  DirectoryEntry,
   WorkspaceSummary,
 } from "./types";
 import {
@@ -87,6 +88,7 @@ function sessionPath(path: string, workspaceId: string, method: string): string 
     return `/v1/human${rest}`;
   }
   if (rest === "/namespaces") return "/v1/human/namespaces";
+  if (rest === "/agents") return "/v1/agents?limit=200";
   if (rest.startsWith("/document-parts")) return `/v1/human${rest}`;
   if (rest === "/audit" || rest.startsWith("/audit?")) return `/v1/human/audit${rest.slice(6)}`;
   if (rest.startsWith("/batches")) return `/v1/human${rest}`;
@@ -157,6 +159,7 @@ export default function ConsolePage() {
     sort: "updated_desc",
   });
   const [agents, setAgents] = useState<AgentToken[]>([]);
+  const [directory, setDirectory] = useState<DirectoryEntry[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [policies, setPolicies] = useState<PathPolicy[]>([]);
   const [budget, setBudget] = useState<Budget | null>(null);
@@ -718,6 +721,11 @@ export default function ConsolePage() {
         "usage",
         call<Usage>(`/v1/admin/workspaces/${id}/usage`),
         (value) => setUsage(value),
+      ),
+      loadOne(
+        "directory",
+        call<{ items: DirectoryEntry[] }>(`/v1/admin/workspaces/${id}/agents`),
+        (value) => setDirectory(value.items),
       ),
       loadOne(
         "webhooks",
@@ -1570,6 +1578,7 @@ export default function ConsolePage() {
                   {tab === "tasks" && (
                     <TaskBoard
                       tasks={tasks}
+                      directory={directory}
                       onOpen={openTask}
                       onCreate={() => setShowCreateTask(true)}
                     />
@@ -1609,6 +1618,7 @@ export default function ConsolePage() {
                     <AgentsView
                       workspaceId={selectedWorkspace.id}
                       tokens={agents}
+                      directory={directory}
                       request={api}
                       onRefresh={async () => {
                         await loadWorkspace(selectedWorkspace.id, true);
