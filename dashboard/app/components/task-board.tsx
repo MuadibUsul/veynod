@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { useI18n } from "../i18n";
 import type { DirectoryEntry, TaskDetail, TaskSummary } from "../types";
-import { formatNumber, pretty, relativeTime } from "../types";
+import { directoryRefs, formatNumber, pretty, relativeTime } from "../types";
 import {
   Empty,
   IconCheck,
@@ -22,79 +22,53 @@ const COLUMNS: Array<{ title: string; detail: string; statuses: string[]; tone: 
   { title: "Backlog / Ready", detail: "TODO · READY", statuses: ["TODO", "READY"], tone: "slate" },
   { title: "In progress", detail: "IN_PROGRESS · REVIEWING · HANDOFF", statuses: ["IN_PROGRESS", "REVIEWING", "HANDOFF"], tone: "sky" },
   { title: "Human gate", detail: "AWAITING_HUMAN · ESCALATED · WAITING_HUMAN", statuses: ["AWAITING_HUMAN", "ESCALATED_TO_HUMAN", "WAITING_HUMAN"], tone: "amber" },
+  // CANCELLED and WAITING_HUMAN had no column, so those tasks silently vanished.
   { title: "Closed", detail: "DONE · FAILED · CANCELLED", statuses: ["DONE", "FAILED", "CANCELLED"], tone: "mint" },
 ];
 
-const ENDED = ["FAILED", "CANCELLED"];
-const FILTER_KEY = "agentgraph.board.filters";
+const NOISE_KEY = "veynod.board.hide_noise";
 
-/** Playtest probes: kind "probe", "probe" as a word in the key, or a title that starts with it. */
-export function isProbeTask(task: TaskSummary): boolean {
-  return (
-    task.kind === "probe" ||
-    /(^|[^a-z0-9])probe([^a-z0-9]|$)/i.test(task.task_key) ||
-    /^\s*\[?probe\b/i.test(task.title)
-  );
-}
-
-type Who = { registered: boolean; online: boolean };
-
-/** Resolve agent:<id|prn|label> against the directory; null when it cannot be judged. */
-function lookup(directory: DirectoryEntry[] | null, ref: string | null | undefined): Who | null {
-  if (!directory || !ref) return null;
-  const [kind, ...rest] = ref.split(":");
-  const name = rest.join(":");
-  if (kind !== "agent" || !name) return null;
-  const entry = directory.find(
-    (item) => item.agent_id === name || item.principal_id === name || item.address === `agent:${name}`,
-  );
-  return { registered: !!entry && entry.source !== "auto", online: !!entry?.presence?.online };
-}
-
-function readFilters(): { ended: boolean; probes: boolean } {
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(FILTER_KEY) ?? "{}");
-    return { ended: stored.ended === true, probes: stored.probes === true };
-  } catch {
-    return { ended: false, probes: false };
-  }
+// Board noise (2026-10-24 playtest): failed or cancelled work and probe/test tasks.
+export function isNoise(task: TaskSummary): boolean {
+  if (["FAILED", "CANCELLED"].includes(String(task.status))) return true;
+  return /(^|[-_/: ])(probe|playtest|smoke|ux-probe)([-_/: ]|$)/i.test(`${task.task_key} ${task.title}`);
 }
 
 export function TaskBoard({
-  tasks,
-  directory = null,
+  tasks: allTasks,
+  directory = [],
   onOpen,
   onCreate,
 }: {
   tasks: TaskSummary[];
-  /** The collaborator directory with presence; null when this console cannot read it. */
-  directory?: DirectoryEntry[] | null;
+  directory?: DirectoryEntry[];
   onOpen: (task: TaskSummary) => void;
   onCreate: () => void;
 }) {
   const { t } = useI18n();
-  const [show, setShow] = useState({ ended: false, probes: false });
-  useEffect(() => setShow(readFilters()), []);
-  function toggle(key: "ended" | "probes") {
-    setShow((current) => {
-      const next = { ...current, [key]: !current[key] };
+  const [hideNoise, setHideNoise] = useState(true);
+  useEffect(() => {
+    try {
+      setHideNoise(localStorage.getItem(NOISE_KEY) !== "0");
+    } catch {
+      // Private mode: keep the default.
+    }
+  }, []);
+  function toggleNoise() {
+    setHideNoise((value) => {
       try {
-        window.localStorage.setItem(FILTER_KEY, JSON.stringify(next));
+        localStorage.setItem(NOISE_KEY, value ? "0" : "1");
       } catch {
-        // A preference only; the board works without storage.
+        // ignore
       }
-      return next;
+      return !value;
     });
   }
-  const endedCount = useMemo(() => tasks.filter((task) => ENDED.includes(task.status)).length, [tasks]);
-  const probeCount = useMemo(() => tasks.filter(isProbeTask).length, [tasks]);
-  const visible = useMemo(
-    () =>
-      tasks.filter(
-        (task) => (show.ended || !ENDED.includes(task.status)) && (show.probes || !isProbeTask(task)),
-      ),
-    [tasks, show],
-  );
+  const hidden = allTasks.filter(isNoise).length;
+  const tasks = hideNoise ? allTasks.filter((task) => !isNoise(task)) : allTasks;
+  const known = directoryRefs(directory);
+  const unregistered = (task: TaskSummary) =>
+    Boolean(task.assignee?.startsWith("agent:") && directory.length > 0 && !known.has(task.assignee));
   return (
     <div className="tab-stack">
       <div className="board-toolbar">
@@ -104,44 +78,26 @@ export function TaskBoard({
             {t("Claims are lease-based. Rejections increment the ping-pong counter and escalate automatically at the threshold.")}
           </p>
         </div>
-        <button
-          type="button"
-          className="button primary"
-          onClick={onCreate}
-          data-modal-trigger="new-task"
-        >
-          <IconPlus /> {t("New task")}
-        </button>
-      </div>
-      {(endedCount > 0 || probeCount > 0) && (
-        <div className="board-filters" role="group" aria-label={t("Board filters")}>
-          {endedCount > 0 && (
-            <button
-              type="button"
-              className={`filter-chip${show.ended ? " active" : ""}`}
-              aria-pressed={show.ended}
-              onClick={() => toggle("ended")}
-            >
-              {t("Show failed & cancelled ({count})", { count: endedCount })}
+        <div className="row-actions">
+          {hidden > 0 && (
+            <button type="button" className="button ghost small" onClick={toggleNoise}
+              title={t("Failed or cancelled tasks, and probe / playtest / smoke tasks")}>
+              {hideNoise
+                ? t("Show {count} hidden", { count: hidden })
+                : t("Hide failed and probe tasks")}
             </button>
           )}
-          {probeCount > 0 && (
-            <button
-              type="button"
-              className={`filter-chip${show.probes ? " active" : ""}`}
-              aria-pressed={show.probes}
-              title={t("Probe tasks: kind probe, 'probe' in the task key, or a title that starts with it.")}
-              onClick={() => toggle("probes")}
-            >
-              {t("Show probe tasks ({count})", { count: probeCount })}
-            </button>
-          )}
-          {tasks.length > visible.length && (
-            <span className="muted">{t("{count} hidden", { count: tasks.length - visible.length })}</span>
-          )}
+          <button
+            type="button"
+            className="button primary"
+            onClick={onCreate}
+            data-modal-trigger="new-task"
+          >
+            <IconPlus /> {t("New task")}
+          </button>
         </div>
-      )}
-      {tasks.length === 0 && (
+      </div>
+      {allTasks.length === 0 && (
         <Empty
           title={t("No tasks yet")}
           detail={t("Create a task for your agents, or let an ANALYST agent plan one. Agents claim READY tasks under a lease and hand them back for your review.")}
@@ -159,7 +115,7 @@ export function TaskBoard({
       )}
       <div className="kanban">
         {COLUMNS.map((column) => {
-          const items = visible.filter((task) => column.statuses.includes(task.status));
+          const items = tasks.filter((task) => column.statuses.includes(task.status));
           return (
             <div className="kanban-column" key={column.title}>
               <div className="kanban-head">
@@ -195,25 +151,24 @@ export function TaskBoard({
                         <RolePill role={task.assigned_role} />
                         <StatusPill status={task.status} />
                         {task.tainted && <span className="pill rose" title={t("Task input references tainted content")}>{t("Tainted")}</span>}
+                        {unregistered(task) && (
+                          <span className="pill amber" title={t("{who} is not in the agent directory: it may never see this task", { who: task.assignee ?? "" })}>
+                            {t("Assignee not registered")}
+                          </span>
+                        )}
                         {task.ping_pong_count > 0 && (
                           <span className="pp-chip" title={t("Review ping-pong count")}>
                             {task.ping_pong_count}/{task.max_retries}
                           </span>
                         )}
                       </div>
-                      {task.assignee && <Assignee who={task.assignee} directory={directory} />}
                       <div className="kanban-foot">
                         <span>
-                          {task.claimed_by ? (
-                            <>
-                              {lookup(directory, `agent:${task.claimed_by}`)?.online && <OnlineDot />}
-                              {`${task.claimed_by} · ${task.lease_active ? t("lease live") : t("lease expired")}`}
-                            </>
-                          ) : task.status === "READY" ? (
-                            t("unclaimed")
-                          ) : (
-                            `v${task.version}`
-                          )}
+                          {task.claimed_by
+                            ? `${task.claimed_by} · ${task.lease_active ? t("lease live") : t("lease expired")}`
+                            : task.status === "READY"
+                              ? t("unclaimed")
+                              : `v${task.version}`}
                         </span>
                         <span>{relativeTime(task.updated_at)}</span>
                       </div>
@@ -225,33 +180,6 @@ export function TaskBoard({
           );
         })}
       </div>
-    </div>
-  );
-}
-
-function OnlineDot() {
-  const { t } = useI18n();
-  return (
-    <span className="online-dot" role="img" aria-label={t("online")}
-      title={t("Online now (inbox stream open)")} />
-  );
-}
-
-function Assignee({ who, directory }: { who: string; directory: DirectoryEntry[] | null }) {
-  const { t } = useI18n();
-  const known = lookup(directory, who);
-  return (
-    <div className="kanban-assignee">
-      {known?.online && <OnlineDot />}
-      <span className="mono" title={t("Assigned to {who}", { who })}>→ {who}</span>
-      {known && !known.registered && (
-        <span
-          className="pill amber"
-          title={t("The assignee has no registered directory entry; it may never see this task.")}
-        >
-          {t("Not registered")}
-        </span>
-      )}
     </div>
   );
 }

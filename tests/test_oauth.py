@@ -111,6 +111,20 @@ async def test_claude_connects_with_pkce_and_gets_a_working_key(client):
     assert replay.status_code == 400 and replay.json()["error"] == "invalid_grant"
 
 
+async def test_long_oauth_state_is_returned_unchanged(client):
+    """Gemini's encrypted state is multi-KB; never truncate it."""
+    owner = await _owner(client)
+    client_id = await _register(client)
+    _, challenge = _pkce()
+    state = "g" * 2_000
+    request_id = await _authorize(client, client_id, challenge, state=state)
+    approved = await client.post(f"/v1/auth/oauth/requests/{request_id}/approve",
+                                 headers=owner, json={"agent_signature": "gemini"})
+    assert approved.status_code == 200, approved.text
+    query = parse_qs(urlsplit(approved.json()["redirect_to"]).query)
+    assert query["state"] == [state]
+
+
 async def test_refusals_and_bad_requests(client):
     owner = await _owner(client)
     client_id = await _register(client)

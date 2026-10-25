@@ -9,6 +9,7 @@ public documentation and never the operator Swagger UI (now /api-reference).
 from __future__ import annotations
 
 import html
+import json
 from functools import lru_cache
 from typing import Any
 
@@ -116,10 +117,71 @@ def _render(slug: str, lang: str) -> str:
     other = "zh" if lang == "en" else "en"
     switch = "中文" if lang == "en" else "English"
     html_lang = "zh-CN" if lang == "zh" else "en"
+    base_url = site["base_url"]
+    canonical = (f"{base_url}/docs/" if slug == "introduction"
+                 else f"{base_url}/docs/{slug}/")
+    description = _t(page["summary"], "en")
+    headline = f"{title} · Veynod Docs"
+    breadcrumb = [
+        {"@type": "ListItem", "position": 1, "name": "Veynod", "item": f"{base_url}/"},
+        {"@type": "ListItem", "position": 2, "name": "Docs", "item": f"{base_url}/docs/"},
+    ]
+    if slug != "introduction":
+        breadcrumb.append(
+            {"@type": "ListItem", "position": 3, "name": title, "item": canonical}
+        )
+    jsonld = json.dumps(
+        {
+            "@context": "https://schema.org",
+            "@graph": [
+                {
+                    "@type": "TechArticle",
+                    "@id": f"{canonical}#article",
+                    "headline": title,
+                    "description": description,
+                    "url": canonical,
+                    "mainEntityOfPage": {"@type": "WebPage", "@id": canonical},
+                    "dateModified": "2026-10-25",
+                    "isPartOf": {
+                        "@type": "WebSite",
+                        "name": "Veynod Docs",
+                        "url": f"{base_url}/docs/",
+                    },
+                    "publisher": {
+                        "@type": "Organization",
+                        "name": "Veynod",
+                        "url": base_url,
+                    },
+                },
+                {
+                    "@type": "BreadcrumbList",
+                    "@id": f"{canonical}#breadcrumb",
+                    "itemListElement": breadcrumb,
+                },
+            ],
+        },
+        ensure_ascii=False,
+    ).replace("</", "<\\/")
     return f"""<!doctype html>
 <html lang="{html_lang}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{_e(title)} · Veynod Docs</title>
+<title>{_e(headline)}</title>
+<meta name="description" content="{_e(description)}">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="{_e(canonical)}">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Veynod">
+<meta property="og:title" content="{_e(headline)}">
+<meta property="og:description" content="{_e(description)}">
+<meta property="og:url" content="{_e(canonical)}">
+<meta property="og:image" content="{base_url}/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{_e(headline)}">
+<meta name="twitter:description" content="{_e(description)}">
+<meta name="twitter:image" content="{base_url}/og.png">
+<script type="application/ld+json">{jsonld}</script>
 <style>
 body{{margin:0;font:16px/1.6 system-ui,sans-serif;color:#1f2133;background:#fbfbfe}}
 header{{display:flex;gap:16px;align-items:center;justify-content:space-between;

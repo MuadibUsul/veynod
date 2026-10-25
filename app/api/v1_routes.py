@@ -309,9 +309,8 @@ async def agent_docs(
         description="summary (default, a few KB): connection, conventions, limits and the "
                     "MCP tool to REST map; full: also the guide, every error code and the "
                     "OpenAPI paths (about 400 KB)"),
-    principal: Principal = Depends(get_principal),
 ):
-    """Read-only API/MCP documentation available to every workspace token."""
+    """Public, read-only API/MCP documentation for agents and crawlers."""
     if format == "markdown":
         return PlainTextResponse(agent_guide.render(), media_type="text/markdown")
     base = str(request.base_url).rstrip("/")

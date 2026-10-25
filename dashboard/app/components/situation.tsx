@@ -165,6 +165,7 @@ export function SituationView({
                     className="button ghost small"
                     onClick={() => void open(alert)}
                     disabled={busy === alert.alert_id}
+                    aria-expanded={drill?.alert.alert_id === alert.alert_id}
                   >
                     {busy === alert.alert_id ? <Spinner /> : <IconPulse size={13} />} {t("Details")}
                   </button>
@@ -179,25 +180,25 @@ export function SituationView({
                     </button>
                   )}
                 </div>
+                {drill?.alert.alert_id === alert.alert_id && (
+                  <section className="card alert-detail" aria-live="polite">
+                    <div className="card-head">
+                      <div>
+                        <h2>{t(RULE_LABELS[drill.alert.rule] ?? drill.alert.rule)}</h2>
+                        <p className="mono">{drill.alert.subject.ref}</p>
+                      </div>
+                      <button type="button" className="button ghost small" onClick={() => setDrill(null)}>
+                        {t("Close")}
+                      </button>
+                    </div>
+                    <pre className="json-block">{JSON.stringify({ details: drill.alert.details, metrics: drill.data }, null, 2)}</pre>
+                  </section>
+                )}
               </div>
             ))}
           </div>
         )}
       </section>
-      {drill && (
-        <section className="card">
-          <div className="card-head">
-            <div>
-              <h2>{t(RULE_LABELS[drill.alert.rule] ?? drill.alert.rule)}</h2>
-              <p className="mono">{drill.alert.subject.ref}</p>
-            </div>
-            <button type="button" className="button ghost small" onClick={() => setDrill(null)}>
-              {t("Close")}
-            </button>
-          </div>
-          <pre className="json-block">{JSON.stringify({ details: drill.alert.details, metrics: drill.data }, null, 2)}</pre>
-        </section>
-      )}
     </div>
   );
 }

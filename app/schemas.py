@@ -2416,10 +2416,11 @@ class WebhookRuleOut(BaseModel):
     active: bool
     last_event_id: int
     consecutive_failures: int
-    dead_deliveries: int = Field(
-        default=0, description="Deliveries in the last 7 days that failed every retry (DEAD)")
-    last_dead_at: datetime | None = Field(
-        default=None, description="When the latest of those made its last attempt")
+    dead_deliveries: int = Field(default=0, description="Deliveries that ended DEAD (last 7 days)")
+    last_error: str | None = None
+    disabled_at: datetime | None = None
+    wake_for: list[str] = Field(default_factory=list,
+                                description="An agent's wake webhook: the refs it wakes")
     created_at: datetime
     updated_at: datetime
 

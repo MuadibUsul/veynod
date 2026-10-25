@@ -39,11 +39,28 @@ def test_human_root_page_keeps_json_shape_and_marks_console_entry():
     assert 'class="entry"' in page
     assert f'<span class="number">{TOOL_COUNT}</span>' in page
     assert "COPY RESPONSE" in page
-    assert 'href="/?format=json"' in page
+    assert 'id="raw-response"' in page
+    assert 'id="copy-curl"' in page
+    assert '<link rel="canonical" href="https://veynod.com/">' in page
+    assert 'property="og:image"' in page
+    assert "application/ld+json" in page
     assert '<span class="value">3.2.1</span>' in page
     assert "agentgraph.session_token" in page
     assert "agentgraph.admin_token" in page
     assert '"/dashboard/login/"' in page
+    assert '<h1 class="kicker">' in page
+    assert '<p class="hero-display">' in page
+    assert 'class="zh"' not in page
+    assert 'class="en"' not in page
+
+
+def test_chinese_page_has_a_physical_route_and_chinese_copy():
+    page = render_root_page(descriptor(), lang="zh")
+    assert '<html lang="zh-Hans"' in page
+    assert '<link rel="canonical" href="https://veynod.com/zh/">' in page
+    assert 'href="/" hreflang="en"' in page
+    assert "Agent 干活" in page
+    assert "Agents do the work." not in page
 
 
 def test_human_root_page_without_dashboard_renders_null_without_a_link():

@@ -20,7 +20,7 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
 API_CONTAINER="${API_CONTAINER:-agentgraph-api}"
 PUBLIC_URL="${PUBLIC_URL:-https://veynod.com}"
 BACKUP_DIR="${BACKUP_DIR:-backups}"
-EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-3.34.0}"
+EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-3.37.0}"
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 log() { printf '\033[1m[deploy]\033[0m %s\n' "$*"; }
@@ -124,6 +124,12 @@ code, body = status("/healthz")
 check("healthz reports backup timestamps", code == 200 and "last_backup_at" in body, str(code))
 code, body = status("/docs/")
 check("public /docs/ 200", code == 200 and ("AgentGraph" in body or "Veynod" in body), str(code))
+code, body = status("/robots.txt")
+check("robots.txt 200 with sitemap", code == 200 and "Sitemap:" in body, str(code))
+code, body = status("/sitemap.xml")
+check("sitemap.xml 200", code == 200 and "<urlset" in body, str(code))
+code, body = status("/og.png")
+check("og.png 200", code == 200, str(code))
 code, _ = status("/docs/quickstart/")
 check("public /docs/quickstart/ 200", code == 200, str(code))
 code, body = status("/docs/api-reference/")

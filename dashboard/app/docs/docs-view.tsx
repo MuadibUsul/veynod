@@ -22,6 +22,8 @@ export function DocsView({ slug }: { slug: string }) {
   const next = index >= 0 && index < flat.length - 1 ? flat[index + 1] : null;
 
   useEffect(() => {
+    // The docs home keeps its SEO title; every article gets its page title.
+    if (slug === "introduction") return;
     document.title = `${pageTitle(slug, lang)} · ${t("Veynod Docs")}`;
   }, [slug, lang, t]);
 

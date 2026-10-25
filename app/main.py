@@ -6,6 +6,7 @@ import asyncio
 import hmac
 import logging
 from contextlib import asynccontextmanager, suppress
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,14 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import SQLAlchemyError
@@ -42,6 +50,7 @@ from app.mcp_server.server import create_http_app, mcp
 from app.middleware import RequestContextMiddleware
 from app.protocol_middleware import ProtocolMiddleware
 from app.root_page import ROOT_PRIMITIVES, render_root_page
+from app.seo_geo import llms_full, llms_index, mcp_reference
 from app.services.external_actions import external_action_loop
 from app.services.indexer import index_worker_loop
 from app.services.reaper import lease_reaper_loop
@@ -50,6 +59,24 @@ from app.services.webhooks import webhook_delivery_loop
 from app.versioning import BASELINE_VERSION, LATEST_VERSION
 
 settings = get_settings()
+
+# Public origin used in search metadata. Deliberately fixed: a misconfigured
+# deployment must not publish a localhost or staging canonical URL.
+SEO_SITE_URL = "https://veynod.com"
+OG_IMAGE_PATH = Path(__file__).resolve().parent / "static" / "og.png"
+
+
+def _is_private_path(path: str) -> bool:
+    """Customer, operator and protocol surfaces that must never be indexed."""
+    return (
+        path == "/dashboard"
+        or path.startswith("/dashboard/")
+        or path == "/v1"
+        or (path.startswith("/v1/") and path != "/v1/agent-docs")
+        or path == "/mcp"
+        or path.startswith("/mcp/")
+        or path in {"/api-reference", "/openapi.json", "/healthz", "/readyz", "/redoc"}
+    )
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -207,6 +234,11 @@ _CSP = (
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    if request.url.hostname in {"www.veynod.com", "agentgraph.fusionpropulsion.space"}:
+        target = f"{SEO_SITE_URL}{request.url.path}"
+        if request.url.query:
+            target += f"?{request.url.query}"
+        return RedirectResponse(target, status_code=301)
     response = await call_next(request)
     response.headers.setdefault("Content-Security-Policy", _CSP)
     response.headers.setdefault("X-Frame-Options", "DENY")
@@ -220,6 +252,16 @@ async def security_headers(request: Request, call_next):
             "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
         )
     path = request.url.path
+    if _is_private_path(path):
+        response.headers.setdefault("X-Robots-Tag", "noindex, nofollow")
+    elif (
+        (path == "/docs" or path.startswith("/docs/"))
+        and response.status_code == 200
+        and response.headers.get("content-type", "").startswith("text/html")
+    ):
+        slug = path.removeprefix("/docs").strip("/")
+        canonical = f"{SEO_SITE_URL}/docs/{slug}/" if slug else f"{SEO_SITE_URL}/docs/"
+        response.headers.setdefault("Link", f'<{canonical}>; rel="canonical"')
     if path.startswith("/dashboard/_next/static/"):
         response.headers.setdefault(
             "Cache-Control", "public, max-age=31536000, immutable"
@@ -282,6 +324,113 @@ if docs_site_dir.is_dir():
     app.mount("/docs", StaticFiles(directory=str(docs_site_dir), html=True), name="docs")
 else:
     app.include_router(public_docs_router)
+
+
+def _sitemap_lastmod() -> str:
+    """Last content change we can prove: the generated docs build stamp."""
+    candidates = (
+        docs_site_dir / "index.html",
+        Path(__file__).resolve().parent / "templates" / "root.html",
+    )
+    for candidate in candidates:
+        try:
+            stamp = candidate.stat().st_mtime
+        except OSError:
+            continue
+        return datetime.fromtimestamp(stamp, tz=timezone.utc).date().isoformat()
+    return datetime.now(tz=timezone.utc).date().isoformat()
+
+
+@app.get("/robots.txt", include_in_schema=False)
+async def robots_txt() -> PlainTextResponse:
+    rules = (
+        "Allow: /\n"
+        "Allow: /zh/\n"
+        "Allow: /docs/\n"
+        "Allow: /v1/agent-docs\n"
+        "Allow: /llms.txt\n"
+        "Allow: /llms-full.txt\n"
+        "Disallow: /dashboard/\n"
+        "Disallow: /v1/\n"
+        "Disallow: /mcp/\n"
+        "Disallow: /api-reference\n"
+        "Disallow: /openapi.json\n"
+        "Disallow: /healthz\n"
+        "Disallow: /readyz\n"
+    )
+    body = (
+        "User-agent: *\n"
+        + rules + "\n"
+        + "".join(
+            f"User-agent: {agent}\n{rules}\n"
+            for agent in ("Googlebot", "Google-Extended", "GPTBot", "OAI-SearchBot",
+                          "ClaudeBot", "PerplexityBot")
+        )
+        + f"Sitemap: {SEO_SITE_URL}/sitemap.xml\n"
+    )
+    return PlainTextResponse(body, headers={"Cache-Control": "public, max-age=3600"})
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+async def sitemap_xml() -> Response:
+    from app.docs_site import NAV
+
+    lastmod = _sitemap_lastmod()
+    urls = [
+        f"{SEO_SITE_URL}/", f"{SEO_SITE_URL}/zh/", f"{SEO_SITE_URL}/docs/",
+        f"{SEO_SITE_URL}/v1/agent-docs", f"{SEO_SITE_URL}/llms.txt",
+        f"{SEO_SITE_URL}/llms-full.txt",
+    ]
+    seen = set(urls)
+    for _group_id, _group_title, pages in NAV:
+        for slug, _page_title in pages:
+            # The docs home renders the introduction; /docs/introduction/ 404s.
+            if slug == "introduction":
+                continue
+            url = f"{SEO_SITE_URL}/docs/{slug}/"
+            if url not in seen:
+                seen.add(url)
+                urls.append(url)
+    body = "\n".join(
+        [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+            *[
+                f"<url><loc>{url}</loc><lastmod>{lastmod}</lastmod></url>"
+                for url in urls
+            ],
+            "</urlset>",
+            "",
+        ]
+    )
+    return Response(
+        content=body,
+        media_type="application/xml",
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
+@app.get("/llms.txt", include_in_schema=False)
+async def llms_txt() -> PlainTextResponse:
+    return PlainTextResponse(llms_index(settings.app_version), media_type="text/plain")
+
+
+@app.get("/llms-full.txt", include_in_schema=False)
+async def llms_full_txt() -> PlainTextResponse:
+    tools = await mcp.list_tools()
+    return PlainTextResponse(
+        llms_full(settings.app_version) + "\n" + mcp_reference(tools),
+        media_type="text/plain",
+    )
+
+
+@app.get("/og.png", include_in_schema=False)
+async def og_image() -> FileResponse:
+    return FileResponse(
+        OG_IMAGE_PATH,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
 
 
 @app.exception_handler(ApiError)
@@ -446,10 +595,47 @@ async def root(request: Request) -> Any:
         "capabilities": capabilities.describe(app),
     }
     headers = {"Vary": "Accept", "Cache-Control": "no-store"}
-    accept = request.headers.get("accept", "").lower()
-    if "text/html" in accept and request.query_params.get("format") != "json":
-        return HTMLResponse(render_root_page(descriptor), headers=headers)
-    return JSONResponse(descriptor, headers=headers)
+    if _wants_json(request.headers.get("accept", "")):
+        headers["X-Robots-Tag"] = "noindex"
+        return JSONResponse(descriptor, headers=headers)
+    headers["Link"] = f'<{SEO_SITE_URL}/>; rel="canonical"'
+    return HTMLResponse(render_root_page(descriptor, lang="en"), headers=headers)
+
+
+def _wants_json(accept: str) -> bool:
+    """Require an explicit JSON media range with higher priority than HTML."""
+    priorities: dict[str, float] = {}
+    for item in accept.lower().split(","):
+        media, *params = item.strip().split(";")
+        quality = 1.0
+        for param in params:
+            if param.strip().startswith("q="):
+                try:
+                    quality = float(param.strip()[2:])
+                except ValueError:
+                    quality = 0.0
+        priorities[media] = max(priorities.get(media, 0.0), quality)
+    return priorities.get("application/json", 0.0) > max(
+        priorities.get("text/html", 0.0), priorities.get("application/xhtml+xml", 0.0)
+    )
+
+
+@app.get("/zh/", include_in_schema=False)
+@app.get("/zh", include_in_schema=False)
+async def root_zh(request: Request) -> HTMLResponse:
+    # The showcase only needs the public descriptor fields; no private state.
+    descriptor = {
+        "name": settings.app_name, "version": settings.app_version,
+        "rest": "/v1", "mcp": "/mcp/" if settings.mcp_enabled else None,
+        "health": "/healthz", "agent_docs": "/v1/agent-docs",
+        "first_call": "get_orientation", "primitives": list(ROOT_PRIMITIVES),
+        "dashboard": "/dashboard/" if dashboard_dir.is_dir() else None,
+    }
+    return HTMLResponse(
+        render_root_page(descriptor, lang="zh"),
+        headers={"Vary": "Accept", "Cache-Control": "no-store",
+                 "Link": f'<{SEO_SITE_URL}/zh/>; rel="canonical"'},
+    )
 
 
 @app.get("/healthz", tags=["Health"], summary="Liveness probe")

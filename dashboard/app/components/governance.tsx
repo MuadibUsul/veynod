@@ -37,7 +37,6 @@ export function GovernanceView({
   webhooks,
   actions,
   users,
-  canRemoveNamespaces = false,
   request,
   onRefresh,
   notify,
@@ -50,8 +49,6 @@ export function GovernanceView({
   webhooks: WebhookRule[];
   actions: ExternalAction[];
   users: HumanUser[];
-  /** Signed-in owners and admins remove empty namespaces; operators never do. */
-  canRemoveNamespaces?: boolean;
   request: ApiRequest;
   onRefresh: () => Promise<void>;
   notify: (message: string) => void;
@@ -217,6 +214,34 @@ export function GovernanceView({
       );
       if (result.ok) notify(`Webhook delivered (HTTP ${result.status_code}).`);
       else setError(result.error ?? t("Webhook test failed."));
+    });
+  }
+
+  type NamespaceRow = { namespace: string; documents?: number; auto_registered?: boolean;
+    owner?: string | null };
+  const [namespaces, setNamespaces] = useState<NamespaceRow[]>([]);
+  const [reserved, setReserved] = useState<string[]>([]);
+  const loadNamespaces = useCallback(async () => {
+    try {
+      const listed = await request<{ items: NamespaceRow[]; reserved?: string[] }>(
+        `/v1/admin/workspaces/${workspaceId}/namespaces`);
+      setNamespaces(listed.items);
+      setReserved(listed.reserved ?? []);
+    } catch {
+      setNamespaces([]);
+    }
+  }, [request, workspaceId]);
+  useEffect(() => {
+    void loadNamespaces();
+  }, [loadNamespaces]);
+
+  // 2026-10-24 decision 1: owners remove empty namespaces (evil-trial-ns).
+  async function deleteNamespace(name: string) {
+    if (!window.confirm(t("Remove the empty namespace “{name}”? This cannot be undone.", { name }))) return;
+    await run(`namespace:${name}`, async () => {
+      await request(`/v1/human/namespaces/${encodeURIComponent(name)}`, { method: "DELETE" });
+      notify(t("Namespace {name} removed.", { name }));
+      await loadNamespaces();
     });
   }
 
@@ -509,6 +534,47 @@ export function GovernanceView({
           <section>
             <div className="panel-toolbar">
               <div>
+                <h3 className="section-title">{t("Namespaces")}</h3>
+                <p className="section-sub">{t("An empty namespace (no live documents, no open tasks) can be removed.")}</p>
+              </div>
+            </div>
+            {namespaces.length === 0 ? (
+              <Empty title={t("No namespaces")} detail={t("Namespaces appear when agents or people first write to them.")} />
+            ) : (
+              <div className="stack-list">
+                {namespaces.map((item) => {
+                  const locked = item.namespace === "default" || reserved.includes(item.namespace);
+                  const empty = (item.documents ?? 0) === 0;
+                  return (
+                    <article key={item.namespace} className="compact-row">
+                      <div>
+                        <strong className="mono">{item.namespace}</strong>
+                        <div className="proposal-meta">
+                          <span>{t("{count} document(s)", { count: item.documents ?? 0 })}</span>
+                          {item.owner && <span>{item.owner}</span>}
+                          {item.auto_registered && <span>{t("auto-registered")}</span>}
+                        </div>
+                      </div>
+                      {!locked && (
+                        <div className="row-actions">
+                          <button type="button" className="button danger small"
+                            disabled={!empty || busy === `namespace:${item.namespace}`}
+                            title={empty ? "" : t("Archive its documents first")}
+                            onClick={() => void deleteNamespace(item.namespace)}>
+                            {t("Remove")}
+                          </button>
+                        </div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <section>
+            <div className="panel-toolbar">
+              <div>
                 <h3 className="section-title">{t("Webhooks")}</h3>
                 <p className="section-sub">{t("Signed, persistent, retried deliveries from the outbox.")}</p>
               </div>
@@ -520,26 +586,31 @@ export function GovernanceView({
               <Empty title={t("No webhook rules")} detail={t("Add an endpoint to receive signed workspace events.")} />
             ) : (
               <div className="stack-list">
-                {webhooks.map((rule) => (
-                  <article key={rule.id} className={`compact-row${(rule.dead_deliveries ?? 0) > 0 ? " dead" : ""}`}>
+                {webhooks.map((rule) => {
+                  const dead = (rule.dead_deliveries ?? 0) > 0 || Boolean(rule.disabled_at);
+                  return (
+                  <article key={rule.id} className={`compact-row${dead ? " row-dead" : ""}`}>
                     <div>
                       <strong>{rule.name}</strong>
+                      {(rule.wake_for?.length ?? 0) > 0 && (
+                        <span className="pill violet" title={t("Wakes this agent while it is offline")}>
+                          {" "}{t("wake")} · {rule.wake_for?.[0]}
+                        </span>
+                      )}
                       <div className="mono muted">{rule.url}</div>
                       <div className="proposal-meta">
-                        {(rule.dead_deliveries ?? 0) > 0 && (
-                          <span
-                            className="pill rose"
-                            title={t("Deliveries gave up after every retry (last {when}). Check the endpoint, then test it.", {
-                              when: rule.last_dead_at ? relativeTime(rule.last_dead_at) : "—",
-                            })}
-                          >
-                            {t("{count} DEAD", { count: rule.dead_deliveries ?? 0 })}
-                          </span>
-                        )}
                         <span>{rule.event_types.join(", ")}</span>
                         <span>{rule.active ? t("active") : t("paused")}</span>
                         <span>{t("{count} recent failure(s)", { count: rule.consecutive_failures })}</span>
+                        {dead && (
+                          <span className="pill rose" title={rule.last_error ?? ""}>
+                            {rule.disabled_at
+                              ? t("Disabled after 24 h of failures")
+                              : t("{count} DEAD in 7 days", { count: rule.dead_deliveries ?? 0 })}
+                          </span>
+                        )}
                       </div>
+                      {dead && rule.last_error && <div className="field-hint rose-text">{rule.last_error}</div>}
                     </div>
                     <div className="row-actions">
                       <button type="button" className="button ghost small" onClick={() => void testWebhook(rule)}>
@@ -550,17 +621,11 @@ export function GovernanceView({
                       </button>
                     </div>
                   </article>
-                ))}
+                  );
+                })}
               </div>
             )}
           </section>
-
-          <NamespacesPanel
-            workspaceId={workspaceId}
-            canRemove={canRemoveNamespaces}
-            request={request}
-            notify={notify}
-          />
 
           <section>
             <div className="panel-toolbar">
@@ -881,115 +946,4 @@ interface IndexHealth {
   deferred_jobs: number;
   failed_jobs: number;
   repairable: number;
-}
-
-interface NamespaceRow {
-  namespace: string;
-  documents: number;
-  my_access?: string;
-}
-
-// Never removable: the fallback namespace and the platform's own (decision 1).
-const PROTECTED_NAMESPACES = new Set(["default", "system"]);
-
-/** Registered namespaces; owners and admins remove the empty ones (DELETE /v1/human/namespaces). */
-function NamespacesPanel({
-  workspaceId,
-  canRemove,
-  request,
-  notify,
-}: {
-  workspaceId: string;
-  canRemove: boolean;
-  request: ApiRequest;
-  notify: (message: string) => void;
-}) {
-  const { t } = useI18n();
-  const [rows, setRows] = useState<NamespaceRow[] | null>(null);
-  const [reserved, setReserved] = useState<string[]>([]);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    try {
-      const value = await request<{ items: NamespaceRow[]; reserved?: string[] }>(
-        `/v1/admin/workspaces/${workspaceId}/namespaces`,
-      );
-      setRows(value.items);
-      setReserved(value.reserved ?? []);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : t("Operation failed."));
-    }
-  }, [request, workspaceId, t]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function remove(row: NamespaceRow) {
-    if (!window.confirm(t("Remove namespace “{ns}”? This cannot be undone.", { ns: row.namespace }))) {
-      return;
-    }
-    setBusy(row.namespace);
-    setError(null);
-    try {
-      await request(`/v1/human/namespaces/${encodeURIComponent(row.namespace)}`, { method: "DELETE" });
-      notify(t("Namespace removed."));
-      await load();
-    } catch (caught) {
-      // 409 namespace_not_empty names what is left; show it as is.
-      setError(caught instanceof Error ? caught.message : t("Operation failed."));
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  return (
-    <section>
-      <div className="panel-toolbar">
-        <div>
-          <h3 className="section-title">{t("Namespaces")}</h3>
-          <p className="section-sub">
-            {t("Remove a namespace once it has no live documents and no open tasks. Removal cannot be undone.")}
-          </p>
-        </div>
-      </div>
-      {error && <div className="inline-error">{error}</div>}
-      {rows === null ? (
-        <Spinner />
-      ) : rows.length === 0 ? (
-        <Empty title={t("No namespaces")} detail={t("Namespaces appear as documents and tasks are written.")} />
-      ) : (
-        <div className="stack-list">
-          {rows.map((row) => {
-            const locked = PROTECTED_NAMESPACES.has(row.namespace) || reserved.includes(row.namespace);
-            const blocked = locked ? t("Protected namespace") : row.documents > 0 ? t("Archive its documents first") : undefined;
-            return (
-              <article key={row.namespace} className="compact-row">
-                <div>
-                  <strong className="mono">{row.namespace}</strong>
-                  <div className="proposal-meta">
-                    <span>{t("{count} document(s)", { count: row.documents })}</span>
-                  </div>
-                </div>
-                {canRemove && (
-                  <div className="row-actions">
-                    <button
-                      type="button"
-                      className="button danger small"
-                      disabled={!!blocked || busy === row.namespace}
-                      title={blocked}
-                      onClick={() => void remove(row)}
-                    >
-                      {busy === row.namespace ? <Spinner /> : null} {t("Remove")}
-                    </button>
-                  </div>
-                )}
-              </article>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
 }

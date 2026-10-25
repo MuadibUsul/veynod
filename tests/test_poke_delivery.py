@@ -192,4 +192,4 @@ async def test_failing_webhooks_retry_three_times_then_die(client, failing_sink)
         rules = (await client.get(path, headers=headers)).json()["items"]
         listed_rule = next(item for item in rules if item["id"] == rule.json()["id"])
         assert 1 <= listed_rule["dead_deliveries"] <= len(items), listed_rule
-        assert listed_rule["last_dead_at"]
+        assert listed_rule["last_error"]

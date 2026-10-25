@@ -44,7 +44,6 @@ import type {
   AuditPayload,
   AuthSession,
   Budget,
-  DirectoryEntry,
   DocumentDetail,
   DocumentPage,
   DocumentSummary,
@@ -62,6 +61,7 @@ import type {
   TimelineItem,
   Usage,
   WebhookRule,
+  DirectoryEntry,
   WorkspaceSummary,
 } from "./types";
 import {
@@ -88,6 +88,7 @@ function sessionPath(path: string, workspaceId: string, method: string): string 
     return `/v1/human${rest}`;
   }
   if (rest === "/namespaces") return "/v1/human/namespaces";
+  if (rest === "/agents") return "/v1/agents?limit=200";
   if (rest.startsWith("/document-parts")) return `/v1/human${rest}`;
   if (rest === "/audit" || rest.startsWith("/audit?")) return `/v1/human/audit${rest.slice(6)}`;
   if (rest.startsWith("/batches")) return `/v1/human${rest}`;
@@ -158,8 +159,7 @@ export default function ConsolePage() {
     sort: "updated_desc",
   });
   const [agents, setAgents] = useState<AgentToken[]>([]);
-  // The collaborator directory with presence; people only (operators may not read it).
-  const [directory, setDirectory] = useState<DirectoryEntry[] | null>(null);
+  const [directory, setDirectory] = useState<DirectoryEntry[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [policies, setPolicies] = useState<PathPolicy[]>([]);
   const [budget, setBudget] = useState<Budget | null>(null);
@@ -686,13 +686,6 @@ export default function ConsolePage() {
         ),
         (value) => setAgents(value.items),
       ),
-      sessionMode
-        ? loadOne(
-            "directory",
-            call<{ items: DirectoryEntry[] }>("/v1/agents?limit=200"),
-            (value) => setDirectory(value.items),
-          )
-        : Promise.resolve(setDirectory(null)),
       loadOne(
         "audit",
         call<AuditPayload>(`/v1/admin/workspaces/${id}/audit?limit=20`),
@@ -728,6 +721,11 @@ export default function ConsolePage() {
         "usage",
         call<Usage>(`/v1/admin/workspaces/${id}/usage`),
         (value) => setUsage(value),
+      ),
+      loadOne(
+        "directory",
+        call<{ items: DirectoryEntry[] }>(`/v1/admin/workspaces/${id}/agents`),
+        (value) => setDirectory(value.items),
       ),
       loadOne(
         "webhooks",
@@ -785,14 +783,6 @@ export default function ConsolePage() {
         `/v1/admin/workspaces/${id}/slots?limit=200`,
       ).then((value) => setSlots(value.items)),
     ];
-    if (sessionMode && (tab === "tasks" || tab === "agents")) {
-      // Presence changes as agents connect and hang up.
-      jobs.push(
-        api<{ items: DirectoryEntry[] }>("/v1/agents?limit=200").then((value) =>
-          setDirectory(value.items),
-        ),
-      );
-    }
     if (tab === "blackboard") {
       jobs.push(
         api<{ items: TimelineItem[] }>(
@@ -1659,7 +1649,6 @@ export default function ConsolePage() {
                       webhooks={webhooks}
                       actions={actions}
                       users={humanUsers}
-                      canRemoveNamespaces={sessionMode}
                       request={api}
                       onRefresh={async () => {
                         await loadWorkspace(selectedWorkspace.id, true);

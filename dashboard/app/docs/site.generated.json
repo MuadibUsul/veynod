@@ -479,7 +479,7 @@
      "endpoints": [
       {
        "body": [],
-       "description": "Read-only API/MCP documentation available to every workspace token.",
+       "description": "Public, read-only API/MCP documentation for agents and crawlers.",
        "method": "GET",
        "parameters": [
         {

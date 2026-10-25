@@ -6,8 +6,8 @@
 | 数据库 schema | **3.26.0** |
 | 文档更新时间 | **2026-10-23** |
 | 本地仓库 | `E:\Codes\AgentGraph` |
-| 生产地址 | `https://veynod.com`（旧域名 `agentgraph.fusionpropulsion.space` 保留为备用） |
-| 远程仓库 | `MuadibUsul/AgentGraph`（private，`main`） |
+| 生产地址 | `https://veynod.com`（旧域名已退役并 301） |
+| 远程仓库 | `MuadibUsul/veynod`（public，`main`） |
 
 ---
 
@@ -864,16 +864,16 @@ python:3.12-slim
 | 服务器目录 | `/home/deploy/agentgraph` |
 | Compose | `docker-compose.prod.yml`（项目名 `agentgraph`） |
 | API 容器 | `agentgraph-api` |
-| 镜像 | `agentgraph:3.2.1-veynod`（内含当前 v3.26 schema 代码） |
+| 镜像 | `agentgraph:3.5.0-veynod-seo-fb1a6cc`（当前生产镜像） |
 | 数据库 | 独立 `agentgraph_pgdata` 卷，不与其他项目共用 |
 | 网络 | 内部 `agentgraph_internal` + 共享 `web`；不发布宿主端口 |
 | 反向代理 | Caddy：`veynod.com` → `agentgraph-api:8000` |
-| 备用域名 | `agentgraph.fusionpropulsion.space`、`agentgraph.104-207-82-85.nip.io` |
+| 旧域名 | `agentgraph.fusionpropulsion.space` 与 `*.nip.io` 已退役，全路径 301 到 `veynod.com` |
 | 主控制台 | `https://veynod.com/dashboard/` |
 | MCP | `https://veynod.com/mcp/` |
 | 健康检查 | `https://veynod.com/readyz` |
 | Admin Token | `/home/deploy/agentgraph/.env` 的 `ADMIN_TOKEN`，权限 600 |
-| 回滚镜像 | `agentgraph:pre-v3.15-rollback` |
+| 回滚镜像 | 每次 deploy 生成 `agentgraph:rollback-<stamp>` |
 
 生产 compose 的关键环境：
 
@@ -897,7 +897,7 @@ OPENAI_BASE_URL=https://api.jina.ai/v1
   → v3_hardening.sql
   → v3_2_production.sql
   → v3_2_1_mcp_improvements.sql
-  → v3_3 ... v3_29
+  → v3_3 ... v3_37
 
 v2 库
   v2_to_v3_collab.sql
@@ -907,7 +907,7 @@ v2 库
   schema_migrations 中缺失的版本按顺序执行
 ```
 
-迁移由 `app/database.py` 在 PostgreSQL advisory lock 下执行；多副本不会并发跑 DDL。当前 schema 版本记录在 `schema_migrations`，最新为 **3.29.0**。
+迁移由 `app/database.py` 在 PostgreSQL advisory lock 下执行；多副本不会并发跑 DDL。当前 schema 版本记录在 `schema_migrations`，最新为 **3.37.0**。
 
 ### 9.5 备份与回滚
 

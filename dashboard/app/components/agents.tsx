@@ -103,7 +103,7 @@ const ROLES = [
 export function AgentsView({
   workspaceId,
   tokens,
-  directory = null,
+  directory = [],
   request,
   onRefresh,
   onKey,
@@ -112,8 +112,7 @@ export function AgentsView({
 }: {
   workspaceId: string;
   tokens: AgentToken[];
-  /** The collaborator directory with presence; null when this console cannot read it. */
-  directory?: DirectoryEntry[] | null;
+  directory?: DirectoryEntry[];
   request: ApiRequest;
   onRefresh: () => Promise<void>;
   onKey: (key: string, name: string, token?: AgentToken) => void;
@@ -121,18 +120,17 @@ export function AgentsView({
   openCreateSignal?: number;
 }) {
   const { t } = useI18n();
+  // Live presence (an open inbox stream), keyed by token id.
+  const presence = new Map<string, NonNullable<DirectoryEntry["presence"]>>();
+  const displayNames = new Map<string, string>();
+  for (const entry of directory) {
+    for (const id of entry.token_ids) {
+      displayNames.set(id, entry.display_name);
+      if (entry.presence) presence.set(id, entry.presence);
+    }
+  }
   const [showCreate, setShowCreate] = useState(false);
   const [progress, setProgress] = useState<AgentOnboardingOverview | null>(null);
-  // Token ids with a live inbox stream (presence), from the directory.
-  const onlineTokens = useMemo(
-    () =>
-      new Set(
-        (directory ?? [])
-          .filter((entry) => entry.presence?.online)
-          .flatMap((entry) => entry.token_ids),
-      ),
-    [directory],
-  );
   const requestRef = useRef(request);
   requestRef.current = request;
   const namespaceInputRef = useRef<HTMLInputElement>(null);
@@ -466,7 +464,23 @@ export function AgentsView({
                         <span className="agent-avatar">
                           <IconAgents size={14} />
                         </span>
-                        <span title={token.agent_signature}>{token.agent_signature}</span>
+                        <span title={token.agent_signature}>
+                          {displayNames.get(token.canonical_id ?? "") ?? token.agent_signature}
+                        </span>
+                        {(() => {
+                          const live = presence.get(token.canonical_id ?? "");
+                          if (!live) return null;
+                          return (
+                            <span
+                              className={`presence-dot${live.online ? " online" : ""}`}
+                              title={live.online
+                                ? t("Online: holding the inbox stream")
+                                : live.last_seen_at
+                                  ? t("Offline · last connected {when}", { when: relativeTime(live.last_seen_at) })
+                                  : t("Offline")}
+                            />
+                          );
+                        })()}
                         {(token.delegated_total ?? 0) > 0 && (
                           <button
                             type="button"
@@ -507,13 +521,6 @@ export function AgentsView({
                     <td>
                       <span className={`status-dot-inline ${token.is_active ? "live" : "dead"}`} />
                       {token.is_active ? t("Active") : t("Disabled")}
-                      {token.canonical_id && onlineTokens.has(token.canonical_id) && (
-                        <span className="field-hint" title={t("Online now (inbox stream open)")}>
-                          {" · "}
-                          <span className="online-dot" />
-                          {t("online")}
-                        </span>
-                      )}
                     </td>
                     <td>
                       <AgentOnboardingBadge

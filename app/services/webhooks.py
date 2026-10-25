@@ -40,10 +40,7 @@ settings = get_settings()
 WEBHOOKS_PER_WORKSPACE = 10
 
 
-DEAD_WINDOW = timedelta(days=7)
-
-
-def _rule_out(rule: WebhookRule, dead: tuple[int, Any] = (0, None)) -> WebhookRuleOut:
+def _rule_out(rule: WebhookRule) -> WebhookRuleOut:
     return WebhookRuleOut(
         id=rule.id,
         name=rule.name,
@@ -55,8 +52,8 @@ def _rule_out(rule: WebhookRule, dead: tuple[int, Any] = (0, None)) -> WebhookRu
         active=rule.active,
         last_event_id=rule.last_event_id,
         consecutive_failures=rule.consecutive_failures,
-        dead_deliveries=dead[0],
-        last_dead_at=dead[1],
+        disabled_at=rule.disabled_at,
+        wake_for=list(rule.targets or [])[:1],
         created_at=rule.created_at,
         updated_at=rule.updated_at,
     )
@@ -113,27 +110,23 @@ async def list_rules(
             .order_by(WebhookRule.created_at.desc())
         )
     ).scalars().all()
-    # DEAD deliveries per rule, so the console can mark a broken endpoint (R2).
-    # A DEAD delivery's next_attempt_at is when its last attempt ran.
-    dead = {
-        row.rule_id: (int(row.count), row.last)
-        for row in await session.execute(
-            select(
-                WebhookDelivery.rule_id,
-                func.count().label("count"),
-                func.max(func.coalesce(WebhookDelivery.next_attempt_at,
-                                       WebhookDelivery.created_at)).label("last"),
-            )
-            .where(
-                WebhookDelivery.workspace_id == workspace_id,
-                WebhookDelivery.status == "DEAD",
-                WebhookDelivery.created_at >= utcnow() - DEAD_WINDOW,
-            )
-            .group_by(WebhookDelivery.rule_id)
-        )
-    }
-    return WebhookRuleListResponse(
-        items=[_rule_out(row, dead.get(row.id, (0, None))) for row in rows])
+    # DEAD deliveries and the last error, so the console can show failing hooks in red.
+    health = {row.rule_id: row for row in (await session.execute(
+        select(WebhookDelivery.rule_id,
+               func.count().filter(WebhookDelivery.status == "DEAD").label("dead"),
+               func.max(WebhookDelivery.last_error).label("error"))
+        .where(WebhookDelivery.workspace_id == workspace_id,
+               WebhookDelivery.created_at >= utcnow() - timedelta(days=7))
+        .group_by(WebhookDelivery.rule_id))).all()}
+    items = []
+    for row in rows:
+        out = _rule_out(row)
+        stats = health.get(row.id)
+        if stats is not None:
+            out = out.model_copy(update={"dead_deliveries": int(stats.dead or 0),
+                                         "last_error": stats.error})
+        items.append(out)
+    return WebhookRuleListResponse(items=items)
 
 
 async def create_rule(
