@@ -247,7 +247,8 @@ async def test_orientation_first_call_and_next_calls(
     again = await client.get("/v1/orientation", headers=agent)
     assert again.json()["constitution"]["ack_required"] is False
 
-    root = await client.get("/")
+    # The root answers HTML unless JSON is explicit (SEO contract, tests/test_seo.py).
+    root = await client.get("/", headers={"Accept": "application/json"})
     assert root.json()["first_call"] == "get_orientation"
 
 

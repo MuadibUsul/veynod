@@ -1128,7 +1128,8 @@ async def test_dashboard_root_and_openapi(client):
     assert health.json()["version"] == settings.app_version
     assert health.headers["x-request-id"]
 
-    root = await client.get("/")
+    # The root answers HTML unless JSON is explicit (SEO contract, tests/test_seo.py).
+    root = await client.get("/", headers={"Accept": "application/json"})
     assert root.status_code == 200
     assert root.json()["version"] == settings.app_version
     assert set(root.json()["primitives"]) == {
