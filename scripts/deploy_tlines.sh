@@ -20,7 +20,7 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
 API_CONTAINER="${API_CONTAINER:-agentgraph-api}"
 PUBLIC_URL="${PUBLIC_URL:-https://veynod.com}"
 BACKUP_DIR="${BACKUP_DIR:-backups}"
-EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-3.37.0}"
+EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-3.38.0}"
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 log() { printf '\033[1m[deploy]\033[0m %s\n' "$*"; }

@@ -201,20 +201,19 @@ listed paths; Google can still fetch the public landing/docs.
 
 ### P0-6. Legacy domain retirement
 
-User decision: the legacy domain can be shut down. Do it in this order:
+User decision (2026-10-25): the legacy domains are removed from the VPS
+entirely, with no redirect and no compatibility proxy.
 
-1. Inventory clients still using `agentgraph.fusionpropulsion.space`:
-   ZCode, Cursor, external MCP clients, docs links, agent configs.
-2. Update known MCP URLs to `https://veynod.com/mcp/` and re-test.
-3. Caddy: 301 all legacy paths to `https://veynod.com{uri}`.
-4. Keep the legacy DNS record and certificate until the redirect has been
-   active for at least 30 days.
-5. Use Google Search Console's Change of Address for the legacy domain.
-6. Monitor legacy 301s and MCP connection failures for 30 days.
+1. Update every known client to `https://veynod.com/mcp/` or the matching
+   `https://veynod.com/v1/` endpoint. Agent tokens are domain-agnostic; only the
+   base URL changes.
+2. Remove the legacy site blocks from Caddy and reload.
+3. Delete the legacy certificates from Caddy storage.
+4. Delete the DNS records at the provider so the names stop resolving.
+5. Keep the Search Console Change of Address record for historical reporting.
 
-Transitional option if some MCP clients cannot follow redirects: 301 HTML pages
-but keep `/mcp/` and `/v1/` reverse-proxied for a short grace period. Do not
-leave both full sites serving 200 long-term.
+No legacy redirect or MCP grace proxy remains. Old URLs fail and clients must be
+reconfigured to the canonical hostname.
 
 Acceptance: legacy `GET /` returns 301 to the new domain; no duplicate 200
 landing page; old-domain MCP traffic is either migrated or explicitly
@@ -300,7 +299,8 @@ auto-generated thin pages. Chinese pages come after English pages rank and the
 - [x] canonical/OG/Twitter on `/` and every docs page
 - [x] valid JSON-LD on landing, docs and FAQ
 - [x] noindex headers on dashboard/API/MCP/health pages
-- [x] legacy domain 301s to veynod.com; no duplicate 200 landing
+- [x] legacy domains removed from Caddy and certificates deleted; no duplicate
+      or redirecting landing page remains
 - [ ] Search Console verified; sitemap submitted; Bing verified
 - [x] Lighthouse/CWV baseline recorded; no regression (mobile 97 / desktop 95
       performance, 100 SEO; `docs/benchmarks/seo/2026-10-25.md`)
@@ -329,7 +329,7 @@ auto-generated thin pages. Chinese pages come after English pages rank and the
 - `scripts/gen_docs_site.py` — include sitemap data if generated at build time.
 - `dashboard/app/docs/site.generated.json` — source of docs slugs/titles for the
   sitemap.
-- Caddy — legacy domain 301 and static cache headers.
+- Caddy — legacy site blocks and certificates removed; static cache headers.
 - `docs/benchmarks/seo/` — Lighthouse before/after records.
 
 ## 11. Definition of done

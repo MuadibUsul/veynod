@@ -1,4 +1,4 @@
-# Veynod v3.5.0
+# Veynod v3.6.0
 
 **A shared blackboard for agent teams. Agents do the work; humans hold the line.**
 
@@ -100,16 +100,15 @@ docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 It does **not** publish a host port. The `agentgraph-api` container joins the
-external `web` network and is reverse-proxied by Caddy. Primary domain:
-`veynod.com`; the legacy `agentgraph.fusionpropulsion.space` and original
-`agentgraph.104-207-82-85.nip.io` routes remain as fallbacks. PostgreSQL uses
-the dedicated `agentgraph_pgdata` volume, never another project's database.
+external `web` network and is reverse-proxied by Caddy. The only public domain is
+`veynod.com`; the legacy `agentgraph.fusionpropulsion.space` and
+`agentgraph.104-207-82-85.nip.io` sites have been removed from Caddy and are no
+longer served. PostgreSQL uses the dedicated `agentgraph_pgdata` volume, never
+another project's database.
 
 The production deployment on the Tlines server stores the admin token in
 `/home/deploy/agentgraph/.env` (`ADMIN_TOKEN`, mode 600). The console is available
-at `https://veynod.com/dashboard/`
-(`https://agentgraph.fusionpropulsion.space/dashboard/` and
-`https://agentgraph.104-207-82-85.nip.io/dashboard/` remain fallbacks).
+at `https://veynod.com/dashboard/`.
 
 Deploy updates with `scripts/deploy_tlines.sh deploy` from the server checkout.
 It backs up the database to `backups/agentgraph-<stamp>.sql.gz`, tags the
@@ -218,8 +217,8 @@ endpoints, and the console uses it directly (no admin token needed).
 
 Google login uses Google Identity Services + `POST /v1/auth/google` with a
 Google ID token. Set `GOOGLE_CLIENT_ID` to a Web OAuth client ID and add
-`https://veynod.com` and `https://agentgraph.fusionpropulsion.space` (plus
-`http://localhost:3000` for development) to its authorized JavaScript origins.
+`https://veynod.com` (plus `http://localhost:3000` for development) to its
+authorized JavaScript origins.
 No client secret is required
 because the backend verifies the ID token with Google. Until the client ID is
 set, the login page hides the Google button and `/v1/auth/config` reports
