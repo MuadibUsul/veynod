@@ -21,6 +21,7 @@ is the repository source of truth.
 | [v3-requirements](v3-requirements.md) | Original v3 requirement set |
 | [MCP_CONNECTION_LIFECYCLE](MCP_CONNECTION_LIFECYCLE.md) | Proposed: stable MCP connections, credential rotation, TTL and cleanup |
 | [HUMAN_DOCUMENT_LIBRARY_UX](HUMAN_DOCUMENT_LIBRARY_UX.md) | Proposed: search-first human document library and reading view |
+| [SEO_TECHNICAL_PLAN](SEO_TECHNICAL_PLAN.md) | Proposed: English-first technical SEO, HTML root by default, legacy-domain retirement |
 
 ## Operations and security
 
