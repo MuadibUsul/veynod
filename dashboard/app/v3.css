@@ -952,6 +952,11 @@
 
 .diff-list { display: flex; flex-direction: column; }
 
+.alert-detail {
+  margin: 2px 0 12px;
+  border: 1px solid var(--line);
+}
+
 .diff-row {
   border-top: 1px solid var(--line);
   padding: 9px 0;
