@@ -29,6 +29,20 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.6.2",
+        "date": "2026-10-25",
+        "summary": "Latency and cost posture: undeclared clients enqueue indexing by "
+                   "default, while explicit 2026-10-21 clients keep synchronous writes; "
+                   "budget enforcement is on.",
+        "highlights": [
+            "With ASYNC_INDEX_DEFAULT=true, a client that sends no AgentGraph-Version "
+            "returns after storing and queues indexing; an explicit 2026-10-21 client "
+            "still embeds synchronously before returning.",
+            "BUDGET_MODE=enforce makes the per-workspace monthly token/cost budgets and "
+            "rate limits blocking instead of shadow-only.",
+        ],
+    },
+    {
         "version": "3.6.1",
         "date": "2026-10-25",
         "summary": "Review fixes: safe deployment rollback, at-least-once poke hooks, "

@@ -6,8 +6,9 @@ job waits, further writes to the same document only bump ``pending_version``,
 so only the latest version is ever embedded (and billed). Failures retry with
 exponential backoff and end as ``failed`` with a DOC_INDEX_FAILED event.
 
-Baseline clients (API version 2026-10-21) keep 3.2.1 semantics: the write
-embeds synchronously and returns already searchable.
+Baseline clients that explicitly send API version 2026-10-21 keep 3.2.1
+semantics: the write embeds synchronously and returns already searchable.
+Undeclared clients use the deployment default (ASYNC_INDEX_DEFAULT).
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from typing import Any
 from sqlalchemy import and_, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import versioning
 from app.config import get_settings
 from app.database import async_session_factory
 from app.errors import ApiError
@@ -35,7 +37,10 @@ settings = get_settings()
 
 
 def asynchronous() -> bool:
-    return at_least(LATEST_VERSION)
+    """Latest and undeclared clients enqueue; explicit baseline stays synchronous."""
+    return at_least(LATEST_VERSION) or (
+        settings.async_index_default and not versioning.is_declared()
+    )
 
 
 def _now() -> datetime:

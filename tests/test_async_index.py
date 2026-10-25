@@ -20,6 +20,27 @@ pytestmark = pytest.mark.integration
 V2 = {"AgentGraph-Version": "2026-11"}
 
 
+def test_async_index_default_only_for_undeclared(monkeypatch):
+    from app import versioning
+
+    monkeypatch.setattr(indexer.settings, "async_index_default", True)
+    token = versioning.set_version(versioning.BASELINE_VERSION, declared=False)
+    try:
+        assert indexer.asynchronous()
+    finally:
+        versioning.reset_version(token)
+    token = versioning.set_version(versioning.BASELINE_VERSION, declared=True)
+    try:
+        assert not indexer.asynchronous()
+    finally:
+        versioning.reset_version(token)
+    token = versioning.set_version(versioning.LATEST_VERSION, declared=True)
+    try:
+        assert indexer.asynchronous()
+    finally:
+        versioning.reset_version(token)
+
+
 def _db() -> str:
     return os.environ["TEST_DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://", 1)
 

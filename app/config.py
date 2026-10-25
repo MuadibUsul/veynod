@@ -1,4 +1,4 @@
-"""Application configuration for Veynod v3.6.1."""
+"""Application configuration for Veynod v3.6.2."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ app
     app_name: str = "Veynod"
     # Bump on every release and add notes in app/services/releases.py.
-    app_version: str = "3.6.1"
+    app_version: str = "3.6.2"
     environment: Literal["development", "staging", "production", "test"] = "development"
     debug: bool = False
     host: str = "0.0.0.0"
@@ -242,6 +242,9 @@ class Settings(BaseSettings):
     index_worker_enabled: bool = True
     index_worker_interval_seconds: float = Field(default=1.0, ge=0.1, le=60)
     index_worker_batch: int = Field(default=20, ge=1, le=500)
+    # Undeclared clients (no AgentGraph-Version) enqueue indexing when true.
+    # A client that explicitly sends 2026-10-21 still gets synchronous indexing.
+    async_index_default: bool = False
     # Scheduled exports (AG-ST-02 point 6): a weekly full baseline and daily
     # increments per root tenant, kept this many days. Off by default.
     scheduled_exports: bool = False

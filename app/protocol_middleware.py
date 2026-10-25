@@ -165,7 +165,7 @@ class ProtocolMiddleware:
             await response(scope, receive, send)
             return
         version = declared or versioning.BASELINE_VERSION
-        token = versioning.set_version(version)
+        token = versioning.set_version(version, declared=declared is not None)
 
         collected = warnings_context.begin_collection()
         merge = not scope.get("path", "").startswith("/mcp")

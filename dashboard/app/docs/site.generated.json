@@ -9777,6 +9777,14 @@
      "type": "p"
     },
     {
+     "text": {
+      "en": "Some deployments set ASYNC_INDEX_DEFAULT=true: a request without the version header returns after storing and indexes in the background, while an explicit 2026-10-21 request keeps synchronous indexing.",
+      "zh": "部分部署会设置 ASYNC_INDEX_DEFAULT=true：不带版本请求头的写入会先保存、在后台索引；显式发送 2026-10-21 的请求仍同步索引。"
+     },
+     "tone": "info",
+     "type": "callout"
+    },
+    {
      "code": "curl -sS \\\n  \"$AGENTGRAPH_URL/v1/whoami\" \\\n  -H \"Authorization: Bearer $AGENTGRAPH_TOKEN\"",
      "label": {
       "en": "Check who you are",

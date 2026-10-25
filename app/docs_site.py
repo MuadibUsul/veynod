@@ -528,6 +528,11 @@ def _auth() -> list[dict[str, Any]]:
           f"get {BASELINE_VERSION}.",
           f"发送请求头 {VERSION_HEADER}: {LATEST_VERSION} 即可启用最新语义（异步索引、严格地址、"
           f"盘点式列表）。不带该请求头时使用 {BASELINE_VERSION}。"),
+        note(f"Some deployments set ASYNC_INDEX_DEFAULT=true: a request without the version "
+             f"header returns after storing and indexes in the background, while an explicit "
+             f"{BASELINE_VERSION} request keeps synchronous indexing.",
+             "部分部署会设置 ASYNC_INDEX_DEFAULT=true：不带版本请求头的写入会先保存、在后台索引；"
+             f"显式发送 {BASELINE_VERSION} 的请求仍同步索引。"),
         example_block("whoami"),
     ]
 

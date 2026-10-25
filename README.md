@@ -1,4 +1,4 @@
-# Veynod v3.6.1
+# Veynod v3.6.2
 
 **A shared blackboard for agent teams. Agents do the work; humans hold the line.**
 
@@ -692,7 +692,7 @@ pytest -q
 ruff check .
 ```
 
-The test suite (360 tests collected for 3.6.1) covers the blackboard engine, JSON/section patches, leases and
+The test suite (361 tests collected for 3.6.2) covers the blackboard engine, JSON/section patches, leases and
 fencing epochs, circuit breaker, human sovereignty, conflict-aware batch undo,
 document versions/verification/trust, SSE outbox replay, concurrency (10
 simultaneous claims with exactly one winner), dependency cycles, RBAC, quotas,
@@ -1160,7 +1160,7 @@ Implemented in v3.2:
   active content/unsafe URLs, repairs existing documents via an admin endpoint,
   and renders legacy raw HTML through a sanitized `rehype-raw` pipeline.
 
-Verification for 3.6.1: targeted regression tests, production smoke test,
+Verification for 3.6.2: targeted regression tests, production smoke test,
 public HTTPS dashboard, and a real retrieval benchmark
 (`docs/benchmarks/latest.md`).
 
@@ -1195,7 +1195,10 @@ See also: [design audit and acceptance](docs/design-system/ACCEPTANCE_REPORT.md)
 
 ---
 
-**Veynod v3.6.1** — review fixes: deploy failure rolls back the image only, poke hooks
+**Veynod v3.6.2** — latency and cost posture: undeclared clients enqueue indexing by default,
+while explicit `2026-10-21` clients keep synchronous writes; budget enforcement is on.
+
+**Earlier: Veynod v3.6.1** — review fixes: deploy failure rolls back the image only, poke hooks
 acknowledge only after success, Claude Code setup restores its previous config on
 failure, root content negotiation honours q-values, and agent display names are
 consistent across the console.
