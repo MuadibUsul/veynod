@@ -896,7 +896,7 @@ OPENAI_BASE_URL=https://api.jina.ai/v1
 | `ASYNC_INDEX_DEFAULT` | `true` | 未声明 `AgentGraph-Version` 的客户端写入后入队索引；显式 `2026-10-21` 仍同步索引 |
 | `BUDGET_MODE` | `enforce` | 月度 token/成本预算和速率限制开始拒绝超限调用 |
 | `QUALITY_CONTROL` | 未设置 / false | 自动质量门禁不强制，人工审核仍可用 |
-| `SCHEDULED_EXPORTS` | 未设置 / false | 定时导出关闭 |
+| `SCHEDULED_EXPORTS` | `true` | 每周完整 + 每日增量导出；当前保留在本机存储 |
 | `PG_ARCHIVE_MODE` | 未设置 / off | 只有逻辑备份，没有 WAL PITR |
 | `BACKUP_UPLOAD_COMMAND` | 未设置 | 备份留在 VPS 本地，没有异地副本 |
 
