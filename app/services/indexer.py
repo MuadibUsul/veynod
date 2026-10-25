@@ -336,6 +336,10 @@ async def _index_one(document_id, workspace_id, reindex) -> bool:
         }
         # Bill a first indexing to the writer of the version being indexed.
         set_current_stamp(stamp)
+        # A rebuild re-embeds everything; a new version reuses unchanged chunks (R6).
+        from app.services.retrieval import REUSE_VECTORS
+
+        reuse = REUSE_VECTORS.set(not rebuild)
         try:
             await reindex(session, document)
         except Exception as exc:  # noqa: BLE001 - provider boundary
@@ -343,6 +347,7 @@ async def _index_one(document_id, workspace_id, reindex) -> bool:
             await _record_failure(document_id, snapshot, exc)
             return False
         finally:
+            REUSE_VECTORS.reset(reuse)
             set_current_stamp(previous_stamp)
         row.indexed_version = version
         row.indexed_at = _now()

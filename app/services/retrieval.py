@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from collections import OrderedDict
+from contextvars import ContextVar
 from typing import Any
 
 from sqlalchemy import delete, select, text
@@ -16,13 +18,20 @@ from app.models import DocumentChunk, SharedDocument
 
 settings = get_settings()
 
+# False while an index that already existed is rebuilt: a rebuild re-embeds
+# everything on purpose, so it must not reuse the vectors it replaces.
+REUSE_VECTORS: ContextVar[bool] = ContextVar("reuse_vectors", default=True)
+
+
+def embed_key(model: str, text_value: str) -> str:
+    """What makes a vector reusable: the model, its dimensions and the exact text."""
+    material = f"{model}\n{settings.embedding_dimensions}\n{text_value}"
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
 
 async def reindex_document_chunks(
     session: AsyncSession, document: SharedDocument
 ) -> int:
-    await session.execute(
-        delete(DocumentChunk).where(DocumentChunk.document_id == document.id)
-    )
     chunks = split_markdown(
         document.content,
         chunk_size=settings.chunk_size_chars,
@@ -35,15 +44,38 @@ async def reindex_document_chunks(
         ).strip()
         for chunk in chunks
     ]
-    vectors = await provider.embed(texts)
-    from app.services.budget import meter_embedding
-    from app.services.token_budget import stamp_chain
+    keys = [embed_key(provider.model, item) for item in texts]
+    # R6: a new version embeds only the chunks whose text changed; unchanged ones
+    # keep their vectors (sections are chunked separately, so an edit stays local).
+    known: dict[str, Any] = {}
+    if REUSE_VECTORS.get() and keys:
+        known = {
+            row.embed_hash: row.embedding
+            for row in await session.execute(
+                select(DocumentChunk.embed_hash, DocumentChunk.embedding).where(
+                    DocumentChunk.document_id == document.id,
+                    DocumentChunk.embed_hash.in_(set(keys)),
+                    DocumentChunk.embedding.is_not(None),
+                )
+            )
+        }
+    missing = list(dict.fromkeys(key for key in keys if key not in known))
+    if missing:
+        text_of = dict(zip(keys, texts, strict=True))
+        fresh = await provider.embed([text_of[key] for key in missing])
+        known.update(zip(missing, fresh, strict=True))
+        from app.services.budget import meter_embedding
+        from app.services.token_budget import stamp_chain
 
-    await meter_embedding(
-        document.workspace_id, sum(len(item) for item in texts), kind="chunks",
-        model=provider.model, chain=stamp_chain(document.updated_stamp),
+        await meter_embedding(
+            document.workspace_id, sum(len(text_of[key]) for key in missing), kind="chunks",
+            model=provider.model, chain=stamp_chain(document.updated_stamp),
+        )
+    vectors = [known[key] for key in keys]
+    await session.execute(
+        delete(DocumentChunk).where(DocumentChunk.document_id == document.id)
     )
-    for chunk, vector in zip(chunks, vectors, strict=True):
+    for chunk, key, vector in zip(chunks, keys, vectors, strict=True):
         session.add(
             DocumentChunk(
                 workspace_id=document.workspace_id,
@@ -55,6 +87,7 @@ async def reindex_document_chunks(
                 content_hash=chunk.content_hash,
                 embedding=vector,
                 embedding_model=provider.model,
+                embed_hash=key,
             )
         )
     if vectors:

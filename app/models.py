@@ -1039,6 +1039,8 @@ class DocumentChunk(Base):
         Vector(get_settings().embedding_dimensions), nullable=True
     )
     embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # sha256 of model, dimensions and the embedded text: equal hash, reusable vector (R6).
+    embed_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     search_vector: Mapped[Any | None] = mapped_column(
         TSVECTOR,
         Computed(

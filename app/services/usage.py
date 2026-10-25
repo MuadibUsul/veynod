@@ -163,9 +163,9 @@ RETURNING count
                 "limit_bytes": settings.embedding_bytes_per_minute,
             },
         )
-    from app.services.budget import meter_embedding
-
-    await meter_embedding(workspace_id, chars, kind="document")
+    # No token metering here (R6): documents are never embedded whole, and the
+    # chunks that are embedded are metered when they are (retrieval). Metering
+    # the whole document too billed every synchronous write twice.
 
 
 async def record_usage(
