@@ -1,4 +1,4 @@
-# Veynod v3.2.1
+# Veynod v3.5.0
 
 **A shared blackboard for agent teams. Agents do the work; humans hold the line.**
 
@@ -6,6 +6,7 @@ Veynod is the product formerly known as AgentGraph. The repository, Python packa
 
 The console ships with a persistent **English / 中文** language switch (EN/中文 in the top bar) covering navigation, boards, documents, agents, audit, governance, modals and formatted dates/numbers. Veynod is a human-in-the-loop multi-agent workspace: versioned and verifiable shared documents, reviewed proposals with a Proposal Arena, path policies and JSON Schema gates, taint propagation from untrusted sources, human accounts with database row security, chunked hybrid retrieval, persistent signed webhooks, approved external actions with compensation, token/cost budgets, scoped agent tokens, a replayable transactional event outbox, and conflict-aware session-batch undo — all on a single PostgreSQL 16 + pgvector core with REST and MCP access.
 
+**文档索引：** [docs/README.md](docs/README.md)（入门、架构、Agent、运维安全、需求规格）。  
 **完整中文架构与路径说明：** [docs/PROJECT_ARCHITECTURE.md](docs/PROJECT_ARCHITECTURE.md)（项目介绍、完整目录树、数据模型、核心流程、API/MCP、权限矩阵、部署与扩展点）。
 
 ```
