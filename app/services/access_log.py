@@ -122,6 +122,26 @@ async def flush() -> int:
         cap = settings.access_log_max_objects
         try:
             async with async_session_factory() as session:
+                # A workspace can be deleted between the request and this flush.
+                # Its rows would fail the tenant trigger forever, so drop them
+                # instead of poisoning the whole buffer.
+                alive: set[str] = set()
+                for workspace in {key[0] for key in pending}:
+                    if await session.scalar(
+                        text("SELECT 1 FROM workspaces WHERE id = CAST(:w AS uuid)"),
+                        {"w": workspace},
+                    ):
+                        alive.add(workspace)
+                skipped = {key for key in pending if key[0] not in alive}
+                if skipped:
+                    logger.info(
+                        "dropping %s access-log bucket(s) for deleted workspace(s)",
+                        len(skipped),
+                    )
+                    pending = {key: entry for key, entry in pending.items()
+                               if key[0] in alive}
+                if not pending:
+                    return 0
                 for (workspace, principal, token, bucket), entry in pending.items():
                     await session.execute(
                         text(
