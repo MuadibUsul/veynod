@@ -302,7 +302,8 @@ auto-generated thin pages. Chinese pages come after English pages rank and the
 - [x] noindex headers on dashboard/API/MCP/health pages
 - [x] legacy domain 301s to veynod.com; no duplicate 200 landing
 - [ ] Search Console verified; sitemap submitted; Bing verified
-- [ ] Lighthouse/CWV baseline recorded; no regression
+- [x] Lighthouse/CWV baseline recorded; no regression (mobile 97 / desktop 95
+      performance, 100 SEO; `docs/benchmarks/seo/2026-10-25.md`)
 - [x] Agent docs unchanged: root JSON contract retained for agents
 - [x] No Chinese `/zh/` or hreflang in this phase
 
