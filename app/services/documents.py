@@ -1800,7 +1800,9 @@ async def patch_document_section(
         namespace=document.namespace,
     )
     await session.commit()
-    return await _mutation_response(session, document, batch)
+    response = await _mutation_response(session, document, batch)
+    response.rebased = rebased
+    return response
 
 
 @access_log.reads("document")

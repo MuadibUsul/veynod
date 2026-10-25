@@ -473,6 +473,11 @@ def classify(
 ) -> dict[str, Any]:
     """Return the protocol fields to merge into an error object."""
     spec = spec_for(code, status)
+    if isinstance(details, dict) and details.get("retry_with"):
+        # The request only lacked the flags the error names (a document the trust
+        # filter hides answers not_found): resend with them, do not give up (R5).
+        spec = _spec(status, FIX_REQUEST, "Resend with details.retry_with.",
+                     "resend_with_retry_with")
     delay = retry_after_ms(headers)
     if delay is None and isinstance(details, dict):
         raw = details.get("retry_after_ms")

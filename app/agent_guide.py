@@ -270,6 +270,27 @@ def render(live: bool = True) -> str:
         "",
         "Events are delivered at least once; deduplicate by `event_id`.",
         "",
+        "An error whose `details.retry_with` names flags (a document hidden by the trust "
+        "filter answers `not_found` this way) has class `fix_request` and action "
+        "`resend_with_retry_with`: resend with those flags instead of giving up.",
+        "",
+        "## Write conflicts",
+        "",
+        "- Read, then write with what you read: `expected_version` is the version you "
+        "read (0 creates). Never write a version you have not seen.",
+        "- 409 `version_conflict`: someone wrote first. `details` has `current_version`, "
+        "`current_hash` and `updated_by_type` (`human` means a person edited it; keep "
+        "their change). Pass `return_current_on_conflict=true` to get the current text "
+        "in the same answer. Merge your change into it and write again with "
+        "`expected_version=current_version`; never resend the same body.",
+        "- Editing one section? Use `patch_doc_section`. Over MCP it rebases by default: "
+        "a newer version whose change is elsewhere is merged; only a change to your own "
+        "section answers 409 `rebase_conflict` (with base, current and proposed text) or "
+        "`section_conflict`. Over REST pass `rebase=true` or `section_hash`.",
+        "- Several writers on one log or journal: `append_entries` never conflicts.",
+        "- 409 `contention` (5 conflicts in 10 s): wait for `Retry-After`, or patch a "
+        "section instead of rewriting the document.",
+        "",
         "## Leases",
         "",
         "- `agent_claim_and_read` returns `lease` with `lease_id`, `fencing_token`, "

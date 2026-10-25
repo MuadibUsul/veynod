@@ -1682,6 +1682,10 @@ class DocumentMutationResponse(BaseModel):
         default=None,
         description="How another agent reads this version back: the uri and the flags "
                     "its default trust filter needs")
+    rebased: bool | None = Field(
+        default=None,
+        description="Section patches: true when a newer version was merged because only "
+                    "other sections had changed (re-read before relying on the rest)")
 
 
 class DocumentBatchUpsertResult(BaseModel):

@@ -2273,16 +2273,20 @@ async def patch_doc_section(
     include_content: bool = False,
     return_current_on_conflict: bool = False,
     section_hash: str | None = None,
+    rebase: bool = True,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """Replace only one Markdown section (by heading) instead of the whole doc.
 
-    Pass expected_version, or section_hash (sha256 of the section body you
-    read; GET /v1/documents/{key}/sections lists them): then only that section
-    must be unchanged, and patches to other sections never conflict (409
-    section_conflict carries current_section_hash). The response is compact
-    unless include_content=true.
+    Pass expected_version (the version you read), or section_hash (sha256 of the
+    section body you read; GET /v1/documents/{key}/sections lists them). Either
+    way only your section must be unchanged: with rebase=true (the default) a
+    newer version whose change is elsewhere is merged (rebased=true in the
+    result); if your section changed you get 409 rebase_conflict with the base,
+    current and proposed text, or section_conflict in section_hash mode.
+    rebase=false refuses any newer version (409 version_conflict). The response
+    is compact unless include_content=true.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -2293,6 +2297,9 @@ async def patch_doc_section(
                 new_markdown=new_markdown,
                 expected_version=expected_version,
                 section_hash=section_hash,
+                # R5 (bug 17): MCP had no rebase, so any change elsewhere in the
+                # document refused a section patch; REST keeps rebase=false.
+                rebase=rebase,
                 agent=_actor(principal, agent) if principal.is_commander else agent,
                 session_batch_id=_batch(session_batch_id),
             )
