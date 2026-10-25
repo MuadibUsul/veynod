@@ -198,7 +198,11 @@ export function configureClaudeCode(
         "--header", `Authorization: Bearer ${key}`],
       { stdio: "ignore" },
     );
-    if (existsSync(backupPath)) unlinkSync(backupPath);
+    try {
+      unlinkSync(backupPath);
+    } catch {
+      // A stale backup is harmless; the new config is already active.
+    }
     return "Claude Code (user scope)";
   } catch (error) {
     if (hadConfig && existsSync(backupPath)) {
