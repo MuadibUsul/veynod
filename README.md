@@ -691,11 +691,11 @@ pytest -q
 ruff check .
 ```
 
-**75 tests** cover the blackboard engine, JSON/section patches, leases and
+The test suite (359 tests collected for 3.6.0) covers the blackboard engine, JSON/section patches, leases and
 fencing epochs, circuit breaker, human sovereignty, conflict-aware batch undo,
 document versions/verification/trust, SSE outbox replay, concurrency (10
 simultaneous claims with exactly one winner), dependency cycles, RBAC, quotas,
-MCP tools, dashboard serving, and v3 REST flows.
+MCP tools, dashboard serving, incremental re-embedding, and v3 REST flows.
 
 Both migration paths were verified:
 
@@ -1159,8 +1159,8 @@ Implemented in v3.2:
   active content/unsafe URLs, repairs existing documents via an admin endpoint,
   and renders legacy raw HTML through a sanitized `rehype-raw` pipeline.
 
-Verification: `100 passed` against a fresh pgvector database, production smoke
-test, public HTTPS dashboard, and a real retrieval benchmark
+Verification for 3.6.0: targeted regression tests, production smoke test,
+public HTTPS dashboard, and a real retrieval benchmark
 (`docs/benchmarks/latest.md`).
 
 Remaining honest boundaries:
