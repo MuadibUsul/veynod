@@ -337,12 +337,15 @@ async def test_renewal_and_expiry(tree):
 
     conn = await asyncpg.connect(_dsn())
     try:
-        await conn.execute("UPDATE agent_tokens SET expires_at = NOW() - INTERVAL '1 minute' "
+        # Decision 5 (2026-10-24): renewed in place within 7 days of expiry
+        # (test_token_lifecycle); after that it is too late.
+        await conn.execute("UPDATE agent_tokens SET expires_at = NOW() - INTERVAL '8 days' "
                            "WHERE canonical_id = $1", child["token_id"])
         late = await client.post(f"/v1/tokens/{child['token_id']}/renew",
                                  headers=parent["headers"], json={"ttl_seconds": 600})
         assert late.status_code == 409
         assert late.json()["error"]["code"] == "token_already_expired"
+        assert late.json()["error"]["details"]["renewable_for_days"] == 7
 
         other = await _issued(client, parent["headers"], scopes=["docs:read"])
         await conn.execute("UPDATE agent_tokens SET expires_at = NOW() - INTERVAL '1 minute' "

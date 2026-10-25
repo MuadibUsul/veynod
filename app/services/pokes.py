@@ -258,7 +258,7 @@ async def set_wake_url(session: AsyncSession, principal: Principal,
         "WHERE workspace_id = :ws AND :t = ANY(token_ids) LIMIT 1"),
         {"ws": principal.workspace.id, "t": principal.token_cid})).mappings().one_or_none()
     if entry is None:
-        raise ApiError(409, "not_registered", "register_agent first: the wake URL belongs "
+        raise ApiError(409, "agent_not_registered", "register_agent first: the wake URL belongs "
                        "to your directory entry", details={"register_with": "register_agent"})
     name = f"wake:{entry['agent_id']}"[:128]
     from sqlalchemy import select

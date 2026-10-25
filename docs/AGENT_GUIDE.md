@@ -61,7 +61,7 @@ not taint your document; citing external or tainted content does.
 
 ## Keeping your token alive
 
-You hear `TOKEN_EXPIRING` in your inbox before your token expires; ask its
+You hear `token.expiring` in your inbox before your token expires; ask its
 parent to `renew_token`. A token that expired less than 7 days ago (and was
 not revoked) is renewed in place: same id, agent_id, secret and assignments.
 `rotate_token_secret` gives the same token a new secret; the old one keeps
@@ -240,6 +240,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `account_link_required` | 409 | `fix_request` |
 | `admin_access_required` | 409 | `fix_request` |
 | `agent_id_taken` | 409 | `fix_request` |
+| `agent_not_registered` | 409 | `fix_request` |
 | `agent_token_exists` | 409 | `fix_request` |
 | `alias_taken` | 409 | `fix_request` |
 | `alias_tombstoned` | 409 | `fix_request` |
@@ -256,7 +257,6 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `locate_required` | 409 | `fix_request` |
 | `log_document_append_only` | 409 | `fix_request` |
 | `not_a_log_document` | 409 | `fix_request` |
-| `not_registered` | 409 | `fix_request` |
 | `policy_exists` | 409 | `fix_request` |
 | `proposal_required` | 409 | `fix_request` |
 | `quality_circuit_open` | 409 | `fix_request` |

@@ -1287,12 +1287,14 @@ async def list_tasks(
     parent: str | None = None,
     kind: str | None = None,
     claimable_by_me: bool = False,
+    task_key: Annotated[str | None, Field(max_length=2_000)] = None,
     limit: Annotated[int, Field(ge=1, le=500)] = 50,
     detail: Literal["summary", "standard", "full"] = "summary",
 ) -> dict[str, Any]:
     """List tasks. claimable_by_me=true: what you may claim now (role, assignee,
-    capabilities); assignee="me": tasks assigned to you; parent: a task's children.
-    status is a comma-separated list. This mirrors REST GET /v1/tasks.
+    capabilities); assignee="me": tasks assigned to you; parent: a task's children;
+    task_key: comma-separated task keys or ids. status is a comma-separated list.
+    This mirrors REST GET /v1/tasks.
     detail=summary (default): key, title, status, priority, namespace, version,
     updated_at, role and holder; standard/full: every field.
     """
@@ -1306,6 +1308,10 @@ async def list_tasks(
                 assigned_role=assigned_role, namespace=namespace, limit=limit,
                 assignee=assignee, required_role=required_role, parent=parent, kind=kind,
                 claimable_by_me=claimable_by_me,
+                # 2026-10-24 #11 on the MCP side: an unknown argument was dropped,
+                # so task_key used to return the whole board here too.
+                task_keys=[item.strip() for item in (task_key or "").split(",")
+                           if item.strip()],
             )
         except ApiError as exc:
             raise _api_error(exc) from exc

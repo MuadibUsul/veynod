@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import uuid
 
+import httpx
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -66,7 +67,10 @@ async def test_claimable_means_what_claim_task_accepts(client, admin_headers, wo
     assert refused.status_code == 403, refused.text
 
 
-async def test_task_key_filter_and_shape(client, admin_headers, workspace):
+async def test_task_key_filter_and_shape(client, api_base_url, admin_headers, workspace):
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+
     owner = workspace["headers"]
     first = await _task(client, owner, namespace="board", task_key="KEY-1")
     await _task(client, owner, namespace="board", task_key="KEY-2")
@@ -75,6 +79,17 @@ async def test_task_key_filter_and_shape(client, admin_headers, workspace):
     # #11: ?task_key= filters (keys or canonical ids, comma-separated).
     picked = await client.get("/v1/tasks", headers=owner, params={"task_key": "KEY-1,KEY-3"})
     assert _keys(picked) == {"KEY-1", "KEY-3"}
+    # ... and so does MCP list_tasks, which used to drop the argument.
+    agent, _ = await _agent(client, admin_headers, workspace, "EXECUTOR", ["board"])
+    async with httpx.AsyncClient(headers=agent, timeout=60) as http:
+        async with streamable_http_client(f"{api_base_url}/mcp/", http_client=http) as (
+                read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                listed = await session.call_tool("list_tasks", {"task_key": "KEY-2"})
+                assert not listed.isError, listed.content
+                assert {item["task_key"] for item in listed.structuredContent["items"]} == {
+                    "KEY-2"}
     if first.get("canonical_id"):
         by_id = await client.get("/v1/tasks", headers=owner,
                                  params={"task_key": first["canonical_id"]})
