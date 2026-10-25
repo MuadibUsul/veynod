@@ -249,17 +249,18 @@ export function AgentConnect({
   const base = normalizeBase(apiBase) || (typeof window !== "undefined" ? window.location.origin : "");
   const endpoint = `${base}/mcp/`;
   const cursor = JSON.stringify(
-    { mcpServers: { agentgraph: { url: endpoint, headers: { Authorization: `Bearer ${agentKey}` } } } },
+    // Same server name and variable as `npx veynod init`, so the two never duplicate.
+    { mcpServers: { veynod: { url: endpoint, headers: { Authorization: `Bearer ${agentKey}` } } } },
     null,
     2,
   );
   const claude = JSON.stringify(
     {
       mcpServers: {
-        agentgraph: {
+        veynod: {
           command: "npx",
-          args: ["-y", "mcp-remote", endpoint, "--header", "Authorization:${AGENTGRAPH_AUTH}"],
-          env: { AGENTGRAPH_AUTH: `Bearer ${agentKey}` },
+          args: ["-y", "mcp-remote", endpoint, "--header", "Authorization:${VEYNOD_AUTH}"],
+          env: { VEYNOD_AUTH: `Bearer ${agentKey}` },
         },
       },
     },

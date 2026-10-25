@@ -18,9 +18,9 @@ pytestmark = pytest.mark.integration
 
 ROOT = Path(__file__).resolve().parent.parent
 GENERATED = ROOT / "dashboard" / "app" / "docs" / "site.generated.json"
-ALLOWED_CONSTANTS = {"AGENTGRAPH_AUTH", "AGENTGRAPH_TOKEN", "AGENTGRAPH_URL",
-                     "HUMAN_SOVEREIGNTY_LOCKED", "IN_PROGRESS", "NAMESPACE_FORBIDDEN",
-                     "AGENT_CLAIM"}
+ALLOWED_CONSTANTS = {"AGENTGRAPH_TOKEN", "AGENTGRAPH_URL", "VEYNOD_AUTH", "VEYNOD_KEY",
+                     "XAI_API_KEY", "HUMAN_SOVEREIGNTY_LOCKED", "IN_PROGRESS",
+                     "NAMESPACE_FORBIDDEN", "AGENT_CLAIM"}
 
 
 def test_generated_site_is_current_and_clean():
@@ -143,12 +143,22 @@ async def test_published_mcp_example_calls_get_orientation(
     )
     assert result.returncode == 0, result.stderr
     assert f"connected as {signature}" in result.stdout
-    cursor = json.loads(configs["cursor"])["mcpServers"]["agentgraph"]
-    claude = json.loads(configs["claude_desktop"])["mcpServers"]["agentgraph"]
+    # The server name and variable are the ones `npx veynod init` writes.
+    cursor = json.loads(configs["cursor"])["mcpServers"]["veynod"]
+    claude = json.loads(configs["claude_desktop"])["mcpServers"]["veynod"]
     assert cursor["url"] == configs["endpoint"] and cursor["url"].endswith("/mcp/")
     assert cursor["headers"]["Authorization"].startswith("Bearer ")
     assert configs["endpoint"] in claude["args"]
-    assert claude["env"]["AGENTGRAPH_AUTH"].startswith("Bearer ")
+    assert claude["env"]["VEYNOD_AUTH"].startswith("Bearer ")
+    assert "--transport http" in configs["claude_code"]
+    assert configs["endpoint"] in configs["claude_code"]
+    # The Grok request body is valid JSON with a remote MCP tool pointing here.
+    body = json.loads(configs["grok"].split("-d '", 1)[1].rstrip("'"))
+    tool = body["tools"][0]
+    assert tool["type"] == "mcp" and tool["server_url"] == configs["endpoint"]
+    assert tool["server_label"] and tool["headers"]["Authorization"].startswith("Bearer ")
+    cli = (Path(__file__).resolve().parent.parent / "cli" / "bin" / "veynod.mjs").read_text()
+    assert 'SERVER_NAME = "veynod"' in cli and "VEYNOD_AUTH" in cli
 
 
 async def test_new_owner_completes_the_checklist(client):
