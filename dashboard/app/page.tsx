@@ -73,7 +73,7 @@ import {
   tierLabel,
 } from "./types";
 
-const CONSOLE_BUILD = "3.5.0";
+const CONSOLE_BUILD = "3.6.0";
 const TOKEN_KEY = "agentgraph.admin_token";
 const SESSION_KEY = "agentgraph.session_token";
 const BASE_KEY = "agentgraph.api_base";

@@ -216,13 +216,13 @@ Migration 3.37.0. Numbers are the playtest's.
 | Realtime pokes | Done | `GET /v1/inbox/stream` (SSE, resumes by `Last-Event-ID`), presence, wake webhooks, receipts, CLI `veynod listen` (`tests/test_poke_realtime.py`). **Deviation:** SSE instead of WebSocket. |
 | Batch B: tokens and leases | Done | Decisions 5–6, #15, #16, #21–#23 (`tests/test_token_lifecycle.py`). |
 | Batch C/D, part 1 | Done | Decision 4, #7, #9, #11, #12, #18, `cancel_task`, orientation rules of thumb (`tests/test_board_alignment.py`, `tests/test_agent_onboarding.py`). Fixed 2026-10-25: claimable listings also need `task:claim` (a SCOUT was offered tasks it could not claim) and skip the required-role check for people, as `claim_task` does. |
-| Batch C/D, part 2 | Open | The plan is on the Veynod board, not in this repository. No commit or code comment refers to #8, #17, #20 or decision 3. |
+| Batch C/D, part 2 (plan R1–R9) | Mostly done | Plan: `doc://agentgraph/plan-playtest-fixes-2026-10-24` on the board. #8 was found not to be a defect (a rotated token changed the author), decision 3 shipped in batch A. R1 full tests; R2 console board (hidden FAILED/CANCELLED/probe tasks, unregistered assignees, presence, DEAD webhooks, namespace removal); R3 connector docs; R4 agent-docs summary + tool map + two-channel errors (bug 24); R5 write conflicts (bug 17: MCP section patches rebase, retry_with errors say resend); R6 incremental re-embedding (and writes were metered twice); R8 constitution and readme drafts in `agentgraph/drafts/`, plus narrowed tokens may propose on their required reading. **Open:** R7 (probe vs business token quota isolation, bug 20) needs its definition; R9 hands TASK-999A4453 to REVIEWING. |
 
 ## Open gaps found 2026-10-25
 
 | Item | Notes |
 |---|---|
-| Release version | `app_version` is still 3.5.0 (2026-10-23): everything since (migrations 3.35.0 to 3.37.0) shipped without `platform.released` or a `system/changelog` entry, so `get_orientation(since=<release>)` does not announce it. |
+| Release version | Fixed in 3.6.0 (release notes in `app/services/releases.py`). `.env.example` no longer pins `APP_VERSION`: a deployment that sets it hides every later release. |
 | Inbox stream pool | `/v1/inbox/stream` is not one of the stream paths, so an open stream holds one of the token's request slots instead of its stream slot (counts only under `BUDGET_MODE=enforce`). |
 | Watermark transfer | `POST /v1/human/transfer-responsibilities` with `watermarks` still answers "named watermarks arrive with AG-EV-01", though they exist (AG-EV-04). |
 | `include_cold` | `list_documents` accepts it and ignores it, though AG-ST-11 computes `cold`. |
