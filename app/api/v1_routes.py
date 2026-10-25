@@ -304,17 +304,56 @@ async def delete_subscription(
 async def agent_docs(
     request: Request,
     format: str = Query(default="json", pattern="^(json|markdown)$"),
+    detail: Literal["summary", "full"] = Query(
+        default="summary",
+        description="summary (default, a few KB): connection, conventions, limits and the "
+                    "MCP tool to REST map; full: also the guide, every error code and the "
+                    "OpenAPI paths (about 400 KB)"),
     principal: Principal = Depends(get_principal),
 ):
     """Read-only API/MCP documentation available to every workspace token."""
     if format == "markdown":
         return PlainTextResponse(agent_guide.render(), media_type="text/markdown")
+    base = str(request.base_url).rstrip("/")
+    if detail == "summary":
+        # R4: the full document was ~400 KB, most of it OpenAPI; agents read it whole.
+        from app import capabilities
+
+        return {
+            **_agent_docs_head(base, request.app.version),
+            "conventions": _agent_docs_conventions(full=False),
+            "limits": agent_guide.limits(),
+            "trust_defaults": agent_guide.trust_defaults(),
+            "tool_map": capabilities.tool_map(request.app),
+            "more": {
+                "full": "GET /v1/agent-docs?detail=full",
+                "guide": "GET /v1/agent-docs?format=markdown or get_api_docs(section='guide')",
+                "error_codes": "get_api_docs(section='errors')",
+                "openapi": "GET /v1/openapi.json",
+                "capabilities": "get_api_docs(section='capabilities')",
+            },
+        }
     openapi = request.app.openapi()
     paths = _agent_paths(openapi)
-    base = str(request.base_url).rstrip("/")
+    return {
+        **_agent_docs_head(base, openapi.get("info", {}).get("version")),
+        "conventions": _agent_docs_conventions(full=True),
+        "guide": agent_guide.render(),
+        "limits": agent_guide.limits(),
+        "trust_defaults": agent_guide.trust_defaults(),
+        "openapi": {
+            "openapi": openapi.get("openapi"),
+            "info": openapi.get("info"),
+            "components": openapi.get("components"),
+            "paths": paths,
+        },
+    }
+
+
+def _agent_docs_head(base: str, version: str | None) -> dict:
     return {
         "name": "Veynod",
-        "version": openapi.get("info", {}).get("version"),
+        "version": version,
         "base_url": f"{base}/v1",
         "mcp_endpoint": f"{base}/mcp/",
         "authentication": {
@@ -335,27 +374,23 @@ async def agent_docs(
             "Use POST /v1/documents/{doc_key}/archive and /restore instead of hard deletion.",
             "Poll incrementally with GET /v1/workspace/map?since=<next_cursor>.",
         ],
-        "conventions": {
-            "errors": protocol_docs("summary")["error_shape"],
-            "protocol": protocol_docs("summary"),
-            "error_codes": protocol_docs("errors")["codes"],
-            "pagination": (
-                "Pass next_cursor back as cursor; "
-                "next_cursor=null means the listing is complete."
-            ),
-            "version_conflict": "The 409 details include current_version, current_hash and latest.",
-            "batch_limits": {"upsert": 25, "dereference": 25},
-        },
-        "guide": agent_guide.render(),
-        "limits": agent_guide.limits(),
-        "trust_defaults": agent_guide.trust_defaults(),
-        "openapi": {
-            "openapi": openapi.get("openapi"),
-            "info": openapi.get("info"),
-            "components": openapi.get("components"),
-            "paths": paths,
-        },
     }
+
+
+def _agent_docs_conventions(*, full: bool) -> dict:
+    conventions = {
+        "errors": protocol_docs("summary")["error_shape"],
+        "protocol": protocol_docs("summary"),
+        "pagination": (
+            "Pass next_cursor back as cursor; "
+            "next_cursor=null means the listing is complete."
+        ),
+        "version_conflict": "The 409 details include current_version, current_hash and latest.",
+        "batch_limits": {"upsert": 25, "dereference": 25},
+    }
+    if full:
+        conventions["error_codes"] = protocol_docs("errors")["codes"]
+    return conventions
 
 
 def _agent_paths(openapi: dict) -> dict:

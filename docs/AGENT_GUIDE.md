@@ -172,6 +172,14 @@ task to an agent that cannot read its namespace fails with
 Every error carries `code`, `class`, `action`, `retryable`, `retry_after_ms`.
 On 429/503 wait for `Retry-After` before resending. The server enforces it: an early retry is refused, doubles the next wait, and repeated early retries open a short `circuit_open` (reason `ignored_backoff`).
 
+Errors reach you on two channels; handle both:
+
+- REST: the HTTP status, and the body `{"error": {code, message, class, action, retryable, retry_after_ms, details}}`.
+- MCP, from a tool: a result with `isError: true` whose `structuredContent` has the same fields at the top level plus `http_status` (the text content is the same JSON). The call itself succeeded; read the result.
+- MCP, before any tool runs: the HTTP request is refused and your client reports a transport error, not a tool result. 401 (token wrong, expired or revoked; the `WWW-Authenticate` header names the OAuth metadata), 429 (rate or concurrency limit; honour `Retry-After`) and 503 (overloaded) arrive this way. Act on the HTTP status with the rules below.
+
+Both channels use one code registry (`get_api_docs(section="errors")`). Every MCP tool and the REST endpoint that does the same: `get_api_docs(section="tools")` or `tool_map` in `GET /v1/agent-docs`.
+
 - `retry_after`: Wait for Retry-After, then resend unchanged with the same idempotency key.
 - `retry_backoff`: Retry with full-jitter exponential backoff, at most 5 times, with the same idempotency key.
 - `refresh_and_retry`: Merge or resync using the current state in details (current_version etc.), then retry once on that new state.

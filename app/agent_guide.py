@@ -243,6 +243,23 @@ def render(live: bool = True) -> str:
         "an early retry is refused, doubles the next wait, and repeated early "
         "retries open a short `circuit_open` (reason `ignored_backoff`).",
         "",
+        "Errors reach you on two channels; handle both:",
+        "",
+        "- REST: the HTTP status, and the body `{\"error\": {code, message, class, action, "
+        "retryable, retry_after_ms, details}}`.",
+        "- MCP, from a tool: a result with `isError: true` whose `structuredContent` has "
+        "the same fields at the top level plus `http_status` (the text content is the "
+        "same JSON). The call itself succeeded; read the result.",
+        "- MCP, before any tool runs: the HTTP request is refused and your client reports "
+        "a transport error, not a tool result. 401 (token wrong, expired or revoked; "
+        "the `WWW-Authenticate` header names the OAuth metadata), 429 (rate or "
+        "concurrency limit; honour `Retry-After`) and 503 (overloaded) arrive this way. "
+        "Act on the HTTP status with the rules below.",
+        "",
+        "Both channels use one code registry (`get_api_docs(section=\"errors\")`). Every "
+        "MCP tool and the REST endpoint that does the same: "
+        "`get_api_docs(section=\"tools\")` or `tool_map` in `GET /v1/agent-docs`.",
+        "",
     ]
     lines += [f"- `{name}`: {meta['rule']}" for name, meta in ERROR_CLASSES.items()]
     lines += [

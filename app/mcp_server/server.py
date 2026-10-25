@@ -3352,18 +3352,24 @@ async def restore_document(
 async def get_api_docs(
     section: Literal[
         "guide", "errors", "limits", "retry", "events", "tokens", "versions", "all",
-        "overview", "capabilities", "releases",
+        "overview", "capabilities", "releases", "tools",
     ] = "overview",
 ) -> dict[str, Any]:
     """Return the REST/MCP connection guide and core request schemas.
 
     Agent-readable; no admin token required. The live OpenAPI document is also
-    available at GET /v1/agent-docs. section="retry" returns the canonical
+    available at GET /v1/openapi.json. section="retry" returns the canonical
     backoff algorithm, "errors" the full error-code registry (code -> class ->
     action), "versions" the supported API versions, "capabilities" the feature
     flags (on/off here) and REST endpoints without a same-named tool,
-    "releases" this deployment's release history.
+    "releases" this deployment's release history, "tools" every MCP tool with
+    the REST method and path that does the same.
     """
+    if section == "tools":
+        from app import capabilities
+        from app.main import app as fastapi_app
+
+        return _compact({"tools": capabilities.tool_map(fastapi_app)})
     if section == "capabilities":
         from app import capabilities
         from app.main import app as fastapi_app

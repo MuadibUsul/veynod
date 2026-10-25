@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 
+import httpx
 import pytest
 
 from app.root_page import ROOT_PRIMITIVES
@@ -525,7 +526,8 @@ async def test_incremental_workspace_sync_and_namespace_counts(client, workspace
 
 
 async def test_agent_docs_are_readable_without_admin(client, workspace):
-    docs = await client.get("/v1/agent-docs", headers=workspace["headers"])
+    docs = await client.get("/v1/agent-docs", headers=workspace["headers"],
+                            params={"detail": "full"})
     assert docs.status_code == 200, docs.text
     payload = docs.json()
     assert payload["base_url"].endswith("/v1")
@@ -535,3 +537,35 @@ async def test_agent_docs_are_readable_without_admin(client, workspace):
 
     anonymous = await client.get("/v1/agent-docs")
     assert anonymous.status_code == 401
+
+
+async def test_agent_docs_default_to_a_summary_with_the_tool_map(
+        client, workspace, api_base_url):
+    """R4: the default was ~400 KB (mostly OpenAPI); now a summary plus pointers."""
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+
+    from app.capabilities import MCP_ONLY
+
+    docs = await client.get("/v1/agent-docs", headers=workspace["headers"])
+    assert docs.status_code == 200, docs.text
+    assert len(docs.content) < 64_000, len(docs.content)
+    payload = docs.json()
+    assert "openapi" not in payload and "guide" not in payload
+    assert payload["more"]["full"] == "GET /v1/agent-docs?detail=full"
+    assert payload["conventions"]["protocol"]["retry"]["max_attempts"] == 5
+    tools = {item["tool"]: item for item in payload["tool_map"]}
+    # Every tool is mapped; only the MCP-only ones have no REST endpoint.
+    assert set(tools) == set(ROOT_PRIMITIVES)
+    assert {name for name, item in tools.items() if not item["rest"]} == set(MCP_ONLY)
+    assert "POST /v1/tasks/{task_key}/claim" in tools["agent_claim_and_read"]["rest"]
+    assert "PUT /v1/documents/{doc_key:path}" in tools["upsert_shared_doc"]["rest"]
+
+    async with httpx.AsyncClient(headers=workspace["headers"], timeout=60) as http:
+        async with streamable_http_client(f"{api_base_url}/mcp/", http_client=http) as (
+                read, write, _):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                result = await session.call_tool("get_api_docs", {"section": "tools"})
+                assert not result.isError, result.content
+                assert result.structuredContent["tools"] == payload["tool_map"]

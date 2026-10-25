@@ -111,7 +111,8 @@ async def test_version_negotiation(client, workspace):
 
 
 async def test_agent_docs_publish_retry_policy(client, workspace):
-    docs = await client.get("/v1/agent-docs", headers=workspace["headers"])
+    docs = await client.get("/v1/agent-docs", headers=workspace["headers"],
+                            params={"detail": "full"})
     conventions = docs.json()["conventions"]
     assert conventions["protocol"]["retry"]["max_attempts"] == 5
     codes = {row["code"] for row in conventions["error_codes"]}

@@ -60,6 +60,83 @@ def _all_routes(routes: list[Any]) -> list[Any]:
     return flat
 
 
+# MCP tools whose REST handler has another name (every other tool shares its
+# handler's name). Mapped by handler, not path, so a moved route stays mapped.
+TOOL_HANDLERS = {
+    "ack_alert": "ack_situation_alert",
+    "agent_claim_and_read": "claim_task",
+    "agent_escalate_to_human": "escalate_task",
+    "agent_handoff_task": "handoff_task",
+    "agent_patch_shared_state": "patch_slot",
+    "append_entries": "append_log_entries",
+    "attach_tenant": "attach_node",
+    "clear_taint": "clear_document_taint",
+    "create_child_tenant": "create_child_node",
+    "dereference_many": "batch_dereference",
+    "detach_tenant": "detach_node",
+    "draft_external_action": "propose_external_action",
+    "export_workspace": "create_export",
+    "get_api_docs": "agent_docs",
+    "get_budget": "get_token_budget",
+    "get_effective_policy": "effective_policy",
+    "get_index_status": "index_status",
+    "get_lineage_attestation": "lineage_attestation",
+    "get_metrics": "get_situation_metrics",
+    "get_orientation": "orientation",
+    "get_poke_receipts": "poke_receipts",
+    "get_tenant_tree": "tenant_tree",
+    "get_usage": "workspace_usage",
+    "heartbeat": "lease_heartbeat",
+    "list_alerts": "list_situation_alerts",
+    "list_budgets": "list_token_budgets",
+    "move_tenant": "move_node",
+    "patch_doc_section": "patch_document_section",
+    "propose_document_change": "create_document_proposal",
+    "query_workspace": "query_documents",
+    "read_entries": "read_log_entries",
+    "set_budget": "set_token_budget",
+    "set_policy": "set_node_policy",
+    "set_status": "set_agent_status",
+    "share": "create_share",
+    "unsubscribe": "delete_subscription",
+    "upsert_many": "batch_upsert_documents",
+    "upsert_shared_doc": "upsert_document",
+    "vote_on_proposal": "vote_document_proposal",
+    "workspace_sync": "workspace_map",
+}
+# MCP tools with no REST counterpart, and why.
+MCP_ONLY = {
+    "batch": "runs several tool calls in one MCP request; over REST send them separately",
+    "request_human_review": "records a hand-off event; over REST submit the task or "
+                            "proposal and people see it in their inbox",
+}
+
+
+def tool_map(app: FastAPI) -> list[dict[str, Any]]:
+    """Each MCP tool with the REST endpoints that do the same (R4)."""
+    from app.root_page import ROOT_PRIMITIVES
+
+    if "tool_map" in _cache:
+        return _cache["tool_map"]
+    endpoints: dict[str, list[str]] = {}
+    for route in _all_routes(app.routes):
+        if not isinstance(route, APIRoute) or not route.include_in_schema:
+            continue
+        if not route.path.startswith("/v1/") or route.path.startswith(_NOT_AGENT_FACING):
+            continue
+        for method in sorted(route.methods - {"HEAD", "OPTIONS"}):
+            endpoints.setdefault(route.endpoint.__name__, []).append(f"{method} {route.path}")
+    items = []
+    for tool in sorted(ROOT_PRIMITIVES):
+        item: dict[str, Any] = {
+            "tool": tool, "rest": endpoints.get(TOOL_HANDLERS.get(tool, tool), [])}
+        if tool in MCP_ONLY:
+            item["note"] = MCP_ONLY[tool]
+        items.append(item)
+    _cache["tool_map"] = items
+    return items
+
+
 def rest_only(app: FastAPI) -> list[dict[str, str]]:
     """Token-facing REST endpoints whose handler has no MCP tool of the same name."""
     from app.root_page import ROOT_PRIMITIVES
