@@ -7,14 +7,9 @@ from __future__ import annotations
 
 import json
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
 from app.root_page import ROOT_PRIMITIVES
-
-_SITE_DATA = (
-    Path(__file__).resolve().parent.parent / "dashboard" / "app" / "docs" / "site.generated.json"
-)
 
 
 def llms_index(version: str) -> str:
@@ -47,7 +42,10 @@ def _text(value: Any) -> str:
 
 @lru_cache(maxsize=1)
 def _site() -> dict[str, Any]:
-    return json.loads(_SITE_DATA.read_text(encoding="utf-8"))
+    # The runtime image contains app/docs_site.py, not dashboard/app/docs source.
+    from app.docs_site import build
+
+    return build()
 
 
 def _block(block: dict[str, Any]) -> list[str]:
