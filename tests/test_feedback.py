@@ -534,4 +534,5 @@ async def test_agent_docs_are_readable_without_admin(client, workspace):
     assert not any(path.startswith("/v1/admin") for path in payload["openapi"]["paths"])
 
     anonymous = await client.get("/v1/agent-docs")
-    assert anonymous.status_code == 401
+    assert anonymous.status_code == 200
+    assert anonymous.headers.get("x-robots-tag") is None

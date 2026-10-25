@@ -304,9 +304,8 @@ async def delete_subscription(
 async def agent_docs(
     request: Request,
     format: str = Query(default="json", pattern="^(json|markdown)$"),
-    principal: Principal = Depends(get_principal),
 ):
-    """Read-only API/MCP documentation available to every workspace token."""
+    """Public, read-only API/MCP documentation for agents and crawlers."""
     if format == "markdown":
         return PlainTextResponse(agent_guide.render(), media_type="text/markdown")
     openapi = request.app.openapi()

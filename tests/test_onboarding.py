@@ -212,7 +212,7 @@ async def test_agent_docs_and_openapi_are_token_readable(client, workspace, api_
     assert markdown.headers["content-type"].startswith("text/markdown")
     for needle in ("list_documents", "include_own_unverified", "Retry-After"):
         assert needle in markdown.text
-    assert (await client.get("/v1/agent-docs")).status_code == 401
+    assert (await client.get("/v1/agent-docs")).status_code == 200
     openapi = await client.get("/v1/openapi.json", headers=workspace["headers"])
     assert openapi.status_code == 200
     assert not [path for path in openapi.json()["paths"] if "/admin" in path]

@@ -17,6 +17,7 @@ async def test_robots_and_sitemap_are_public_and_clean(client):
     assert robots.headers["content-type"].startswith("text/plain")
     assert "Allow: /" in robots.text
     assert f"Sitemap: {SITE}/sitemap.xml" in robots.text
+    assert "Allow: /v1/agent-docs" in robots.text
     for private in ("/dashboard/", "/v1/", "/mcp/", "/api-reference",
                     "/openapi.json", "/healthz", "/readyz"):
         assert f"Disallow: {private}" in robots.text
@@ -28,12 +29,14 @@ async def test_robots_and_sitemap_are_public_and_clean(client):
     root = ET.fromstring(sitemap.text)
     urls = [loc.text for loc in root.findall("sm:url/sm:loc", SITEMAP_NS)]
     assert f"{SITE}/" in urls and f"{SITE}/docs/" in urls
+    for public in ("/zh/", "/v1/agent-docs", "/llms.txt", "/llms-full.txt"):
+        assert f"{SITE}{public}" in urls
     assert f"{SITE}/docs/quickstart/" in urls
     assert f"{SITE}/docs/introduction/" not in urls
     for url in urls:
         assert url.startswith(f"{SITE}/")
         path = urlsplit(url).path
-        for private in ("/dashboard", "/login", "/v1", "/mcp", "/oauth", "/cli"):
+        for private in ("/dashboard", "/login", "/mcp", "/oauth", "/cli"):
             assert not (path == private or path.startswith(private + "/")), url
 
     for url in urls:
@@ -42,7 +45,12 @@ async def test_robots_and_sitemap_are_public_and_clean(client):
             path, headers={"Accept": "text/html"} if path == "/" else {}
         )
         assert response.status_code == 200, (url, response.status_code)
-        assert response.headers["content-type"].startswith("text/html"), url
+        if path.endswith(".txt"):
+            assert response.headers["content-type"].startswith("text/plain"), url
+        elif path == "/v1/agent-docs":
+            assert response.headers["content-type"].startswith("application/json"), url
+        else:
+            assert response.headers["content-type"].startswith("text/html"), url
 
 
 async def test_root_html_carries_search_metadata_and_json_is_noindex(client):
@@ -62,11 +70,10 @@ async def test_root_html_carries_search_metadata_and_json_is_noindex(client):
     assert api.headers["x-robots-tag"] == "noindex"
     assert api.headers["content-type"].startswith("application/json")
 
-    # Agent contract: a generic client that sends */* still gets the JSON root.
+    # Generic clients and crawlers receive HTML unless JSON is explicit.
     default = await client.get("/")
-    assert default.headers["content-type"].startswith("application/json")
-    assert default.headers["x-robots-tag"] == "noindex"
-    assert default.json()["name"] == "Veynod"
+    assert default.headers["content-type"].startswith("text/html")
+    assert default.headers.get("x-robots-tag") is None
 
     browser_accept = await client.get(
         "/", headers={"Accept": "text/html,application/json;q=0.9"}
