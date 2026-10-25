@@ -1,0 +1,33 @@
+name: Publish CLI
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "cli-v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish-cli
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Use an npm CLI with trusted publishing support
+        run: npm install --global npm@latest
+      - name: Test
+        run: npm test
+      - name: Publish with provenance
+        run: npm publish --registry=https://registry.npmjs.org/ --access public --provenance

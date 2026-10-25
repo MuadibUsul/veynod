@@ -54,5 +54,13 @@ npm test                                   # unit tests
 node bin/veynod.mjs init --host http://localhost:8000 --client print
 ```
 
-Publishing: `npm publish` from this directory (the `veynod` package name must
-be available to your npm account).
+Publishing uses GitHub Actions Trusted Publishing, not a long-lived token or
+OTP:
+
+1. In `https://www.npmjs.com/package/veynod/settings`, add a Trusted Publisher:
+   GitHub Actions, owner `MuadibUsul`, repository `veynod`, workflow
+   `publish-cli.yml` (environment blank).
+2. Run **Actions → Publish CLI → Run workflow**, or push a `cli-v*` tag.
+
+The workflow uses npm's OIDC identity (`id-token: write`) and publishes with
+provenance. Do not create a Bypass 2FA token for this repository.
