@@ -116,3 +116,26 @@ async def test_registration_is_step_four_and_tokens_are_backfilled(client):
     found = next(item for item in others
                  if item["address"] == f"agent:{fresh_agent['signature']}")
     assert found["capabilities"] == ["claims tasks"] and found["role"] == "EXECUTOR"
+
+
+async def test_agent_rename_emits_an_event(client):
+    ws = await _workspace(client)
+    agent = await _agent(client, ws)
+    registered = await client.post("/v1/agents/register", headers=agent["headers"],
+                                   json={"display_name": "Runner One"})
+    assert registered.status_code == 201, registered.text
+    entry = registered.json()
+    cursor = (await client.get("/v1/events", headers=ws["human"])).json()["next_cursor"]
+
+    updated = await client.patch(
+        f"/v1/agents/{entry['agent_id']}", headers=ws["human"],
+        json={"fields": {"display_name": "Runner Two"}},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["display_name"] == "Runner Two"
+
+    events = (await client.get("/v1/events", headers=ws["human"],
+                               params={"cursor": cursor})).json()["events"]
+    renamed = [event for event in events
+               if str(event["type"]).lower() in {"agent.renamed", "timeline.agent_renamed"}]
+    assert renamed, [event["type"] for event in events]

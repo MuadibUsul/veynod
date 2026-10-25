@@ -422,6 +422,16 @@ async def update_agent(session: AsyncSession, principal: Principal, ref: str,
         ).mappings().one()
         if "status" in fields and fields["status"] != row["status"]:
             await _status_event(session, dict(updated), row["status"])
+        if (
+            ("display_name" in fields and fields["display_name"] != row["display_name"])
+            or ("agent_id" in fields and fields["agent_id"] != row["agent_id"])
+        ):
+            await _announce(
+                session, updated["workspace_id"], "AGENT_RENAMED",
+                {"agent_id": updated["agent_id"], "previous_agent_id": row["agent_id"],
+                 "display_name": updated["display_name"],
+                 "previous_display_name": row["display_name"]},
+            )
         await session.commit()
         return entry_out(dict(updated))
     return entry_out(row)

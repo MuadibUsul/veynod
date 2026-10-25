@@ -9,6 +9,8 @@
 #   scripts/deploy_tlines.sh rollback <stamp>  # previous image + DB restore
 #   scripts/deploy_tlines.sh rollback-image <stamp>   # previous image only
 #
+# A failed verification rolls the image back only. The database backup is kept
+# for an explicit, destructive `rollback`, never restored automatically.
 # <stamp> is printed by `deploy` and is the suffix of backups/agentgraph-<stamp>.sql.gz
 # and of the image tag agentgraph:rollback-<stamp>.
 #
@@ -228,10 +230,11 @@ deploy() {
     log "deployment failed verification"
     compose logs --tail 80 api || true
     if docker image inspect "agentgraph:rollback-$stamp" >/dev/null 2>&1; then
-      log "rolling back to agentgraph:rollback-$stamp with database restore"
-      rollback "$stamp"
+      log "rolling back the image only; the database is preserved"
+      restart_with_image "agentgraph:rollback-$stamp"
+      wait_ready || log "image rollback did not become ready; inspect the log"
     fi
-    fail "deploy aborted; see the log above"
+    fail "deploy aborted; database was NOT restored. The backup is $BACKUP_DIR/agentgraph-$stamp.sql.gz; use 'rollback $stamp' only if you accept losing writes made after the backup"
   fi
   log "deployed. rollback stamp: $stamp"
   log "  full rollback:  scripts/deploy_tlines.sh rollback $stamp"

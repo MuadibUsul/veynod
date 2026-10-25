@@ -71,7 +71,7 @@ async def test_browser_root_serves_human_page_and_json_stays_available(client):
     assert f'<span class="number">{len(ROOT_PRIMITIVES)}</span>' in response.text
     assert "COPY RESPONSE" in response.text
 
-    # JSON is asked for with Accept (the SEO change dropped ?format=json).
+    # JSON is asked for with Accept; ?format=json remains supported for scripts.
     api = await client.get("/", headers={"Accept": "application/json"})
     assert api.status_code == 200
     assert api.headers["content-type"].startswith("application/json")

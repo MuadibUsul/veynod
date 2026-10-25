@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { useI18n } from "../i18n";
 import type { DirectoryEntry, TaskDetail, TaskSummary } from "../types";
-import { directoryRefs, formatNumber, pretty, relativeTime } from "../types";
+import { directoryDisplayName, directoryRefs, formatNumber, pretty, relativeTime } from "../types";
 import {
   Empty,
   IconCheck,
@@ -152,7 +152,7 @@ export function TaskBoard({
                         <StatusPill status={task.status} />
                         {task.tainted && <span className="pill rose" title={t("Task input references tainted content")}>{t("Tainted")}</span>}
                         {unregistered(task) && (
-                          <span className="pill amber" title={t("{who} is not in the agent directory: it may never see this task", { who: task.assignee ?? "" })}>
+                          <span className="pill amber" title={t("{who} is not in the agent directory: it may never see this task", { who: directoryDisplayName(directory, task.assignee) })}>
                             {t("Assignee not registered")}
                           </span>
                         )}
@@ -165,7 +165,7 @@ export function TaskBoard({
                       <div className="kanban-foot">
                         <span>
                           {task.claimed_by
-                            ? `${task.claimed_by} · ${task.lease_active ? t("lease live") : t("lease expired")}`
+                            ? `${directoryDisplayName(directory, task.claimed_by)} · ${task.lease_active ? t("lease live") : t("lease expired")}`
                             : task.status === "READY"
                               ? t("unclaimed")
                               : `v${task.version}`}
@@ -186,12 +186,14 @@ export function TaskBoard({
 
 export function TaskDetailModal({
   task,
+  directory = [],
   busy,
   onClose,
   onReview,
   onOpenArtifact,
 }: {
   task: TaskDetail;
+  directory?: DirectoryEntry[];
   busy: boolean;
   onClose: () => void;
   onReview: (decision: "approve" | "reject", feedback: string) => Promise<void>;
@@ -267,7 +269,7 @@ export function TaskDetailModal({
         <div className="detail-cell">
           <span>{t("Claim / lease")}</span>
           <strong>
-            {task.claimed_by ?? t("unclaimed")}
+            {task.claimed_by ? directoryDisplayName(directory, task.claimed_by) : t("unclaimed")}
             {task.lease_active ? ` · ${t("live")}` : ""}
           </strong>
         </div>

@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
+  claudeCodeConfigPath,
   claudeDesktopConfigPath,
   claudeDesktopEntry,
+  configureClaudeCode,
   cursorEntry,
   makeKeyPair,
   mergeServer,
@@ -56,6 +61,27 @@ test("client config shapes", () => {
   assert.equal(desktop.env.VEYNOD_AUTH, "Bearer agt_3");
   assert.ok(claudeDesktopConfigPath("/home/u", "darwin").replaceAll("\\", "/").includes("Application Support/Claude"));
   assert.ok(claudeDesktopConfigPath("/home/u", "linux").replaceAll("\\", "/").endsWith(".config/Claude/claude_desktop_config.json"));
+  assert.equal(claudeCodeConfigPath("/home/u").replaceAll("\\", "/"), "/home/u/.claude.json");
+});
+
+test("a failed Claude Code add restores the previous config", () => {
+  const home = mkdtempSync(join(tmpdir(), "veynod-home-"));
+  const path = claudeCodeConfigPath(home);
+  const previous = { mcpServers: { veynod: { url: "https://old/mcp/" }, other: { url: "https://other/mcp/" } } };
+  writeFileSync(path, JSON.stringify(previous), { mode: 0o600 });
+  const calls = [];
+  const fakeExec = (_command, args) => {
+    calls.push(args.join(" "));
+    if (args[1] === "add") throw new Error("claude refused the new entry");
+  };
+  assert.throws(
+    () => configureClaudeCode("https://new/mcp/", "agt_new", { home, exec: fakeExec }),
+    /previous Claude Code config restored/,
+  );
+  assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), previous);
+  assert.equal(existsSync(`${path}.veynod-backup`), false);
+  assert.ok(calls.some((call) => call.includes("mcp remove")));
+  assert.ok(calls.some((call) => call.includes("mcp add")));
 });
 
 test("parseSse splits frames and keeps the partial tail", () => {
@@ -73,4 +99,30 @@ test("listen options parse", () => {
   assert.equal(options.key, "agt_x");
   assert.equal(options.exec, "./hook.sh");
   assert.equal(options.once, true);
+});
+
+test("listen keeps the cursor when --exec fails", async () => {
+  const stateDir = mkdtempSync(join(tmpdir(), "veynod-state-"));
+  const server = createServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "text/event-stream" });
+    response.write('id: 7\nevent: poke\ndata: {"event_seq":7,"kind":"mention"}\n\n');
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+  const cli = fileURLToPath(new URL("../bin/veynod.mjs", import.meta.url));
+  const hookDir = mkdtempSync(join(tmpdir(), "veynod-hook-"));
+  const hook = join(hookDir, "fail.mjs");
+  writeFileSync(hook, "process.exit(1);\n");
+  let stderr = "";
+  const child = spawn(process.execPath, [
+    cli, "listen", "--host", `http://127.0.0.1:${port}`, "--key", "agt_test",
+    "--exec", `"${process.execPath}" "${hook.replaceAll("\\", "/")}"`, "--once",
+  ], { env: { ...process.env, VEYNOD_STATE_DIR: stateDir }, stdio: ["ignore", "pipe", "pipe"] });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const code = await new Promise((resolve) => child.on("close", resolve));
+  if (code !== 1) process.stderr.write(stderr);
+  server.closeAllConnections?.();
+  await new Promise((resolve) => server.close(resolve));
+  assert.equal(code, 1);
+  assert.deepEqual(readdirSync(stateDir), []);
 });

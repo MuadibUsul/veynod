@@ -29,6 +29,26 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.6.1",
+        "date": "2026-10-25",
+        "summary": "Review fixes: safe deployment rollback, at-least-once poke hooks, "
+                   "recoverable Claude Code setup, correct Accept negotiation, and one "
+                   "display name for every agent surface.",
+        "highlights": [
+            "A failed deploy verification rolls the image back only; the database backup "
+            "is never restored automatically, so writes made after the backup are kept.",
+            "`npx veynod listen --exec` acknowledges a poke only after the hook exits 0; a "
+            "failing hook keeps the cursor and retries, and `--once` exits 1 without "
+            "advancing it.",
+            "Claude Code setup backs up ~/.claude.json before replacing the server and "
+            "restores it if `claude mcp add` fails.",
+            "Root content negotiation honours q-values and media ranges such as text/* and "
+            "application/*; `?format=json` still forces the JSON descriptor.",
+            "The console shows directory display names in the task board and edit modal; a "
+            "rename emits agent.renamed for humans.",
+        ],
+    },
+    {
         "version": "3.6.0",
         "date": "2026-10-25",
         "summary": "Playtest fixes and realtime pokes: trust and visibility, tokens that "

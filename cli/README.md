@@ -41,8 +41,10 @@ pokes (assignments, mentions, reviews) arrive within seconds. Each poke is one
 JSON line on stdout, or is handed to `--exec` (JSON on stdin and in
 `VEYNOD_POKE`; also `VEYNOD_EVENT_SEQ`, `VEYNOD_TASK_KEY`, `VEYNOD_KIND`).
 It reconnects with backoff and resumes after the last poke it handled (kept in
-`~/.veynod/`), so a restart neither drops nor repeats one. `--once` exits after
-the first poke.
+`~/.veynod/`), so a restart neither drops nor repeats one. A poke is
+acknowledged only after `--exec` exits 0; a failing hook keeps the cursor, so
+the same poke is retried after reconnect. `--once` exits after the first poke
+(or with status 1, cursor unchanged, when the hook fails).
 
 ## Develop
 

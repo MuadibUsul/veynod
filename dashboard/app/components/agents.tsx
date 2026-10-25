@@ -635,7 +635,7 @@ export function AgentsView({
 
       {editing && (
         <Modal
-          title={t("Edit {name}", { name: editing.agent_signature })}
+          title={t("Edit {name}", { name: displayNames.get(editing.canonical_id ?? "") ?? editing.agent_signature })}
           subtitle={t("Role package plus a permission delta. Changes apply to the next request.")}
           onClose={() => setEditing(null)}
           footer={

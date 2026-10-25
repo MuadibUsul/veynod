@@ -1733,6 +1733,7 @@ export default function ConsolePage() {
       {taskDetail && (
         <TaskDetailModal
           task={taskDetail}
+          directory={directory}
           busy={taskBusy}
           onClose={() => setTaskDetail(null)}
           onReview={reviewTask}

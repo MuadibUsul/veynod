@@ -595,29 +595,61 @@ async def root(request: Request) -> Any:
         "capabilities": capabilities.describe(app),
     }
     headers = {"Vary": "Accept", "Cache-Control": "no-store"}
-    if _wants_json(request.headers.get("accept", "")):
+    if (
+        request.query_params.get("format", "").lower() == "json"
+        or _wants_json(request.headers.get("accept", ""))
+    ):
         headers["X-Robots-Tag"] = "noindex"
         return JSONResponse(descriptor, headers=headers)
     headers["Link"] = f'<{SEO_SITE_URL}/>; rel="canonical"'
     return HTMLResponse(render_root_page(descriptor, lang="en"), headers=headers)
 
 
-def _wants_json(accept: str) -> bool:
-    """Require an explicit JSON media range with higher priority than HTML."""
-    priorities: dict[str, float] = {}
+def _accept_quality(accept: str, candidate: str) -> float:
+    """Quality for one representation, honouring media-range specificity."""
+    candidate_type, candidate_subtype = candidate.split("/", 1)
+    best_specificity = -1
+    best_quality = 0.0
     for item in accept.lower().split(","):
         media, *params = item.strip().split(";")
+        media = media.strip()
+        if media != "*/*" and "/" not in media:
+            continue
+        range_type, _, range_subtype = media.partition("/")
         quality = 1.0
         for param in params:
             if param.strip().startswith("q="):
                 try:
-                    quality = float(param.strip()[2:])
+                    quality = min(1.0, max(0.0, float(param.strip()[2:])))
                 except ValueError:
                     quality = 0.0
-        priorities[media] = max(priorities.get(media, 0.0), quality)
-    return priorities.get("application/json", 0.0) > max(
-        priorities.get("text/html", 0.0), priorities.get("application/xhtml+xml", 0.0)
-    )
+        if range_type == "*" and range_subtype == "*":
+            specificity = 0
+        elif range_subtype == "*":
+            specificity = 1
+        else:
+            specificity = 2
+        matches = (
+            (range_type == "*" and range_subtype == "*")
+            or (range_type == candidate_type and range_subtype == "*")
+            or (range_type == candidate_type and range_subtype == candidate_subtype)
+        )
+        if not matches:
+            continue
+        if specificity > best_specificity:
+            best_specificity = specificity
+            best_quality = quality
+        elif specificity == best_specificity and quality > best_quality:
+            best_quality = quality
+    return best_quality if best_specificity >= 0 else 0.0
+
+
+def _wants_json(accept: str) -> bool:
+    """Compare JSON and HTML quality; ties and `*/*` keep the HTML landing page."""
+    # XHTML is not a representation we serve; treating application/* as an
+    # XHTML request would make an API client's `application/*` select HTML.
+    html = _accept_quality(accept, "text/html")
+    return _accept_quality(accept, "application/json") > html
 
 
 @app.get("/zh/", include_in_schema=False)

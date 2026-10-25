@@ -75,6 +75,7 @@ EVENT_TYPES: dict[str, str] = {
     "token.expiring": "A token expires within 10 minutes (targets: its parent).",
     "agent.registered": "An agent joined the directory (targets: the workspace's humans).",
     "agent.status_changed": "An agent's directory status changed.",
+    "agent.renamed": "An agent's display name or directory id changed.",
     "doc.recalled": "A version this document derives from was recalled (details: recall_id, "
                     "hop, via; targets: the author, the maintainer, holders of pinned tasks).",
     "recall.closed": "Every node of a recall is resolved or dismissed.",

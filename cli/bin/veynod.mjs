@@ -24,12 +24,12 @@ import {
   generateKeyPairSync,
   hkdfSync,
 } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, chmodSync, copyFileSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, hostname, platform } from "node:os";
 import { dirname, join } from "node:path";
 import process from "node:process";
 
-export const VERSION = "0.2.0";
+export const VERSION = "0.2.1";
 const SEAL_INFO = Buffer.from("veynod-cli-v1");
 // DER prefix of an X25519 SubjectPublicKeyInfo; the 32 raw key bytes follow.
 const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
@@ -163,19 +163,60 @@ export function claudeDesktopEntry(url, key) {
   };
 }
 
-function configureClaudeCode(url, key) {
-  try {
-    execFileSync("claude", ["mcp", "remove", SERVER_NAME, "--scope", "user"], { stdio: "ignore" });
-  } catch {
-    // Not configured before.
+export function claudeCodeConfigPath(home = homedir()) {
+  return join(home, ".claude.json");
+}
+
+export function configureClaudeCode(
+  url,
+  key,
+  { home = homedir(), exec = execFileSync } = {},
+) {
+  const configPath = claudeCodeConfigPath(home);
+  const backupPath = `${configPath}.veynod-backup`;
+  const hadConfig = existsSync(configPath);
+  if (hadConfig) {
+    try {
+      copyFileSync(configPath, backupPath);
+      chmodSync(backupPath, 0o600);
+    } catch (error) {
+      throw new Error(`could not back up ${configPath}; not changing Claude Code: ${error.message}`);
+    }
   }
-  execFileSync(
-    "claude",
-    ["mcp", "add", "--transport", "http", "--scope", "user", SERVER_NAME, url,
-      "--header", `Authorization: Bearer ${key}`],
-    { stdio: "ignore" },
-  );
-  return "Claude Code (user scope)";
+  const remove = () => {
+    try {
+      exec("claude", ["mcp", "remove", SERVER_NAME, "--scope", "user"], { stdio: "ignore" });
+    } catch {
+      // Not configured before.
+    }
+  };
+  try {
+    remove();
+    exec(
+      "claude",
+      ["mcp", "add", "--transport", "http", "--scope", "user", SERVER_NAME, url,
+        "--header", `Authorization: Bearer ${key}`],
+      { stdio: "ignore" },
+    );
+    if (existsSync(backupPath)) unlinkSync(backupPath);
+    return "Claude Code (user scope)";
+  } catch (error) {
+    if (hadConfig && existsSync(backupPath)) {
+      try {
+        copyFileSync(backupPath, configPath);
+        chmodSync(configPath, 0o600);
+        unlinkSync(backupPath);
+      } catch (restoreError) {
+        throw new Error(
+          `${error.message}; could not restore ${configPath} (backup kept at ${backupPath}): ${restoreError.message}`,
+        );
+      }
+      throw new Error(`${error.message}; previous Claude Code config restored`);
+    }
+    // No previous config: remove a partially written entry before reporting.
+    remove();
+    throw error;
+  }
 }
 
 // -------------------------------------------------------------------- http
@@ -434,7 +475,8 @@ export function parseSse(buffer) {
 
 function cursorFile(host, key) {
   const tag = Buffer.from(`${host}|${key.slice(-12)}`).toString("base64url").slice(0, 24);
-  return join(homedir(), ".veynod", `listen-${tag}.json`);
+  const directory = process.env.VEYNOD_STATE_DIR || join(homedir(), ".veynod");
+  return join(directory, `listen-${tag}.json`);
 }
 
 function loadCursor(path) {
@@ -464,7 +506,7 @@ function runHook(command, poke) {
       process.stderr.write(`  ${red("✗")} --exec failed: ${error.message}\n`);
       resolve(1);
     });
-    child.on("close", (code) => resolve(code ?? 0));
+    child.on("close", (code) => resolve(code === null ? 1 : code));
     child.stdin.end(payload);
   });
 }
@@ -500,8 +542,19 @@ async function listen(options) {
           const poke = JSON.parse(event.data);
           const seq = Number(event.id || poke.event_seq);
           if (lastSeq && seq <= lastSeq) continue; // seen before a reconnect
-          if (options.exec) await runHook(options.exec, poke);
-          else process.stdout.write(`${JSON.stringify(poke)}\n`);
+          if (options.exec) {
+            const code = await runHook(options.exec, poke);
+            if (code !== 0) {
+              const message = `--exec exited ${code}; event ${seq} was not acknowledged`;
+              if (options.once) {
+                process.stderr.write(`  ${red("✗")} ${message}; cursor kept at ${lastSeq ?? "start"}\n`);
+                return 1;
+              }
+              throw new Error(message);
+            }
+          } else {
+            process.stdout.write(`${JSON.stringify(poke)}\n`);
+          }
           lastSeq = seq;
           saveCursor(statePath, seq);
           if (options.once) {

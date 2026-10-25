@@ -394,6 +394,23 @@ export function directoryRefs(entries: DirectoryEntry[]): Set<string> {
   return refs;
 }
 
+/** Resolve a task/directory reference (signature, agent:<id>, or prn_ id) to the display name. */
+export function directoryDisplayName(entries: DirectoryEntry[], ref: string | null | undefined): string {
+  const value = String(ref ?? "");
+  if (!value) return value;
+  for (const entry of entries) {
+    const refs = [
+      entry.address,
+      entry.agent_id,
+      entry.principal_id,
+      `agent:${entry.agent_id}`,
+      `agent:${entry.principal_id}`,
+    ];
+    if (refs.includes(value)) return entry.display_name || entry.agent_id;
+  }
+  return value;
+}
+
 export interface WebhookDelivery {
   id: string;
   rule_id: string;

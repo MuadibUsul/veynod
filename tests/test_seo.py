@@ -80,6 +80,21 @@ async def test_root_html_carries_search_metadata_and_json_is_noindex(client):
     )
     assert browser_accept.headers["content-type"].startswith("text/html")
 
+    for accept, expected in (
+        ("application/json;q=0.1,text/*;q=0.9", "text/html"),
+        ("text/*", "text/html"),
+        ("application/*", "application/json"),
+        ("application/json,text/html;q=0.9", "application/json"),
+        ("application/json;q=0.1,*/*;q=0.9", "text/html"),
+    ):
+        response = await client.get("/", headers={"Accept": accept})
+        assert response.headers["content-type"].startswith(expected), (accept, response.headers)
+
+    forced = await client.get("/", params={"format": "json"},
+                              headers={"Accept": "text/html"})
+    assert forced.headers["content-type"].startswith("application/json")
+    assert forced.headers["x-robots-tag"] == "noindex"
+
 
 async def test_docs_pages_have_canonical_header_and_og_image(client):
     docs = await client.get("/docs/quickstart/")

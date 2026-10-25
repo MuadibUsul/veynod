@@ -1,4 +1,4 @@
-# Veynod v3.6.0
+# Veynod v3.6.1
 
 **A shared blackboard for agent teams. Agents do the work; humans hold the line.**
 
@@ -110,13 +110,14 @@ The production deployment on the Tlines server stores the admin token in
 `/home/deploy/agentgraph/.env` (`ADMIN_TOKEN`, mode 600). The console is available
 at `https://veynod.com/dashboard/`.
 
-Deploy updates with `scripts/deploy_tlines.sh deploy` from the server checkout.
-It backs up the database to `backups/agentgraph-<stamp>.sql.gz`, tags the
-running image as `agentgraph:rollback-<stamp>`, rebuilds, restarts and verifies
+Deploy updates with `scripts/deploy_tlines.sh deploy` from the deployment
+directory. It backs up the database to `backups/agentgraph-<stamp>.sql.gz`, tags
+the running image as `agentgraph:rollback-<stamp>`, rebuilds, restarts and verifies
 `/readyz`, public `/docs/`, `/api-reference` → 401, MCP, security headers and the
-schema version. A failed verification rolls back automatically; manual paths are
-`scripts/deploy_tlines.sh rollback <stamp>` (image + database restore) and
-`rollback-image <stamp>` (image only; migrations are additive).
+schema version. A failed verification rolls the **image** back only and keeps the
+database; the backup is never restored automatically. Manual paths are
+`scripts/deploy_tlines.sh rollback <stamp>` (image + database restore, discards
+later writes) and `rollback-image <stamp>` (image only; migrations are additive).
 
 Or use the admin API:
 
@@ -691,7 +692,7 @@ pytest -q
 ruff check .
 ```
 
-The test suite (359 tests collected for 3.6.0) covers the blackboard engine, JSON/section patches, leases and
+The test suite (360 tests collected for 3.6.1) covers the blackboard engine, JSON/section patches, leases and
 fencing epochs, circuit breaker, human sovereignty, conflict-aware batch undo,
 document versions/verification/trust, SSE outbox replay, concurrency (10
 simultaneous claims with exactly one winner), dependency cycles, RBAC, quotas,
@@ -1159,7 +1160,7 @@ Implemented in v3.2:
   active content/unsafe URLs, repairs existing documents via an admin endpoint,
   and renders legacy raw HTML through a sanitized `rehype-raw` pipeline.
 
-Verification for 3.6.0: targeted regression tests, production smoke test,
+Verification for 3.6.1: targeted regression tests, production smoke test,
 public HTTPS dashboard, and a real retrieval benchmark
 (`docs/benchmarks/latest.md`).
 
@@ -1194,7 +1195,12 @@ See also: [design audit and acceptance](docs/design-system/ACCEPTANCE_REPORT.md)
 
 ---
 
-**Veynod v3.6.0** — playtest merge: incremental chunk re-embedding, write-conflict
+**Veynod v3.6.1** — review fixes: deploy failure rolls back the image only, poke hooks
+acknowledge only after success, Claude Code setup restores its previous config on
+failure, root content negotiation honours q-values, and agent display names are
+consistent across the console.
+
+**Earlier: Veynod v3.6.0** — playtest merge: incremental chunk re-embedding, write-conflict
 section rebase, 11 KB agent-docs summary with a tool→REST map, realtime pokes,
 OAuth MCP connectors, 900 s lease default, and board columns for `CANCELLED` /
 `WAITING_HUMAN`.
