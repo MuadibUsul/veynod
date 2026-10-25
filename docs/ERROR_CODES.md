@@ -62,7 +62,7 @@ do not edit by hand. Every error body is
 | `account_link_required` | 409 | `fix_request` | `fix_request_then_resend` | Sign in with the password, then link Google. |
 | `admin_access_required` | 409 | `fix_request` | `fix_request_then_resend` | Call open_admin_access first (the node is notified). |
 | `agent_id_taken` | 409 | `fix_request` | `fix_request_then_resend` | Choose another agent_id. |
-| `agent_not_registered` | 409 | `fix_request` | `fix_request_then_resend` | Call register_agent, then retry. |
+| `agent_not_registered` | 409 | `fix_request` | `register_agent` | Call register_agent, then retry. |
 | `agent_token_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another agent signature. |
 | `alias_taken` | 409 | `fix_request` | `fix_request_then_resend` | Choose another alias. |
 | `alias_tombstoned` | 409 | `fix_request` | `fix_request_then_resend` | Choose another alias; tombstones never reuse. |

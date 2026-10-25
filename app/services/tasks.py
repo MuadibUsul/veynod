@@ -8,7 +8,7 @@ from datetime import timedelta
 from functools import wraps
 from typing import Any
 
-from sqlalchemy import func, select, text
+from sqlalchemy import false, func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -565,23 +565,30 @@ async def list_tasks(
 
 async def claimable_conditions(session: AsyncSession, principal: Principal) -> list[Any]:
     """Exactly what claim_task checks, as filters (2026-10-24 #12: orientation and
-    list_tasks(claimable_by_me) used to disagree): status, assignee, required
-    role and capabilities, assigned role, and a namespace the token may write."""
+    list_tasks(claimable_by_me) used to disagree): the task:claim permission,
+    status, assignee, required role and capabilities (not for people, as in
+    check_claimable), assigned role, and a namespace the token may write."""
+    if not can(principal, "task:claim"):
+        return [false()]  # claim_task would refuse every one (a SCOUT, say)
     mine = await collab.my_refs(session, principal)
-    entry = await collab.my_directory_entry(session, principal)
     conditions: list[Any] = [
         CollabTask.workspace_id == principal.workspace.id,
         CollabTask.status.in_(list(_CLAIMABLE)),
         (CollabTask.assignee.is_(None)) | (CollabTask.assignee.in_(mine)),
-        (CollabTask.required_role.is_(None))
-        | (CollabTask.required_role == ((entry or {}).get("role") or "")),
-        CollabTask.required_capabilities.contained_by(
-            list((entry or {}).get("capabilities") or [])
-        ),
     ]
+    if not principal.is_human:
+        entry = await collab.my_directory_entry(session, principal)
+        conditions += [
+            (CollabTask.required_role.is_(None))
+            | (CollabTask.required_role == ((entry or {}).get("role") or "")),
+            CollabTask.required_capabilities.contained_by(
+                list((entry or {}).get("capabilities") or [])
+            ),
+        ]
     if not principal.is_commander:
         conditions.append(CollabTask.assigned_role.is_(None)
                           | (CollabTask.assigned_role == principal.role.value))
+    if principal.auth_kind is AuthKind.AGENT:
         writes = (principal.write_namespaces if principal.write_namespaces is not None
                   else principal.allowed_namespaces)
         if "*" not in writes:

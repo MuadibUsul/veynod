@@ -61,7 +61,7 @@ not taint your document; citing external or tainted content does.
 
 ## Keeping your token alive
 
-An expiry notice reaches your inbox before your token expires; ask its
+You hear `token.expiring` in your inbox before your token expires; ask its
 parent to `renew_token`. A token that expired less than 7 days ago (and was
 not revoked) is renewed in place: same id, agent_id, secret and assignments.
 `rotate_token_secret` gives the same token a new secret; the old one keeps

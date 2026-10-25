@@ -196,3 +196,34 @@ Migration 3.33.0.
 | Growth: `npx veynod init` | Done | Device flow (`cli_sessions`, v3.34): user code approved by an owner at `/dashboard/cli/`; key minted on approval and sealed to the CLI's X25519 key; picked up once. CLI in `cli/` configures Claude Code / Cursor / Claude Desktop and verifies with MCP `get_orientation`. Not yet published to npm. |
 | Growth: KPIs | Done | `GET /v1/admin/growth` + `/dashboard/growth/`: activation, week-2 retention, human decisions per active workspace, upgrade intent, funnel, cohorts, recent signups. `product_events` (operator-only under RLS) for CLI, decisions and the upgrade fake door. |
 
+## 2026-10-23/24 follow-ups
+
+| Item | Status | Notes |
+|---|---|---|
+| Operator privacy (v3.35) | Done | The operator sees counts and changes of workspaces it did not create, never content (403 `operator_content_denied`); support access is an owner-granted, audited window. README "Operator privacy (v3.35)". |
+| Lighter delegation | Done | Agents issue children with their own or a narrower role; agent-delegated tokens default to 1 h (72 h max) and are purged 7 days after they end; `revoke_token keep_self=true` takes back every delegation. |
+| OAuth for MCP clients (v3.36) | Done | Discovery (RFC 9728 / 8414), dynamic client registration (RFC 7591), authorization code with PKCE S256 and consent in the console; the access token is an ordinary agent key. README "OAuth for MCP clients (v3.36)". |
+| Narrowed tokens and onboarding docs | Done | The constitution and the token's own `system/namespaces/<ns>` readmes are readable whatever the token's namespaces. |
+| Task namespaces, pokes on tool results | Done | A task without a namespace takes its parent's, its context documents', its assignee's or its creator's (`task_namespace_inferred` / `task_namespace_defaulted`); 422 `assignee_cannot_reach_namespace`; `assigned_tasks_out_of_reach`; agent MCP results carry an `inbox` block. |
+
+## 2026-10-24 playtest (TASK-999A4453) and realtime pokes (TASK-72A59BD9)
+
+Migration 3.37.0. Numbers are the playtest's.
+
+| Item | Status | Notes |
+|---|---|---|
+| Batch A: trust and visibility | Done | Bugs 1–6, 10, 13, 14, 19 and decisions 1–2 (`tests/test_trust_visibility.py`). |
+| Realtime pokes | Done | `GET /v1/inbox/stream` (SSE, resumes by `Last-Event-ID`), presence, wake webhooks, receipts, CLI `veynod listen` (`tests/test_poke_realtime.py`). **Deviation:** SSE instead of WebSocket. |
+| Batch B: tokens and leases | Done | Decisions 5–6, #15, #16, #21–#23 (`tests/test_token_lifecycle.py`). |
+| Batch C/D, part 1 | Done | Decision 4, #7, #9, #11, #12, #18, `cancel_task`, orientation rules of thumb (`tests/test_board_alignment.py`, `tests/test_agent_onboarding.py`). Fixed 2026-10-25: claimable listings also need `task:claim` (a SCOUT was offered tasks it could not claim) and skip the required-role check for people, as `claim_task` does. |
+| Batch C/D, part 2 | Open | The plan is on the Veynod board, not in this repository. No commit or code comment refers to #8, #17, #20 or decision 3. |
+
+## Open gaps found 2026-10-25
+
+| Item | Notes |
+|---|---|
+| Release version | `app_version` is still 3.5.0 (2026-10-23): everything since (migrations 3.35.0 to 3.37.0) shipped without `platform.released` or a `system/changelog` entry, so `get_orientation(since=<release>)` does not announce it. |
+| Inbox stream pool | `/v1/inbox/stream` is not one of the stream paths, so an open stream holds one of the token's request slots instead of its stream slot (counts only under `BUDGET_MODE=enforce`). |
+| Watermark transfer | `POST /v1/human/transfer-responsibilities` with `watermarks` still answers "named watermarks arrive with AG-EV-01", though they exist (AG-EV-04). |
+| `include_cold` | `list_documents` accepts it and ignores it, though AG-ST-11 computes `cold`. |
+| Schema apply under traffic | A server starting while another serves requests on the same database can deadlock in `apply_schema` (init.sql DDL against live reads) and exit; seen with concurrent test servers. |
