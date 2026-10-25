@@ -110,7 +110,7 @@ REGISTRY: dict[str, ErrorSpec] = {
     ),
     "sse_capacity": _spec(429, RETRY_AFTER, "Too many event streams; reconnect later."),
     "backup_in_progress": _spec(409, RETRY_AFTER, "Another backup is running; retry later."),
-    "not_registered": _spec(409, FIX_REQUEST, "Call register_agent, then retry."),
+    "agent_not_registered": _spec(409, FIX_REQUEST, "Call register_agent, then retry."),
     "task_claimed": _spec(409, ESCALATE_HUMAN, "Ask the holder or a person to cancel it."),
     "namespace_not_empty": _spec(409, ESCALATE_HUMAN, "Archive its documents and close its tasks."),
     # --- retry_backoff

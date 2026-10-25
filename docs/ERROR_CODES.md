@@ -62,6 +62,7 @@ do not edit by hand. Every error body is
 | `account_link_required` | 409 | `fix_request` | `fix_request_then_resend` | Sign in with the password, then link Google. |
 | `admin_access_required` | 409 | `fix_request` | `fix_request_then_resend` | Call open_admin_access first (the node is notified). |
 | `agent_id_taken` | 409 | `fix_request` | `fix_request_then_resend` | Choose another agent_id. |
+| `agent_not_registered` | 409 | `fix_request` | `fix_request_then_resend` | Call register_agent, then retry. |
 | `agent_token_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another agent signature. |
 | `alias_taken` | 409 | `fix_request` | `fix_request_then_resend` | Choose another alias. |
 | `alias_tombstoned` | 409 | `fix_request` | `fix_request_then_resend` | Choose another alias; tombstones never reuse. |
@@ -78,7 +79,6 @@ do not edit by hand. Every error body is
 | `locate_required` | 409 | `fix_request` | `fix_request_then_resend` | Run locate_personal_data first. |
 | `log_document_append_only` | 409 | `fix_request` | `append_entries` | Use append_entries instead. |
 | `not_a_log_document` | 409 | `fix_request` | `fix_request_then_resend` | Write with upsert_shared_doc instead. |
-| `not_registered` | 409 | `fix_request` | `fix_request_then_resend` | Call register_agent, then retry. |
 | `policy_exists` | 409 | `fix_request` | `fix_request_then_resend` | Update the existing policy instead. |
 | `proposal_required` | 409 | `fix_request` | `propose_document_change` | Submit propose_document_change instead. |
 | `quality_circuit_open` | 409 | `fix_request` | `fix_request_then_resend` | The domain's circuit is open: hand off to REVIEWING. |
