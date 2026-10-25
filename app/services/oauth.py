@@ -175,6 +175,10 @@ async def start_authorization(session: AsyncSession, params: dict[str, str]) -> 
     if redirect_uri not in client["redirect_uris"]:
         raise OAuthError("invalid_request", "redirect_uri is not registered for this client")
     state = params.get("state")
+    # State is opaque and may be a multi-KB encrypted blob (Gemini's custom MCP
+    # connector). Truncating it breaks the client's HMAC verification.
+    if state and len(state) > 16_384:
+        raise OAuthError("invalid_request", "state is too long")
 
     def fail(error: str, description: str) -> str:
         query = {"error": error, "error_description": description}
@@ -192,7 +196,7 @@ async def start_authorization(session: AsyncSession, params: dict[str, str]) -> 
         text("INSERT INTO oauth_requests (id, client_id, redirect_uri, state, code_challenge, "
              "scope, resource, expires_at) VALUES (:id, :c, :r, :s, :cc, :sc, :res, :x)"),
         {"id": request_id, "c": client["client_id"], "r": redirect_uri,
-         "s": (state or "")[:1_000] or None, "cc": challenge,
+         "s": state or None, "cc": challenge,
          "sc": (params.get("scope") or "mcp")[:200], "res": (params.get("resource") or "")[:500]
          or None, "x": _now() + REQUEST_TTL},
     )
