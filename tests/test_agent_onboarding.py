@@ -206,6 +206,43 @@ async def test_restricted_token_gets_its_own_readme(client, admin_headers, works
     assert other.status_code == 403 and other.json()["error"]["code"] == "NAMESPACE_FORBIDDEN"
 
 
+async def test_restricted_token_amends_its_required_reading_by_proposal(
+        client, admin_headers, workspace):
+    """system/* is proposal-only (memory seed rule 2), so a narrowed token may propose
+    on, read and vote on its required reading; applying stays with people (R8)."""
+    agent, _ = await _agent(client, admin_headers, workspace, "EXECUTOR", namespaces=["ideas"])
+    voter, _ = await _agent(client, admin_headers, workspace, "ANALYST", namespaces=["ideas"])
+    for namespace in ("ideas", "private-ns"):
+        await client.put(f"/v1/documents/seed-{namespace}", headers=workspace["headers"],
+                         json={"namespace": namespace, "content": namespace,
+                               "expected_version": 0})
+
+    created = {}
+    for key in ("system/constitution", "system/namespaces/ideas"):
+        current = (await client.post("/v1/dereference", headers=agent, json={
+            "uri": f"doc://{key}", "include_unverified": True})).json()["document"]
+        proposed = await client.post(f"/v1/documents/{key}/proposals", headers=agent, json={
+            "content": f"# {key}\n\nA real rule.\n", "base_version": current["version"]})
+        assert proposed.status_code == 201, (key, proposed.text)
+        created[key] = proposed.json()["id"]
+
+    proposal = created["system/constitution"]
+    assert (await client.get(f"/v1/proposals/{proposal}", headers=agent)).status_code == 200
+    listed = await client.get("/v1/documents/system/constitution/proposals", headers=agent)
+    assert listed.status_code == 200, listed.text
+    assert proposal in {item["id"] for item in listed.json()["items"]}
+    voted = await client.post(f"/v1/proposals/{proposal}/vote", headers=voter,
+                              json={"score": 4, "comment": "clear"})
+    assert voted.status_code == 200, voted.text
+
+    # Someone else's readme stays out of reach, and agents never apply.
+    other = await client.post("/v1/documents/system/namespaces/private-ns/proposals",
+                              headers=agent, json={"content": "x", "base_version": 1})
+    assert other.status_code == 403 and other.json()["error"]["code"] == "NAMESPACE_FORBIDDEN"
+    applied = await client.post(f"/v1/proposals/{proposal}/apply", headers=agent, json={})
+    assert applied.status_code == 403, applied.text
+
+
 async def test_mcp_instructions_order_and_hints(client, admin_headers, workspace, api_base_url):
     await _real_constitution(client, admin_headers, workspace)
     from mcp import ClientSession

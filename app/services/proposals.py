@@ -32,7 +32,7 @@ from app.schemas import (
     ProposalVoteOut,
     ProposalVoteRequest,
 )
-from app.services import agent_onboarding, indexer
+from app.services import agent_onboarding, indexer, onboarding
 from app.services.common import (
     append_event,
     document_out,
@@ -108,6 +108,17 @@ def _proposal_out(
     )
 
 
+def _ensure_reach(principal: Principal, namespace: str, doc_key: str, *,
+                  write: bool = False) -> None:
+    """The token's namespaces, except its required reading (the constitution and
+    its own namespace readmes): agents are told to amend those only through
+    proposals, so a token limited to a few namespaces may still propose, read
+    and vote there. Applying stays with people."""
+    if onboarding.is_required_reading(principal, doc_key):
+        return
+    ensure_namespace(principal, namespace, write=write)
+
+
 async def _get_proposal(
     session: AsyncSession,
     workspace_id: uuid.UUID,
@@ -136,7 +147,7 @@ async def create_proposal(
 ) -> ProposalOut:
     require_permission(principal, "doc:propose")
     document = await _get_document(session, principal.workspace.id, doc_key)
-    ensure_namespace(principal, document.namespace, write=True)
+    _ensure_reach(principal, document.namespace, document.doc_key, write=True)
     agent = effective_agent(principal, request.agent)
     if document.version != request.base_version:
         raise VersionConflict("shared_document", document_out(document).model_dump(mode="json"))
@@ -227,8 +238,12 @@ async def list_proposals(
         )
     if doc_key:
         document = await _get_document(session, principal.workspace.id, doc_key)
-        ensure_namespace(principal, document.namespace)
-        query = query.where(DocumentProposal.doc_key == doc_key)
+        _ensure_reach(principal, document.namespace, document.doc_key)
+        # Reach is checked: the namespace filter above would hide required reading.
+        query = select(DocumentProposal).where(
+            DocumentProposal.workspace_id == principal.workspace.id,
+            DocumentProposal.doc_key == document.doc_key,
+        )
     if status:
         query = query.where(DocumentProposal.status == status.upper())
     proposals = (
@@ -250,7 +265,7 @@ async def get_proposal(
 ) -> ProposalOut:
     require_permission(principal, "proposal:read")
     proposal = await _get_proposal(session, principal.workspace.id, proposal_id)
-    ensure_namespace(principal, proposal.namespace)
+    _ensure_reach(principal, proposal.namespace, proposal.doc_key)
     votes = (await _votes(session, [proposal.id])).get(proposal.id, [])
     return _proposal_out(proposal, votes)
 
@@ -263,7 +278,7 @@ async def vote_proposal(
 ) -> ProposalOut:
     require_permission(principal, "proposal:vote")
     proposal = await _get_proposal(session, principal.workspace.id, proposal_id)
-    ensure_namespace(principal, proposal.namespace)
+    _ensure_reach(principal, proposal.namespace, proposal.doc_key)
     if proposal.status != "PENDING":
         raise ApiError(409, "proposal_not_pending", "only pending proposals can be voted on")
     if proposal.created_by == principal.agent_signature:
