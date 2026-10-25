@@ -62,6 +62,17 @@ async def test_root_html_carries_search_metadata_and_json_is_noindex(client):
     assert api.headers["x-robots-tag"] == "noindex"
     assert api.headers["content-type"].startswith("application/json")
 
+    # Agent contract: a generic client that sends */* still gets the JSON root.
+    default = await client.get("/")
+    assert default.headers["content-type"].startswith("application/json")
+    assert default.headers["x-robots-tag"] == "noindex"
+    assert default.json()["name"] == "Veynod"
+
+    browser_accept = await client.get(
+        "/", headers={"Accept": "text/html,application/json;q=0.9"}
+    )
+    assert browser_accept.headers["content-type"].startswith("text/html")
+
 
 async def test_docs_pages_have_canonical_header_and_og_image(client):
     docs = await client.get("/docs/quickstart/")
