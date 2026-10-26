@@ -13,6 +13,7 @@ import asyncpg
 import httpx
 import pytest
 
+from app.config import get_settings
 from app.services import budget, indexer
 
 pytestmark = pytest.mark.integration
@@ -73,18 +74,24 @@ async def _put(http, headers, key, content, version=0):
 async def test_rate_limit_then_forced_backoff_then_circuit(
     client, enforce_client, admin_headers, workspace
 ):
+    # One-token burst makes the refusal deterministic even on slow runners.
+    # Burst capacity itself is covered separately; this test exercises the
+    # refusal, forced backoff, and circuit sequence.
+    await _limits(client, admin_headers, "workspace", workspace["workspace"]["id"],
+                  write_rate_per_minute=1, write_burst=1)
     agent = await _agent(client, admin_headers, workspace)
+    agent["AgentGraph-Version"] = "2026-11"  # budget test need not synchronously embed
     prefix = uuid.uuid4().hex[:6]
     successes = 0
     first_refusal = None
-    for index in range(40):
+    for index in range(3):
         response = await _put(enforce_client, agent, f"rate-{prefix}-{index}", f"c {index}", 0)
         if response.status_code == 200:
             successes += 1
             continue
         first_refusal = response
         break
-    assert successes >= 20  # burst, plus whatever refilled meanwhile
+    assert successes == 1
     assert first_refusal is not None and first_refusal.status_code == 429
     error = first_refusal.json()["error"]
     assert error["code"] == "rate_limited" and error["details"]["dimension"] == "writes"
@@ -95,9 +102,11 @@ async def test_rate_limit_then_forced_backoff_then_circuit(
     early = await _put(enforce_client, agent, f"rate-{prefix}-x", "x", 0)
     assert early.status_code == 429
     assert early.json()["error"]["details"]["reason"] == "ignored_backoff"
-    assert int(early.headers["Retry-After"]) == wait * 2
+    expected = min(wait * 2, get_settings().backoff_max_seconds)
+    assert int(early.headers["Retry-After"]) == expected
     early = await _put(enforce_client, agent, f"rate-{prefix}-x", "x", 0)
-    assert int(early.headers["Retry-After"]) == wait * 4
+    assert int(early.headers["Retry-After"]) == min(
+        expected * 2, get_settings().backoff_max_seconds)
     # ... and the third violation in a row opens a short circuit.
     tripped = await _put(enforce_client, agent, f"rate-{prefix}-x", "x", 0)
     assert tripped.status_code == 429
@@ -126,6 +135,7 @@ async def test_hot_key_loop_trips_circuit_until_a_human_clears_it(
     await _limits(client, admin_headers, "workspace", workspace_id,
                   write_rate_per_minute=1000, write_burst=1000)
     agent = await _agent(client, admin_headers, workspace)
+    agent["AgentGraph-Version"] = "2026-11"
     key = f"loop-{uuid.uuid4().hex[:6]}"
     statuses = []
     for version in range(21):

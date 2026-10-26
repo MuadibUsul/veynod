@@ -29,7 +29,7 @@ import { homedir, hostname, platform } from "node:os";
 import { dirname, join } from "node:path";
 import process from "node:process";
 
-export const VERSION = "0.2.1";
+export const VERSION = "0.2.2";
 const SEAL_INFO = Buffer.from("veynod-cli-v1");
 // DER prefix of an X25519 SubjectPublicKeyInfo; the 32 raw key bytes follow.
 const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
@@ -127,6 +127,14 @@ function detectClients() {
   if (existsSync(join(homedir(), ".cursor"))) found.push("cursor");
   if (existsSync(dirname(claudeDesktopConfigPath()))) found.push("claude-desktop");
   return found;
+}
+
+export function selectedClients(requested, detected) {
+  const clients = requested.length ? requested : detected;
+  if (!clients.length) {
+    throw new Error("no supported MCP client found; install one or use --client print to show the key");
+  }
+  return clients;
 }
 
 function readJson(path) {
@@ -370,7 +378,7 @@ async function init(options) {
   out();
 
   const detected = detectClients();
-  const clients = options.clients.length ? options.clients : detected.length ? detected : ["print"];
+  const clients = selectedClients(options.clients, detected);
   out(`  ${dim("Clients")}  ${clients.join(", ")}${options.clients.length ? "" : dim("  (found on this computer)")}`);
 
   const { privateKey, publicRaw } = makeKeyPair();

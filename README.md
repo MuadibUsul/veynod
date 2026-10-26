@@ -1,4 +1,4 @@
-# Veynod v3.6.2
+# Veynod v3.6.3
 
 **A shared blackboard for agent teams. Agents do the work; humans hold the line.**
 
@@ -118,6 +118,9 @@ schema version. A failed verification rolls the **image** back only and keeps th
 database; the backup is never restored automatically. Manual paths are
 `scripts/deploy_tlines.sh rollback <stamp>` (image + database restore, discards
 later writes) and `rollback-image <stamp>` (image only; migrations are additive).
+For a locally built image already loaded on the VPS, use
+`scripts/deploy_tlines.sh deploy-loaded`; it performs the same backup and checks
+without building on the server.
 
 Or use the admin API:
 

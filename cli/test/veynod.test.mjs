@@ -18,6 +18,7 @@ import {
   openSealed,
   parseArgs,
   parseSse,
+  selectedClients,
   sealForTest,
 } from "../bin/veynod.mjs";
 
@@ -38,6 +39,12 @@ test("arguments", () => {
   assert.equal(options.open, false);
   assert.throws(() => parseArgs(["init", "--client", "vim"]), /unknown client/);
   assert.throws(() => parseArgs(["init", "--host"]), /needs a value/);
+});
+
+test("a missing client never reveals the key implicitly", () => {
+  assert.throws(() => selectedClients([], []), /--client print/);
+  assert.deepEqual(selectedClients(["print"], []), ["print"]);
+  assert.deepEqual(selectedClients([], ["cursor"]), ["cursor"]);
 });
 
 test("merging keeps other servers and leaves a backup", () => {
