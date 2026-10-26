@@ -170,6 +170,16 @@ machine `agent_id`, and credential `generation`.
 | Naming rule (T-4) | Done | A token created from `agent_id` gets `<agent_id>-v1`; later generations increment. The console mint form accepts stable id, display name and legacy signature. |
 | Invariants | Done | No secret in names; `token_id` stays opaque; permissions remain from the token grant/`whoami`; old aliases never resolve to another identity. |
 
+## Blob storage and public share links (v3.40.0)
+
+| Item | Status | Notes |
+|---|---|---|
+| Blob primitive | Done | `blobs` stores content-addressed bytes separate from `shared_documents`; `POST /v1/blobs` (single) and resumable `/v1/blobs/uploads` paths; download verifies `X-Content-SHA256`; dedupe is per workspace. |
+| Attachments | Done | `document_blobs` attaches blob ids without versioning or taint propagation; `GET/POST/DELETE /v1/documents/{key}/blobs`; deleting a referenced blob is 409 with the document list, commander force-delete leaves a broken reference with 410 on download. |
+| Lifecycle and admission | Done | Unreferenced TTL GC (`POST /v1/blobs/gc` plus hourly loop), owner purge with audit, base64/large-body rejection pointing at `/v1/blobs`, and per-agent daily document quota. Scoped `cleanup_grants` let a delegated agent archive only the granted namespace/prefix until expiry or revocation. |
+| Artifact migration | Done | `POST /v1/blobs/migrate-parts` reassembles base64 `file_artifact_part` documents, verifies `file_sha256`, archives all parts and appends a `blob-migration-log` document. |
+| Public share links | Done | `POST /v1/documents/{key}/share-links` supports 24h/7d/30d/custom/permanent; `/s/{token}` is unauthenticated, serves only a watermarked server-rendered SVG (no markdown in HTML, copy/context-menu deterrents), follows the latest version, is single-document isolated, and records create/access/revoke audit rows. |
+
 ## Automated quality control 1.0 (执行版 1.0)
 
 Migration 3.32.0. Everything is recorded at all times; `QUALITY_CONTROL=true` (feature flag, off by default, listed in the root's `capabilities`) enforces the release matrix on reviews and hand-offs, so existing workspaces keep today's behaviour until an operator turns it on.
