@@ -73,6 +73,10 @@ async def _put(http, headers, key, content, version=0):
 async def test_rate_limit_then_forced_backoff_then_circuit(
     client, enforce_client, admin_headers, workspace
 ):
+    # A slow CI runner can refill the default 60/minute bucket while writing;
+    # keep the burst at 20 but make refills negligible during this test.
+    await _limits(client, admin_headers, "workspace", workspace["workspace"]["id"],
+                  write_rate_per_minute=1, write_burst=20)
     agent = await _agent(client, admin_headers, workspace)
     prefix = uuid.uuid4().hex[:6]
     successes = 0
