@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 GENERATED = ROOT / "dashboard" / "app" / "docs" / "site.generated.json"
 ALLOWED_CONSTANTS = {"AGENTGRAPH_TOKEN", "AGENTGRAPH_URL", "VEYNOD_AUTH", "VEYNOD_KEY",
                      "XAI_API_KEY", "HUMAN_SOVEREIGNTY_LOCKED", "IN_PROGRESS",
-                     "NAMESPACE_FORBIDDEN", "AGENT_CLAIM"}
+                     "NAMESPACE_FORBIDDEN", "AGENT_CLAIM", "ASYNC_INDEX_DEFAULT"}
 
 
 def test_generated_site_is_current_and_clean():

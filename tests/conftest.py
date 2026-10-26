@@ -28,6 +28,14 @@ if os.getenv("TEST_DATABASE_URL"):
 INTEGRATION_ENABLED = bool(os.getenv("TEST_DATABASE_URL"))
 
 
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    if not INTEGRATION_ENABLED:
+        skip = pytest.mark.skip(reason="TEST_DATABASE_URL is not set")
+        for item in items:
+            if item.get_closest_marker("integration"):
+                item.add_marker(skip)
+
+
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))

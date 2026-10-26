@@ -155,14 +155,14 @@ async def _resolve(session: AsyncSession, workspace: Workspace, ref: str) -> dic
 
 
 async def _announce(session: AsyncSession, workspace_id: Any, event_type: str,
-                    payload: dict[str, Any]) -> None:
+                    payload: dict[str, Any], *, actor: str = "directory") -> None:
     humans = (
         await session.execute(
             text("SELECT id FROM human_users WHERE workspace_id = :ws AND is_active"),
             {"ws": workspace_id},
         )
     ).scalars().all()
-    await append_event(session, workspace_id=workspace_id, agent="directory",
+    await append_event(session, workspace_id=workspace_id, agent=actor,
                        event_type=event_type,
                        payload={**payload, "targets": [f"human:{item}" for item in humans]})
 
@@ -430,7 +430,18 @@ async def update_agent(session: AsyncSession, principal: Principal, ref: str,
                 session, updated["workspace_id"], "AGENT_RENAMED",
                 {"agent_id": updated["agent_id"], "previous_agent_id": row["agent_id"],
                  "display_name": updated["display_name"],
-                 "previous_display_name": row["display_name"]},
+                 "previous_display_name": row["display_name"],
+                 "details": {
+                     "agent_id": updated["agent_id"], "previous_agent_id": row["agent_id"],
+                     "display_name": updated["display_name"],
+                     "previous_display_name": row["display_name"],
+                     "changed_by": principal.agent_signature,
+                 },
+                 "actor_stamp": {
+                     "principal_id": str(principal.user_id or principal.token_cid),
+                     "kind": "human" if principal.is_human else "agent",
+                 }},
+                actor=principal.agent_signature,
             )
         await session.commit()
         return entry_out(dict(updated))

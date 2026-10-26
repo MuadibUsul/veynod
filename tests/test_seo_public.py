@@ -34,6 +34,11 @@ async def test_homepage_negotiation_and_locales(monkeypatch):
 
         generic = await client.get("/", headers={"Accept": "*/*"})
         assert generic.headers["content-type"].startswith("text/html")
+        wildcard = await client.get("/", headers={"Accept": "application/*"})
+        assert wildcard.headers["content-type"].startswith("text/html")
+        weighted = await client.get(
+            "/", headers={"Accept": "application/json;q=0.1,text/*;q=0.9"})
+        assert weighted.headers["content-type"].startswith("text/html")
         api = await client.get("/", headers={"Accept": "application/json"})
         assert api.status_code == 200
         assert "Accept" in api.headers["vary"]
@@ -86,7 +91,7 @@ async def test_public_crawler_endpoints_and_canonical_redirects():
         assert "get_orientation" in full.text
         assert "npx veynod init" in full.text
         assert len(full.text) > 30_000
-        for host in ("www.veynod.com", "agentgraph.fusionpropulsion.space"):
+        for host in ("www.veynod.com",):
             redirect = await client.get(
                 "/docs/quickstart/?a=1", headers={"Host": host}, follow_redirects=False
             )

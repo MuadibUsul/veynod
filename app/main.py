@@ -646,6 +646,10 @@ def _accept_quality(accept: str, candidate: str) -> float:
 
 def _wants_json(accept: str) -> bool:
     """Compare JSON and HTML quality; ties and `*/*` keep the HTML landing page."""
+    # A wildcard is insufficient to opt an agent into the orientation payload.
+    if not any(item.split(";", 1)[0].strip().lower() == "application/json"
+               for item in accept.split(",")):
+        return False
     # XHTML is not a representation we serve; treating application/* as an
     # XHTML request would make an API client's `application/*` select HTML.
     html = _accept_quality(accept, "text/html")

@@ -139,3 +139,7 @@ async def test_agent_rename_emits_an_event(client):
     renamed = [event for event in events
                if str(event["type"]).lower() in {"agent.renamed", "timeline.agent_renamed"}]
     assert renamed, [event["type"] for event in events]
+    assert renamed[-1]["details"]["previous_display_name"] == "Runner One"
+    assert renamed[-1]["details"]["display_name"] == "Runner Two"
+    assert renamed[-1]["details"]["changed_by"]
+    assert renamed[-1]["actor"]["type"] == "human"
