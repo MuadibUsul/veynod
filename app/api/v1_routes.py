@@ -19,6 +19,7 @@ from app.errors import ApiError
 from app.models import TaskStatus
 from app.schemas import (
     AgentGenerationRequest,
+    AgentMergeRequest,
     AgentRegisterRequest,
     AgentStatusRequest,
     AgentUpdateRequest,
@@ -948,6 +949,21 @@ async def get_agent(
 ) -> dict:
     require_permission(principal, "workspace:read")
     return await directory.get_agent(session, principal, ref)
+
+
+@router.post("/agents/merge",
+             summary="Merge duplicate directory identities into one stable agent_id")
+async def merge_agent_identities(
+    body: AgentMergeRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import agent_merge
+
+    return await agent_merge.merge_identities(
+        session, principal.workspace, body.target, body.sources,
+        dry_run=body.dry_run, principal=principal,
+    )
 
 
 @router.post("/agents/{ref}/generations",

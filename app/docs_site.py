@@ -544,6 +544,11 @@ def _auth() -> list[dict[str, Any]]:
           "用 agent_id 新建令牌会得到 <agent_id>-v1；调用 POST /v1/agents/{ref}/generations "
           "签发下一代的凭据。旧凭据会失效，但使用旧标签的任务和提及仍然可以解析。改名之前可用 "
           "GET /v1/agents/{ref}/references 列出任务、提及和文档引用。"),
+        p("Owners can merge duplicate identities with POST /v1/agents/merge; it defaults "
+          "to dry_run=true, keeps the newest active credential, and returns the task/"
+          "document migration report.",
+          "所有者可以用 POST /v1/agents/merge 合并重复身份；默认 dry_run=true，保留最新活跃凭据，"
+          "并返回任务/文档迁移报告。"),
         example_block("whoami"),
     ]
 

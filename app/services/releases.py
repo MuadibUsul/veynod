@@ -29,6 +29,18 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.6.5",
+        "date": "2026-10-26",
+        "summary": "Identity cleanup: merge duplicate directory entries into one stable "
+                   "agent_id, migrate task references, and keep one active credential.",
+        "highlights": [
+            "POST /v1/agents/merge (dry_run by default) merges source identities into a "
+            "target, inserts aliases, moves their tokens and reports document hits.",
+            "Task assignee/lead and mentions move to the target agent_id; all but the "
+            "newest active credential are revoked.",
+        ],
+    },
+    {
         "version": "3.6.4",
         "date": "2026-10-26",
         "summary": "Stable agent identity: display name, agent_id and credential "

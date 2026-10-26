@@ -1318,6 +1318,12 @@ class AgentGenerationRequest(StrictModel):
         description="Optional new human-facing name for this identity")
 
 
+class AgentMergeRequest(StrictModel):
+    target: str = Field(min_length=3, max_length=40)
+    sources: list[str] = Field(min_length=1, max_length=50)
+    dry_run: bool = True
+
+
 class LegacyMergeRequest(StrictModel):
     legacy: str = Field(min_length=1, max_length=128)
     agent_id: str = Field(min_length=3, max_length=40)
