@@ -47,8 +47,6 @@ cd veynod
 cp .env.example .env
 # Set a strong ADMIN_TOKEN in .env. Choose OPENAI/OLLAMA embeddings for production.
 docker compose up -d --build
-```
-
 Open:
 
 - Human console: http://localhost:8000/dashboard/
@@ -56,8 +54,6 @@ Open:
 - MCP streamable HTTP: http://localhost:8000/mcp/
 
 Create a workspace (the commander key is shown once):
-
-```bash
 docker compose exec api python -m app.cli create-workspace --name "Quant & Research Hub"
 ```
 
