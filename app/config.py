@@ -1,4 +1,4 @@
-"""Application configuration for Veynod v3.6.5."""
+"""Application configuration for Veynod v3.6.6."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ app
     app_name: str = "Veynod"
     # Bump on every release and add notes in app/services/releases.py.
-    app_version: str = "3.6.5"
+    app_version: str = "3.6.6"
     environment: Literal["development", "staging", "production", "test"] = "development"
     debug: bool = False
     host: str = "0.0.0.0"
@@ -237,6 +237,19 @@ class Settings(BaseSettings):
     max_state_bytes: int = 100_000
     max_brief_bytes: int = 32_768
     max_artifact_chars: int = 4_194_304
+
+    # ------------------------------------------------ blobs (v3.40)
+    max_blob_bytes: int = Field(default=100 * 1024 * 1024, ge=1)
+    blob_unreferenced_ttl_days: int = Field(default=30, ge=0, le=3650)
+    blob_base64_ratio: float = Field(default=0.80, ge=0.0, le=1.0)
+    blob_base64_min_bytes: int = Field(default=64 * 1024, ge=1)
+    agent_daily_document_limit: int = Field(default=100, ge=1)
+    agent_daily_document_bytes: int = Field(default=10 * 1024 * 1024, ge=1)
+    blob_upload_ttl_hours: int = Field(default=24, ge=1, le=168)
+    # Public share links: origin used in generated URLs (falls back to the
+    # request origin); the image width is the server-rendered page width.
+    share_link_origin: str | None = None
+    share_link_image_width: int = Field(default=1200, ge=480, le=2400)
 
     # ------------------------------------------------ async index (AG-ST-13)
     index_worker_enabled: bool = True

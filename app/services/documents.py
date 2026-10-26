@@ -991,9 +991,12 @@ async def _set_document_archived(
     action = "archive" if archived else "restore"
     onboarding.ensure_system_writable(principal, document.namespace, document.doc_key)
     if not _can_manage_document(principal, document):
-        raise Forbidden(
-            f"only the creator or a workspace commander can {action} this document"
-        )
+        from app.services.blobs import can_archive_with_grant
+
+        if not await can_archive_with_grant(session, principal, document):
+            raise Forbidden(
+                f"only the creator or a workspace commander can {action} this document"
+            )
     ensure_not_human_locked(
         principal, "shared_document", document.locked_by_human, document.human_note
     )
@@ -1263,6 +1266,10 @@ async def upsert_document(
         existing = None
     if existing is not None:
         doc_key = existing.doc_key
+    else:
+        from app.services.blobs import check_document_admission
+
+        await check_document_admission(session, principal, agent, content)
     await budget.check_write(
         principal, document_id=existing.id if existing else None, doc_key=doc_key
     )

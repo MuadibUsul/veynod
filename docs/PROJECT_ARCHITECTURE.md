@@ -2,8 +2,8 @@
 
 | 项 | 值 |
 |---|---|
-| 产品版本 | **v3.6.5** |
-| 数据库 schema | **3.39.0** |
+| 产品版本 | **v3.6.6** |
+| 数据库 schema | **3.40.0** |
 | 文档更新时间 | **2026-10-25** |
 | 本地仓库 | `E:\Codes\AgentGraph` |
 | 生产地址 | `https://veynod.com`（唯一域名；旧域名已从 Caddy 移除） |
@@ -921,7 +921,7 @@ v2 库
   schema_migrations 中缺失的版本按顺序执行
 ```
 
-迁移由 `app/database.py` 在 PostgreSQL advisory lock 下执行；多副本不会并发跑 DDL。当前 schema 版本记录在 `schema_migrations`，最新为 **3.39.0**。
+迁移由 `app/database.py` 在 PostgreSQL advisory lock 下执行；多副本不会并发跑 DDL。当前 schema 版本记录在 `schema_migrations`，最新为 **3.40.0**。
 
 ### 9.5 备份与回滚
 
@@ -1016,7 +1016,7 @@ ruff check .
 
 ## 12. 历史记录：GitHub R1/R2 增量（schema 3.26.0）
 
-> 以下保留 2026-10-22 合并时的版本与工具数量，作为历史记录。当前版本见文首：**v3.6.5 / schema 3.39.0 / 100 个 MCP 工具**。
+> 以下保留 2026-10-22 合并时的版本与工具数量，作为历史记录。当前版本见文首：**v3.6.6 / schema 3.40.0 / 100 个 MCP 工具**。
 
 2026-10-22 合并 `origin/main` 后，代码已包含 GitHub 上的 R1.3–R2.4 能力；当时产品版本统一为 **v3.2.1**，数据库 schema 升至 **3.26.0**。
 
@@ -1061,4 +1061,4 @@ ruff check .
 
 ---
 
-*Veynod v3.6.5 · schema 3.39.0 — 共享黑板、租约、人类主权、可追溯文档、提案与污点、租户 RLS、混合检索、签名 Webhook、可补偿外部动作、预算与可重放事件。*
+*Veynod v3.6.6 · schema 3.40.0 — 共享黑板、租约、人类主权、可追溯文档、提案与污点、租户 RLS、混合检索、签名 Webhook、可补偿外部动作、预算与可重放事件。*

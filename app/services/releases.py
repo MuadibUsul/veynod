@@ -29,6 +29,24 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.6.6",
+        "date": "2026-10-26",
+        "summary": "Blob storage and public share links: binary files are first-class "
+                   "objects, and one document can be shared read-only without login.",
+        "highlights": [
+            "POST /v1/blobs stores content-addressed bytes separately from documents; "
+            "downloads verify sha256, attachments do not change trust/taint, and "
+            "unreferenced blobs are reclaimed after the configured TTL.",
+            "Resumable uploads, referenced-blob protection, owner force-delete, scoped "
+            "cleanup grants and a 17-part artifact migration are available.",
+            "Document admission rejects large base64 bodies with a pointer to /v1/blobs "
+            "and enforces a per-agent daily document quota.",
+            "POST /v1/documents/{key}/share-links creates time-limited or permanent public "
+            "links; /s/{token} serves only a watermarked image with copy/context-menu "
+            "deterrents, and create/access/revoke are recorded.",
+        ],
+    },
+    {
         "version": "3.6.5",
         "date": "2026-10-26",
         "summary": "Identity cleanup: merge duplicate directory entries into one stable "

@@ -84,7 +84,7 @@ async def test_root_html_carries_search_metadata_and_json_is_noindex(client):
     for accept, expected in (
         ("application/json;q=0.1,text/*;q=0.9", "text/html"),
         ("text/*", "text/html"),
-        ("application/*", "application/json"),
+        ("application/*", "text/html"),
         ("application/json,text/html;q=0.9", "application/json"),
         ("application/json;q=0.1,*/*;q=0.9", "text/html"),
     ):

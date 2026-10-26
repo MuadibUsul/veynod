@@ -226,6 +226,7 @@ _INCREMENTAL_MIGRATIONS: list[tuple[str, Path]] = [
     ("3.37.0", _MIGRATIONS_DIR / "v3_37_poke_realtime.sql"),
     ("3.38.0", _MIGRATIONS_DIR / "v3_38_chunk_embed_hash.sql"),
     ("3.39.0", _MIGRATIONS_DIR / "v3_39_token_naming.sql"),
+    ("3.40.0", _MIGRATIONS_DIR / "v3_40_blobs_share_links.sql"),
 ]
 CURRENT_SCHEMA_VERSION = _INCREMENTAL_MIGRATIONS[-1][0]
 

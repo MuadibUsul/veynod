@@ -31,11 +31,14 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app import capabilities
 from app.api.admin_routes import router as admin_router
 from app.api.auth_routes import router as auth_router
+from app.api.blob_routes import router as blob_router
 from app.api.human_routes import router as human_router
 from app.api.inbox_stream import router as inbox_stream_router
 from app.api.oauth_routes import router as oauth_router
 from app.api.org_routes import router as org_router
 from app.api.public_docs import router as public_docs_router
+from app.api.share_routes import public_router as share_public_router
+from app.api.share_routes import router as share_router
 from app.api.stream_routes import admin_router as admin_stream_router
 from app.api.stream_routes import router as stream_router
 from app.api.v1_routes import router as v1_router
@@ -77,6 +80,8 @@ def _is_private_path(path: str) -> bool:
         or (path.startswith("/v1/") and path != "/v1/agent-docs")
         or path == "/mcp"
         or path.startswith("/mcp/")
+        or path == "/s"
+        or path.startswith("/s/")
         or path in {"/api-reference", "/openapi.json", "/healthz", "/readyz", "/redoc"}
     )
 
@@ -142,6 +147,7 @@ async def lifespan(app: FastAPI):
     from app.services.access_log import flush as flush_access_log
     from app.services.access_log import flush_loop as access_log_loop
     from app.services.backups import backup_scheduler_loop
+    from app.services.blobs import blob_gc_loop
     from app.services.incidents import incident_check_loop
     from app.services.mailer import mail_worker_loop
     from app.services.situation import evaluation_loop as situation_evaluation_loop
@@ -157,6 +163,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(situation_evaluation_loop(), name="agentgraph-situation"),
         asyncio.create_task(mail_worker_loop(), name="agentgraph-mailer"),
         asyncio.create_task(incident_check_loop(), name="agentgraph-incident-sla"),
+        asyncio.create_task(blob_gc_loop(), name="agentgraph-blob-gc"),
     ]
     if settings.backup_dir and settings.backup_scheduler_enabled:
         background.append(
@@ -298,6 +305,8 @@ app.add_middleware(
                     "Idempotent-Replayed", "Retry-After"],
 )
 
+app.include_router(blob_router)
+app.include_router(share_router)
 app.include_router(v1_router)
 app.include_router(auth_router)
 app.include_router(human_router)
@@ -326,6 +335,7 @@ if docs_site_dir.is_dir():
     app.mount("/docs", StaticFiles(directory=str(docs_site_dir), html=True), name="docs")
 else:
     app.include_router(public_docs_router)
+app.include_router(share_public_router)
 
 
 def _sitemap_lastmod() -> str:
@@ -353,6 +363,7 @@ async def robots_txt() -> PlainTextResponse:
         "Allow: /llms.txt\n"
         "Allow: /llms-full.txt\n"
         "Disallow: /dashboard/\n"
+        "Disallow: /s/\n"
         "Disallow: /v1/\n"
         "Disallow: /mcp/\n"
         "Disallow: /api-reference\n"
