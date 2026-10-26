@@ -148,7 +148,10 @@ async def _resolve(session: AsyncSession, workspace: Workspace, ref: str) -> dic
                  "(d.agent_id = :r OR d.principal_id = :r "
                  "OR :r = ANY(d.signatures) OR :r = ANY(d.legacy_names) "
                  "OR d.principal_id = (SELECT principal_id FROM agent_aliases "
-                 "WHERE tenant_id = :t AND alias = :r))"),
+                 "WHERE tenant_id = :t AND alias = :r)) "
+                 "ORDER BY CASE WHEN d.agent_id = :r THEN 0 "
+                 "WHEN d.principal_id = :r THEN 1 "
+                 "WHEN :r = ANY(d.signatures) THEN 2 ELSE 3 END, d.created_at LIMIT 1"),
             {"t": workspace.tenant_id, "r": ref},
         )
     ).mappings().one_or_none()

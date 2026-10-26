@@ -54,7 +54,10 @@ async def _directory_entry(session: AsyncSession, workspace_id: Any,
                  "(d.agent_id = :r OR d.principal_id = :r "
                  "OR :r = ANY(d.signatures) OR :r = ANY(d.legacy_names) "
                  "OR d.principal_id IN (SELECT principal_id FROM agent_aliases a "
-                 "WHERE a.workspace_id = :ws AND a.alias = :r)) LIMIT 1"),
+                 "WHERE a.workspace_id = :ws AND a.alias = :r)) "
+                 "ORDER BY CASE WHEN d.agent_id = :r THEN 0 "
+                 "WHEN d.principal_id = :r THEN 1 "
+                 "WHEN :r = ANY(d.signatures) THEN 2 ELSE 3 END, d.created_at LIMIT 1"),
             {"ws": workspace_id, "r": agent_ref},
         )
     ).mappings().one_or_none()
