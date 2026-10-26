@@ -881,6 +881,14 @@ a {
   margin-top: 2px;
 }
 
+.card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .mono {
   font-family: var(--mono);
   font-size: 10.5px;

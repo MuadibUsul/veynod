@@ -130,7 +130,13 @@ export function AgentsView({
     }
   }
   const [showCreate, setShowCreate] = useState(false);
+  const [showDisabled, setShowDisabled] = useState(false);
   const [progress, setProgress] = useState<AgentOnboardingOverview | null>(null);
+  const disabledCount = tokens.filter((token) => !token.is_active).length;
+  const visibleTokens = useMemo(
+    () => (showDisabled ? tokens : tokens.filter((token) => token.is_active)),
+    [showDisabled, tokens],
+  );
   const requestRef = useRef(request);
   requestRef.current = request;
   const namespaceInputRef = useRef<HTMLInputElement>(null);
@@ -437,9 +443,23 @@ export function AgentsView({
             <h2>{t("Scoped agent tokens")}</h2>
             <p>{t("Each token pins one agent signature, a role and its namespaces.")}</p>
           </div>
-          <button type="button" className="button primary" onClick={() => setShowCreate(true)}>
-            <IconPlus /> {t("Mint token")}
-          </button>
+          <div className="card-actions">
+            {disabledCount > 0 && (
+              <button
+                type="button"
+                className="button ghost small"
+                onClick={() => setShowDisabled((value) => !value)}
+                aria-pressed={showDisabled}
+              >
+                {showDisabled
+                  ? t("Hide disabled ({count})", { count: disabledCount })
+                  : t("Show disabled ({count})", { count: disabledCount })}
+              </button>
+            )}
+            <button type="button" className="button primary" onClick={() => setShowCreate(true)}>
+              <IconPlus /> {t("Mint token")}
+            </button>
+          </div>
         </div>
         {error && <div className="inline-error">{error}</div>}
         {progress && tokens.length > 0 && (
@@ -458,12 +478,25 @@ export function AgentsView({
             {t("Only tokens people issued are listed. Agents hold {count} active delegated tokens, folded under the token that issued them.", { count: delegatedActive })}
           </p>
         )}
-        {tokens.length === 0 ? (
+        {visibleTokens.length === 0 ? (
           <Empty
-            title={t("No agent tokens")}
-            detail={t("Mint a token for each agent runtime before connecting it to the API or MCP.")}
+            title={tokens.length === 0 ? t("No agent tokens") : t("No active agent tokens")}
+            detail={
+              tokens.length === 0
+                ? t("Mint a token for each agent runtime before connecting it to the API or MCP.")
+                : t("All tokens in this workspace are disabled. Show them to re-enable or inspect.")
+            }
             action={
               <div className="empty-actions">
+                {disabledCount > 0 && (
+                  <button
+                    type="button"
+                    className="button ghost small"
+                    onClick={() => setShowDisabled(true)}
+                  >
+                    {t("Show disabled ({count})", { count: disabledCount })}
+                  </button>
+                )}
                 <button type="button" className="button primary small" onClick={() => setShowCreate(true)}>
                   <IconPlus /> {t("Mint token")}
                 </button>
@@ -488,7 +521,7 @@ export function AgentsView({
                 </tr>
               </thead>
               <tbody>
-                {tokens.map((token) => (
+                {visibleTokens.map((token) => (
                   <Fragment key={token.id}>
                   <tr>
                     <td>

@@ -332,6 +332,11 @@ const ZH: Record<string, string> = {
   "Each token pins one agent signature, a role and its namespaces.":
     "每个令牌固定一个 Agent 标识、一个角色及其命名空间。",
   Disabled: "禁用",
+  "Show disabled ({count})": "显示已禁用（{count}）",
+  "Hide disabled ({count})": "隐藏已禁用（{count}）",
+  "No active agent tokens": "没有活跃的 Agent 令牌",
+  "All tokens in this workspace are disabled. Show them to re-enable or inspect.":
+    "此工作区的令牌都已禁用。显示它们以重新启用或检查。",
   Disable: "禁用",
   Enable: "启用",
   Agent: "Agent",
