@@ -18,6 +18,7 @@ from app.error_registry import protocol_docs
 from app.errors import ApiError
 from app.models import TaskStatus
 from app.schemas import (
+    AgentGenerationRequest,
     AgentRegisterRequest,
     AgentStatusRequest,
     AgentUpdateRequest,
@@ -947,6 +948,32 @@ async def get_agent(
 ) -> dict:
     require_permission(principal, "workspace:read")
     return await directory.get_agent(session, principal, ref)
+
+
+@router.post("/agents/{ref}/generations",
+             summary="Issue the next credential generation for the same agent_id")
+async def next_agent_generation(
+    ref: str,
+    body: AgentGenerationRequest | None = None,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import token_naming
+
+    return await token_naming.next_generation(
+        session, principal, ref, (body.display_name if body else None))
+
+
+@router.get("/agents/{ref}/references",
+            summary="Task/mention/document references to an agent identity")
+async def agent_references(
+    ref: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import token_naming
+
+    return await token_naming.references(session, principal, ref)
 
 
 @router.patch("/agents/{ref}", summary="Change directory fields (per-field permissions)")

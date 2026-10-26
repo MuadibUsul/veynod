@@ -739,7 +739,15 @@ class TimelineEventRequest(StrictModel):
 
 
 class AgentTokenCreateRequest(StrictModel):
-    agent_signature: str = Field(min_length=1, max_length=128)
+    agent_signature: str | None = Field(default=None, min_length=1, max_length=128)
+    agent_id: str | None = Field(
+        default=None, pattern=r"^[a-z][a-z0-9-]{2,39}$",
+        description="Stable machine identity; a new generation keeps it")
+    generation: int | None = Field(
+        default=None, ge=1,
+        description="Credential generation; defaults to the next free one")
+    display_name: str | None = Field(
+        default=None, max_length=64, description="Human-facing name; free-form")
     role_scope: RoleName
     purpose: str | None = Field(default=None, max_length=1_000)
     allowed_namespaces: list[str] = Field(default_factory=lambda: ["*"])
@@ -890,6 +898,8 @@ class WhoAmIResponse(BaseModel):
     tenant: TenantInfo | None = None
     role: str
     agent_signature: str
+    agent_id: str | None = None
+    generation: int | None = None
     auth_kind: str
     allowed_namespaces: list[str]
     permissions: list[str] = Field(
@@ -1300,6 +1310,12 @@ class AgentUpdateRequest(BaseModel):
 class AgentStatusRequest(StrictModel):
     status: Literal["active", "idle"]
     note: str | None = Field(default=None, max_length=200)
+
+
+class AgentGenerationRequest(StrictModel):
+    display_name: str | None = Field(
+        default=None, max_length=64,
+        description="Optional new human-facing name for this identity")
 
 
 class LegacyMergeRequest(StrictModel):
@@ -1919,6 +1935,9 @@ class AgentTokenOut(BaseModel):
         default=None, description="Opaque canonical address (<type>_<ULID>); never changes"
     )
     agent_signature: str
+    agent_id: str | None = Field(
+        default=None, description="Stable machine identity shared by token generations")
+    generation: int = 1
     role_scope: str
     allowed_namespaces: list[str]
     is_active: bool

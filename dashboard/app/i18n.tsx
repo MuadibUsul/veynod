@@ -290,6 +290,18 @@ const ZH: Record<string, string> = {
   "Status": "状态",
   "Allowed agent roles": "允许的 Agent 角色",
   "Agent signature": "Agent 标识",
+  "Stable agent id (optional)": "稳定 agent_id（可选）",
+  "Lowercase machine identity. New tokens get a -v1 suffix and later generations increment it.":
+    "小写机器身份。新令牌自动加 -v1，后续代际递增。",
+  "Display name (optional)": "显示名（可选）",
+  "Free-form name for people; it never affects task or mention matching.":
+    "给人看的自由名称，不影响任务或提及匹配。",
+  "Agent signature (legacy)": "Agent 标识（兼容旧方式）",
+  "New generation": "新代际",
+  "Issue a new generation for {name}? The current token stops working immediately.":
+    "为 {name} 签发新代际？当前令牌会立即停止工作。",
+  "Generation v{generation} issued for {name}.": "已为 {name} 签发 v{generation} 代际。",
+  "Unable to issue a generation": "无法签发新代际",
   "Role scope": "角色范围",
   "Allowed namespaces (comma separated, * for all)":
     "允许的命名空间（逗号分隔，* 表示全部）",

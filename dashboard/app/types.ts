@@ -165,6 +165,8 @@ export interface DocumentDetail extends DocumentSummary {
 export interface AgentToken {
   id: string;
   agent_signature: string;
+  agent_id?: string | null;
+  generation?: number;
   role_scope: string;
   allowed_namespaces: string[];
   is_active: boolean;
@@ -379,6 +381,7 @@ export interface DirectoryEntry {
   principal_id: string;
   display_name: string;
   token_ids: string[];
+  signatures?: string[];
   address?: string;
   presence?: { online: boolean; connections: number; last_seen_at: string | null };
 }
@@ -389,6 +392,7 @@ export function directoryRefs(entries: DirectoryEntry[]): Set<string> {
   for (const entry of entries) {
     refs.add(`agent:${entry.agent_id}`);
     refs.add(`agent:${entry.principal_id}`);
+    for (const signature of entry.signatures ?? []) refs.add(`agent:${signature}`);
     if (entry.address) refs.add(entry.address);
   }
   return refs;
@@ -403,8 +407,10 @@ export function directoryDisplayName(entries: DirectoryEntry[], ref: string | nu
       entry.address,
       entry.agent_id,
       entry.principal_id,
+      ...(entry.signatures ?? []),
       `agent:${entry.agent_id}`,
       `agent:${entry.principal_id}`,
+      ...(entry.signatures ?? []).map((signature) => `agent:${signature}`),
     ];
     if (refs.includes(value)) return entry.display_name || entry.agent_id;
   }

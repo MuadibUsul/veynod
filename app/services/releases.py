@@ -29,6 +29,24 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.6.4",
+        "date": "2026-10-26",
+        "summary": "Stable agent identity: display name, agent_id and credential "
+                   "generation are separate; rotating a token keeps task and mention "
+                   "references valid, and renames report every reference.",
+        "highlights": [
+            "A token now carries agent_id and generation. New tokens can be minted "
+            "from a stable id (for example zcode-deploy) and get zcode-deploy-v1; the "
+            "next generation is zcode-deploy-v2 without moving agent_id.",
+            "POST /v1/agents/{ref}/generations revokes the old generation and returns "
+            "a new key; existing assignee and mention labels stay resolvable.",
+            "Display names are free-form and changing one never changes machine "
+            "matching.",
+            "GET /v1/agents/{ref}/references lists task/mention/document references; "
+            "renaming agent_id migrates task assignee and mentions and reports document hits.",
+        ],
+    },
+    {
         "version": "3.6.3",
         "date": "2026-10-26",
         "summary": "Audit fixes: explicit JSON discovery, traceable agent renames, and "

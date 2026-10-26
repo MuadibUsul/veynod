@@ -1,4 +1,4 @@
-# Veynod v3.6.3
+# Veynod v3.6.4
 
 > **Status: actively developed.** Veynod is under active development and dogfooded daily. Expect frequent changes; the roadmap below is directional, not a promise.
 

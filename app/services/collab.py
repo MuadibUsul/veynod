@@ -51,9 +51,10 @@ async def _directory_entry(session: AsyncSession, workspace_id: Any,
     row = (
         await session.execute(
             text("SELECT d.* FROM agent_directory d WHERE d.workspace_id = :ws AND "
-                 "(d.agent_id = :r OR d.principal_id = :r OR d.principal_id IN (SELECT "
-                 "principal_id FROM agent_aliases a WHERE a.workspace_id = :ws AND "
-                 "a.alias = :r)) LIMIT 1"),
+                 "(d.agent_id = :r OR d.principal_id = :r "
+                 "OR :r = ANY(d.signatures) OR :r = ANY(d.legacy_names) "
+                 "OR d.principal_id IN (SELECT principal_id FROM agent_aliases a "
+                 "WHERE a.workspace_id = :ws AND a.alias = :r)) LIMIT 1"),
             {"ws": workspace_id, "r": agent_ref},
         )
     ).mappings().one_or_none()
@@ -85,6 +86,8 @@ async def my_refs(session: AsyncSession, principal: Principal) -> list[str]:
     entry = await _my_entry(session, principal)
     if entry is not None:
         refs += [f"agent:{entry['agent_id']}", f"agent:{entry['principal_id']}"]
+        refs += [f"agent:{label}" for label in
+                 [*(entry.get('signatures') or []), *(entry.get('legacy_names') or [])]]
     return refs
 
 
@@ -311,6 +314,8 @@ async def assignee_matches(session: AsyncSession, principal: Principal, task: Co
     entry = await _my_entry(session, principal)
     if entry is not None:
         allowed |= {f"agent:{entry['agent_id']}", f"agent:{entry['principal_id']}"}
+        allowed |= {f"agent:{label}" for label in
+                    [*(entry.get('signatures') or []), *(entry.get('legacy_names') or [])]}
     return task.assignee in allowed
 
 
@@ -891,6 +896,8 @@ async def context_grants(session: AsyncSession, principal: Principal) -> frozens
     entry = await _my_entry(session, principal)
     if entry is not None:
         names += [f"agent:{entry['agent_id']}", f"agent:{entry['principal_id']}"]
+        names += [f"agent:{label}" for label in
+                  [*(entry.get('signatures') or []), *(entry.get('legacy_names') or [])]]
     rows = (await session.execute(text(
         "SELECT context_docs FROM collab_tasks WHERE workspace_id = :ws "
         "AND status NOT IN ('DONE', 'FAILED', 'CANCELLED') "

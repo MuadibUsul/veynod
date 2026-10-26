@@ -90,6 +90,7 @@ async def _me(session: AsyncSession, principal: Principal) -> dict[str, Any]:
     if entry is not None:
         return {
             "agent_id": entry["agent_id"],
+            "generation": principal.generation,
             "principal_id": entry["principal_id"],
             "display_name": entry["display_name"],
             "type": "agent",
@@ -105,7 +106,8 @@ async def _me(session: AsyncSession, principal: Principal) -> dict[str, Any]:
             "token": token,
         }
     return {
-        "agent_id": principal.agent_signature,
+        "agent_id": principal.agent_id or principal.agent_signature,
+        "generation": principal.generation,
         "display_name": principal.agent_signature,
         "type": "human" if principal.is_human else "agent",
         "role": principal.role.value,

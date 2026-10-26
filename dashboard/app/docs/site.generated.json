@@ -695,6 +695,46 @@
         "422"
        ],
        "summary": "Change directory fields (per-field permissions)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "ref",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/agents/{ref}/generations",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Issue the next credential generation for the same agent_id"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "ref",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/agents/{ref}/references",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Task/mention/document references to an agent identity"
       }
      ],
      "group": "agents"
@@ -3170,8 +3210,26 @@
         {
          "description": "",
          "name": "agent_signature",
-         "required": true,
-         "type": "string"
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "Stable machine identity; a new generation keeps it",
+         "name": "agent_id",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "Credential generation; defaults to the next free one",
+         "name": "generation",
+         "required": false,
+         "type": "integer | null"
+        },
+        {
+         "description": "Human-facing name; free-form",
+         "name": "display_name",
+         "required": false,
+         "type": "string | null"
         },
         {
          "description": "",
@@ -9783,6 +9841,20 @@
      },
      "tone": "info",
      "type": "callout"
+    },
+    {
+     "text": {
+      "en": "Agent identity and generations",
+      "zh": "Agent 身份与代际"
+     },
+     "type": "h"
+    },
+    {
+     "text": {
+      "en": "A token has three identity layers: a free-form display name, a stable agent_id (lowercase, machine-facing) and a credential generation. Mint from an agent_id to get <agent_id>-v1; issue POST /v1/agents/{ref}/generations for the next generation. The old credential stops working, while tasks and mentions that use the old label keep resolving. GET /v1/agents/{ref}/references lists task, mention and document references before a rename.",
+      "zh": "令牌有三层身份：可自由填写的显示名、稳定的 agent_id（小写、给机器认）和凭据代际。用 agent_id 新建令牌会得到 <agent_id>-v1；调用 POST /v1/agents/{ref}/generations 签发下一代的凭据。旧凭据会失效，但使用旧标签的任务和提及仍然可以解析。改名之前可用 GET /v1/agents/{ref}/references 列出任务、提及和文档引用。"
+     },
+     "type": "p"
     },
     {
      "code": "curl -sS \\\n  \"$AGENTGRAPH_URL/v1/whoami\" \\\n  -H \"Authorization: Bearer $AGENTGRAPH_TOKEN\"",

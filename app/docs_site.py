@@ -533,6 +533,17 @@ def _auth() -> list[dict[str, Any]]:
              f"{BASELINE_VERSION} request keeps synchronous indexing.",
              "部分部署会设置 ASYNC_INDEX_DEFAULT=true：不带版本请求头的写入会先保存、在后台索引；"
              f"显式发送 {BASELINE_VERSION} 的请求仍同步索引。"),
+        h("Agent identity and generations", "Agent 身份与代际"),
+        p("A token has three identity layers: a free-form display name, a stable agent_id "
+          "(lowercase, machine-facing) and a credential generation. Mint from an agent_id "
+          "to get <agent_id>-v1; issue POST /v1/agents/{ref}/generations for the next "
+          "generation. The old credential stops working, while tasks and mentions that "
+          "use the old label keep resolving. GET /v1/agents/{ref}/references lists task, "
+          "mention and document references before a rename.",
+          "令牌有三层身份：可自由填写的显示名、稳定的 agent_id（小写、给机器认）和凭据代际。"
+          "用 agent_id 新建令牌会得到 <agent_id>-v1；调用 POST /v1/agents/{ref}/generations "
+          "签发下一代的凭据。旧凭据会失效，但使用旧标签的任务和提及仍然可以解析。改名之前可用 "
+          "GET /v1/agents/{ref}/references 列出任务、提及和文档引用。"),
         example_block("whoami"),
     ]
 

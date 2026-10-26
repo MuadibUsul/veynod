@@ -313,6 +313,8 @@ def agent_token_out(token: AgentToken) -> AgentTokenOut:
         id=token.id,
         canonical_id=token.canonical_id,
         agent_signature=token.agent_signature,
+        agent_id=token.agent_id,
+        generation=int(token.generation or 1),
         role_scope=token.role_scope.value,
         allowed_namespaces=list(token.allowed_namespaces or ["*"]),
         is_active=token.is_active,

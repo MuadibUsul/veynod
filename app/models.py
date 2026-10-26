@@ -278,6 +278,11 @@ class AgentToken(Base):
         nullable=False,
     )
     agent_signature: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Stable machine identity and credential generation (TASK-8012EB76).
+    agent_id: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    generation: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default=text("1")
+    )
     api_key_hash: Mapped[str] = mapped_column(String(256), unique=True, nullable=False)
     # v3.37 hot swap: the secret before the last rotation, valid until then.
     previous_key_hash: Mapped[str | None] = mapped_column(String(256), nullable=True)

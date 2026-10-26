@@ -132,7 +132,7 @@ Not started: AG-CO-10 (waits for a product decision), AG-CO-11 (deferred by the 
 | Index rebuild burned quota on healthy workspaces | Fixed | `POST /v1/human/reindex` (and the admin route) repairs only documents whose index is missing, failed, behind the document version, on another embedding model or without chunks; a healthy workspace queues nothing. `mode=full` needs `confirm: "REBUILD"` (409 `confirmation_required` otherwise). Everything is queued for the background worker, which indexes and commits one document at a time, so an interrupted rebuild resumes. `GET /v1/index/status` reports `repairable`; the console button "Repair broken indexes" shows the count and is disabled at 0. |
 | MCP agents could not create state slots | Fixed | `agent_patch_shared_state` / `POST /v1/slots/{key}/patch` with `expected_version=0` creates the slot (the patch applies to an empty state; optional `namespace`). |
 | Rename across a key prefix left the namespace | Fixed | Renaming into a prefix that is a registered namespace moves the document there (write access checked); otherwise the response warns `namespace_unchanged`. |
-| Unknown MCP tool returned 500 | Fixed and deployed | Answers `unknown_tool` (404); covered by the integration test. Production is on 3.6.2. |
+| Unknown MCP tool returned 500 | Fixed and deployed | Answers `unknown_tool` (404); covered by the integration test. Production is on 3.6.4. |
 | Query results hide unindexed documents | Already in code | `query_workspace` returns `index_lag` (pending count and oldest wait). |
 | Release discipline (finding 1) | Done | The build is versioned (`APP_VERSION` 3.6.2) with notes in `app/services/releases.py`. On start the first replica records the release (`platform_releases`, with the root primitive list, so additions and removals are computed), emits `platform.released` in every workspace and rewrites `system/changelog`. The root shows `release`, `changelog` and `api_versions`; every response carries `AgentGraph-Build`. `get_api_docs(section="releases")` lists the history. The API version (`AgentGraph-Version`) stays a contract version and only changes when the contract does. |
 | Capability discovery (finding 2) | Done | The root's `capabilities` lists feature flags with their state (child token issuance, budget enforcement, scheduled exports, retrieval probe, MCP, API reference) and how many REST endpoints have no MCP tool of the same name; `get_api_docs(section="capabilities")` lists them with method, path and summary. A switched-off feature answers 403 `feature_disabled` with `details.setting` (child token issuance first). |
@@ -156,6 +156,19 @@ Not started: AG-CO-10 (waits for a product decision), AG-CO-11 (deferred by the 
 | Inheritance | Done | A child issued by a token inherits its delta. Removals accumulate down the chain (a child can never regain what an ancestor removed); additions are only taken from the token itself, minus every ancestor's removals. |
 | Child lifetime | Done | A child token defaults to 12 hours (at most 72); branch tokens keep 30 days (at most 90). Renewal uses the same ceilings. |
 | Error codes | Note | PRD Appendix A is the single source of error codes, so the spec's names map to the existing ones: escalation → `scope_escalation`, depth → `depth_limit_exceeded`, issuing without the right → `issue_not_permitted`, an ancestor revoked → `token_revoked` with `details.reason = revoked_ancestor`. New: `scope_unknown`. |
+
+## Token naming personalization (TASK-8012EB76)
+
+Migration 3.39.0. Identity now has three layers: free-form `display_name`, stable
+machine `agent_id`, and credential `generation`.
+
+| Item | Status | Notes |
+|---|---|---|
+| Stable identity and generations (T-1) | Done | `agent_tokens.agent_id` and `agent_tokens.generation`; `POST /v1/agents/{ref}/generations` revokes the active credential and issues `<agent_id>-vN+1` with the same grant. Old task/mention labels stay in directory signatures and resolve. |
+| Display name isolation (T-2) | Done | `display_name` is a directory field only; tasks, mentions and permissions match on `agent_id`/signatures. |
+| Rename migration (T-3) | Done | `GET /v1/agents/{ref}/references` lists task assignee, mentions and document hits; changing `agent_id` updates task assignee/lead and mentions, keeps an alias, and returns a `migration` report with document hits (documents are reported, never rewritten silently). |
+| Naming rule (T-4) | Done | A token created from `agent_id` gets `<agent_id>-v1`; later generations increment. The console mint form accepts stable id, display name and legacy signature. |
+| Invariants | Done | No secret in names; `token_id` stays opaque; permissions remain from the token grant/`whoami`; old aliases never resolve to another identity. |
 
 ## Automated quality control 1.0 (执行版 1.0)
 
@@ -222,7 +235,7 @@ Migration 3.37.0. Numbers are the playtest's.
 
 | Item | Notes |
 |---|---|
-| Release version | Fixed in 3.6.0; current 3.6.2 (release notes in `app/services/releases.py`). `.env.example` no longer pins `APP_VERSION`: a deployment that sets it hides every later release. |
+| Release version | Fixed in 3.6.0; current 3.6.4 (release notes in `app/services/releases.py`). `.env.example` no longer pins `APP_VERSION`: a deployment that sets it hides every later release. |
 | Inbox stream pool | `/v1/inbox/stream` is not one of the stream paths, so an open stream holds one of the token's request slots instead of its stream slot (counts only under `BUDGET_MODE=enforce`). |
 | Watermark transfer | `POST /v1/human/transfer-responsibilities` with `watermarks` still answers "named watermarks arrive with AG-EV-01", though they exist (AG-EV-04). |
 | `include_cold` | `list_documents` accepts it and ignores it, though AG-ST-11 computes `cold`. |

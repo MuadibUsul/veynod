@@ -90,8 +90,8 @@ async def test_registration_is_step_four_and_tokens_are_backfilled(client):
     async with run_server({}, ".server-seed.log") as base_url:  # startup backfills
         async with httpx.AsyncClient(base_url=base_url, timeout=60) as fresh:
             listed = (await fresh.get("/v1/agents", headers=ws["key"])).json()["items"]
-    auto = next(item for item in listed if item["address"] == f"agent:{old['signature']}")
-    assert auto["source"] == "auto" and auto["agent_id"] == old["signature"].lower()
+    auto = next(item for item in listed if item["agent_id"] == old["signature"].lower())
+    assert auto["source"] == "auto" and auto["address"] == f"agent:{auto['agent_id']}"
     me = (await client.get("/v1/orientation", headers=old["headers"])).json()["me"]
     assert me["registered"] is False and me["directory_source"] == "auto"
     assigned = await client.post("/v1/tasks", headers=ws["key"], json={
@@ -114,7 +114,7 @@ async def test_registration_is_step_four_and_tokens_are_backfilled(client):
     assert registered.status_code == 201, registered.text
     others = (await client.get("/v1/agents", headers=old["headers"])).json()["items"]
     found = next(item for item in others
-                 if item["address"] == f"agent:{fresh_agent['signature']}")
+                 if item["agent_id"] == fresh_agent["signature"].lower())
     assert found["capabilities"] == ["claims tasks"] and found["role"] == "EXECUTOR"
 
 

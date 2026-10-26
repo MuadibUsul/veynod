@@ -41,7 +41,7 @@ services:
           memory: 768m
 
   api:
-    image: agentgraph:3.6.3
+    image: agentgraph:3.6.4
     build: .
     container_name: agentgraph-api
     env_file:

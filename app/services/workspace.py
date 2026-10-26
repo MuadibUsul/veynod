@@ -75,6 +75,8 @@ async def whoami(principal: Principal) -> WhoAmIResponse:
         tenant=tenant_info(principal.tenant) if principal.tenant else None,
         role=principal.role.value,
         agent_signature=principal.agent_signature,
+        agent_id=principal.agent_id,
+        generation=principal.generation,
         auth_kind=principal.auth_kind.value,
         allowed_namespaces=principal.allowed_namespaces,
         # 2026-10-24 #13/#14: what is actually in force, per namespace and with
@@ -684,22 +686,46 @@ async def create_agent_token(
     workspace: Workspace,
     request: AgentTokenCreateRequest,
 ) -> AgentTokenCreatedResponse:
+    from app.services import directory as directory_service
+    from app.services import token_naming
+
+    signature = (request.agent_signature or "").strip()
+    agent_id = (request.agent_id or "").strip()
+    if not signature and not agent_id:
+        raise ApiError(422, "validation_error",
+                       "agent_signature or agent_id is required",
+                       details={"field": "agent_signature"})
+    if not agent_id:
+        agent_id = directory_service.default_agent_id(signature)
+    max_generation = await session.scalar(
+        select(func.max(AgentToken.generation)).where(
+            AgentToken.workspace_id == workspace.id,
+            AgentToken.agent_id == agent_id,
+        )
+    )
+    generation = request.generation or (
+        int(max_generation or 0) + 1 if request.agent_id else 1
+    )
+    if not signature:
+        signature = f"{agent_id}-v{generation}"
     existing = await session.scalar(
         select(AgentToken.id).where(
             AgentToken.workspace_id == workspace.id,
-            AgentToken.agent_signature == request.agent_signature,
+            AgentToken.agent_signature == signature,
         )
     )
     if existing is not None:
         raise ApiError(
             409,
             "agent_token_exists",
-            f"agent '{request.agent_signature}' already has a token",
+            f"agent '{signature}' already has a token",
         )
     raw_key = generate_agent_key()
     token = AgentToken(
         workspace_id=workspace.id,
-        agent_signature=request.agent_signature,
+        agent_signature=signature,
+        agent_id=agent_id,
+        generation=generation,
         api_key_hash=hash_api_key(raw_key),
         role_scope=AgentRole(request.role_scope),
         allowed_namespaces=request.allowed_namespaces,
@@ -717,6 +743,10 @@ async def create_agent_token(
         depth=1,
         issued_by_agent_id=(current_stamp() or {}).get("principal_id") or "admin",
         purpose=request.purpose,
+        agent_profile={
+            "agent_id": agent_id,
+            "display_name": (request.display_name or signature)[:64],
+        },
     )
     session.add(token)
     try:
@@ -726,6 +756,13 @@ async def create_agent_token(
         raise ApiError(409, "agent_token_exists", "agent token already exists") from None
     token.lineage = [workspace.root_token_id, token.canonical_id]
     await snapshot_token(session, workspace, token)
+    if request.agent_id or request.display_name:
+        # New naming API: bind the credential to a stable directory identity
+        # immediately. Legacy console/CLI mints keep the deferred auto entry.
+        await token_naming.attach_token(
+            session, workspace, token, display_name=request.display_name,
+            registered_by="admin", source="registered",
+        )
     await session.commit()
     return AgentTokenCreatedResponse(token=agent_token_out(token), api_key=raw_key)
 

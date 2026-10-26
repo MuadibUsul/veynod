@@ -2,8 +2,8 @@
 
 | 项 | 值 |
 |---|---|
-| 产品版本 | **v3.6.3** |
-| 数据库 schema | **3.38.0** |
+| 产品版本 | **v3.6.4** |
+| 数据库 schema | **3.39.0** |
 | 文档更新时间 | **2026-10-25** |
 | 本地仓库 | `E:\Codes\AgentGraph` |
 | 生产地址 | `https://veynod.com`（唯一域名；旧域名已从 Caddy 移除） |
@@ -483,7 +483,8 @@ E:\Codes\AgentGraph\
 | 分组 | 表 | 用途 |
 |---|---|---|
 | **租户与身份** | `tenants`、`workspaces`、`memberships` | 租户树、工作区、成员关系 |
-| | `agent_tokens` | Scoped Agent Key；角色、namespace、启停、grant 快照 |
+| | `agent_tokens` | Scoped Agent Key；稳定 `agent_id`、代际、角色、namespace、启停、grant 快照 |
+| | `agent_directory`、`agent_aliases` | 机器身份、显示名、历史标签与改名别名 |
 | | `human_users`、`human_sessions` | 人类账号、密码/Google 身份、短时会话 |
 | | `grant_snapshots`、`access_audit`、`constitution_acks` | 令牌授权快照、读访问审计、宪法确认 |
 | **协作** | `collab_tasks` | 任务状态机、L1 brief、L2 artifact、ping-pong |
@@ -864,7 +865,7 @@ python:3.12-slim
 | 服务器目录 | `/home/deploy/agentgraph` |
 | Compose | `docker-compose.prod.yml`（项目名 `agentgraph`） |
 | API 容器 | `agentgraph-api` |
-| 镜像 | `agentgraph:3.6.3`（部署目标；以服务器实际容器为准） |
+| 镜像 | `agentgraph:3.6.4`（部署目标；以服务器实际容器为准） |
 | 数据库 | 独立 `agentgraph_pgdata` 卷，不与其他项目共用 |
 | 网络 | 内部 `agentgraph_internal` + 共享 `web`；不发布宿主端口 |
 | 反向代理 | Caddy：`veynod.com` → `agentgraph-api:8000` |
@@ -910,7 +911,7 @@ OPENAI_BASE_URL=https://api.jina.ai/v1
   → v3_hardening.sql
   → v3_2_production.sql
   → v3_2_1_mcp_improvements.sql
-  → v3_3 ... v3_38
+  → v3_3 ... v3_39
 
 v2 库
   v2_to_v3_collab.sql
@@ -920,7 +921,7 @@ v2 库
   schema_migrations 中缺失的版本按顺序执行
 ```
 
-迁移由 `app/database.py` 在 PostgreSQL advisory lock 下执行；多副本不会并发跑 DDL。当前 schema 版本记录在 `schema_migrations`，最新为 **3.38.0**。
+迁移由 `app/database.py` 在 PostgreSQL advisory lock 下执行；多副本不会并发跑 DDL。当前 schema 版本记录在 `schema_migrations`，最新为 **3.39.0**。
 
 ### 9.5 备份与回滚
 
@@ -1015,7 +1016,7 @@ ruff check .
 
 ## 12. 历史记录：GitHub R1/R2 增量（schema 3.26.0）
 
-> 以下保留 2026-10-22 合并时的版本与工具数量，作为历史记录。当前版本见文首：**v3.6.3 / schema 3.38.0 / 100 个 MCP 工具**。
+> 以下保留 2026-10-22 合并时的版本与工具数量，作为历史记录。当前版本见文首：**v3.6.4 / schema 3.39.0 / 100 个 MCP 工具**。
 
 2026-10-22 合并 `origin/main` 后，代码已包含 GitHub 上的 R1.3–R2.4 能力；当时产品版本统一为 **v3.2.1**，数据库 schema 升至 **3.26.0**。
 
@@ -1060,4 +1061,4 @@ ruff check .
 
 ---
 
-*Veynod v3.6.3 · schema 3.38.0 — 共享黑板、租约、人类主权、可追溯文档、提案与污点、租户 RLS、混合检索、签名 Webhook、可补偿外部动作、预算与可重放事件。*
+*Veynod v3.6.4 · schema 3.39.0 — 共享黑板、租约、人类主权、可追溯文档、提案与污点、租户 RLS、混合检索、签名 Webhook、可补偿外部动作、预算与可重放事件。*

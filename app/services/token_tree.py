@@ -432,6 +432,8 @@ async def issue_child_token(
     token = AgentToken(
         workspace_id=workspace.id,
         agent_signature=agent_id,
+        agent_id=agent_id,
+        generation=1,
         api_key_hash=hash_api_key(raw_key),
         role_scope=role,
         allowed_namespaces=read,

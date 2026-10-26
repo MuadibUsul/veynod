@@ -213,6 +213,8 @@ export function AgentsView({
     (progress?.items ?? []).map((item) => [item.agent_signature, item] as const),
   );
   const [signature, setSignature] = useState("");
+  const [agentId, setAgentId] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [role, setRole] = useState("EXECUTOR");
   const [busy, setBusy] = useState(false);
   // Agents may delegate short-lived child tokens; they stay folded under the
@@ -310,7 +312,9 @@ export function AgentsView({
         {
           method: "POST",
           body: JSON.stringify({
-            agent_signature: signature.trim(),
+            agent_signature: signature.trim() || undefined,
+            agent_id: agentId.trim() || undefined,
+            display_name: displayName.trim() || undefined,
             role_scope: role,
             allowed_namespaces: selectedNamespaces,
           }),
@@ -318,6 +322,8 @@ export function AgentsView({
       );
       setShowCreate(false);
       setSignature("");
+      setAgentId("");
+      setDisplayName("");
       setSelectedNamespaces(["*"]);
       setNamespaceQuery("");
       setNamespaceOpen(false);
@@ -346,6 +352,32 @@ export function AgentsView({
       notify(t("{name} {state}.", { name: token.agent_signature, state: token.is_active ? t("disabled") : t("enabled") }));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t("Unable to update token"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function newGeneration(token: AgentToken) {
+    const name = token.agent_id || token.agent_signature;
+    if (!window.confirm(t("Issue a new generation for {name}? The current token stops working immediately.", { name }))) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await request<{
+        api_key: string; token: AgentToken; agent_id: string; generation: number;
+      }>(`/v1/agents/${encodeURIComponent(name)}/generations`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      onKey(result.api_key, result.token.agent_signature, result.token);
+      notify(t("Generation v{generation} issued for {name}.", {
+        generation: result.generation, name,
+      }));
+      await onRefresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : t("Unable to issue a generation"));
     } finally {
       setBusy(false);
     }
@@ -550,6 +582,14 @@ export function AgentsView({
                         type="button"
                         className="button ghost small"
                         disabled={busy}
+                        onClick={() => void newGeneration(token)}
+                      >
+                        {t("New generation")}
+                      </button>
+                      <button
+                        type="button"
+                        className="button ghost small"
+                        disabled={busy}
                         onClick={() => void toggle(token)}
                       >
                         {token.is_active ? t("Disable") : t("Enable")}
@@ -716,7 +756,7 @@ export function AgentsView({
                 type="submit"
                 form="agent-token-form"
                 className="button primary"
-                disabled={busy || !signature.trim() || selectedNamespaces.length === 0}
+                disabled={busy || (!signature.trim() && !agentId.trim()) || selectedNamespaces.length === 0}
               >
                 {busy ? <Spinner /> : <IconKey />} {t("Mint token")}
               </button>
@@ -725,13 +765,34 @@ export function AgentsView({
         >
           <form id="agent-token-form" onSubmit={create}>
             <label className="field">
-              <span>{t("Agent signature")}</span>
+              <span>{t("Stable agent id (optional)")}</span>
+              <input
+                value={agentId}
+                onChange={(e) => setAgentId(e.target.value)}
+                placeholder="zcode-deploy"
+                autoFocus
+              />
+              <small className="field-hint">
+                {t("Lowercase machine identity. New tokens get a -v1 suffix and later generations increment it.")}
+              </small>
+            </label>
+            <label className="field">
+              <span>{t("Display name (optional)")}</span>
+              <input
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="ZCode · Deploy"
+              />
+              <small className="field-hint">
+                {t("Free-form name for people; it never affects task or mention matching.")}
+              </small>
+            </label>
+            <label className="field">
+              <span>{t("Agent signature (legacy)")}</span>
               <input
                 value={signature}
                 onChange={(e) => setSignature(e.target.value)}
                 placeholder="grid_executor_01"
-                autoFocus
-                required
               />
             </label>
             <label className="field">

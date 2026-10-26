@@ -76,8 +76,10 @@ async def test_mentions_and_assignees_are_checked(client):
     types = [event["type"] for event in await _mine(client, b["headers"], cursor)]
     assert "mention.created" in types
 
+    # agent_id is the stable lower-case machine identity; a different casing of
+    # the human label must still fail with a did-you-mean suggestion.
     wrong_case = await client.post("/v1/tasks", headers=ws["key"], json={
-        "title": "x", "assignee": f"agent:{label.lower()}"})
+        "title": "x", "assignee": f"agent:{label.upper()}"})
     assert wrong_case.status_code == 422
     error = wrong_case.json()["error"]
     assert error["code"] == "unknown_principal"

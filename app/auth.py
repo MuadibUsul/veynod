@@ -76,6 +76,9 @@ class Principal:
     # Labels of the tokens above this one (not the workspace root): what they
     # wrote counts as this agent's own for the default trust filters.
     ancestor_signatures: frozenset[str] = frozenset()
+    # Stable identity and credential generation (TASK-8012EB76).
+    agent_id: str | None = None
+    generation: int | None = None
 
     @property
     def own_names(self) -> list[str]:
@@ -320,6 +323,8 @@ async def _agent_principal(
         perm_remove=removed,
         ancestor_signatures=frozenset(item.agent_signature for item in ancestors
                                       if (item.depth or 0) > 0 and item.agent_signature),
+        agent_id=token.agent_id,
+        generation=token.generation,
     )
 
 

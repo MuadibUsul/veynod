@@ -54,6 +54,7 @@ def entry_out(row: dict[str, Any]) -> dict[str, Any]:
         "status_note": row["status_note"],
         "trust_level": row["trust_level"],
         "token_ids": list(row["token_ids"] or []),
+        "signatures": list(row.get("signatures") or []),
         "registered_by": row["registered_by"],
         "version": row["version"],
         "last_seen_at": row["last_seen_at"],
@@ -61,7 +62,7 @@ def entry_out(row: dict[str, Any]) -> dict[str, Any]:
         "updated_at": row["updated_at"],
         "source": row.get("source") or "registered",
         "reach": row.get("reach") or {},
-        "address": f"agent:{(row.get('signatures') or [row['agent_id']])[0]}",
+        "address": f"agent:{row['agent_id']}",
     }
 
 
@@ -144,8 +145,10 @@ async def _resolve(session: AsyncSession, workspace: Workspace, ref: str) -> dic
     row = (
         await session.execute(
             text("SELECT d.* FROM agent_directory d WHERE d.tenant_id = :t AND "
-                 "(d.agent_id = :r OR d.principal_id = :r OR d.principal_id = "
-                 "(SELECT principal_id FROM agent_aliases WHERE tenant_id = :t AND alias = :r))"),
+                 "(d.agent_id = :r OR d.principal_id = :r "
+                 "OR :r = ANY(d.signatures) OR :r = ANY(d.legacy_names) "
+                 "OR d.principal_id = (SELECT principal_id FROM agent_aliases "
+                 "WHERE tenant_id = :t AND alias = :r))"),
             {"t": workspace.tenant_id, "r": ref},
         )
     ).mappings().one_or_none()
@@ -420,11 +423,18 @@ async def update_agent(session: AsyncSession, principal: Principal, ref: str,
                 params,
             )
         ).mappings().one()
+        migration = None
         if "status" in fields and fields["status"] != row["status"]:
             await _status_event(session, dict(updated), row["status"])
+        renamed = "agent_id" in fields and fields["agent_id"] != row["agent_id"]
+        if renamed:
+            from app.services.token_naming import migrate_rename
+
+            migration = await migrate_rename(session, principal.workspace,
+                                             dict(row), dict(updated))
         if (
             ("display_name" in fields and fields["display_name"] != row["display_name"])
-            or ("agent_id" in fields and fields["agent_id"] != row["agent_id"])
+            or renamed
         ):
             await _announce(
                 session, updated["workspace_id"], "AGENT_RENAMED",
@@ -436,6 +446,7 @@ async def update_agent(session: AsyncSession, principal: Principal, ref: str,
                      "display_name": updated["display_name"],
                      "previous_display_name": row["display_name"],
                      "changed_by": principal.agent_signature,
+                     **(migration or {}),
                  },
                  "actor_stamp": {
                      "principal_id": str(principal.user_id or principal.token_cid),
@@ -444,7 +455,10 @@ async def update_agent(session: AsyncSession, principal: Principal, ref: str,
                 actor=principal.agent_signature,
             )
         await session.commit()
-        return entry_out(dict(updated))
+        result = entry_out(dict(updated))
+        if migration is not None:
+            result["migration"] = migration
+        return result
     return entry_out(row)
 
 
