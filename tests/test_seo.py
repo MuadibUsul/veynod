@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
@@ -107,6 +108,37 @@ async def test_docs_pages_have_canonical_header_and_og_image(client):
     assert image.headers["content-type"].startswith("image/png")
     assert image.content.startswith(b"\x89PNG\r\n\x1a\n")
     assert len(image.content) > 10_000
+
+
+async def test_favicon_and_apple_touch_icon_are_public(client):
+    root = Path(__file__).resolve().parent.parent
+    svg = (root / "app/static/favicon.svg").read_bytes()
+    apple = (root / "app/static/apple-touch-icon.png").read_bytes()
+
+    icon = await client.get("/favicon.svg")
+    assert icon.status_code == 200
+    assert icon.headers["content-type"].startswith("image/svg+xml")
+    assert icon.content == svg
+
+    touch = await client.get("/apple-touch-icon.png")
+    assert touch.status_code == 200
+    assert touch.headers["content-type"].startswith("image/png")
+    assert touch.content == apple
+
+    page = await client.get("/", headers={"Accept": "text/html"})
+    assert '<link rel="icon" href="/favicon.svg" type="image/svg+xml">' in page.text
+    assert '<link rel="apple-touch-icon" href="/apple-touch-icon.png">' in page.text
+    assert "/dashboard/icon.svg" not in page.text
+    assert "/dashboard/apple-icon.png" not in page.text
+
+    robots = await client.get("/robots.txt")
+    assert "Disallow: /dashboard/" in robots.text
+    assert "/favicon.svg" not in robots.text
+    assert "/apple-touch-icon.png" not in robots.text
+
+    og = await client.get("/og.png")
+    assert og.status_code == 200
+    assert og.headers["content-type"].startswith("image/png")
 
 
 async def test_private_surfaces_send_noindex(client):

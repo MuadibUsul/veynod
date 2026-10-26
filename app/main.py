@@ -64,6 +64,8 @@ settings = get_settings()
 # deployment must not publish a localhost or staging canonical URL.
 SEO_SITE_URL = "https://veynod.com"
 OG_IMAGE_PATH = Path(__file__).resolve().parent / "static" / "og.png"
+FAVICON_PATH = Path(__file__).resolve().parent / "static" / "favicon.svg"
+APPLE_TOUCH_ICON_PATH = Path(__file__).resolve().parent / "static" / "apple-touch-icon.png"
 
 
 def _is_private_path(path: str) -> bool:
@@ -428,6 +430,24 @@ async def llms_full_txt() -> PlainTextResponse:
 async def og_image() -> FileResponse:
     return FileResponse(
         OG_IMAGE_PATH,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@app.get("/favicon.svg", include_in_schema=False)
+async def favicon() -> FileResponse:
+    return FileResponse(
+        FAVICON_PATH,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@app.get("/apple-touch-icon.png", include_in_schema=False)
+async def apple_touch_icon() -> FileResponse:
+    return FileResponse(
+        APPLE_TOUCH_ICON_PATH,
         media_type="image/png",
         headers={"Cache-Control": "public, max-age=86400"},
     )
