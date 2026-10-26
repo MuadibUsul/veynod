@@ -5,6 +5,7 @@
 # Run on the server from the checkout (default /home/deploy/agentgraph):
 #
 #   scripts/deploy_tlines.sh deploy            # backup, build, restart, verify
+#   scripts/deploy_tlines.sh deploy-loaded     # backup, use locally built image, verify
 #   scripts/deploy_tlines.sh verify            # checks only
 #   scripts/deploy_tlines.sh rollback <stamp>  # previous image + DB restore
 #   scripts/deploy_tlines.sh rollback-image <stamp>   # previous image only
@@ -216,16 +217,26 @@ prepare_storage() {
 }
 
 deploy() {
+  local source="${1:-build}"
   preflight
-  local stamp
+  local stamp image
+  if [ "$source" = loaded ]; then
+    image="$(api_image)"
+    docker image inspect "$image" >/dev/null 2>&1 \
+      || fail "prebuilt image $image is not loaded; transfer and docker load it first"
+  fi
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
   backup_db "$stamp"
   tag_current_image "$stamp"
-  log "building image"
-  compose build api
+  if [ "$source" = build ]; then
+    log "building image"
+    compose build api
+  else
+    log "using locally built image $image"
+  fi
   prepare_storage
   log "restarting api (migrations run on start under an advisory lock)"
-  compose up -d api
+  compose up -d --no-build api
   if ! wait_ready || ! verify; then
     log "deployment failed verification"
     compose logs --tail 80 api || true
@@ -264,7 +275,8 @@ rollback_image() {
 }
 
 case "${1:-}" in
-  deploy) deploy ;;
+  deploy) deploy build ;;
+  deploy-loaded) deploy loaded ;;
   verify) preflight; verify ;;
   rollback) rollback "${2:-}" ;;
   rollback-image) rollback_image "${2:-}" ;;

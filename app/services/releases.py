@@ -29,6 +29,18 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.6.3",
+        "date": "2026-10-26",
+        "summary": "Audit fixes: explicit JSON discovery, traceable agent renames, and "
+                   "safer CLI key display.",
+        "highlights": [
+            "The root JSON orientation is returned only when Accept explicitly names "
+            "application/json; wildcard media ranges keep the HTML page.",
+            "Agent rename events expose the previous and new names plus the actor.",
+            "CLI 0.2.2 no longer prints a key implicitly when no MCP client is found.",
+        ],
+    },
+    {
         "version": "3.6.2",
         "date": "2026-10-25",
         "summary": "Latency and cost posture: undeclared clients enqueue indexing by "
