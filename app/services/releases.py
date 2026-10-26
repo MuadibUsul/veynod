@@ -29,6 +29,17 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.6.7",
+        "date": "2026-10-26",
+        "summary": "Public read-only demo workspace and a reusable multi-agent template.",
+        "highlights": [
+            "/demo/ serves a live, unauthenticated, read-only view of the veynod-demo "
+            "workspace: documents and tasks with no write paths.",
+            "templates/multi-agent-research/ ships a planner, researcher and independent "
+            "reviewer prompt, MCP config and starter task graph.",
+        ],
+    },
+    {
         "version": "3.6.6",
         "date": "2026-10-26",
         "summary": "Blob storage and public share links: binary files are first-class "

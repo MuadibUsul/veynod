@@ -390,7 +390,8 @@ async def sitemap_xml() -> Response:
 
     lastmod = _sitemap_lastmod()
     urls = [
-        f"{SEO_SITE_URL}/", f"{SEO_SITE_URL}/zh/", f"{SEO_SITE_URL}/docs/",
+        f"{SEO_SITE_URL}/", f"{SEO_SITE_URL}/zh/", f"{SEO_SITE_URL}/demo/",
+        f"{SEO_SITE_URL}/docs/",
         f"{SEO_SITE_URL}/v1/agent-docs", f"{SEO_SITE_URL}/llms.txt",
         f"{SEO_SITE_URL}/llms-full.txt",
     ]
@@ -702,6 +703,58 @@ async def root_zh(request: Request) -> HTMLResponse:
         render_root_page(descriptor, lang="zh"),
         headers={"Vary": "Accept", "Cache-Control": "no-store",
                  "Link": f'<{SEO_SITE_URL}/zh/>; rel="canonical"'},
+    )
+
+
+@app.get("/demo", include_in_schema=False)
+async def demo_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/demo/", status_code=308)
+
+
+@app.get("/demo/", include_in_schema=False)
+async def demo_page() -> HTMLResponse:
+    """Public read-only snapshot of the seeded demo workspace."""
+    from sqlalchemy import select
+
+    from app.database import async_session_factory
+    from app.demo_page import render_demo_page
+    from app.models import CollabTask, SharedDocument, Workspace
+
+    async with async_session_factory() as session:
+        workspace = await session.scalar(
+            select(Workspace).where(Workspace.name == settings.demo_workspace_name)
+        )
+        documents: list[dict[str, Any]] = []
+        tasks: list[dict[str, Any]] = []
+        if workspace is not None:
+            docs = (await session.execute(
+                select(SharedDocument).where(
+                    SharedDocument.workspace_id == workspace.id,
+                    SharedDocument.archived_at.is_(None),
+                    SharedDocument.namespace != "system",
+                ).order_by(SharedDocument.updated_at.desc()).limit(6)
+            )).scalars().all()
+            documents = [
+                {"title": doc.title, "namespace": doc.namespace,
+                 "verification_status": doc.verification_status,
+                 "updated_at": doc.updated_at, "snippet": doc.content}
+                for doc in docs
+            ]
+            rows = (await session.execute(
+                select(CollabTask).where(CollabTask.workspace_id == workspace.id)
+                .order_by(CollabTask.priority.desc(), CollabTask.updated_at.desc()).limit(8)
+            )).scalars().all()
+            tasks = [
+                {"title": task.title,
+                 "status": getattr(task.status, "value", task.status),
+                 "assigned_role": task.assigned_role,
+                 "assignee": task.assignee, "priority": task.priority}
+                for task in rows
+            ]
+    return HTMLResponse(
+        render_demo_page(documents, tasks, workspace_name=settings.demo_workspace_name),
+        headers={"Vary": "Accept", "Cache-Control": "public, max-age=60",
+                 "Link": f'<{SEO_SITE_URL}/demo/>; rel="canonical"'},
     )
 
 

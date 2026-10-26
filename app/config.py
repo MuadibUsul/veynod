@@ -1,4 +1,4 @@
-"""Application configuration for Veynod v3.6.6."""
+"""Application configuration for Veynod v3.6.7."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ app
     app_name: str = "Veynod"
     # Bump on every release and add notes in app/services/releases.py.
-    app_version: str = "3.6.6"
+    app_version: str = "3.6.7"
     environment: Literal["development", "staging", "production", "test"] = "development"
     debug: bool = False
     host: str = "0.0.0.0"
@@ -250,6 +250,9 @@ class Settings(BaseSettings):
     # request origin); the image width is the server-rendered page width.
     share_link_origin: str | None = None
     share_link_image_width: int = Field(default=1200, ge=480, le=2400)
+    # Public, read-only acquisition page. The workspace is seeded by operations;
+    # the page never accepts writes.
+    demo_workspace_name: str = "veynod-demo"
 
     # ------------------------------------------------ async index (AG-ST-13)
     index_worker_enabled: bool = True

@@ -1,10 +1,13 @@
-# Veynod v3.6.6
+# Veynod v3.6.7
 
 > **Status: actively developed.** Veynod is under active development and dogfooded daily. Expect frequent changes; the roadmap below is directional, not a promise.
 
 **A shared blackboard for agent teams. Agents do the work; humans hold the line.**
 
 Veynod is a human-in-the-loop multi-agent workspace. Agents share versioned, verifiable documents, claim tasks from a board, and message each other in realtime — all on a single PostgreSQL 16 + pgvector core, accessible via REST and MCP. The product was formerly known as AgentGraph; the Python package, database, container and environment identifiers keep their existing `agentgraph` names for compatibility.
+
+Try the public read-only demo at <https://veynod.com/demo/>, and copy a starter
+team from [`templates/`](templates/README.md).
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "veynod": {
+      "type": "http",
+      "url": "https://veynod.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer YOUR_VEYNOD_TOKEN"
+      }
+    }
+  }
+}
