@@ -13,6 +13,7 @@ import asyncpg
 import httpx
 import pytest
 
+from app.config import get_settings
 from app.services import budget, indexer
 
 pytestmark = pytest.mark.integration
@@ -99,9 +100,11 @@ async def test_rate_limit_then_forced_backoff_then_circuit(
     early = await _put(enforce_client, agent, f"rate-{prefix}-x", "x", 0)
     assert early.status_code == 429
     assert early.json()["error"]["details"]["reason"] == "ignored_backoff"
-    assert int(early.headers["Retry-After"]) == wait * 2
+    expected = min(wait * 2, get_settings().backoff_max_seconds)
+    assert int(early.headers["Retry-After"]) == expected
     early = await _put(enforce_client, agent, f"rate-{prefix}-x", "x", 0)
-    assert int(early.headers["Retry-After"]) == wait * 4
+    assert int(early.headers["Retry-After"]) == min(
+        expected * 2, get_settings().backoff_max_seconds)
     # ... and the third violation in a row opens a short circuit.
     tripped = await _put(enforce_client, agent, f"rate-{prefix}-x", "x", 0)
     assert tripped.status_code == 429
