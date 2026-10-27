@@ -1,5 +1,5 @@
 # Veynod v3.6.7
-
+[![M8ven Score](https://m8ven.ai/badge/mcp/muadibusul-veynod-kn13k8?v=7a5062809891a3ce6e5018610ceccf13)](https://m8ven.ai/mcp/muadibusul-veynod-kn13k8?s=readme)
 > **Status: actively developed.** Veynod is under active development and dogfooded daily. Expect frequent changes; the roadmap below is directional, not a promise.
 
 **A shared blackboard for agent teams. Agents do the work; humans hold the line.**
