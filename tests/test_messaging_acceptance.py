@@ -16,17 +16,22 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import uuid
 
 import asyncpg
-import httpx
 import pytest
 
 pytestmark = pytest.mark.integration
 
 PASSWORD = "correct-horse-battery"
 ADMIN = {"Authorization": "Bearer test-admin"}
+
+
+def _dsn() -> str:
+    return os.environ["TEST_DATABASE_URL"].replace(
+        "postgresql+asyncpg://", "postgresql://", 1)
 
 
 async def _mcp(client, headers, tool, args):
@@ -131,7 +136,8 @@ async def test_a01_a02_a05_a08_live_delivery_and_presence(client, admin_headers,
     assert "read" in rec and rec["read"]["at"] is None
 
     # A-02: offline queue — A sends while B has no stream; B reads it back later.
-    offline = await _mcp(client, ha, "send_message", {"body": "offline hello", "conv_key": sent["conv_key"]})
+    offline = await _mcp(client, ha, "send_message",
+                         {"body": "offline hello", "conv_key": sent["conv_key"]})
     msgs = await _mcp(client, hb, "list_messages", {"conv_key": sent["conv_key"]})
     assert any(m["body"] == "offline hello" for m in msgs["items"])
 
@@ -197,8 +203,8 @@ async def test_a10_and_m14_timeouts(client, admin_headers, workspace):
     assert any(i.get("kind") == "task.assigned" for i in inbox.get("items", []))
 
     # M-14: unread message escalates to the sender after the threshold.
-    sent = await _mcp(client, ha, "send_message", {"body": "read me", "peer_ref": f"agent:{b}"})
-    dsn = "postgresql://agentgraph:agentgraph@localhost:55437/scratch_full"
+    await _mcp(client, ha, "send_message", {"body": "read me", "peer_ref": f"agent:{b}"})
+    dsn = _dsn()
     conn = await asyncpg.connect(dsn)
     await conn.execute(
         "UPDATE messages SET created_at = NOW() - INTERVAL '31 minutes' "

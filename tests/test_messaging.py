@@ -10,9 +10,7 @@ receipt progress sent -> delivered -> read.
 from __future__ import annotations
 
 import json
-import uuid
 
-import httpx
 import pytest
 
 pytestmark = pytest.mark.integration
