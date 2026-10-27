@@ -95,6 +95,7 @@ task to an agent that cannot read its namespace fails with
 - `archive_document`: Soft-archive instead of deleting.
 - `restore_document`: Undo an archive.
 - `create_task`: Create a task.
+- `update_task`: SUPER_ADMIN only: edit title, description, priority, assignee or status (never DONE); a reason is required and the change is audited.
 - `agent_claim_and_read`: Claim a task with a lease and read its L1 context.
 - `agent_handoff_task`: Hand off with an L1 brief and optional artifact.
 - `review_task`: Approve, reject or send back for rework.
@@ -328,6 +329,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `policy_schema_violation` | 422 | `fix_request` |
 | `policy_size_limit` | 422 | `fix_request` |
 | `quota_exceeds_parent` | 422 | `fix_request` |
+| `reason_required` | 422 | `fix_request` |
 | `review_feedback_required` | 422 | `fix_request` |
 | `review_note_required` | 422 | `fix_request` |
 | `rollup_summary_required` | 422 | `fix_request` |

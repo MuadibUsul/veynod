@@ -41,6 +41,8 @@ PRIMITIVES: dict[str, str] = {
     "archive_document": "Soft-archive instead of deleting.",
     "restore_document": "Undo an archive.",
     "create_task": "Create a task.",
+    "update_task": "SUPER_ADMIN only: edit title, description, priority, assignee "
+    "or status (never DONE); a reason is required and the change is audited.",
     "agent_claim_and_read": "Claim a task with a lease and read its L1 context.",
     "agent_handoff_task": "Hand off with an L1 brief and optional artifact.",
     "review_task": "Approve, reject or send back for rework.",

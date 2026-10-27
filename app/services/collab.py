@@ -309,6 +309,8 @@ async def check_claimable(session: AsyncSession, principal: Principal, task: Col
 
 async def assignee_matches(session: AsyncSession, principal: Principal, task: CollabTask,
                            agent: str) -> bool:
+    if principal.is_super_admin:
+        return True
     if not task.assignee:
         return True
     allowed = {f"agent:{agent}", f"human:{agent}"}

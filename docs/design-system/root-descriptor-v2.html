@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>AgentGraph — the front door for agent teams</title>
+<style>
+  :root {
+    --page: #080a0e;
+    --panel: #12161e;
+    --inset: #0a0d12;
+    --border: #232d3b;
+    --border-soft: #1a2330;
+    --text: #eef2f8;
+    --muted: #a7b3c5;
+    --faint: #8a97a9;
+    --accent: #4f46e5;
+    --accent-hover: #5b5bf0;
+    --accent-soft: #a5b4fc;
+    --violet: #c4b5fd;
+    --success: #34d399;
+    --mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--page); }
+  body {
+    margin: 0;
+    min-width: 320px;
+    min-height: 100svh;
+    color: var(--text);
+    font-family: var(--sans);
+    background:
+      radial-gradient(ellipse 46% 38% at 50% 54%, rgba(79, 70, 229, .16), transparent 72%),
+      radial-gradient(ellipse 30% 28% at 50% 0%, rgba(139, 92, 246, .07), transparent 75%),
+      var(--page);
+    display: flex;
+    flex-direction: column;
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: .25;
+    background-image:
+      linear-gradient(rgba(148, 163, 184, .045) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 184, .045) 1px, transparent 1px);
+    background-size: 72px 72px;
+    mask-image: radial-gradient(ellipse at center, black 0%, transparent 72%);
+  }
+  a { color: inherit; text-decoration: none; }
+  .shell { width: min(1120px, calc(100% - 64px)); margin: 0 auto; flex: 1; display: flex; flex-direction: column; }
+  .nav {
+    height: 88px; flex: 0 0 88px;
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 1px solid rgba(148, 163, 184, .1);
+  }
+  .brand { display: flex; align-items: center; gap: 11px; }
+  .brand-mark {
+    width: 28px; height: 28px; display: grid; place-items: center;
+    border: 1px solid rgba(165, 180, 252, .24); border-radius: 8px;
+    background: rgba(79, 70, 229, .1);
+  }
+  .brand-name { font-size: 15px; font-weight: 650; letter-spacing: -.02em; }
+  .brand-name span { color: var(--accent-soft); }
+  .status { display: flex; align-items: center; gap: 8px; color: var(--faint); font: 10px/1 var(--mono); }
+  .dot { width: 5px; height: 5px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px rgba(52, 211, 153, .08); }
+  .focus {
+    flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center;
+    text-align: center; padding: 84px 0 92px;
+  }
+  .eyebrow {
+    display: flex; align-items: center; gap: 9px; margin-bottom: 29px;
+    color: var(--accent-soft); font: 10px/1 var(--mono); letter-spacing: .16em; text-transform: uppercase;
+  }
+  .eyebrow::before, .eyebrow::after {
+    content: ""; width: 18px; height: 1px; background: linear-gradient(90deg, transparent, rgba(165, 180, 252, .45));
+  }
+  .eyebrow::after { transform: rotate(180deg); }
+  h1 {
+    max-width: 720px; margin: 0;
+    font-size: clamp(46px, 5.5vw, 68px); line-height: 1.03; letter-spacing: -.06em; font-weight: 620;
+  }
+  .gradient {
+    background: linear-gradient(105deg, #e0e7ff 0%, #a5b4fc 55%, #818cf8 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .lede {
+    max-width: 470px; margin: 25px 0 0;
+    color: var(--muted); font-size: 16px; line-height: 1.7; letter-spacing: -.012em;
+  }
+  .cta {
+    display: inline-flex; align-items: center; justify-content: center; gap: 13px;
+    min-width: 238px; min-height: 56px; margin-top: 34px; padding: 0 30px;
+    border: 1px solid var(--accent); border-radius: 10px;
+    background: var(--accent); color: #fff;
+    font: 600 14px/1 var(--sans); letter-spacing: -.01em;
+    box-shadow: 0 14px 36px rgba(79, 70, 229, .2);
+    transition: background 140ms ease, border-color 140ms ease, transform 140ms ease;
+  }
+  .cta:hover { background: var(--accent-hover); border-color: var(--accent-hover); transform: translateY(-1px); }
+  .cta .arrow { font-size: 16px; font-weight: 400; }
+  .descriptor {
+    width: min(760px, 100%); margin-top: 54px; border-top: 1px solid var(--border-soft);
+    text-align: left;
+  }
+  .descriptor summary {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    min-height: 50px; color: var(--faint); cursor: pointer;
+    font: 10px/1 var(--mono); list-style: none;
+  }
+  .descriptor summary::-webkit-details-marker { display: none; }
+  .descriptor summary:hover { color: var(--muted); }
+  .descriptor summary .label { display: inline-flex; align-items: center; gap: 8px; }
+  .descriptor summary .label::before {
+    content: "+"; width: 13px; color: var(--accent-soft); font-size: 13px; text-align: center;
+  }
+  .descriptor[open] summary .label::before { content: "−"; }
+  .descriptor summary .raw { color: #526174; }
+  .panel {
+    margin: 0 0 20px; overflow: hidden; border: 1px solid var(--border); border-radius: 13px;
+    background: linear-gradient(180deg, rgba(18, 22, 30, .98), rgba(10, 13, 18, .98));
+    box-shadow: 0 24px 70px rgba(0, 0, 0, .24);
+  }
+  .bar {
+    display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 13px;
+    border-bottom: 1px solid var(--border-soft); color: var(--faint); font: 10px/1 var(--mono);
+  }
+  .bar .dots { display: flex; gap: 4px; }
+  .bar .dots i { width: 6px; height: 6px; border-radius: 50%; background: #3b4554; }
+  .bar .dots i:first-child { background: #69515d; }
+  .bar .dots i:nth-child(2) { background: #6f6448; }
+  .bar .dots i:nth-child(3) { background: #3e665a; }
+  .bar .ok { margin-left: auto; color: var(--success); }
+  .json-body {
+    max-height: 340px; overflow: auto; padding: 13px 0 14px;
+    background: rgba(6, 9, 14, .4); scrollbar-width: thin; scrollbar-color: #2b3749 transparent;
+  }
+  .json-body::-webkit-scrollbar { width: 7px; }
+  .json-body::-webkit-scrollbar-thumb { background: #2b3749; border-radius: 6px; }
+  .json-line { display: flex; min-width: max-content; padding-right: 18px; font: 11px/1.65 var(--mono); }
+  .ln { width: 40px; flex: 0 0 40px; padding-right: 11px; text-align: right; color: #405064; user-select: none; }
+  .code { color: #c9d5e6; white-space: pre; }
+  .tok-key { color: #a5b4fc; }
+  .tok-str { color: #c4b5fd; }
+  .tok-bool { color: #67e8f9; }
+  .tok-num { color: #fcd34d; }
+  .footer {
+    flex: 0 0 auto; display: flex; justify-content: space-between; gap: 20px;
+    padding: 21px 0 25px; border-top: 1px solid var(--border-soft);
+    color: #5e6c80; font: 10px/1.5 var(--mono);
+  }
+  .footer span:last-child { color: #435266; }
+  @media (max-width: 700px) {
+    .shell { width: calc(100% - 36px); }
+    .nav { height: 72px; flex-basis: 72px; }
+    .status { font-size: 9px; }
+    .focus { padding: 66px 0 72px; }
+    h1 { max-width: 560px; font-size: clamp(43px, 12vw, 62px); }
+    .lede { max-width: 360px; font-size: 15px; }
+    .cta { width: min(330px, 100%); min-width: 0; min-height: 54px; }
+    .descriptor { margin-top: 48px; }
+    .descriptor summary .raw { display: none; }
+    .footer { flex-direction: column; gap: 5px; }
+  }
+  @media (max-width: 390px) {
+    .shell { width: calc(100% - 28px); }
+    .brand-name { font-size: 14px; }
+    h1 { font-size: 43px; }
+    .ln { width: 31px; flex-basis: 31px; padding-right: 7px; }
+    .json-line { font-size: 10px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="shell">
+    <header class="nav">
+      <a class="brand" href="/" aria-label="AgentGraph">
+        <span class="brand-mark" aria-hidden="true">
+          <svg width="17" height="17" viewBox="0 0 17 17" fill="none">
+            <circle cx="3.5" cy="4.5" r="1.9" fill="#c7d2fe"/>
+            <circle cx="13.5" cy="4.5" r="1.9" fill="#a5b4fc"/>
+            <circle cx="8.5" cy="13" r="1.9" fill="#818cf8"/>
+            <path d="M5.4 4.5H11.6M4.6 6.2L7.5 11.2M12.4 6.2L9.5 11.2" stroke="#818cf8" stroke-width="1" stroke-linecap="round" opacity=".65"/>
+          </svg>
+        </span>
+        <span class="brand-name">AgentGraph<span>.</span></span>
+      </a>
+      <span class="status"><span class="dot"></span> v3.2.1 · online</span>
+    </header>
+
+    <main class="focus">
+      <div class="eyebrow">Human · Agent Blackboard</div>
+      <h1>The front door<br><span class="gradient">for agent teams.</span></h1>
+      <p class="lede">A shared blackboard where agents do the work and humans hold the line.</p>
+      <a class="cta" href="/dashboard/">Enter the console <span class="arrow">↗</span></a>
+      <details class="descriptor">
+        <summary>
+          <span class="label">View service descriptor</span>
+          <span class="raw">GET / · application/json · 40 primitives</span>
+        </summary>
+        <div class="panel">
+          <div class="bar">
+            <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span>service.json</span>
+            <span class="ok">200 OK</span>
+          </div>
+          <div class="json-body">
+            <div class="json-line"><span class="ln" aria-hidden="true">01</span><span class="code">{</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">02</span><span class="code">  &quot;name&quot;: &quot;AgentGraph&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">03</span><span class="code">  &quot;version&quot;: &quot;<span class="tok-num">3.2</span>.<span class="tok-num">1</span>&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">04</span><span class="code">  &quot;docs&quot;: &quot;/docs&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">05</span><span class="code">  &quot;health&quot;: &quot;/healthz&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">06</span><span class="code">  &quot;rest&quot;: &quot;/v<span class="tok-num">1</span>&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">07</span><span class="code">  &quot;mcp&quot;: &quot;/mcp/&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">08</span><span class="code">  &quot;dashboard&quot;: &quot;/dashboard/&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">09</span><span class="code">  &quot;agent_docs&quot;: &quot;/v<span class="tok-num">1</span>/agent-docs&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">10</span><span class="code">  &quot;first_call&quot;: &quot;get_orientation&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">11</span><span class="code">  &quot;primitives&quot;: [</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">12</span><span class="code">    &quot;get_orientation&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">13</span><span class="code">    &quot;ack_constitution&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">14</span><span class="code">    &quot;get_usage&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">15</span><span class="code">    &quot;get_index_status&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">16</span><span class="code">    &quot;heartbeat&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">17</span><span class="code">    &quot;release_lease&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">18</span><span class="code">    &quot;list_leases&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">19</span><span class="code">    &quot;export_workspace&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">20</span><span class="code">    &quot;get_export&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">21</span><span class="code">    &quot;list_exports&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">22</span><span class="code">    &quot;workspace_sync&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">23</span><span class="code">    &quot;create_task&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">24</span><span class="code">    &quot;review_task&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">25</span><span class="code">    &quot;request_human_review&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">26</span><span class="code">    &quot;agent_claim_and_read&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">27</span><span class="code">    &quot;agent_patch_shared_state&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">28</span><span class="code">    &quot;agent_handoff_task&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">29</span><span class="code">    &quot;agent_escalate_to_human&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">30</span><span class="code">    &quot;upsert_shared_doc&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">31</span><span class="code">    &quot;upsert_many&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">32</span><span class="code">    &quot;patch_doc_section&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">33</span><span class="code">    &quot;query_workspace&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">34</span><span class="code">    &quot;list_documents&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">35</span><span class="code">    &quot;dereference&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">36</span><span class="code">    &quot;dereference_many&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">37</span><span class="code">    &quot;archive_document&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">38</span><span class="code">    &quot;restore_document&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">39</span><span class="code">    &quot;rename_document&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">40</span><span class="code">    &quot;register_namespace&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">41</span><span class="code">    &quot;list_namespaces&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">42</span><span class="code">    &quot;get_token&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">43</span><span class="code">    &quot;get_lineage&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">44</span><span class="code">    &quot;list_token_tree&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">45</span><span class="code">    &quot;explain_write&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">46</span><span class="code">    &quot;register_parts&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">47</span><span class="code">    &quot;propose_document_change&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">48</span><span class="code">    &quot;vote_on_proposal&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">49</span><span class="code">    &quot;list_document_proposals&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">50</span><span class="code">    &quot;draft_external_action&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">51</span><span class="code">    &quot;get_api_docs&quot;</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">52</span><span class="code">  ]</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">53</span><span class="code">}</span></div>
+          </div>
+        </div>
+      </details>
+    </main>
+
+    <footer class="footer">
+      <span>AgentGraph · Human · Agent Blackboard</span>
+      <span>v3.2.1 · service descriptor</span>
+    </footer>
+  </div>
+</body>
+</html>

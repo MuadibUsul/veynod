@@ -807,7 +807,7 @@ async def create_task(
     project: str | None = None,
     repo: str | None = None,
     description: str | None = None,
-    assigned_role: Literal["ANALYST", "AUDITOR", "EXECUTOR"] | None = None,
+    assigned_role: Literal["SUPER_ADMIN", "ANALYST", "AUDITOR", "EXECUTOR"] | None = None,
     priority: int = 0,
     namespace: str | None = None,
     input_context: dict[str, Any] | None = None,
@@ -882,6 +882,39 @@ async def create_task(
             raise _validation_error(exc) from exc
         except ApiError as exc:
             raise _api_error(exc) from exc
+    return _compact(result.model_dump(mode="json"))
+
+
+@mcp.tool(name="update_task")
+async def update_task(
+    task_key: str,
+    title: str | None = None,
+    description: str | None = None,
+    priority: int | None = None,
+    assignee: str | None = None,
+    status: str | None = None,
+    reason: str = "",
+    expected_version: int | None = None,
+    agent: str | None = None,
+) -> dict[str, Any]:
+    """SUPER_ADMIN only: edit title, description, priority, assignee or status
+    (never DONE). A reason is required; the change is audited."""
+    from app.schemas import TaskUpdateRequest
+    from app.services.tasks import super_admin_update_task
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            request = TaskUpdateRequest(
+                title=title, description=description, priority=priority,
+                assignee=assignee, status=status, reason=reason,
+                expected_version=expected_version)
+            result = await super_admin_update_task(
+                session, principal, task_key, request)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+        except ValueError as exc:
+            raise _tool_error("validation_error", str(exc), 422) from exc
     return _compact(result.model_dump(mode="json"))
 
 

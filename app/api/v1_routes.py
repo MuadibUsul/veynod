@@ -89,6 +89,7 @@ from app.schemas import (
     SlotReplaceRequest,
     SubscriptionRequest,
     SubtasksRequest,
+    SuperAdminTokenIssueRequest,
     TaskActionResponse,
     TaskClaimRequest,
     TaskContextResponse,
@@ -100,11 +101,13 @@ from app.schemas import (
     TaskReleaseRequest,
     TaskRenewRequest,
     TaskReviewRequest,
+    TaskUpdateRequest,
     TimelineEventRequest,
     TimelineItemOut,
     TimelineListResponse,
     TokenBudgetRequest,
     TokenIssueRequest,
+    TokenNamespacesRequest,
     TokenRenewRequest,
     TokenRevokeRequest,
     UsageOut,
@@ -508,6 +511,22 @@ async def renew_task(
     return await services.renew_task(session, principal, task_key, body)
 
 
+@router.patch(
+    "/tasks/{task_key}",
+    response_model=TaskOut,
+    summary="SUPER_ADMIN edits task fields (title, description, priority, assignee, status)",
+)
+async def update_task_fields(
+    task_key: str,
+    body: TaskUpdateRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> TaskOut:
+    from app.services.tasks import super_admin_update_task
+
+    return await super_admin_update_task(session, principal, task_key, body)
+
+
 @router.post(
     "/leases/{lease_id}/heartbeat",
     response_model=LeaseHeartbeatResponse,
@@ -882,6 +901,36 @@ async def revoke_token(
     return await token_tree.revoke_token(session, principal, ref, reason=body.reason,
                                          taint_writes_since=body.taint_writes_since,
                                          keep_self=body.keep_self)
+
+
+@router.post(
+    "/tokens/issue",
+    summary="SUPER_ADMIN mints a normal-role token (SUPER_ADMIN tokens need the owner)",
+)
+async def issue_token_super_admin(
+    body: SuperAdminTokenIssueRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import token_tree
+
+    return await token_tree.super_admin_issue_token(session, principal, body)
+
+
+@router.patch(
+    "/tokens/{ref}/namespaces",
+    summary="SUPER_ADMIN changes a token's allowed namespaces",
+)
+async def set_token_namespaces(
+    ref: str,
+    body: TokenNamespacesRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import token_tree
+
+    return await token_tree.set_token_namespaces(
+        session, principal, ref, body.allowed_namespaces, reason=body.reason)
 
 
 @router.post("/tokens/{ref}/renew", summary="Renew a token (its parent or an ancestor renews)")

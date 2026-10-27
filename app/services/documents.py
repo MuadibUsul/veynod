@@ -2496,6 +2496,9 @@ async def verify_document(
     request: DocumentVerifyRequest,
 ) -> DocumentMutationResponse:
     require_permission(principal, "doc:verify")
+    if principal.is_super_admin:
+        raise Forbidden(
+            "a SUPER_ADMIN cannot change verification or trust status; that is the owner's")
     batch = request.session_batch_id or uuid.uuid4()
     agent = principal.agent_signature
     document = await _get_document(

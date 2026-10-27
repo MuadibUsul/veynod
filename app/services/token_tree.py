@@ -416,6 +416,8 @@ async def issue_child_token(
 
     role = AgentRole(request["role_scope"]) if request.get("role_scope") else _role_for(
         scopes, principal)
+    if role is AgentRole.SUPER_ADMIN:
+        raise Forbidden("SUPER_ADMIN tokens need owner approval")
     # An agent may hand a child its own role or a narrower one (EXECUTOR may
     # issue ANALYST or SCOUT), never a role with any permission it lacks.
     if principal.auth_kind is AuthKind.AGENT and not (
@@ -517,6 +519,8 @@ async def _target(session: AsyncSession, workspace: Workspace, token_id: str) ->
 
 def _may_manage(principal: Principal, token: AgentToken, *, allow_self: bool) -> bool:
     if principal.auth_kind in (AuthKind.ROOT, AuthKind.HUMAN_ADMIN, AuthKind.WORKSPACE):
+        return True
+    if principal.is_super_admin:
         return True
     if principal.auth_kind is AuthKind.HUMAN:
         return principal.human_role in ("OWNER", "ADMIN") or (
@@ -802,3 +806,74 @@ async def purge_stale_delegated(*, force: bool = False) -> int:
         )
         await session.commit()
     return int(result.rowcount or 0)
+
+
+async def super_admin_issue_token(session: AsyncSession, principal: Principal,
+                                  request: Any) -> dict[str, Any]:
+    """SUPER_ADMIN mints a normal-role token; SUPER_ADMIN tokens stay owner-only."""
+    if not principal.is_super_admin:
+        raise Forbidden("only a SUPER_ADMIN issues tokens this way")
+    if request.role_scope == "SUPER_ADMIN":
+        raise Forbidden("SUPER_ADMIN tokens need owner approval")
+    reason = (request.reason or "").strip()
+    if not reason:
+        raise ApiError(422, "reason_required", "issuing a token needs a reason",
+                       details={"field": "reason"})
+    from app.schemas import AgentTokenCreateRequest
+    from app.services.workspace import create_agent_token
+
+    result = await create_agent_token(session, principal.workspace, AgentTokenCreateRequest(
+        agent_signature=request.agent_signature,
+        agent_id=request.agent_id,
+        display_name=request.display_name,
+        role_scope=request.role_scope,
+        allowed_namespaces=list(request.allowed_namespaces),
+        expires_in_days=request.expires_in_days,
+    ))
+    await append_event(
+        session, workspace_id=principal.workspace.id, agent=principal.agent_signature,
+        event_type="TOKEN_ISSUED",
+        payload={"agent_signature": result.token.agent_signature,
+                 "agent_id": result.token.agent_id,
+                 "role_scope": request.role_scope, "reason": reason,
+                 "targets": [f"agent:{result.token.agent_signature}"]},
+    )
+    await session.commit()
+    return result.model_dump(mode="json")
+
+
+async def set_token_namespaces(session: AsyncSession, principal: Principal, token_id: str,
+                               namespaces: list[str], *, reason: str) -> dict[str, Any]:
+    """SUPER_ADMIN changes a token's allowed namespaces (audited)."""
+    if not principal.is_super_admin:
+        raise Forbidden("only a SUPER_ADMIN changes token namespaces")
+    if not (reason or "").strip():
+        raise ApiError(422, "reason_required", "a namespace change needs a reason",
+                       details={"field": "reason"})
+    workspace = await session.get(Workspace, principal.workspace.id)
+    target = await _target(session, workspace, token_id)
+    if target.canonical_id in (workspace.root_token_id, workspace.key_token_id):
+        raise Forbidden("the root and workspace keys are rotated, not re-scoped")
+    before = {"allowed_namespaces": list(target.allowed_namespaces or []),
+              "read_namespaces": target.read_namespaces,
+              "write_namespaces": target.write_namespaces}
+    target.allowed_namespaces = list(namespaces)
+    target.read_namespaces = None
+    target.write_namespaces = None
+    await session.flush()
+    from app.services.common import record_audit
+
+    await record_audit(
+        session,
+        workspace_id=principal.workspace.id,
+        session_batch_id=uuid.uuid4(),
+        agent_signature=principal.agent_signature,
+        target_table="agent_tokens",
+        target_record_id=target.id,
+        operation="UPDATE",
+        before=before,
+        after={"allowed_namespaces": list(namespaces), "reason": reason},
+    )
+    await session.commit()
+    return {"token_id": target.canonical_id, "allowed_namespaces": list(namespaces),
+            "reason": reason}
