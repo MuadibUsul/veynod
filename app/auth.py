@@ -673,6 +673,47 @@ SCOPES = tuple(sorted(SCOPE_PERMISSIONS))
 ALL_PERMISSIONS = tuple(sorted(set().union(*PERMISSIONS.values()) - {"*"}))
 
 
+# Role rules v0.2 §2.6/§4.2: sovereignty capabilities are named explicitly and
+# belong to the human OWNER. A role's permission package (including "*") never
+# implies them, and no token delegation may add them.
+ROLE_CAPABILITY_MATRIX: dict[str, frozenset[str]] = {
+    "OWNER": frozenset({"task:approve_done", "task:reassign", "grant:issue"}),
+    "ADMIN": frozenset({"task:reassign"}),
+    "COMMANDER": frozenset(),
+    "SUPER_ADMIN": frozenset(),
+    "AUDITOR": frozenset(),
+    "ANALYST": frozenset(),
+    "EXECUTOR": frozenset(),
+    "SCOUT": frozenset(),
+    "VIEWER": frozenset(),
+}
+
+
+def capability_role(principal: Principal) -> str:
+    """The matrix row a principal belongs to."""
+    if principal.auth_kind is AuthKind.HUMAN_ADMIN:
+        # The operator console is the owner's root credential.
+        return "OWNER"
+    if principal.is_human:
+        return principal.human_role or "VIEWER"
+    return principal.role.value
+
+
+def has_capability(principal: Principal, capability: str) -> bool:
+    return capability in ROLE_CAPABILITY_MATRIX.get(capability_role(principal), frozenset())
+
+
+def require_capability(principal: Principal, capability: str) -> None:
+    if has_capability(principal, capability):
+        return
+    raise ApiError(
+        403,
+        "role_permission_denied",
+        f"{capability} is reserved for the human OWNER",
+        details={"action": capability, "role": capability_role(principal)},
+    )
+
+
 def scopes_for_role(role: RoleScope) -> list[str]:
     """The scopes a role's permissions cover (what a legacy token may grant on)."""
     granted = PERMISSIONS.get(role, set())

@@ -164,6 +164,8 @@ do not edit by hand. Every error body is
 | `NAMESPACE_FORBIDDEN` | 403 | `abandon` | `abandon_and_release_local_state` | Stay within the token's namespaces. |
 | `acceptance_locked` | 403 | `abandon` | `abandon_and_release_local_state` | Acceptance is locked after the first claim; ask the task's creator or a person. |
 | `acceptance_self_report` | 403 | `abandon` | `abandon_and_release_local_state` | The executor cannot report its own acceptance; another agent or a person must. |
+| `commander_grant_invalid` | 403 | `abandon` | `abandon_and_release_local_state` | The grant is unknown, revoked or not yours. |
+| `commander_grant_out_of_scope` | 403 | `abandon` | `abandon_and_release_local_state` | Stay within the grant's action, namespace and task scope. |
 | `depth_limit_exceeded` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `forbidden` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `human_endpoint` | 403 | `abandon` | `abandon_and_release_local_state` | Use the agent endpoint named in details. |
@@ -217,9 +219,12 @@ do not edit by hand. Every error body is
 | `budget_exceeded` | 402 | `escalate_human` | `stop_and_escalate_to_human` | Ask a human to raise the budget. |
 | `quota_exceeded` | 402 | `escalate_human` | `stop_and_escalate_to_human` | Ask a human to raise the quota. |
 | `HUMAN_SOVEREIGNTY_LOCKED` | 403 | `escalate_human` | `stop_and_escalate_to_human` | A human locked this resource; ask a human to change it. |
+| `commander_grant_expired` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the owner to issue a fresh grant. |
+| `commander_grant_required` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the owner for a grant, then send X-Commander-Grant-Id. |
 | `feature_disabled` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Switched off here; ask an operator (details.setting). |
 | `operator_content_denied` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the workspace owner to open support access in the console. |
 | `operator_write_denied` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the owner to reopen support access with changes allowed. |
+| `role_permission_denied` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the human OWNER; this capability is not delegated. |
 | `tenant_deleting` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Stop; only an owner can cancel deletion or fetch the export. |
 | `tenant_suspended` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Stop writing and notify a human; reads and export still work. |
 | `backup_chain_broken` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Restore from an older full backup or take a new one. |

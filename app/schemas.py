@@ -23,7 +23,8 @@ from app.models import LinkType, TaskStatus
 settings = get_settings()
 
 Namespace = str
-RoleName = Literal["SUPER_ADMIN", "SCOUT", "ANALYST", "AUDITOR", "EXECUTOR"]
+RoleName = Literal["SUPER_ADMIN", "COMMANDER", "SCOUT", "ANALYST", "AUDITOR", "EXECUTOR"]
+CommanderAction = Literal["task:cancel", "task:review", "task:archive"]
 _KEY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$"
 _NAMESPACE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
 
@@ -781,6 +782,39 @@ class SuperAdminTokenIssueRequest(StrictModel):
     allowed_namespaces: list[str] = Field(default_factory=lambda: ["*"])
     expires_in_days: int | None = Field(default=None, ge=1, le=3650)
     reason: str = Field(min_length=1, max_length=2_000)
+
+
+class CommanderGrantCreateRequest(StrictModel):
+    """A human OWNER's grant for a COMMANDER agent (role rules v0.2 §2.5)."""
+
+    grantee: str = Field(min_length=3, max_length=256)
+    allowed_actions: list[CommanderAction] = Field(min_length=1, max_length=3)
+    scope_namespace: str = Field(default="*", min_length=1, max_length=64)
+    scope_task_keys: list[str] | None = Field(default=None, max_length=50)
+    scope_task_kind: str | None = Field(default=None, max_length=16)
+    reason: str = Field(min_length=5, max_length=2_000)
+    expires_in_seconds: int = Field(default=3_600, ge=60, le=2_592_000)
+
+    @field_validator("grantee")
+    @classmethod
+    def _grantee(cls, value: str) -> str:
+        value = value.strip()
+        return value if value.startswith("agent:") else f"agent:{value}"
+
+
+class CommanderGrantOut(StrictModel):
+    grant_id: uuid.UUID
+    issued_by: str
+    grantee: str
+    allowed_actions: list[str]
+    scope_namespace: str
+    scope_task_keys: list[str] | None = None
+    scope_task_kind: str | None = None
+    reason: str
+    expires_at: datetime
+    revoked_at: datetime | None = None
+    revoked_by: str | None = None
+    created_at: datetime
 
 
 class TokenNamespacesRequest(StrictModel):

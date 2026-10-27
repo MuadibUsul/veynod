@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Header, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -629,10 +629,12 @@ async def handoff_task(
 async def review_task(
     task_key: str,
     body: TaskReviewRequest,
+    x_commander_grant_id: str | None = Header(default=None, alias="X-Commander-Grant-Id"),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> TaskActionResponse:
-    return await services.review_task(session, principal, task_key, body)
+    return await services.review_task(
+        session, principal, task_key, body, grant_id=x_commander_grant_id)
 
 
 @router.post(
@@ -1446,6 +1448,7 @@ async def set_wake_url(
 async def cancel_task(
     task_key: str,
     body: dict,
+    x_commander_grant_id: str | None = Header(default=None, alias="X-Commander-Grant-Id"),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
@@ -1453,7 +1456,8 @@ async def cancel_task(
 
     result = await cancel_own_task(session, principal, task_key,
                                    reason=str(body.get("reason") or ""),
-                                   expected_version=body.get("expected_version"))
+                                   expected_version=body.get("expected_version"),
+                                   grant_id=x_commander_grant_id)
     return result.model_dump(mode="json")
 
 

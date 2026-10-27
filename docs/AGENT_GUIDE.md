@@ -361,6 +361,8 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `NAMESPACE_FORBIDDEN` | 403 | `abandon` |
 | `acceptance_locked` | 403 | `abandon` |
 | `acceptance_self_report` | 403 | `abandon` |
+| `commander_grant_invalid` | 403 | `abandon` |
+| `commander_grant_out_of_scope` | 403 | `abandon` |
 | `depth_limit_exceeded` | 403 | `abandon` |
 | `forbidden` | 403 | `abandon` |
 | `human_endpoint` | 403 | `abandon` |
@@ -414,9 +416,12 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `budget_exceeded` | 402 | `escalate_human` |
 | `quota_exceeded` | 402 | `escalate_human` |
 | `HUMAN_SOVEREIGNTY_LOCKED` | 403 | `escalate_human` |
+| `commander_grant_expired` | 403 | `escalate_human` |
+| `commander_grant_required` | 403 | `escalate_human` |
 | `feature_disabled` | 403 | `escalate_human` |
 | `operator_content_denied` | 403 | `escalate_human` |
 | `operator_write_denied` | 403 | `escalate_human` |
+| `role_permission_denied` | 403 | `escalate_human` |
 | `tenant_deleting` | 403 | `escalate_human` |
 | `tenant_suspended` | 403 | `escalate_human` |
 | `backup_chain_broken` | 409 | `escalate_human` |
