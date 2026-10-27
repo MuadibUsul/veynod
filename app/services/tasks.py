@@ -1359,6 +1359,70 @@ async def reap_expired_task_leases(
     return len(tasks)
 
 
+async def reap_task_timeouts(
+    session: AsyncSession, threshold_seconds: int | None = None, limit: int = 100
+) -> int:
+    """M-14: a READY task assigned to a specific agent but left unclaimed for
+    the timeout window is degraded and its assignment is opened for reassignment."""
+    from app.config import get_settings
+
+    threshold = (
+        threshold_seconds
+        if threshold_seconds is not None
+        else get_settings().task_unclaimed_timeout_seconds
+    )
+    cutoff = await db_now(session) - timedelta(seconds=threshold)
+    tasks = (
+        await session.execute(
+            select(CollabTask)
+            .where(
+                CollabTask.status == TaskStatus.READY,
+                CollabTask.assignee.is_not(None),
+                CollabTask.claimed_by.is_(None),
+                CollabTask.updated_at < cutoff,
+            )
+            .with_for_update(skip_locked=True)
+            .limit(limit)
+        )
+    ).scalars().all()
+    for task in tasks:
+        assignee = task.assignee
+        before = task_snapshot(task)
+        task.assignee = None
+        task.version += 1
+        task.updated_at = utcnow()
+        await session.flush()
+        await record_audit(
+            session,
+            workspace_id=task.workspace_id,
+            session_batch_id=uuid.uuid4(),
+            agent_signature="timeout_reaper",
+            target_table="collab_tasks",
+            target_record_id=task.id,
+            operation="UPDATE",
+            before=before,
+            after=task_snapshot(task),
+        )
+        await append_event(
+            session,
+            workspace_id=task.workspace_id,
+            agent="timeout_reaper",
+            event_type="TASK_TIMEOUT_DEGRADED",
+            payload={
+                "task_key": task.task_key,
+                "targets": [assignee, "human"],
+                "details": {
+                    "delivery_kind": "task.timeout_degraded",
+                    "priority": 0,
+                    "note": f"unclaimed for {threshold}s; reassignment opened",
+                },
+            },
+            namespace=task.namespace,
+        )
+    await session.commit()
+    return len(tasks)
+
+
 async def reassign_task(
     session: AsyncSession,
     workspace_id: uuid.UUID,

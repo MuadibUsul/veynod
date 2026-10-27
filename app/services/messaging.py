@@ -12,6 +12,7 @@ the record/fallback path.
 from __future__ import annotations
 
 import hashlib
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -31,6 +32,33 @@ MESSAGE_LIMIT = 200
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+async def record_stream_delivery(
+    workspace_id: Any, message_id: int, recipient: str
+) -> None:
+    """Record a live stream push as a delivery receipt (M-07). Best-effort:
+    a receipt never fails the delivery it records."""
+    from app.database import async_session_factory
+
+    try:
+        async with async_session_factory() as session:
+            await session.execute(
+                text(
+                    "INSERT INTO message_deliveries (workspace_id, message_id, recipient, "
+                    "channel, status, detail) VALUES (:ws, :m, :r, 'stream', 'delivered', "
+                    "'stream push') ON CONFLICT (message_id, recipient, channel) DO UPDATE "
+                    "SET status = EXCLUDED.status, detail = EXCLUDED.detail, at = NOW()"
+                ),
+                {"ws": workspace_id, "m": int(message_id), "r": recipient[:256]},
+            )
+            await session.commit()
+    except Exception:  # noqa: BLE001
+        import logging
+
+        logging.getLogger("agentgraph.messaging").warning(
+            "message stream receipt not recorded", exc_info=True
+        )
 
 
 def _direct_key(peer_a: str, peer_b: str) -> str:
@@ -126,6 +154,9 @@ def _conversation_out(conv: Conversation, members: list[ConversationMember]) -> 
         "conv_key": conv.conv_key,
         "kind": conv.kind,
         "title": conv.title,
+        "status": conv.status,
+        "approved_by": conv.approved_by,
+        "approved_at": conv.approved_at.isoformat() if conv.approved_at else None,
         "created_by": conv.created_by,
         "created_at": conv.created_at.isoformat(),
         "members": [
@@ -196,6 +227,70 @@ async def get_or_create_direct(
     return _conversation_out(conv, members)
 
 
+async def create_group(
+    session: AsyncSession,
+    principal: Principal,
+    title: str,
+    member_refs: list[str],
+) -> dict[str, Any]:
+    """Create a group conversation (M-12/A-09). Agent-created groups start
+    'pending' and need a human to approve them; humans create 'active' groups."""
+    require_permission(principal, "state:write")
+    title = (title or "").strip() or "group"
+    me = await _sender_ref(session, principal)
+    refs = {me}
+    for raw in member_refs or []:
+        resolved = await _resolve_agent_ref(session, principal.workspace.id, raw.strip())
+        if resolved:
+            refs.add(resolved)
+    if len(refs) < 3:
+        raise ApiError(422, "validation_error", "a group needs at least 3 distinct members")
+
+    conv = Conversation(
+        workspace_id=principal.workspace.id,
+        conv_key=f"group_{uuid.uuid4().hex[:16]}",
+        kind=GROUP_KIND,
+        title=title[:256],
+        status="active" if principal.is_human else "pending",
+        created_by=me,
+        created_at=_now(),
+    )
+    session.add(conv)
+    await session.flush()
+    for ref in sorted(refs):
+        session.add(
+            ConversationMember(
+                workspace_id=principal.workspace.id,
+                conversation_id=conv.id,
+                member_ref=ref,
+                role="admin" if ref == me else "member",
+                joined_at=_now(),
+            )
+        )
+    await session.commit()
+    members = await _members(session, conv.id)
+    return _conversation_out(conv, members)
+
+
+async def approve_group(
+    session: AsyncSession, principal: Principal, conv_key: str
+) -> dict[str, Any]:
+    """A human approves a pending group conversation (M-12/A-09)."""
+    require_permission(principal, "state:write")
+    if not principal.is_human:
+        raise Forbidden("only a human can approve a group conversation")
+    conv = await _conversation_by_key(session, principal, conv_key)
+    if conv.kind != GROUP_KIND:
+        raise ApiError(422, "validation_error", "not a group conversation")
+    if conv.status == "pending":
+        conv.status = "active"
+        conv.approved_by = await _sender_ref(session, principal)
+        conv.approved_at = _now()
+        await session.commit()
+    members = await _members(session, conv.id)
+    return _conversation_out(conv, members)
+
+
 async def send_message(
     session: AsyncSession,
     principal: Principal,
@@ -227,6 +322,9 @@ async def send_message(
         conv = await _get_or_create_direct_conv(session, principal, me, peer)
     else:
         raise ApiError(422, "validation_error", "conv_key or peer_ref is required")
+
+    if conv.status != "active":
+        raise Forbidden("this conversation is pending human approval")
 
     members = await _members(session, conv.id)
     me_row = next((m for m in members if m.member_ref == me), None)
@@ -282,6 +380,9 @@ async def send_message(
                 "priority": 1,
                 "conv_key": conv.conv_key,
                 "seq": next_seq,
+                "message_id": message.id,
+                "sender": me,
+                "body": text_body,
             },
         },
         namespace="default",
@@ -430,23 +531,80 @@ async def message_receipts(
         },
         "recipients": [],
     }
+    me = await _sender_ref(session, principal)
+    is_sender = me == message.sender_ref
     for member in members:
         if member.member_ref == message.sender_ref:
             continue
         delivered = [d for d in deliveries if d.recipient == member.member_ref]
         delivered_at = min((d.at for d in delivered), default=None)
         read = member.last_read_seq >= message.seq
-        out["recipients"].append(
-            {
-                "ref": member.member_ref,
-                "delivered": {
-                    "at": delivered_at.isoformat() if delivered_at else None,
-                    "channels": sorted({d.channel for d in delivered}),
-                },
-                "read": {
-                    "at": member.last_read_at.isoformat() if read and member.last_read_at else None,
-                    "via": "mark_read" if read else None,
-                },
+        recipient_out = {
+            "ref": member.member_ref,
+            "delivered": {
+                "at": delivered_at.isoformat() if delivered_at else None,
+                "channels": sorted({d.channel for d in delivered}),
+            },
+        }
+        # M-07: read status is visible to the sender only.
+        if is_sender:
+            recipient_out["read"] = {
+                "at": member.last_read_at.isoformat()
+                if read and member.last_read_at else None,
+                "via": "mark_read" if read else None,
             }
-        )
+        out["recipients"].append(recipient_out)
     return out
+
+
+async def reap_message_escalations(
+    session: AsyncSession, threshold_seconds: int | None = None
+) -> int:
+    """M-14: notify the sender once for each message no recipient has read
+    within the escalation threshold. Returns how many escalations fired."""
+    from app.config import get_settings
+
+    threshold = (
+        threshold_seconds
+        if threshold_seconds is not None
+        else get_settings().message_unread_escalation_seconds
+    )
+    rows = (
+        await session.execute(
+            text(
+                "SELECT m.id, m.conversation_id, m.seq, m.sender_ref, c.conv_key, "
+                "c.workspace_id FROM messages m JOIN conversations c ON c.id = m.conversation_id "
+                "WHERE m.created_at < NOW() - make_interval(secs => :thr) "
+                "AND NOT EXISTS (SELECT 1 FROM message_escalations e WHERE e.message_id = m.id) "
+                "AND EXISTS (SELECT 1 FROM conversation_members cm "
+                "  WHERE cm.conversation_id = m.conversation_id AND cm.member_ref <> m.sender_ref "
+                "  AND cm.last_read_seq < m.seq) LIMIT 500"
+            ),
+            {"thr": threshold},
+        )
+    ).mappings().all()
+    for row in rows:
+        await session.execute(
+            text(
+                "INSERT INTO message_escalations (workspace_id, message_id, sender_ref) "
+                "VALUES (:ws, :m, :s) ON CONFLICT (message_id) DO NOTHING"
+            ),
+            {"ws": row["workspace_id"], "m": row["id"], "s": row["sender_ref"]},
+        )
+        await append_event(
+            session,
+            workspace_id=row["workspace_id"],
+            agent="escalation_reaper",
+            event_type="MESSAGE_UNREAD",
+            payload={
+                "targets": [row["sender_ref"]],
+                "details": {
+                    "delivery_kind": "message.unread",
+                    "priority": 1,
+                    "conv_key": row["conv_key"],
+                    "seq": row["seq"],
+                },
+            },
+            namespace="default",
+        )
+    return len(rows)

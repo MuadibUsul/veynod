@@ -1187,3 +1187,15 @@ async def make_workspace_private(principal: Principal = Depends(get_human_accoun
 
     return await operator_privacy.make_private(principal)
 
+
+
+@router.post("/groups/{conv_key}/approve",
+             summary="Approve a pending group conversation (a human action)")
+async def approve_group_conversation(
+    conv_key: str,
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import messaging
+
+    return await messaging.approve_group(session, principal, conv_key)

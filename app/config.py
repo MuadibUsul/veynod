@@ -70,6 +70,9 @@ class Settings(BaseSettings):
     lease_default_ttl_seconds: int = Field(default=900, ge=60, le=3_600)
     orphan_escalation_threshold: int = Field(default=3, ge=1, le=100)
     default_max_retries: int = Field(default=3, ge=1, le=100)
+    # L3 messaging (M-14): unread-message and unclaimed-task timeout escalation.
+    message_unread_escalation_seconds: int = Field(default=1800, ge=30, le=86_400)
+    task_unclaimed_timeout_seconds: int = Field(default=7200, ge=60, le=86_400)
     max_reject_history: int = Field(default=20, ge=1, le=500)
     human_override_default_lock: bool = True
 

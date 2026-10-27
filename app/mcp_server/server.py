@@ -2031,6 +2031,22 @@ async def get_message_receipts(conv_key: str, seq: int) -> dict[str, Any]:
     return _compact(result)
 
 
+@mcp.tool(name="create_group")
+async def create_group(title: str, member_refs: list[str]) -> dict[str, Any]:
+    """Create a group conversation (3+ members). Agent-created groups start
+    pending and need a human to approve them (REST: POST /v1/human/groups/{conv_key}/approve);
+    humans create active groups directly."""
+    from app.services import messaging
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await messaging.create_group(session, principal, title, member_refs)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
 BATCH_MAX = 20
 
 

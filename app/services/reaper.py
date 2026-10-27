@@ -27,6 +27,17 @@ async def lease_reaper_loop() -> None:
             async with async_session_factory() as session:
                 tasks = await reap_expired_task_leases(session)
                 slots = await reap_expired_slot_leases(session)
+                from app.services.tasks import reap_task_timeouts
+
+                timed_out = await reap_task_timeouts(session)
+                from app.services.messaging import reap_message_escalations
+
+                escalated = await reap_message_escalations(session)
+                if timed_out or escalated:
+                    logger.info(
+                        "timeout upkeep: %s task(s) degraded, %s message(s) escalated",
+                        timed_out, escalated,
+                    )
                 cutoff = await db_now(session) - timedelta(
                     days=settings.event_retention_days
                 )
