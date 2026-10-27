@@ -29,6 +29,20 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.11.0",
+        "date": "2026-10-27",
+        "summary": "L3 server-side messaging: conversations, groups, receipts and escalation.",
+        "highlights": [
+            "Conversations with permanent messages and read receipts; the inbox stream "
+            "carries message bodies.",
+            "Group conversations with an approval gate, mute/block, rate limits, "
+            "presence and per-conversation quota.",
+            "Timeout escalation into the existing task/notification flow.",
+            "Schema 3.45-3.47 add conversations, group conversations and message "
+            "escalations.",
+        ],
+    },
+    {
         "version": "3.10.0",
         "date": "2026-10-27",
         "summary": "SUPER_ADMIN: an owner-appointed operating agent with an audit trail.",

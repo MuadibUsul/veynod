@@ -4604,6 +4604,26 @@
       {
        "body": [],
        "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "conv_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/human/groups/{conv_key}/approve",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Approve a pending group conversation (a human action)"
+      },
+      {
+       "body": [],
+       "description": "",
        "method": "GET",
        "parameters": [
         {

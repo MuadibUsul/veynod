@@ -64,7 +64,7 @@ async def record_stream_delivery(
 def _direct_key(peer_a: str, peer_b: str) -> str:
     """Order-independent, stable 1:1 conversation key (M-10 exact compare)."""
     low, high = sorted([peer_a, peer_b])
-    digest_ = hashlib.sha256(f"{low}\x00{high}".encode("utf-8")).hexdigest()[:16]
+    digest_ = hashlib.sha256(f"{low}\x00{high}".encode()).hexdigest()[:16]
     return f"dm_{digest_}"
 
 
