@@ -30,6 +30,7 @@ settings = get_settings()
 
 class RoleScope(str, Enum):
     COMMANDER = "COMMANDER"
+    SUPER_ADMIN = "SUPER_ADMIN"
     VIEWER = "VIEWER"
     SCOUT = "SCOUT"
     ANALYST = "ANALYST"
@@ -97,6 +98,11 @@ class Principal:
     @property
     def is_commander(self) -> bool:
         return self.role is RoleScope.COMMANDER
+
+    @property
+    def is_super_admin(self) -> bool:
+        """An owner-appointed operating agent: full execution, no sovereignty."""
+        return self.role is RoleScope.SUPER_ADMIN
 
     @property
     def is_human(self) -> bool:
@@ -551,6 +557,7 @@ TenantGuard = Depends(get_principal)
 
 PERMISSIONS: dict[RoleScope, set[str]] = {
     RoleScope.COMMANDER: {"*"},
+    RoleScope.SUPER_ADMIN: {"*"},
     RoleScope.VIEWER: {
         "workspace:read",
         "events:read",
@@ -738,6 +745,8 @@ def effective_agent(principal: Principal, provided: str | None) -> str:
 
 def ensure_namespace(principal: Principal, namespace: str, *, write: bool = False) -> None:
     if principal.auth_kind is not AuthKind.AGENT:
+        return
+    if principal.is_super_admin:
         return
     names = (principal.write_namespaces
              if write and principal.write_namespaces is not None

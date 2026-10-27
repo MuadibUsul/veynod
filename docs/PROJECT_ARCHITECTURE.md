@@ -911,7 +911,7 @@ OPENAI_BASE_URL=https://api.jina.ai/v1
   → v3_hardening.sql
   → v3_2_production.sql
   → v3_2_1_mcp_improvements.sql
-  → v3_3 ... v3_42
+  → v3_3 ... v3_44
 
 v2 库
   v2_to_v3_collab.sql

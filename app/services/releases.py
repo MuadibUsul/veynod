@@ -29,6 +29,23 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.10.0",
+        "date": "2026-10-27",
+        "summary": "SUPER_ADMIN: an owner-appointed operating agent with an audit trail.",
+        "highlights": [
+            "New SUPER_ADMIN role: full task, document and token operations in every "
+            "namespace, bypassing creator/assignee filters, while DONE, trust levels "
+            "and SUPER_ADMIN issuance stay with the human owner.",
+            "PATCH /v1/tasks/{task_key} edits title, description, priority, assignee "
+            "or a non-DONE status with a required reason and an audit row; MCP "
+            "update_task mirrors it.",
+            "SUPER_ADMIN issues, re-scopes, rotates and revokes normal-role tokens "
+            "(POST /v1/tokens/issue, PATCH /v1/tokens/{ref}/namespaces); a SUPER_ADMIN "
+            "token is never self-issued. Schema 3.44 widens the token role check.",
+
+        ],
+    },
+    {
         "version": "3.9.0",
         "date": "2026-10-27",
         "summary": "Lease fencing at the database clock and explicit renewal.",

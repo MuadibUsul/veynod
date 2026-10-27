@@ -134,6 +134,7 @@ do not edit by hand. Every error body is
 | `policy_schema_violation` | 422 | `fix_request` | `fix_request_then_resend` | Conform to the path JSON Schema. |
 | `policy_size_limit` | 422 | `fix_request` | `fix_request_then_resend` | Shrink the content below the policy limit. |
 | `quota_exceeds_parent` | 422 | `fix_request` | `fix_request_then_resend` | Stay within the parent's limit. |
+| `reason_required` | 422 | `fix_request` | `fix_request_then_resend` | Pass a non-empty reason; it goes into the audit trail. |
 | `review_feedback_required` | 422 | `fix_request` | `fix_request_then_resend` | Say why in feedback, then resend. |
 | `review_note_required` | 422 | `fix_request` | `fix_request_then_resend` | Say why in note, then resend. |
 | `rollup_summary_required` | 422 | `fix_request` | `fix_request_then_resend` | Attach a rollup summary. |

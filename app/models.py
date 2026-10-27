@@ -39,6 +39,7 @@ def utcnow() -> datetime:
 
 
 class AgentRole(str, enum.Enum):
+    SUPER_ADMIN = "SUPER_ADMIN"
     SCOUT = "SCOUT"
     ANALYST = "ANALYST"
     AUDITOR = "AUDITOR"

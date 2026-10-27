@@ -23,7 +23,7 @@ from app.models import LinkType, TaskStatus
 settings = get_settings()
 
 Namespace = str
-RoleName = Literal["SCOUT", "ANALYST", "AUDITOR", "EXECUTOR"]
+RoleName = Literal["SUPER_ADMIN", "SCOUT", "ANALYST", "AUDITOR", "EXECUTOR"]
 _KEY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$"
 _NAMESPACE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
 
@@ -362,6 +362,29 @@ REVIEW_REJECT_STATUSES: tuple[str, ...] = ("READY", "IN_PROGRESS")
 class AuditItemResult(StrictModel):
     item_id: str = Field(min_length=1, max_length=64)
     result: Literal["PASS", "FAIL"]
+
+
+class TaskUpdateRequest(StrictModel):
+    """SUPER_ADMIN edit of task fields; locked acceptance is not reachable here."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=256)
+    description: str | None = Field(default=None, max_length=200_000)
+    priority: int | None = Field(default=None, ge=-50, le=100)
+    assignee: str | None = Field(default=None, max_length=160)
+    status: Literal["TODO", "READY", "REVIEWING", "HANDOFF", "AWAITING_HUMAN",
+                    "ESCALATED_TO_HUMAN", "WAITING_HUMAN", "CANCELLED",
+                    "FAILED"] | None = None
+    reason: str = Field(min_length=1, max_length=2_000)
+    expected_version: int | None = Field(default=None, ge=1)
+
+    @field_validator("assignee")
+    @classmethod
+    def _assignee_ref(cls, value: str | None) -> str | None:
+        if value in (None, ""):
+            return value
+        if not re.match(r"^(agent|human):[A-Za-z0-9_.:-]+$", value):
+            raise ValueError("assignee must be agent:<id> or human:<id>")
+        return value
 
 
 class TaskReviewRequest(StrictModel):
@@ -748,6 +771,21 @@ class TimelineEventRequest(StrictModel):
 
 
 # ------------------------------------------------------------- agent tokens
+
+
+class SuperAdminTokenIssueRequest(StrictModel):
+    role_scope: RoleName = "EXECUTOR"
+    agent_signature: str | None = Field(default=None, min_length=1, max_length=128)
+    agent_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9-]{2,39}$")
+    display_name: str | None = Field(default=None, max_length=64)
+    allowed_namespaces: list[str] = Field(default_factory=lambda: ["*"])
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
+    reason: str = Field(min_length=1, max_length=2_000)
+
+
+class TokenNamespacesRequest(StrictModel):
+    allowed_namespaces: list[str] = Field(min_length=1, max_length=50)
+    reason: str = Field(min_length=1, max_length=2_000)
 
 
 class AgentTokenCreateRequest(StrictModel):

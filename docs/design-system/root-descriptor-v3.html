@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>AgentGraph — service descriptor</title>
+<style>
+  :root {
+    --page: #080a0e;
+    --text: #eef2f8;
+    --muted: #8a97a9;
+    --string: #c9d5e6;
+    --key: #91a0b4;
+    --accent: #a5b4fc;
+    --action: #4f46e5;
+    --mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--page); }
+  body {
+    min-width: 320px;
+    min-height: 100svh;
+    color: var(--text);
+    font-family: var(--mono);
+    background:
+      radial-gradient(ellipse 34% 30% at 61.8% 61.8%, rgba(79, 70, 229, .12), transparent 72%),
+      var(--page);
+  }
+  .json {
+    position: absolute;
+    left: 19.1vw;
+    top: 38.2vh;
+    width: 61.8vw;
+    margin: 0;
+    color: var(--string);
+    font-size: 15px;
+    line-height: 2.1;
+    letter-spacing: -.015em;
+    white-space: pre;
+    tab-size: 2;
+  }
+  .tok-key { color: var(--key); }
+  .tok-str { color: var(--string); }
+  .tok-num, .tok-bool { color: var(--muted); }
+  .entry-key { color: var(--accent); }
+  .entry {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 9px;
+    color: var(--accent);
+    text-decoration: none;
+    border-bottom: 1.5px solid rgba(165, 180, 252, .62);
+    outline-offset: 5px;
+    transition: color 140ms ease, border-color 140ms ease;
+  }
+  .entry .tok-str { color: inherit; }
+  .entry-arrow { font-size: 15px; transform: translateY(-1px); }
+  .entry:hover { color: #e0e7ff; border-color: #e0e7ff; }
+  .entry:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 5px;
+    border-radius: 2px;
+  }
+  @media (max-width: 800px) {
+    .json {
+      left: 24px;
+      top: 22vh;
+      width: calc(100% - 48px);
+      font-size: 12.5px;
+      line-height: 2.05;
+    }
+  }
+  @media (max-width: 390px) {
+    .json { left: 18px; width: calc(100% - 36px); font-size: 10.5px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<pre class="json" aria-label="AgentGraph service descriptor JSON">{
+  &quot;name&quot;: &quot;AgentGraph&quot;,
+  &quot;version&quot;: &quot;<span class="tok-num">3.2</span>.<span class="tok-num">1</span>&quot;,
+  &quot;rest&quot;: &quot;/v<span class="tok-num">1</span>&quot;,
+  &quot;mcp&quot;: &quot;/mcp/&quot;,
+  &quot;health&quot;: &quot;/healthz&quot;,
+  &quot;agent_docs&quot;: &quot;/v<span class="tok-num">1</span>/agent-docs&quot;,
+  &quot;first_call&quot;: &quot;get_orientation&quot;,
+  &quot;primitives&quot;: <span class="tok-num">40</span>,
+  <span class="tok-key entry-key">"dashboard"</span>: <a class="entry" href="/dashboard/" aria-label="Enter the AgentGraph console"><span class="tok-str">"/dashboard/"</span><span class="entry-arrow" aria-hidden="true">↗</span></a>
+}</pre>
+</body>
+</html>

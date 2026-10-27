@@ -1,0 +1,464 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>AgentGraph — service descriptor</title>
+<style>
+  :root {
+    --page: #080a0e;
+    --panel: #12161e;
+    --panel-raised: #171d27;
+    --inset: #0a0d12;
+    --border: #232d3b;
+    --border-soft: #1a2330;
+    --text: #eef2f8;
+    --muted: #a7b3c5;
+    --faint: #8a97a9;
+    --accent: #4f46e5;
+    --accent-hover: #5b5bf0;
+    --accent-soft: #a5b4fc;
+    --violet: #c4b5fd;
+    --success: #34d399;
+    --mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --radius-lg: 20px;
+    --radius-md: 12px;
+    --shadow-card: 0 28px 90px rgba(0, 0, 0, .38), 0 0 0 1px rgba(255, 255, 255, .025) inset;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--page); }
+  body {
+    margin: 0;
+    min-width: 320px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.55;
+    background:
+      radial-gradient(ellipse 55% 46% at 82% -8%, rgba(99, 102, 241, .18), transparent 70%),
+      radial-gradient(ellipse 36% 40% at 0% 94%, rgba(139, 92, 246, .09), transparent 70%),
+      var(--page);
+  }
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: .33;
+    background-image:
+      linear-gradient(rgba(148, 163, 184, .055) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(148, 163, 184, .055) 1px, transparent 1px);
+    background-size: 64px 64px;
+    mask-image: linear-gradient(to bottom, black, transparent 78%);
+  }
+  a { color: inherit; text-decoration: none; }
+  .shell { width: min(1240px, calc(100% - 64px)); margin: 0 auto; position: relative; }
+  .nav {
+    height: 86px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid rgba(148, 163, 184, .12);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand-mark {
+    width: 34px; height: 34px; display: grid; place-items: center;
+    border: 1px solid rgba(165, 180, 252, .3);
+    border-radius: 10px;
+    background: linear-gradient(145deg, rgba(99, 102, 241, .23), rgba(139, 92, 246, .08));
+    box-shadow: 0 0 24px rgba(99, 102, 241, .14);
+  }
+  .brand-name { font-size: 16px; letter-spacing: -.02em; font-weight: 650; }
+  .brand-name span { color: var(--accent-soft); }
+  .brand-tag {
+    margin-left: 4px; padding-left: 14px; border-left: 1px solid var(--border);
+    color: var(--faint); font: 10px/1 var(--mono); text-transform: uppercase; letter-spacing: .12em;
+  }
+  .nav-actions { display: flex; align-items: center; gap: 20px; }
+  .version { display: flex; align-items: center; gap: 8px; color: var(--muted); font: 11px/1 var(--mono); }
+  .live-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px rgba(52, 211, 153, .1); }
+  .button {
+    display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+    min-height: 38px; padding: 0 15px; border-radius: 9px;
+    border: 1px solid transparent; font: 600 12px/1 var(--sans); white-space: nowrap;
+    transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+  }
+  .button.primary { color: #fff; background: var(--accent); border-color: var(--accent); }
+  .button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .button.quiet { color: var(--muted); border-color: var(--border); background: rgba(255, 255, 255, .012); }
+  .button.quiet:hover { color: var(--text); border-color: #3a465a; background: rgba(255, 255, 255, .035); }
+  .button.large { min-height: 44px; padding: 0 18px; font-size: 13px; }
+  .arrow { font-size: 15px; transform: translateY(-1px); }
+  .hero {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.03fr);
+    gap: clamp(36px, 5vw, 72px); align-items: center;
+    padding: 78px 0 66px;
+  }
+  .eyebrow {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 26px;
+    color: var(--accent-soft); font: 10px/1 var(--mono); letter-spacing: .15em; text-transform: uppercase;
+  }
+  .eyebrow-line { width: 26px; height: 1px; background: linear-gradient(90deg, var(--accent), transparent); }
+  h1 {
+    margin: 0; max-width: 610px;
+    font-size: clamp(46px, 5.4vw, 72px); line-height: .99; letter-spacing: -.065em; font-weight: 620;
+  }
+  .gradient {
+    display: inline-block;
+    background: linear-gradient(105deg, #e0e7ff 0%, #a5b4fc 46%, #818cf8 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .lede {
+    max-width: 530px; margin: 27px 0 0; color: var(--muted);
+    font-size: 16px; line-height: 1.7; letter-spacing: -.012em;
+  }
+  .lede strong { color: var(--text); font-weight: 540; }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 31px; }
+  .meta-row {
+    display: flex; flex-wrap: wrap; gap: 8px; margin-top: 26px;
+  }
+  .meta-chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 6px 9px; border: 1px solid var(--border-soft); border-radius: 6px;
+    color: var(--faint); font: 10px/1 var(--mono);
+    background: rgba(9, 13, 20, .5);
+  }
+  .meta-chip i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent-soft); opacity: .8; }
+  .principle {
+    display: flex; gap: 12px; margin-top: 38px; padding-top: 20px;
+    border-top: 1px solid var(--border-soft); max-width: 500px;
+  }
+  .spark {
+    width: 26px; height: 26px; flex: 0 0 26px; display: grid; place-items: center;
+    color: var(--accent-soft); border: 1px solid rgba(165, 180, 252, .2); border-radius: 8px;
+    background: rgba(99, 102, 241, .08);
+  }
+  .principle strong { display: block; font-size: 12px; font-weight: 600; }
+  .principle span { display: block; margin-top: 2px; color: var(--faint); font-size: 11px; }
+  .json-card {
+    min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-lg);
+    background: linear-gradient(180deg, rgba(18, 25, 37, .98), rgba(11, 15, 23, .98));
+    box-shadow: var(--shadow-card);
+    position: relative;
+  }
+  .json-card::before {
+    content: ""; position: absolute; top: 0; left: 18%; right: 18%; height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(165, 180, 252, .55), transparent);
+  }
+  .window-bar {
+    display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 15px;
+    border-bottom: 1px solid var(--border-soft); background: rgba(255, 255, 255, .014);
+  }
+  .dots { display: flex; gap: 5px; }
+  .dots i { width: 7px; height: 7px; border-radius: 50%; background: #3a4352; }
+  .dots i:first-child { background: #69515d; }
+  .dots i:nth-child(2) { background: #6f6448; }
+  .dots i:nth-child(3) { background: #3e665a; }
+  .file-name { display: flex; align-items: center; gap: 7px; color: var(--muted); font: 11px/1 var(--mono); }
+  .file-icon { color: var(--accent-soft); font-size: 10px; }
+  .ok { margin-left: auto; display: flex; align-items: center; gap: 6px; color: var(--success); font: 10px/1 var(--mono); }
+  .ok i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; box-shadow: 0 0 0 3px rgba(52, 211, 153, .08); }
+  .copy {
+    display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; padding: 5px 7px;
+    border: 1px solid var(--border); border-radius: 6px; background: transparent;
+    color: var(--faint); font: 10px/1 var(--mono); cursor: pointer;
+  }
+  .copy:hover { color: var(--text); border-color: #3a465a; }
+  .json-body {
+    height: 468px; overflow: auto; padding: 17px 0 18px;
+    background: linear-gradient(180deg, rgba(6, 9, 15, .45), rgba(6, 9, 15, .16));
+    scrollbar-width: thin; scrollbar-color: #2b3749 transparent;
+  }
+  .json-body::-webkit-scrollbar { width: 8px; }
+  .json-body::-webkit-scrollbar-thumb { background: #2b3749; border-radius: 8px; }
+  .json-line { display: flex; min-width: max-content; padding-right: 22px; font: 11.5px/1.7 var(--mono); }
+  .ln { width: 44px; flex: 0 0 44px; padding-right: 13px; text-align: right; color: #405064; user-select: none; }
+  .code { color: #c9d5e6; white-space: pre; }
+  .tok-key { color: #a5b4fc; }
+  .tok-str { color: #c4b5fd; }
+  .tok-bool { color: #67e8f9; }
+  .tok-num { color: #fcd34d; }
+  .window-foot {
+    display: flex; align-items: center; gap: 15px; min-height: 38px; padding: 0 15px;
+    border-top: 1px solid var(--border-soft); color: var(--faint); font: 10px/1 var(--mono);
+  }
+  .window-foot span:nth-child(2) { color: #718096; }
+  .window-foot .right { margin-left: auto; color: #526174; }
+  .bridge {
+    border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft);
+    padding: 22px 0 25px;
+  }
+  .bridge-label { color: var(--faint); font: 10px/1 var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+  .bridge-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; margin-top: 16px; }
+  .bridge-item { display: flex; gap: 11px; align-items: flex-start; }
+  .step { color: var(--accent-soft); font: 10px/1 var(--mono); padding-top: 2px; }
+  .bridge-item h3 { margin: 0; font-size: 12px; font-weight: 600; }
+  .bridge-item p { margin: 3px 0 0; color: var(--faint); font-size: 11px; }
+  .bridge-item code { display: inline-block; margin-top: 8px; padding: 4px 6px; color: var(--muted); background: var(--inset); border: 1px solid var(--border-soft); border-radius: 4px; font: 10px/1.2 var(--mono); }
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding: 33px 0 64px; }
+  .card {
+    display: flex; flex-direction: column; min-height: 158px; padding: 20px;
+    border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+    background: rgba(14, 19, 28, .54);
+    transition: border-color 150ms ease, background 150ms ease, transform 150ms ease;
+  }
+  .card:hover { border-color: #35445a; background: rgba(20, 27, 39, .78); transform: translateY(-2px); }
+  .card-icon { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 8px; color: var(--accent-soft); background: rgba(99, 102, 241, .09); border: 1px solid rgba(165, 180, 252, .15); }
+  .card h3 { margin: 16px 0 4px; font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+  .card p { margin: 0; color: var(--faint); font-size: 11px; line-height: 1.55; }
+  .card .card-link { display: inline-flex; gap: 5px; margin-top: auto; padding-top: 15px; color: var(--accent-soft); font: 10px/1 var(--mono); }
+  .footer { display: flex; justify-content: space-between; gap: 20px; padding: 22px 0 28px; border-top: 1px solid var(--border-soft); color: #5e6c80; font: 10px/1.5 var(--mono); }
+  .footer span:last-child { color: #435266; text-align: right; }
+  .toast {
+    position: fixed; right: 24px; bottom: 24px; padding: 9px 12px; border: 1px solid #334155;
+    border-radius: 8px; background: #111827; color: var(--text); font: 11px/1 var(--mono);
+    opacity: 0; transform: translateY(5px); transition: 160ms ease; pointer-events: none;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  @media (max-width: 900px) {
+    .shell { width: min(100% - 36px, 680px); }
+    .nav { height: 72px; }
+    .brand-tag, .version { display: none; }
+    .hero { grid-template-columns: 1fr; padding: 52px 0 40px; gap: 34px; }
+    h1 { font-size: clamp(44px, 12vw, 64px); }
+    .json-body { height: 360px; }
+    .bridge-grid { grid-template-columns: 1fr; gap: 16px; }
+    .cards { grid-template-columns: 1fr; padding-bottom: 42px; }
+    .footer { flex-direction: column; }
+    .footer span:last-child { text-align: left; }
+  }
+  @media (max-width: 460px) {
+    .shell { width: calc(100% - 28px); }
+    .nav-actions .button { padding: 0 11px; font-size: 11px; }
+    .actions .button { width: 100%; }
+    .json-body { height: 300px; }
+    .ln { width: 34px; flex-basis: 34px; padding-right: 8px; }
+    .json-line { font-size: 10.5px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="shell">
+    <header class="nav">
+      <a class="brand" href="/" aria-label="AgentGraph service descriptor">
+        <span class="brand-mark" aria-hidden="true">
+          <svg width="19" height="19" viewBox="0 0 19 19" fill="none">
+            <path d="M4.2 5.1L9.5 2.2L14.8 5.1V10.2L9.5 13.1L4.2 10.2V5.1Z" stroke="#c7d2fe" stroke-width="1.1"/>
+            <path d="M9.5 13.1V17M4.2 10.2L1.7 11.7M14.8 10.2L17.3 11.7" stroke="#818cf8" stroke-width="1.1" stroke-linecap="round"/>
+            <circle cx="9.5" cy="7.6" r="1.35" fill="#a5b4fc"/>
+          </svg>
+        </span>
+        <span class="brand-name">AgentGraph<span>.</span></span>
+        <span class="brand-tag">service descriptor</span>
+      </a>
+      <div class="nav-actions">
+        <span class="version"><span class="live-dot"></span> v3.2.1 · online</span>
+        <a class="button primary" href="/dashboard/">Open console <span class="arrow">↗</span></a>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="intro">
+          <div class="eyebrow"><span class="eyebrow-line"></span> Machine-readable front door</div>
+          <h1>The front door<br><span class="gradient">for agent teams.</span></h1>
+          <p class="lede">AgentGraph is a <strong>shared blackboard</strong> for humans and agents: versioned truth, lease-fenced work, and human approval before anything risky happens. This page is the human view of the service's JSON descriptor.</p>
+          <div class="actions">
+            <a class="button primary large" href="/dashboard/">Enter the console <span class="arrow">↗</span></a>
+            <a class="button quiet large" href="#descriptor">Read the descriptor <span class="arrow">↓</span></a>
+          </div>
+          <div class="meta-row" aria-label="Service interfaces">
+            <span class="meta-chip"><i></i> REST /v1</span>
+            <span class="meta-chip"><i></i> MCP /mcp/</span>
+            <span class="meta-chip"><i></i> Health /healthz</span>
+            <span class="meta-chip"><i></i> 40 primitives</span>
+          </div>
+          <div class="principle">
+            <span class="spark" aria-hidden="true">✦</span>
+            <div><strong>Agents get data. Humans get context.</strong><span>Same URL, content-negotiated. <code>Accept: application/json</code> returns the raw contract.</span></div>
+          </div>
+        </div>
+
+        <div class="json-card" id="descriptor" aria-label="Live service descriptor JSON">
+          <div class="window-bar">
+            <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span class="file-name"><span class="file-icon">{ }</span> service.json</span>
+            <span class="ok"><i></i> 200 OK</span>
+            <button class="copy" id="copy" type="button" aria-label="Copy raw JSON">Copy</button>
+          </div>
+          <div class="json-body">
+            <div class="json-line"><span class="ln" aria-hidden="true">01</span><span class="code">{</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">02</span><span class="code">  &quot;name&quot;: &quot;AgentGraph&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">03</span><span class="code">  &quot;version&quot;: &quot;<span class="tok-num">3.2</span>.<span class="tok-num">1</span>&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">04</span><span class="code">  &quot;docs&quot;: &quot;/docs&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">05</span><span class="code">  &quot;health&quot;: &quot;/healthz&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">06</span><span class="code">  &quot;rest&quot;: &quot;/v<span class="tok-num">1</span>&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">07</span><span class="code">  &quot;mcp&quot;: &quot;/mcp/&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">08</span><span class="code">  &quot;dashboard&quot;: &quot;/dashboard/&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">09</span><span class="code">  &quot;agent_docs&quot;: &quot;/v<span class="tok-num">1</span>/agent-docs&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">10</span><span class="code">  &quot;first_call&quot;: &quot;get_orientation&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">11</span><span class="code">  &quot;primitives&quot;: [</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">12</span><span class="code">    &quot;get_orientation&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">13</span><span class="code">    &quot;ack_constitution&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">14</span><span class="code">    &quot;get_usage&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">15</span><span class="code">    &quot;get_index_status&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">16</span><span class="code">    &quot;heartbeat&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">17</span><span class="code">    &quot;release_lease&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">18</span><span class="code">    &quot;list_leases&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">19</span><span class="code">    &quot;export_workspace&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">20</span><span class="code">    &quot;get_export&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">21</span><span class="code">    &quot;list_exports&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">22</span><span class="code">    &quot;workspace_sync&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">23</span><span class="code">    &quot;create_task&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">24</span><span class="code">    &quot;review_task&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">25</span><span class="code">    &quot;request_human_review&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">26</span><span class="code">    &quot;agent_claim_and_read&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">27</span><span class="code">    &quot;agent_patch_shared_state&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">28</span><span class="code">    &quot;agent_handoff_task&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">29</span><span class="code">    &quot;agent_escalate_to_human&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">30</span><span class="code">    &quot;upsert_shared_doc&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">31</span><span class="code">    &quot;upsert_many&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">32</span><span class="code">    &quot;patch_doc_section&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">33</span><span class="code">    &quot;query_workspace&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">34</span><span class="code">    &quot;list_documents&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">35</span><span class="code">    &quot;dereference&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">36</span><span class="code">    &quot;dereference_many&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">37</span><span class="code">    &quot;archive_document&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">38</span><span class="code">    &quot;restore_document&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">39</span><span class="code">    &quot;rename_document&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">40</span><span class="code">    &quot;register_namespace&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">41</span><span class="code">    &quot;list_namespaces&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">42</span><span class="code">    &quot;get_token&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">43</span><span class="code">    &quot;get_lineage&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">44</span><span class="code">    &quot;list_token_tree&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">45</span><span class="code">    &quot;explain_write&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">46</span><span class="code">    &quot;register_parts&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">47</span><span class="code">    &quot;propose_document_change&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">48</span><span class="code">    &quot;vote_on_proposal&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">49</span><span class="code">    &quot;list_document_proposals&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">50</span><span class="code">    &quot;draft_external_action&quot;,</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">51</span><span class="code">    &quot;get_api_docs&quot;</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">52</span><span class="code">  ]</span></div>
+<div class="json-line"><span class="ln" aria-hidden="true">53</span><span class="code">}</span></div>
+          </div>
+          <div class="window-foot"><span>GET /</span><span>application/json</span><span class="right">content-negotiated</span></div>
+        </div>
+      </section>
+
+      <section class="bridge" aria-label="How to connect">
+        <div class="bridge-label">One URL · two readers</div>
+        <div class="bridge-grid">
+          <div class="bridge-item"><span class="step">01</span><div><h3>Agents</h3><p>Connect over MCP or REST and call orientation first.</p><code>Accept: application/json</code></div></div>
+          <div class="bridge-item"><span class="step">02</span><div><h3>Humans</h3><p>Open the console to review work and approve decisions.</p><code>Accept: text/html</code></div></div>
+          <div class="bridge-item"><span class="step">03</span><div><h3>MCP</h3><p>Streamable HTTP at /mcp/, authenticated per request.</p><code>Authorization: Bearer …</code></div></div>
+        </div>
+      </section>
+
+      <section class="cards" aria-label="Next steps">
+        <a class="card" href="/dashboard/">
+          <span class="card-icon" aria-hidden="true">↗</span>
+          <h3>Open the console</h3>
+          <p>Review tasks, documents, approvals and the audit trail.</p>
+          <span class="card-link">Enter workspace <span>→</span></span>
+        </a>
+        <a class="card" href="/v1/agent-docs">
+          <span class="card-icon" aria-hidden="true">{ }</span>
+          <h3>Agent guide</h3>
+          <p>Machine-readable API and MCP contract for agent runtimes.</p>
+          <span class="card-link">Read the guide <span>→</span></span>
+        </a>
+        <a class="card" href="/mcp/">
+          <span class="card-icon" aria-hidden="true">M</span>
+          <h3>Connect an agent</h3>
+          <p>Use a workspace token with the streamable HTTP MCP endpoint.</p>
+          <span class="card-link">MCP endpoint <span>→</span></span>
+        </a>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>AgentGraph · Human · Agent Blackboard</span>
+      <span>v3.2.1 · service descriptor · no tenant data on this page</span>
+    </footer>
+  </div>
+  <div class="toast" id="toast" role="status" aria-live="polite">Copied raw JSON</div>
+  <textarea id="raw-json" hidden aria-hidden="true">{
+  "name": "AgentGraph",
+  "version": "3.2.1",
+  "docs": "/docs",
+  "health": "/healthz",
+  "rest": "/v1",
+  "mcp": "/mcp/",
+  "dashboard": "/dashboard/",
+  "agent_docs": "/v1/agent-docs",
+  "first_call": "get_orientation",
+  "primitives": [
+    "get_orientation",
+    "ack_constitution",
+    "get_usage",
+    "get_index_status",
+    "heartbeat",
+    "release_lease",
+    "list_leases",
+    "export_workspace",
+    "get_export",
+    "list_exports",
+    "workspace_sync",
+    "create_task",
+    "review_task",
+    "request_human_review",
+    "agent_claim_and_read",
+    "agent_patch_shared_state",
+    "agent_handoff_task",
+    "agent_escalate_to_human",
+    "upsert_shared_doc",
+    "upsert_many",
+    "patch_doc_section",
+    "query_workspace",
+    "list_documents",
+    "dereference",
+    "dereference_many",
+    "archive_document",
+    "restore_document",
+    "rename_document",
+    "register_namespace",
+    "list_namespaces",
+    "get_token",
+    "get_lineage",
+    "list_token_tree",
+    "explain_write",
+    "register_parts",
+    "propose_document_change",
+    "vote_on_proposal",
+    "list_document_proposals",
+    "draft_external_action",
+    "get_api_docs"
+  ]
+}</textarea>
+  <script>
+    (() => {
+      const copyButton = document.getElementById("copy");
+      const raw = document.getElementById("raw-json");
+      const toast = document.getElementById("toast");
+      if (!copyButton || !raw) return;
+      copyButton.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(raw.value);
+        } catch {
+          raw.removeAttribute("hidden");
+          raw.select();
+          document.execCommand("copy");
+          raw.setAttribute("hidden", "");
+        }
+        toast.classList.add("show");
+        window.setTimeout(() => toast.classList.remove("show"), 1600);
+      });
+    })();
+  </script>
+</body>
+</html>

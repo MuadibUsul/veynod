@@ -59,6 +59,7 @@ from app.schemas import (
     TaskReleaseRequest,
     TaskRenewRequest,
     TaskReviewRequest,
+    TaskUpdateRequest,
 )
 from app.services import access_log, agent_onboarding, collab, quality
 from app.services import addresses as address_service
@@ -1061,6 +1062,8 @@ async def handoff_task(
         task.reviewed_by = None
 
     auto_release: dict[str, Any] | None = None
+    if request.next_status == "DONE" and principal.is_super_admin:
+        raise Forbidden("a SUPER_ADMIN cannot approve DONE; a human owner must")
     if request.next_status == "DONE" and not principal.is_human:
         if not quality.enforced():
             raise Forbidden(
@@ -1206,6 +1209,8 @@ async def review_task(
         task.review_feedback = None
         task.review_history = _resolve_review_history(task.review_history)
         next_status = audit["next_status"] or request.next_status or "DONE"
+        if next_status == "DONE" and principal.is_super_admin:
+            raise Forbidden("a SUPER_ADMIN cannot approve DONE; a human owner must")
         task.status = TaskStatus(next_status)
         if human_decision:
             task.human_feedback = request.feedback
@@ -1535,7 +1540,7 @@ async def cancel_own_task(session: AsyncSession, principal: Principal, task_key:
     Its creator may, while nobody else holds it; people and commanders always."""
     task = await _get_task(session, principal.workspace.id, task_key)
     ensure_namespace(principal, task.namespace, write=True)
-    if not (principal.is_human or principal.is_commander):
+    if not (principal.is_human or principal.is_commander or principal.is_super_admin):
         if not await collab.created_by_matches(session, principal, task.created_by):
             raise Forbidden("only the task's creator, or a person, cancels it")
         if task.claimed_by and not await collab.created_by_matches(
@@ -1670,6 +1675,75 @@ async def write_continuation(
         )
         result["task"] = handoff.task.model_dump(mode="json")
     return result
+
+
+async def super_admin_update_task(
+    session: AsyncSession,
+    principal: Principal,
+    task_key: str,
+    request: TaskUpdateRequest,
+) -> TaskOut:
+    """SUPER_ADMIN edits task fields (never DONE, never locked acceptance)."""
+    if not principal.is_super_admin:
+        raise Forbidden("only a SUPER_ADMIN token may edit task fields directly")
+    reason = (request.reason or "").strip()
+    if not reason:
+        raise ApiError(422, "reason_required", "an update needs a reason",
+                       details={"field": "reason"})
+    task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
+    ensure_namespace(principal, task.namespace, write=True)
+    _check_version(task, request.expected_version)
+    before = task_snapshot(task)
+    changed: list[str] = []
+    if request.title is not None and request.title != task.title:
+        task.title = request.title
+        changed.append("title")
+    if request.description is not None and request.description != task.description:
+        task.description = request.description
+        changed.append("description")
+    if request.priority is not None and request.priority != task.priority:
+        task.priority = request.priority
+        changed.append("priority")
+    if request.assignee is not None and (request.assignee or None) != task.assignee:
+        task.assignee = request.assignee or None
+        changed.append("assignee")
+    if request.status is not None:
+        if request.status == "DONE":
+            raise Forbidden("a SUPER_ADMIN cannot approve DONE; a human owner must")
+        if request.status == "IN_PROGRESS":
+            raise ApiError(409, "claim_required",
+                           "IN_PROGRESS needs a lease; claim the task instead")
+        if TaskStatus(request.status) is not task.status:
+            task.status = TaskStatus(request.status)
+            changed.append("status")
+    if not changed:
+        raise ApiError(422, "validation_error", "nothing to update",
+                       details={"field": "changes"})
+    task.version += 1
+    task.updated_at = utcnow()
+    await session.flush()
+    await record_audit(
+        session,
+        workspace_id=principal.workspace.id,
+        session_batch_id=uuid.uuid4(),
+        agent_signature=principal.agent_signature,
+        target_table="collab_tasks",
+        target_record_id=task.id,
+        operation="UPDATE",
+        before=before,
+        after=task_snapshot(task),
+    )
+    await append_event(
+        session,
+        workspace_id=principal.workspace.id,
+        agent=principal.agent_signature,
+        event_type="TASK_UPDATED",
+        payload={"task_key": task.task_key, "fields": changed, "reason": reason,
+                 "status": task.status.value},
+        namespace=task.namespace,
+    )
+    await session.commit()
+    return task_out(task)
 
 
 async def create_subtasks(

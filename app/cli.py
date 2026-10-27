@@ -129,7 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
     agent.add_argument(
         "--role",
         default="EXECUTOR",
-        choices=["SCOUT", "ANALYST", "AUDITOR", "EXECUTOR"],
+        choices=["SUPER_ADMIN", "SCOUT", "ANALYST", "AUDITOR", "EXECUTOR"],
     )
     agent.add_argument(
         "--namespaces",
