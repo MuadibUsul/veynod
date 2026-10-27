@@ -86,6 +86,20 @@ export interface TaskSummary {
   updated_at: string;
 }
 
+export interface AcceptanceItem {
+  id?: string;
+  item_id?: string;
+  kind?: string;
+  statement?: string;
+  text?: string;
+  auto_runner_id?: string;
+}
+
+export interface AcceptanceState {
+  id: string;
+  status: "PASS" | "FAIL" | "PENDING" | string;
+}
+
 export interface TaskDetail extends TaskSummary {
   description: string | null;
   input_context: Record<string, unknown>;
@@ -95,6 +109,17 @@ export interface TaskDetail extends TaskSummary {
   reject_history: unknown[];
   created_by: string;
   created_at: string;
+  // Optional on task-detail responses; older payloads omit them.
+  acceptance?: AcceptanceItem[];
+  acceptance_locked?: boolean;
+  acceptance_state?: AcceptanceState[];
+  review_round?: number;
+  context_docs?: unknown[];
+  // Structured attribution once task-project-repo-field lands; the console
+  // falls back to the 【项目归属】 section of the description until then.
+  project?: string;
+  repo?: string;
+  supersedes?: string;
 }
 
 export interface HandoffBrief {
