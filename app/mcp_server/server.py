@@ -3343,6 +3343,7 @@ async def list_documents(
                 include_archived=include_archived,
                 include_unverified=include_unverified,
                 include_tainted=include_tainted,
+                include_cold=include_cold,
                 verification_status=verification_status,
                 tainted=tainted,
                 updated_after=updated_after,

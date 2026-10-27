@@ -22,7 +22,8 @@ from app.errors import error_body
 logger = logging.getLogger("agentgraph.concurrency")
 settings = get_settings()
 
-STREAM_PATHS = ("/v1/stream", "/v1/events")
+# Long-lived responses count against the stream pool, not the request pool.
+STREAM_PATHS = ("/v1/stream", "/v1/events", "/v1/inbox/stream")
 
 
 def _credential(scope: Scope) -> str | None:
