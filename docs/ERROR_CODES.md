@@ -88,6 +88,7 @@ do not edit by hand. Every error body is
 | `quality_gates_unmet` | 409 | `fix_request` | `fix_request_then_resend` | Report the gates in details.missing as PASS, then retry. |
 | `task_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another task_key. |
 | `tenant_has_children` | 409 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
+| `terminal_state_immutable` | 409 | `fix_request` | `fix_request_then_resend` | The task is DONE or FAILED; create a new task instead. |
 | `upload_incomplete` | 409 | `fix_request` | `fix_request_then_resend` | Upload the remaining parts first. |
 | `workspace_confirmation_mismatch` | 409 | `fix_request` | `fix_request_then_resend` | Confirm with the exact name. |
 | `batch_too_large` | 413 | `fix_request` | `fix_request_then_resend` | Split the batch per details. |

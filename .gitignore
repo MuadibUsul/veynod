@@ -19,6 +19,9 @@ build/
 # Local database
 pgdata/
 
+# Node packages
+node_modules/
+
 # Dashboard
 dashboard/node_modules/
 dashboard/.next/

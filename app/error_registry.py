@@ -162,6 +162,9 @@ REGISTRY: dict[str, ErrorSpec] = {
         400, FIX_REQUEST, "Use a version from details.supported.", "use_supported_api_version"
     ),
     "field_not_writable": _spec(403, FIX_REQUEST, "Remove the field from the request."),
+    "terminal_state_immutable": _spec(
+        409, FIX_REQUEST, "The task is DONE or FAILED; create a new task instead."
+    ),
     "system_namespace_protected": _spec(
         403, FIX_REQUEST, "Use propose_document_change instead.", "propose_document_change"
     ),

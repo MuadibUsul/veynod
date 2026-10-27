@@ -45,6 +45,18 @@ jobs:
           node-version: 22
       - run: npm test --prefix cli
 
+  protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: protocol/package-lock.json
+      - run: npm ci --prefix protocol
+      - run: npm test --prefix protocol
+
   dashboard:
     runs-on: ubuntu-latest
     steps:
