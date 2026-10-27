@@ -229,9 +229,9 @@ _INCREMENTAL_MIGRATIONS: list[tuple[str, Path]] = [
     ("3.40.0", _MIGRATIONS_DIR / "v3_40_blobs_share_links.sql"),
     ("3.41.0", _MIGRATIONS_DIR / "v3_41_task_invariants.sql"),
     ("3.42.0", _MIGRATIONS_DIR / "v3_42_task_project_repo.sql"),
-    ("3.43.0", _MIGRATIONS_DIR / "v3_43_conversations.sql"),
-    ("3.44.0", _MIGRATIONS_DIR / "v3_44_group_conversations.sql"),
-    ("3.45.0", _MIGRATIONS_DIR / "v3_45_message_escalations.sql"),
+    ("3.45.0", _MIGRATIONS_DIR / "v3_45_conversations.sql"),
+    ("3.46.0", _MIGRATIONS_DIR / "v3_46_group_conversations.sql"),
+    ("3.47.0", _MIGRATIONS_DIR / "v3_47_message_escalations.sql"),
 ]
 CURRENT_SCHEMA_VERSION = _INCREMENTAL_MIGRATIONS[-1][0]
 
