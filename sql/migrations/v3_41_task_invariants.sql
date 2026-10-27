@@ -97,7 +97,9 @@ BEGIN
             OLD.task_key;
     END IF;
 
-    NEW.updated_at := NOW();
+    -- Deliberately no NEW.updated_at := NOW() here (the spec's DDL sets it):
+    -- the platform derives "waiting on people" from an explicit updated_at,
+    -- and several write paths set it themselves.
     RETURN NEW;
 END
 $$ LANGUAGE plpgsql;
