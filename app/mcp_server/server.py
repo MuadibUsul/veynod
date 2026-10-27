@@ -2047,6 +2047,34 @@ async def create_group(title: str, member_refs: list[str]) -> dict[str, Any]:
     return _compact(result)
 
 
+@mcp.tool(name="mute_conversation")
+async def mute_conversation(conv_key: str, muted: bool = True) -> dict[str, Any]:
+    """Mute or unmute a conversation for yourself (M-02)."""
+    from app.services import messaging
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await messaging.set_mute(session, principal, conv_key, muted)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="block_member")
+async def block_member(conv_key: str, member_ref: str, blocked: bool = True) -> dict[str, Any]:
+    """Block (or unblock) a member from sending in a conversation (M-02)."""
+    from app.services import messaging
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await messaging.set_block(session, principal, conv_key, member_ref, blocked)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
 BATCH_MAX = 20
 
 

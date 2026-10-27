@@ -149,7 +149,11 @@ async def _members(
     )
 
 
-def _conversation_out(conv: Conversation, members: list[ConversationMember]) -> dict[str, Any]:
+def _conversation_out(
+    conv: Conversation,
+    members: list[ConversationMember],
+    online: set[str] | None = None,
+) -> dict[str, Any]:
     return {
         "conv_key": conv.conv_key,
         "kind": conv.kind,
@@ -165,6 +169,7 @@ def _conversation_out(conv: Conversation, members: list[ConversationMember]) -> 
                 "role": m.role,
                 "muted": m.muted,
                 "blocked": m.blocked,
+                "online": (m.member_ref in online) if online is not None else None,
                 "last_read_seq": m.last_read_seq,
                 "last_read_at": m.last_read_at.isoformat() if m.last_read_at else None,
             }
@@ -291,6 +296,31 @@ async def approve_group(
     return _conversation_out(conv, members)
 
 
+async def _enforce_rate_limit(
+    session: AsyncSession, principal: Principal, me: str
+) -> None:
+    """M-02: bound message sends per sender per minute (rate_limit_windows)."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    if not settings.rate_limit_enabled:
+        return
+    bucket = f"msg:{me}"[:160]
+    count = await session.scalar(
+        text(
+            "INSERT INTO rate_limit_windows (workspace_id, bucket, window_start, count) "
+            "VALUES (:ws, :bucket, to_timestamp(floor(extract(epoch from now()) / 60) * 60), 1) "
+            "ON CONFLICT (bucket, window_start) DO UPDATE SET count = "
+            "rate_limit_windows.count + 1 RETURNING count"
+        ),
+        {"ws": str(principal.workspace.id), "bucket": bucket},
+    )
+    if int(count or 0) > settings.message_rate_limit_per_minute:
+        from app.errors import RateLimited
+
+        raise RateLimited(60)
+
+
 async def send_message(
     session: AsyncSession,
     principal: Principal,
@@ -309,6 +339,9 @@ async def send_message(
         raise ApiError(422, "validation_error", "body is too long (max 8192)")
 
     me = await _sender_ref(session, principal)
+
+    await _enforce_rate_limit(session, principal, me)
+    await _ensure_message_quota(session, principal)
 
     if conv_key:
         conv = await _conversation_by_key(session, principal, conv_key)
@@ -417,6 +450,9 @@ async def send_message(
 async def list_conversations(session: AsyncSession, principal: Principal) -> dict[str, Any]:
     require_permission(principal, "state:read")
     me = await _sender_ref(session, principal)
+    from app.services import pokes
+
+    online = await pokes.online_refs(session, principal.workspace.id)
     rows = (
         await session.execute(
             text(
@@ -432,7 +468,7 @@ async def list_conversations(session: AsyncSession, principal: Principal) -> dic
     for conv_key in rows:
         conv = await _conversation_by_key(session, principal, conv_key)
         members = await _members(session, conv.id)
-        items.append(_conversation_out(conv, members))
+        items.append(_conversation_out(conv, members, online))
     return {"items": items}
 
 
@@ -608,3 +644,63 @@ async def reap_message_escalations(
             namespace="default",
         )
     return len(rows)
+
+
+async def set_mute(
+    session: AsyncSession, principal: Principal, conv_key: str, muted: bool
+) -> dict[str, Any]:
+    """Mute/unmute a conversation for the caller (M-02)."""
+    require_permission(principal, "state:write")
+    conv = await _conversation_by_key(session, principal, conv_key)
+    me = await _sender_ref(session, principal)
+    member = await _member(session, conv.id, me)
+    if member is None:
+        raise Forbidden("you are not a member of this conversation")
+    member.muted = muted
+    await session.commit()
+    return {"conv_key": conv.conv_key, "muted": member.muted}
+
+
+async def set_block(
+    session: AsyncSession,
+    principal: Principal,
+    conv_key: str,
+    member_ref: str,
+    blocked: bool,
+) -> dict[str, Any]:
+    """Block/unblock a member from sending in a conversation (M-02)."""
+    require_permission(principal, "state:write")
+    conv = await _conversation_by_key(session, principal, conv_key)
+    me = await _sender_ref(session, principal)
+    if await _member(session, conv.id, me) is None:
+        raise Forbidden("you are not a member of this conversation")
+    target = await _resolve_agent_ref(session, principal.workspace.id, member_ref.strip())
+    member = await _member(session, conv.id, target)
+    if member is None:
+        raise NotFound("member", f"{target} is not in this conversation")
+    member.blocked = blocked
+    await session.commit()
+    return {"conv_key": conv.conv_key, "member": member.member_ref, "blocked": member.blocked}
+
+
+async def _ensure_message_quota(session: AsyncSession, principal: Principal) -> None:
+    """M-11: permanent messages are quota-bounded per workspace tier."""
+    from app.config import get_settings
+
+    settings = get_settings()
+    tier = principal.workspace.tier
+    if tier == "free":
+        limit = settings.free_max_messages
+    elif tier == "pro":
+        limit = settings.pro_max_messages
+    else:
+        limit = settings.developer_max_messages
+    used = await session.scalar(
+        select(func.count(Message.id)).where(
+            Message.workspace_id == principal.workspace.id
+        )
+    )
+    if (used or 0) >= limit:
+        from app.errors import QuotaExceeded
+
+        raise QuotaExceeded("messages", limit)
