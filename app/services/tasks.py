@@ -53,6 +53,7 @@ from app.schemas import (
     TaskCreateRequest,
     TaskEscalateRequest,
     TaskHandoffRequest,
+    TaskLeaseRenewRequest,
     TaskListResponse,
     TaskOut,
     TaskReleaseRequest,
@@ -767,6 +768,75 @@ async def renew_task(
     task.claimed_by = agent
     task.version += 1
     task.updated_at = now
+    await session.commit()
+    return task_out(task)
+
+
+async def renew_lease_explicit(
+    session: AsyncSession,
+    principal: Principal,
+    task_key: str,
+    request: TaskLeaseRenewRequest,
+) -> TaskOut:
+    """Renew only in the last 300 s of a lease, at most 12 times per claim (§4.2).
+
+    The liveness test runs as one SQL statement against the database clock, and
+    the fence (``lease_epoch``) does not move, so a stale holder still fails.
+    """
+    require_permission(principal, "task:claim")
+    agent = effective_agent(principal, request.agent)
+    task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
+    ensure_namespace(principal, task.namespace, write=True)
+    if task.status is not TaskStatus.IN_PROGRESS:
+        raise InvalidStateTransition(task.status.value, "renew")
+    now = await db_now(session)
+    lease_service.check_fencing(task, request.fencing_token)
+    await lease_service.require_holder(session, task, agent, now)
+    remaining = (task.lease_expires_at - now).total_seconds()
+    window = settings.lease_renew_window_seconds
+    if remaining >= window:
+        raise ApiError(
+            409,
+            "lease_renew_too_early",
+            f"renew only when less than {window} seconds remain",
+            details={"remaining_seconds": int(remaining), "window_seconds": window},
+        )
+    limit = settings.max_lease_renews
+    renewals = int(task.lease_renew_count or 0)
+    if renewals >= limit:
+        raise ApiError(
+            409,
+            "lease_renew_limit",
+            "this claim reached its renewal limit; claim the task again",
+            details={"renewals": renewals, "limit": limit},
+        )
+    before = task_snapshot(task)
+    task.lease_renew_count = renewals + 1
+    task.lease_expires_at = now + timedelta(seconds=settings.default_task_lease_seconds)
+    task.version += 1
+    task.updated_at = now
+    await lease_service.touch(session, task, now)
+    await session.flush()
+    await record_audit(
+        session,
+        workspace_id=principal.workspace.id,
+        session_batch_id=uuid.uuid4(),
+        agent_signature=agent,
+        target_table="collab_tasks",
+        target_record_id=task.id,
+        operation="UPDATE",
+        before=before,
+        after=task_snapshot(task),
+    )
+    await append_event(
+        session,
+        workspace_id=principal.workspace.id,
+        agent=agent,
+        event_type="TASK_LEASE_RENEWED",
+        payload={"task_key": task.task_key, "renewals": task.lease_renew_count,
+                 "lease_expires_at": task.lease_expires_at.isoformat()},
+        namespace=task.namespace,
+    )
     await session.commit()
     return task_out(task)
 

@@ -329,6 +329,12 @@ REGISTRY: dict[str, ErrorSpec] = {
     "invalid_transition": _spec(409, ABANDON, "Give up this action."),
     "invalid_state_transition": _spec(409, ABANDON, "Re-read the task; give up this action."),
     "lease_lost": _spec(409, ABANDON, "Drop local state and claim again."),
+    "lease_expired": _spec(
+        409, ABANDON, "Your lease ended before NOW(); claim the task again."),
+    "lease_renew_too_early": _spec(
+        409, FIX_REQUEST, "Renew only in the last 300 seconds of the lease."),
+    "lease_renew_limit": _spec(
+        409, FIX_REQUEST, "This claim reached 12 renewals; claim the task again."),
     "queue_ticket_expired": _spec(409, ABANDON, "Call acquire_resource again to re-queue."),
     "lineage_unavailable": _spec(409, ABANDON, "This subject has no signed lineage; give up."),
     "nothing_to_probe": _spec(409, ABANDON, "Write and index documents first."),

@@ -29,6 +29,21 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.9.0",
+        "date": "2026-10-27",
+        "summary": "Lease fencing at the database clock and explicit renewal.",
+        "highlights": [
+            "Hand-off, renew, release and holder subtask creation test "
+            "lease_expires_at > NOW() in one SQL statement; an expired holder gets "
+            "409 lease_expired instead of slipping through before the reaper runs.",
+            "POST /v1/tasks/{task_key}/lease/renew renews only in the last 300 "
+            "seconds of a lease, at most 12 times per claim; the counter resets on "
+            "claim and hand-off. Schema 3.43 adds collab_tasks.lease_renew_count.",
+            "Task payloads expose retry_count (the ping_pong_count used by the "
+            "review-rejection loop).",
+        ],
+    },
+    {
         "version": "3.7.0",
         "date": "2026-10-27",
         "summary": "Task protocol v0.2: ingress schemas and storage invariants.",

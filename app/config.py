@@ -1,4 +1,4 @@
-"""Application configuration for Veynod v3.6.8."""
+"""Application configuration for Veynod v3.9.0."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ app
     app_name: str = "Veynod"
     # Bump on every release and add notes in app/services/releases.py.
-    app_version: str = "3.7.0"
+    app_version: str = "3.9.0"
     environment: Literal["development", "staging", "production", "test"] = "development"
     debug: bool = False
     host: str = "0.0.0.0"
@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     # 2026-10-24 decision 6: 900 s for every API version (60 s stalled long tasks).
     default_task_lease_seconds: int = Field(default=900, ge=5, le=86_400)
     max_task_lease_seconds: int = Field(default=3_600, ge=5, le=86_400)
+    # Explicit renewal (spec §1.6): only in the last 300 s, at most 12 per claim.
+    lease_renew_window_seconds: int = Field(default=300, ge=1, le=86_400)
+    max_lease_renews: int = Field(default=12, ge=1, le=1_000)
     lease_reaper_interval_seconds: int = Field(default=15, ge=5, le=3_600)
     # AG-TC-05: how often the anomaly rules run.
     situation_interval_seconds: int = Field(default=60, ge=5, le=3_600)
