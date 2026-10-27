@@ -29,6 +29,22 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.12.0",
+        "date": "2026-10-27",
+        "summary": "RBAC gateway and CommanderGrant: DONE stays with the owner.",
+        "highlights": [
+            "ROLE_CAPABILITY_MATRIX makes task:approve_done an OWNER-only capability: "
+            "a non-owner approval returns 403 role_permission_denied (quality-control "
+            "tier release remains an explicit deployment setting).",
+            "commander_grants (schema 3.48) stores owner-issued, scoped, expiring "
+            "authority; COMMANDER becomes a mintable agent role.",
+            "COMMANDER writes require X-Commander-Grant-Id: a missing, revoked, "
+            "expired, foreign or out-of-scope grant returns 403.",
+            "POST /v1/human/commander-grants issues, lists and revokes grants with an "
+            "audit row.",
+        ],
+    },
+    {
         "version": "3.11.0",
         "date": "2026-10-27",
         "summary": "L3 server-side messaging: conversations, groups, receipts and escalation.",

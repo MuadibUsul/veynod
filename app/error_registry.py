@@ -314,6 +314,16 @@ REGISTRY: dict[str, ErrorSpec] = {
     "review_sealed": _spec(403, ABANDON, "Give up this action."),
     "role_mismatch": _spec(403, ABANDON, "Give up this action."),
     "role_not_assignable": _spec(403, ABANDON, "Give up this action."),
+    "role_permission_denied": _spec(
+        403, ESCALATE_HUMAN, "Ask the human OWNER; this capability is not delegated."),
+    "commander_grant_required": _spec(
+        403, ESCALATE_HUMAN, "Ask the owner for a grant, then send X-Commander-Grant-Id."),
+    "commander_grant_invalid": _spec(
+        403, ABANDON, "The grant is unknown, revoked or not yours."),
+    "commander_grant_expired": _spec(
+        403, ESCALATE_HUMAN, "Ask the owner to issue a fresh grant."),
+    "commander_grant_out_of_scope": _spec(
+        403, ABANDON, "Stay within the grant's action, namespace and task scope."),
     "root_token_data_access_denied": _spec(403, ABANDON, "Give up this action."),
     "scope_escalation": _spec(403, ABANDON, "Give up this action."),
     "NAMESPACE_FORBIDDEN": _spec(403, ABANDON, "Stay within the token's namespaces."),

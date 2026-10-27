@@ -24,6 +24,8 @@ from app.schemas import (
     BatchUndoResponse,
     BudgetOut,
     BudgetUpdateRequest,
+    CommanderGrantCreateRequest,
+    CommanderGrantOut,
     DocumentHumanUpdateRequest,
     DocumentMutationResponse,
     DocumentPurgeRequest,
@@ -76,6 +78,7 @@ from app.services import addresses as address_service
 from app.services import agent_onboarding as agent_onboarding_service
 from app.services import budget as budget_service
 from app.services import exports as export_service
+from app.services import grants as grant_service
 from app.services import human_onboarding as onboarding_service
 from app.services import incidents as incident_service
 from app.services import leases as lease_service
@@ -214,6 +217,45 @@ async def review_task(
     result = await services.review_task(session, principal, task_key, body)
     await product_events.human_decision(principal, "task_review", body.decision)
     return result
+
+
+@router.post(
+    "/commander-grants",
+    response_model=CommanderGrantOut,
+    status_code=201,
+    summary="Issue a scoped, expiring CommanderGrant (human owner only)",
+)
+async def issue_commander_grant(
+    body: CommanderGrantCreateRequest,
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await grant_service.issue_grant(session, principal, body)
+
+
+@router.get(
+    "/commander-grants",
+    response_model=list[CommanderGrantOut],
+    summary="List this workspace's CommanderGrants",
+)
+async def list_commander_grants(
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    return await grant_service.list_grants(session, principal)
+
+
+@router.post(
+    "/commander-grants/{grant_id}/revoke",
+    response_model=CommanderGrantOut,
+    summary="Revoke a CommanderGrant immediately (human owner only)",
+)
+async def revoke_commander_grant(
+    grant_id: str,
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await grant_service.revoke_grant(session, principal, grant_id)
 
 
 @router.post(

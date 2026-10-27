@@ -40,6 +40,7 @@ def utcnow() -> datetime:
 
 class AgentRole(str, enum.Enum):
     SUPER_ADMIN = "SUPER_ADMIN"
+    COMMANDER = "COMMANDER"
     SCOUT = "SCOUT"
     ANALYST = "ANALYST"
     AUDITOR = "AUDITOR"
@@ -2187,3 +2188,33 @@ class MessageDelivery(Base):
     )
 
 
+
+
+class CommanderGrant(Base):
+    """A human OWNER's explicit, scoped, expiring authority for a COMMANDER."""
+
+    __tablename__ = "commander_grants"
+
+    grant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4,
+        server_default=text("gen_random_uuid()"),
+    )
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    tenant_id: Mapped[str] = mapped_column(
+        String(40), nullable=False, server_default=FetchedValue()
+    )
+    issued_by: Mapped[str] = mapped_column(Text, nullable=False)
+    grantee: Mapped[str] = mapped_column(Text, nullable=False)
+    allowed_actions: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
+    scope_namespace: Mapped[str] = mapped_column(Text, nullable=False)
+    scope_task_keys: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+    scope_task_kind: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, server_default=func.now()
+    )

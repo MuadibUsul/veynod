@@ -15,10 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import (
     AuthKind,
     Principal,
+    RoleScope,
     can,
+    capability_role,
     effective_agent,
     ensure_namespace,
     ensure_task_role,
+    has_capability,
     require_permission,
 )
 from app.config import get_settings
@@ -63,6 +66,7 @@ from app.schemas import (
 )
 from app.services import access_log, agent_onboarding, collab, quality
 from app.services import addresses as address_service
+from app.services import grants as grant_service
 from app.services import leases as lease_service
 from app.services.common import (
     append_event,
@@ -1153,6 +1157,24 @@ async def handoff_task(
     )
 
 
+def _require_approve_done(principal: Principal) -> None:
+    """Role rules v0.2 §2.6: only the human OWNER approves DONE.
+
+    Under QUALITY_CONTROL an AUDITOR releases through the tier gates; that is
+    an explicitly configured, gated delegation, not an owner decision.
+    """
+    if has_capability(principal, "task:approve_done"):
+        return
+    if settings.quality_control and principal.role is RoleScope.AUDITOR:
+        return
+    raise ApiError(
+        403,
+        "role_permission_denied",
+        "only the human OWNER approves DONE",
+        details={"action": "task:approve_done", "role": capability_role(principal)},
+    )
+
+
 @agent_onboarding.records("review")
 @_task_failure_event("REVIEW")
 async def review_task(
@@ -1160,6 +1182,8 @@ async def review_task(
     principal: Principal,
     task_key: str,
     request: TaskReviewRequest,
+    *,
+    grant_id: str | None = None,
 ) -> TaskActionResponse:
     if not (principal.is_commander or can(principal, "task:review")):
         require_permission(principal, "task:review")
@@ -1173,6 +1197,9 @@ async def review_task(
     batch = request.session_batch_id or uuid.uuid4()
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
     ensure_namespace(principal, task.namespace, write=True)
+    if grant_service.requires_grant(principal):
+        await grant_service.require_grant(
+            session, principal, grant_id, "task:review", task)
     if task.status is not TaskStatus.REVIEWING and task.status not in (
         TaskStatus.AWAITING_HUMAN,
         TaskStatus.ESCALATED_TO_HUMAN,
@@ -1209,8 +1236,8 @@ async def review_task(
         task.review_feedback = None
         task.review_history = _resolve_review_history(task.review_history)
         next_status = audit["next_status"] or request.next_status or "DONE"
-        if next_status == "DONE" and principal.is_super_admin:
-            raise Forbidden("a SUPER_ADMIN cannot approve DONE; a human owner must")
+        if next_status == "DONE":
+            _require_approve_done(principal)
         task.status = TaskStatus(next_status)
         if human_decision:
             task.human_feedback = request.feedback
@@ -1599,11 +1626,15 @@ async def cancel_task(
 
 
 async def cancel_own_task(session: AsyncSession, principal: Principal, task_key: str, *,
-                          reason: str, expected_version: int | None) -> TaskOut:
+                          reason: str, expected_version: int | None,
+                          grant_id: str | None = None) -> TaskOut:
     """Withdraw a task (2026-10-24: there was no cancel outside the admin API).
     Its creator may, while nobody else holds it; people and commanders always."""
     task = await _get_task(session, principal.workspace.id, task_key)
     ensure_namespace(principal, task.namespace, write=True)
+    if grant_service.requires_grant(principal):
+        await grant_service.require_grant(
+            session, principal, grant_id, "task:cancel", task)
     if not (principal.is_human or principal.is_commander or principal.is_super_admin):
         if not await collab.created_by_matches(session, principal, task.created_by):
             raise Forbidden("only the task's creator, or a person, cancels it")

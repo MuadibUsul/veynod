@@ -932,6 +932,7 @@ async def review_task(
     cited_clauses: list[str] | None = None,
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
+    commander_grant_id: str | None = None,
 ) -> dict[str, Any]:
     """Approve or reject a task in REVIEWING (AUDITOR/human) or a human-state task.
 
@@ -958,7 +959,8 @@ async def review_task(
                 agent=_actor(principal, agent) if principal.is_commander else agent,
                 session_batch_id=_batch(session_batch_id),
             )
-            result = await services.review_task(session, principal, task_key, body)
+            result = await services.review_task(
+                session, principal, task_key, body, grant_id=commander_grant_id)
         except ValidationError as exc:
             raise _validation_error(exc) from exc
         except ApiError as exc:
@@ -1929,16 +1931,19 @@ async def ack_inbox(up_to_event_seq: Annotated[int, Field(ge=0)]) -> dict[str, A
 
 @mcp.tool(name="cancel_task")
 async def cancel_task(task_key: str, reason: str,
-                      expected_version: int | None = None) -> dict[str, Any]:
+                      expected_version: int | None = None,
+                      commander_grant_id: str | None = None) -> dict[str, Any]:
     """Withdraw a task you created (while nobody else holds it); people may
-    cancel any. Its open subtasks are cancelled too; the reason is recorded."""
+    cancel any. Its open subtasks are cancelled too; the reason is recorded.
+    A COMMANDER agent must pass commander_grant_id."""
     from app.services.tasks import cancel_own_task
 
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
         try:
             result = await cancel_own_task(session, principal, task_key, reason=reason,
-                                           expected_version=expected_version)
+                                           expected_version=expected_version,
+                                           grant_id=commander_grant_id)
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result.model_dump(mode="json"))
