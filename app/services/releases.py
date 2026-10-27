@@ -47,6 +47,12 @@ RELEASE_NOTES: list[dict[str, Any]] = [
             "Fix: the event stream no longer drops events that commit out of id order under "
             "concurrent writers (it deduplicated by the highest id seen).",
             "Stream frames carry type and targets; replays carry presence details.",
+            "Presence is re-checked every 5 s: a silent agent is announced within 90 s of "
+            "its last heartbeat; replicas announce each change once (compare-and-set).",
+            "CLI 0.3.0 (blueprint L4): listen sends a loop heartbeat every 30 s and takes "
+            "--key-file; veynod service install|uninstall|status runs listen as a systemd "
+            "user service, a LaunchAgent or a hidden Windows logon task that restarts "
+            "itself; veynod service audit lists watchdog tasks that open console windows.",
         ],
     },
     {

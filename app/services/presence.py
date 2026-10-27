@@ -2,8 +2,9 @@
 
 Every registered agent is in exactly one of four states:
 
-``online``      an open inbox stream or a loop heartbeat within the last 90 s
-                (heartbeats every 30 s; three missed ones and it is gone);
+``online``      an open inbox stream or a loop heartbeat within the last 85 s
+                (heartbeats every 30 s; it is gone before a third one is
+                missed, and announced within 90 s of its last beat);
 ``offline``     neither, but a working wake channel: a poke will wake it;
 ``degraded``    neither, and its wake channel is failing (retrying or DEAD);
 ``unwakeable``  neither, and no wake channel at all: nothing reaches it until
@@ -12,13 +13,13 @@ Every registered agent is in exactly one of four states:
 The state an agent was last announced in is kept on its directory entry, and
 every change is published once as an ``AGENT_PRESENCE_CHANGED`` timeline event
 (stream, webhooks, the live blackboard). Reconciliation runs when a stream
-opens or closes, on each heartbeat that changes something, when a wake URL is
-set, and on every reaper pass, so a silent loop is announced within the online
-window plus one reaper interval.
+opens or closes, on each heartbeat, when a wake URL is set, and every 5 s in
+``presence_loop``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timedelta
 from typing import Any
@@ -35,6 +36,11 @@ logger = logging.getLogger("agentgraph.presence")
 
 STATES = ("online", "offline", "degraded", "unwakeable")
 EVENT = "AGENT_PRESENCE_CHANGED"
+# Three missed 30 s heartbeats is 90 s. The state is judged against 85 s and
+# re-checked every 5 s, so a silent agent is announced within 90 s of its
+# last sign of life, never later.
+LIVE_WINDOW = timedelta(seconds=85)
+CHECK_EVERY_SECONDS = 5
 
 _STATE_SQL = """
 SELECT d.workspace_id, d.agent_id, d.principal_id, d.display_name, d.presence_state,
@@ -92,7 +98,7 @@ def describe(row: dict[str, Any]) -> dict[str, Any]:
 
 async def rows(session: AsyncSession, workspace_id: Any = None,
                principal_ids: list[str] | None = None) -> list[dict[str, Any]]:
-    where, params = "", {"cutoff": _now() - ONLINE_WINDOW}
+    where, params = "", {"cutoff": _now() - LIVE_WINDOW}
     if workspace_id is not None:
         where += " AND d.workspace_id = :ws"
         params["ws"] = workspace_id
@@ -118,9 +124,14 @@ async def _reconcile(session: AsyncSession, workspace_id: Any = None) -> list[di
         previous = row.get("presence_state")
         if state == previous:
             continue
-        await session.execute(text(
+        # Compare-and-set: of two replicas (or a stream close racing the
+        # loop) that see the same change, only one announces it.
+        claimed = await session.execute(text(
             "UPDATE agent_directory SET presence_state = :s, presence_changed_at = NOW() "
-            "WHERE principal_id = :p"), {"s": state, "p": row["principal_id"]})
+            "WHERE principal_id = :p AND presence_state IS NOT DISTINCT FROM :prev"),
+            {"s": state, "p": row["principal_id"], "prev": previous})
+        if not claimed.rowcount:
+            continue
         if previous is None and state != "online":
             # First sighting (a new entry, or the upgrade): record it quietly.
             # Coming online is announced either way.
@@ -146,6 +157,18 @@ async def reconcile(workspace_id: Any = None) -> list[dict[str, Any]]:
     except Exception:  # noqa: BLE001 - presence bookkeeping never fails a request
         logger.warning("presence reconciliation failed", exc_info=True)
         return []
+
+
+async def presence_loop() -> None:
+    """Announce silent agents promptly (blueprint L2: within 90 s)."""
+    while True:
+        await asyncio.sleep(CHECK_EVERY_SECONDS)
+        try:
+            await _unscoped(_reconcile, None)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - background resilience
+            logger.warning("presence check failed", exc_info=True)
 
 
 async def heartbeat(principal: Principal, agent_ref: str) -> dict[str, Any]:
