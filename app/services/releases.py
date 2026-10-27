@@ -29,6 +29,17 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.13.1",
+        "date": "2026-10-27",
+        "summary": "Fix scheduled backups: no more phantom table in the export list.",
+        "highlights": [
+            "super_admin_grants was classified as exported but no migration creates it, "
+            "so every scheduled export and backup failed with KeyError on production.",
+            "The export now skips a classified table that is absent instead of failing the "
+            "whole backup, and logs the skip.",
+        ],
+    },
+    {
         "version": "3.13.0",
         "date": "2026-10-27",
         "summary": "Agent self-naming: the console mints no name, the agent picks one.",

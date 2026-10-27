@@ -72,7 +72,6 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "alias_redirects": ("objects.jsonl", ()),
     "tombstones": ("objects.jsonl", ()),
     "commander_grants": ("objects.jsonl", ()),
-    "super_admin_grants": ("objects.jsonl", ()),
     # L3 messaging (v3.45-3.47): permanent conversations and receipts.
     "conversations": ("objects.jsonl", ()),
     "conversation_members": ("objects.jsonl", ()),
@@ -682,6 +681,11 @@ async def _run_export(export_id: str) -> None:
         document_ids: list[str] | None = None
         current_versions: set[tuple[Any, Any]] = set()
         for index, (table, (target, excluded)) in enumerate(EXPORTED.items()):
+            if table not in pks:
+                # A classified table that no migration created (a schema drift
+                # in one deployment) must not take the whole backup down.
+                logger.warning("export skips missing table %s", table)
+                continue
             group = _GROUP_OF.get(target)
             if group is not None and group not in groups:
                 continue
