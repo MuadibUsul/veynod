@@ -141,3 +141,34 @@ async def test_rename_lists_and_migrates_task_references(client):
     assert old.status_code == 200 and old.json()["agent_id"] == "zcode-runner"
     mine = await client.get("/v1/tasks", headers=agent, params={"claimable_by_me": "true"})
     assert task_key in {item["task_key"] for item in mine.json()["items"]}
+
+
+async def test_an_unnamed_token_names_itself_on_first_connect(client):
+    """The console mints role + namespaces; the agent picks its own rule id."""
+    ws = await _workspace(client)
+    created = await _mint(client, ws)
+    token = created["token"]
+    assert token["agent_id"].startswith("unnamed-")
+    assert token["agent_signature"].endswith("-v1")
+    agent = {"Authorization": f"Bearer {created['api_key']}"}
+
+    unnamed = await client.post("/v1/agents/register", headers=agent, json={})
+    assert unnamed.status_code == 422, unnamed.text
+    assert unnamed.json()["error"]["details"]["field"] == "agent_id"
+
+    registered = await client.post("/v1/agents/register", headers=agent, json={
+        "agent_id": "self-named", "display_name": "Self Named",
+        "capabilities": ["code"]})
+    assert registered.status_code in (200, 201), registered.text
+    assert registered.json()["agent_id"] == "self-named"
+
+    me = await client.get("/v1/whoami", headers=agent)
+    assert me.status_code == 200
+    assert me.json()["agent_id"] == "self-named"
+    assert me.json()["agent_signature"] == "self-named-v1"
+
+    rotated = await client.post("/v1/agents/self-named/generations",
+                                headers=agent, json={})
+    assert rotated.status_code == 200, rotated.text
+    assert rotated.json()["agent_id"] == "self-named"
+    assert rotated.json()["token"]["agent_signature"] == "self-named-v2"

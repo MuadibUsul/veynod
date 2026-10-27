@@ -292,6 +292,10 @@ const ZH: Record<string, string> = {
   "Status": "状态",
   "Allowed agent roles": "允许的 Agent 角色",
   "Agent signature": "Agent 标识",
+  "Naming happens on the agent side": "命名由 Agent 自己完成",
+  "No name is set here. On first connect the agent calls register_agent with a lowercase kebab-case id (for example zcode-deploy); the server adds the -v1 generation automatically. Later rotations keep the id and only bump the generation.":
+    "签发时不填名字。Agent 首次连接时调用 register_agent 自己选一个全小写、连字符分隔的 id（例如 zcode-deploy），服务端自动补上 -v1 代际；以后轮换只递增代际，id 不变。",
+  "Unnamed — self-naming on first connect": "未命名 — 等待 Agent 首次连接自命名",
   "Stable agent id (optional)": "稳定 agent_id（可选）",
   "Lowercase machine identity. New tokens get a -v1 suffix and later generations increment it.":
     "小写机器身份。新令牌自动加 -v1，后续代际递增。",
@@ -339,8 +343,8 @@ const ZH: Record<string, string> = {
   "Mint a token for each agent runtime before connecting it to the API or MCP.":
     "在接入 API 或 MCP 前，为每个 Agent 运行时签发令牌。",
   "Scoped agent tokens": "受限 Agent 令牌",
-  "Each token pins one agent signature, a role and its namespaces.":
-    "每个令牌固定一个 Agent 标识、一个角色及其命名空间。",
+  "Each token pins one role and its namespaces. The agent picks its own name on first connect.":
+    "每枚令牌只绑定角色与命名空间；Agent 首次连接时自己命名。",
   Disabled: "禁用",
   "Show disabled ({count})": "显示已禁用（{count}）",
   "Hide disabled ({count})": "隐藏已禁用（{count}）",
@@ -885,6 +889,8 @@ const ZH: Record<string, string> = {
   "$5": "$5",
   "A doc_key is a stable path, e.g. strategy/btc_weekly_plan.": "doc_key 是稳定路径，例如 strategy/btc_weekly_plan。",
   "Agent token for {name} minted.": "已为 {name} 签发 Agent 令牌。",
+  "Agent token minted. It will name itself on first connect.":
+    "Agent 令牌已签发，首次连接时由 Agent 自己命名。",
   "Agents": "Agent",
   "Audit": "审计",
   "Blackboard": "黑板",
