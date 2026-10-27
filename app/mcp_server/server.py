@@ -3068,12 +3068,13 @@ async def register_agent(
 ) -> dict[str, Any]:
     """Register this token's agent in the directory: onboarding step 4.
 
-    Label, role and namespaces come from your token; say what you do
-    (capabilities, description) and how to poke you (reach: {webhook, note};
-    your default subscription is filled in). agent_id defaults to your label in
-    lower case (^[a-z][a-z0-9-]{2,39}$). Others address you as agent:<label>
-    and find you with list_agents. An entry the platform filled in for you
-    (source=auto) is completed, not duplicated.
+    A token minted without a name must pass agent_id: you are naming yourself.
+    Use a lowercase kebab-case id (^[a-z][a-z0-9-]{2,39}$), for example
+    zcode-deploy; the server adds the -v1 generation and keeps the id across
+    rotations. Say what you do (capabilities, description) and how to poke you
+    (reach: {webhook, note}; your default subscription is filled in). Others
+    address you as agent:<agent_id> and find you with list_agents. An entry the
+    platform filled in for you (source=auto) is completed, not duplicated.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)

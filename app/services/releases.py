@@ -29,6 +29,20 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.13.0",
+        "date": "2026-10-27",
+        "summary": "Agent self-naming: the console mints no name, the agent picks one.",
+        "highlights": [
+            "Minting asks only for a role and namespaces. The credential starts as "
+            "unnamed-xxxx-v1; on first connect the agent calls register_agent with its "
+            "own lowercase kebab-case id (for example zcode-deploy).",
+            "The server adds the -v1 generation, binds the token to the chosen agent_id "
+            "and keeps it across rotations; the old signature field is gone from the form.",
+            "No compatibility path: an unnamed token must be named at registration, and a "
+            "name that is already taken returns 409 agent_id_taken.",
+        ],
+    },
+    {
         "version": "3.12.0",
         "date": "2026-10-27",
         "summary": "RBAC gateway and CommanderGrant: DONE stays with the owner.",

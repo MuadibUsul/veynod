@@ -217,7 +217,15 @@ async def register_agent(session: AsyncSession, principal: Principal,
     if existing is not None and existing.get("source") != "auto":
         raise ApiError(409, "already_registered", "this token is already registered",
                        details={"agent_id": existing["agent_id"]})
-    agent_id = (data.get("agent_id") or "").strip() or (
+    # An unnamed credential names itself here; a named one may only fill in the
+    # rest of its profile.
+    unnamed = not principal.agent_id or principal.agent_id.startswith("unnamed-")
+    requested = (data.get("agent_id") or "").strip()
+    if unnamed and not requested:
+        raise ApiError(422, "validation_error",
+                       "this token has no name yet; pass agent_id to name it",
+                       details={"field": "agent_id"})
+    agent_id = requested or (
         existing["agent_id"] if existing else default_agent_id(principal.agent_signature))
     if not AGENT_ID.fullmatch(agent_id):
         raise ApiError(422, "validation_error", "agent_id must match ^[a-z][a-z0-9-]{2,39}$",
@@ -226,6 +234,17 @@ async def register_agent(session: AsyncSession, principal: Principal,
             session, workspace.tenant_id, agent_id):
         raise ApiError(409, "agent_id_taken", "this agent_id is already registered",
                        details={"agent_id": agent_id})
+    named_signature = None
+    default_display = agent_id if unnamed else principal.agent_signature
+    if unnamed:
+        named_signature = f"{agent_id}-v{principal.generation or 1}"
+        clash = await session.scalar(text(
+            "SELECT 1 FROM agent_tokens WHERE workspace_id = :ws "
+            "AND agent_signature = :sig AND id <> :id"),
+            {"ws": workspace.id, "sig": named_signature, "id": principal.token_id})
+        if clash:
+            raise ApiError(409, "agent_id_taken", "this agent_id is already registered",
+                           details={"agent_id": agent_id})
     reach = await _reach(session, principal, data.get("reach"))
     if existing is not None:
         # Complete the entry the platform filled in (R-03).
@@ -236,12 +255,13 @@ async def register_agent(session: AsyncSession, principal: Principal,
             "registered_by = :by, version = version + 1, updated_at = NOW() "
             "WHERE principal_id = :id RETURNING *"),
             {"agent": agent_id,
-             "name": (data.get("display_name") or principal.agent_signature)[:64],
+             "name": (data.get("display_name") or default_display)[:64],
              "role": (data.get("role") or None) and data["role"][:32],
              "caps": [str(item)[:64] for item in (data.get("capabilities") or [])][:20],
              "desc": (data.get("description") or None) and data["description"][:500],
              "reach": json.dumps(reach), "by": principal.token_cid,
              "id": existing["principal_id"]})).mappings().one()
+        await _adopt_name(session, principal, agent_id, named_signature)
         await session.commit()
         await _registered(principal)
         return entry_out(dict(row))
@@ -258,20 +278,40 @@ async def register_agent(session: AsyncSession, principal: Principal,
                  ":desc, :owner, ARRAY[:token], ARRAY[:sig], :by, NOW(), CAST(:reach AS jsonb)) "
                  "RETURNING *"),
             {"ws": workspace.id, "agent": agent_id, "reach": json.dumps(reach),
-             "name": (data.get("display_name") or principal.agent_signature)[:64],
+             "name": (data.get("display_name") or default_display)[:64],
              "role": ((data.get("role") or None) and data["role"][:32])
              or principal.role.value,
              "caps": [str(item)[:64] for item in (data.get("capabilities") or [])][:20],
              "desc": (data.get("description") or None) and data["description"][:500],
-             "owner": owner, "token": principal.token_cid, "sig": principal.agent_signature,
+             "owner": owner, "token": principal.token_cid,
+             "sig": named_signature or principal.agent_signature,
              "by": principal.token_cid},
         )
     ).mappings().one()
+    await _adopt_name(session, principal, agent_id, named_signature)
     await _announce(session, workspace.id, "AGENT_REGISTERED",
                     {"agent_id": agent_id, "token_id": principal.token_cid})
     await session.commit()
     await _registered(principal)
     return entry_out(dict(row))
+
+
+async def _adopt_name(session: AsyncSession, principal: Principal, agent_id: str,
+                      signature: str | None) -> None:
+    """Give an unnamed credential the identity its agent chose at registration."""
+    if signature is None:
+        return
+    await session.execute(text(
+        "UPDATE agent_tokens SET agent_id = :agent, agent_signature = :sig, "
+        "agent_profile = jsonb_set(coalesce(agent_profile, '{}'::jsonb), "
+        "'{agent_id}', to_jsonb(CAST(:agent_text AS text)), true) WHERE id = :id"),
+        {"agent": agent_id, "agent_text": agent_id, "sig": signature,
+         "id": principal.token_id})
+    await session.execute(text(
+        "UPDATE agent_directory SET signatures = array_append(signatures, :sig) "
+        "WHERE workspace_id = :ws AND agent_id = :agent "
+        "AND NOT (:sig = ANY(signatures))"),
+        {"sig": signature, "ws": principal.workspace.id, "agent": agent_id})
 
 
 async def _reach(session: AsyncSession, principal: Principal,

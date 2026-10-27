@@ -692,9 +692,9 @@ async def create_agent_token(
     signature = (request.agent_signature or "").strip()
     agent_id = (request.agent_id or "").strip()
     if not signature and not agent_id:
-        raise ApiError(422, "validation_error",
-                       "agent_signature or agent_id is required",
-                       details={"field": "agent_signature"})
+        # Self-naming: the token starts unnamed and the agent picks its own
+        # stable id (and optional display name) on first register_agent.
+        agent_id = f"unnamed-{uuid.uuid4().hex[:6]}"
     if not agent_id:
         agent_id = directory_service.default_agent_id(signature)
     max_generation = await session.scalar(

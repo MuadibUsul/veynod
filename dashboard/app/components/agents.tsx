@@ -230,9 +230,6 @@ export function AgentsView({
   const byAgent = new Map(
     (progress?.items ?? []).map((item) => [item.agent_signature, item] as const),
   );
-  const [signature, setSignature] = useState("");
-  const [agentId, setAgentId] = useState("");
-  const [displayName, setDisplayName] = useState("");
   const [role, setRole] = useState("EXECUTOR");
   const [busy, setBusy] = useState(false);
   // Agents may delegate short-lived child tokens; they stay folded under the
@@ -335,24 +332,18 @@ export function AgentsView({
         {
           method: "POST",
           body: JSON.stringify({
-            agent_signature: signature.trim() || undefined,
-            agent_id: agentId.trim() || undefined,
-            display_name: displayName.trim() || undefined,
             role_scope: role,
             allowed_namespaces: selectedNamespaces,
           }),
         },
       );
       setShowCreate(false);
-      setSignature("");
-      setAgentId("");
-      setDisplayName("");
       setSelectedNamespaces(["*"]);
       setNamespaceQuery("");
       setNamespaceOpen(false);
       onKey(result.api_key, result.token.agent_signature, result.token);
       await onRefresh();
-      notify(t("Agent token for {name} minted.", { name: result.token.agent_signature }));
+      notify(t("Agent token minted. It will name itself on first connect."));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : t("Unable to create agent token"));
     } finally {
@@ -503,7 +494,7 @@ export function AgentsView({
         <div className="card-head">
           <div>
             <h2>{t("Scoped agent tokens")}</h2>
-            <p>{t("Each token pins one agent signature, a role and its namespaces.")}</p>
+            <p>{t("Each token pins one role and its namespaces. The agent picks its own name on first connect.")}</p>
           </div>
           <div className="card-actions">
             {disabledCount > 0 && (
@@ -592,7 +583,10 @@ export function AgentsView({
                           <IconAgents size={14} />
                         </span>
                         <span title={token.agent_signature}>
-                          {byToken.get(token.canonical_id ?? "")?.display_name ?? token.agent_signature}
+                          {byToken.get(token.canonical_id ?? "")?.display_name
+                            ?? (token.agent_id?.startsWith("unnamed-")
+                              ? t("Unnamed — self-naming on first connect")
+                              : token.agent_signature)}
                           {byToken.get(token.canonical_id ?? "") && (
                             <small className="field-hint"> · agent:{byToken.get(token.canonical_id ?? "")?.agent_id}</small>
                           )}
@@ -906,7 +900,7 @@ export function AgentsView({
                 type="submit"
                 form="agent-token-form"
                 className="button primary"
-                disabled={busy || (!signature.trim() && !agentId.trim()) || selectedNamespaces.length === 0}
+                disabled={busy || selectedNamespaces.length === 0}
               >
                 {busy ? <Spinner /> : <IconKey />} {t("Mint token")}
               </button>
@@ -914,37 +908,12 @@ export function AgentsView({
           }
         >
           <form id="agent-token-form" onSubmit={create}>
-            <label className="field">
-              <span>{t("Stable agent id (optional)")}</span>
-              <input
-                value={agentId}
-                onChange={(e) => setAgentId(e.target.value)}
-                placeholder="zcode-deploy"
-                autoFocus
-              />
+            <div className="field">
+              <span>{t("Naming happens on the agent side")}</span>
               <small className="field-hint">
-                {t("Lowercase machine identity. New tokens get a -v1 suffix and later generations increment it.")}
+                {t("No name is set here. On first connect the agent calls register_agent with a lowercase kebab-case id (for example zcode-deploy); the server adds the -v1 generation automatically. Later rotations keep the id and only bump the generation.")}
               </small>
-            </label>
-            <label className="field">
-              <span>{t("Display name (optional)")}</span>
-              <input
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="ZCode · Deploy"
-              />
-              <small className="field-hint">
-                {t("Free-form name for people; it never affects task or mention matching.")}
-              </small>
-            </label>
-            <label className="field">
-              <span>{t("Agent signature (legacy)")}</span>
-              <input
-                value={signature}
-                onChange={(e) => setSignature(e.target.value)}
-                placeholder="grid_executor_01"
-              />
-            </label>
+            </div>
             <label className="field">
               <span>{t("Role scope")}</span>
               <select value={role} onChange={(e) => setRole(e.target.value)}>

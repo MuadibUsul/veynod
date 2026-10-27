@@ -181,7 +181,7 @@ async def test_scout_analyst_and_auditor_paths(client, admin_headers, workspace)
     queue = await client.get("/v1/workspace/map", headers=auditor)
     assert queue.json()["onboarding"]["next_call"]["tool"] == "review_task"
     reviewed = await client.post(f"/v1/tasks/{task['task_key']}/review", headers=auditor,
-                                 json={"decision": "approve"})
+                                 json={"decision": "reject", "feedback": "needs sources"})
     assert reviewed.status_code == 200, reviewed.text
     assert reviewed.json()["onboarding"]["state"] == "active"
 
