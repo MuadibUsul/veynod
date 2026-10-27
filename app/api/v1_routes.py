@@ -980,6 +980,19 @@ async def next_agent_generation(
         session, principal, ref, (body.display_name if body else None))
 
 
+@router.get("/agents/{ref}/generations",
+            summary="Credential generations of a stable agent identity")
+async def agent_generations(
+    ref: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import token_naming
+
+    require_permission(principal, "workspace:read")
+    return await token_naming.generations(session, principal, ref)
+
+
 @router.get("/agents/{ref}/references",
             summary="Task/mention/document references to an agent identity")
 async def agent_references(

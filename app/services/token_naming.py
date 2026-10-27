@@ -153,6 +153,50 @@ async def next_generation(session: AsyncSession, principal: Principal, ref: str,
             "previous_token_ids": [old.canonical_id for old in active]}
 
 
+async def generations(session: AsyncSession, principal: Principal, ref: str) -> dict[str, Any]:
+    """The credential-generation ledger of one stable identity (R-05).
+
+    Every token row is one generation; the directory entry keeps them together,
+    so a rotation or a revocation is auditable without reading the token list.
+    """
+    entry = await _resolve(session, principal.workspace, ref)
+    tokens = (await session.execute(select(AgentToken).where(
+        AgentToken.workspace_id == principal.workspace.id,
+        AgentToken.canonical_id.in_(entry.get("token_ids") or []),
+    ).order_by(AgentToken.generation, AgentToken.created_at))).scalars().all()
+    now = _now()
+
+    def status(token: AgentToken) -> str:
+        if token.revoked_at is not None:
+            return "revoked"
+        if not token.is_active:
+            return "inactive"
+        if token.expires_at is not None and token.expires_at <= now:
+            return "expired"
+        return "active"
+
+    active = [token for token in tokens if status(token) == "active"]
+    current = max(active, key=lambda token: int(token.generation or 1), default=None)
+    items = [{
+        "generation": int(token.generation or 1),
+        "signature": token.agent_signature,
+        "token_id": token.canonical_id,
+        "status": status(token),
+        "is_current": current is not None and token.id == current.id,
+        "created_at": token.created_at.isoformat() if token.created_at else None,
+        "revoked_at": token.revoked_at.isoformat() if token.revoked_at else None,
+        "revoke_reason": token.revoke_reason,
+        "expires_at": token.expires_at.isoformat() if token.expires_at else None,
+    } for token in tokens]
+    return {
+        "agent_id": entry["agent_id"],
+        "principal_id": str(entry["principal_id"]),
+        "display_name": entry.get("display_name"),
+        "status": "revoked" if not active and tokens else "active",
+        "items": items,
+    }
+
+
 async def references(session: AsyncSession, principal: Principal, ref: str) -> dict[str, Any]:
     """Every machine reference to an identity; used before a rename (T-3)."""
     entry = await _resolve(session, principal.workspace, ref)

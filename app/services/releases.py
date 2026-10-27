@@ -29,6 +29,21 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.8.0",
+        "date": "2026-10-27",
+        "summary": "Credential generations keep one identity; orphaned tasks can be reclaimed.",
+        "highlights": [
+            "Creator rights (cancel, and any future archive/restore) follow the stable "
+            "directory identity: a new credential generation can manage the tasks its "
+            "earlier generation created.",
+            "GET /v1/agents/{ref}/generations lists every credential generation with "
+            "status, rotation time and revoke reason.",
+            "GET /v1/human/orphan-tasks and POST /v1/human/orphan-tasks/claim let a "
+            "person or commander find tasks whose creator identity has no active "
+            "credential and reassign them, so no task is stranded.",
+        ],
+    },
+    {
         "version": "3.7.0",
         "date": "2026-10-27",
         "summary": "Task protocol v0.2: ingress schemas and storage invariants.",

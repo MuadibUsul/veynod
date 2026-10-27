@@ -1081,6 +1081,14 @@ class TransferResponsibilitiesRequest(StrictModel):
     reason: str | None = Field(default=None, max_length=2_000)
 
 
+class OrphanClaimRequest(StrictModel):
+    task_keys: list[str] = Field(min_length=1, max_length=100)
+    assignee: str | None = Field(
+        default=None, max_length=160,
+        description="agent:<id> or human:<id>; defaults to the caller")
+    reason: str | None = Field(default=None, max_length=2_000)
+
+
 class TransferResponsibilitiesResponse(BaseModel):
     from_: str = Field(serialization_alias="from")
     to: str
