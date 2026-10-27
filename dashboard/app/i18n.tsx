@@ -15,8 +15,6 @@ import { setFormatLanguage, type FormatLanguage } from "./types";
 export type Language = FormatLanguage;
 
 const ZH: Record<string, string> = {
-  "Project": "项目",
-  "Repository": "代码仓库",
   "Project (optional)": "项目（可选）",
   "Repository (optional)": "代码仓库（可选）",
   // Merged reading of hand-split documents
@@ -418,6 +416,23 @@ const ZH: Record<string, string> = {
   Priority: "优先级",
   Namespace: "命名空间",
   Automatic: "自动",
+  Project: "项目",
+  Repo: "仓库",
+  Supersedes: "替代旧单",
+  "Requirement doc": "需求文档",
+  "Local path": "本地路径",
+  "Deploy target": "部署目标",
+  Acceptance: "验收",
+  Passed: "通过",
+  Failed: "未过",
+  Pending: "待验",
+  "Locked after first claim": "首次认领后已锁定",
+  Assignee: "指派给",
+  Anyone: "任何人",
+  Empty: "空",
+  "Key-value": "键值表",
+  "Raw JSON": "原始 JSON",
+  "Review round": "评审轮次",
   "Show {count} hidden": "显示隐藏的 {count} 个",
   "Hide failed and probe tasks": "隐藏失败和探针任务",
   "Failed or cancelled tasks, and probe / playtest / smoke tasks": "失败或已取消的任务，以及 probe / playtest / smoke 任务",

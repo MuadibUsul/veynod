@@ -102,6 +102,9 @@ def test_task_card_and_slot_render():
     card = render_task_card(task())
     assert "REVIEWING" in card
     assert "ping_pong=1/3" in card
+    assert "project=" not in card
+    routed = render_task_card(task(project="Veynod", repo="MuadibUsul/AgentGraph"))
+    assert "project=Veynod repo=MuadibUsul/AgentGraph" in routed
     slot_line = render_slot(slot())
     assert "trading:regime" in slot_line
     assert "v4" in slot_line

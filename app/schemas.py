@@ -979,6 +979,10 @@ class TaskOut(TaskSummary):
     description: str | None = None
     acceptance: list[dict[str, Any]] = Field(default_factory=list)
     acceptance_locked: bool = False
+    acceptance_state: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Per acceptance item status: PASS, FAIL or PENDING "
+                    "(latest audit, then the task status)")
     input_context: dict[str, Any] = Field(default_factory=dict)
     output_artifact: dict[str, Any] = Field(default_factory=dict)
     handoff_brief: dict[str, Any] | None = None

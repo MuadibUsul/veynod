@@ -911,7 +911,7 @@ OPENAI_BASE_URL=https://api.jina.ai/v1
   → v3_hardening.sql
   → v3_2_production.sql
   → v3_2_1_mcp_improvements.sql
-  → v3_3 ... v3_39
+  → v3_3 ... v3_42
 
 v2 库
   v2_to_v3_collab.sql
@@ -921,7 +921,7 @@ v2 库
   schema_migrations 中缺失的版本按顺序执行
 ```
 
-迁移由 `app/database.py` 在 PostgreSQL advisory lock 下执行；多副本不会并发跑 DDL。当前 schema 版本记录在 `schema_migrations`，最新为 **3.40.0**。
+迁移由 `app/database.py` 在 PostgreSQL advisory lock 下执行；多副本不会并发跑 DDL。当前 schema 版本记录在 `schema_migrations`，最新为 **3.42.0**（3.41 为任务存储不变量，3.42 为可选 `project` / `repo` 列）。
 
 ### 9.5 备份与回滚
 

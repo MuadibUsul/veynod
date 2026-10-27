@@ -627,7 +627,34 @@ async def get_task(
     task = await _get_task(session, principal.workspace.id, task_key)
     ensure_namespace(principal, task.namespace)
     out = task_out(task)
+    out.acceptance_state = await acceptance_state(session, task)
     out.children_summary = await collab.children_summary(session, task)
+    return out
+
+
+async def acceptance_state(session: AsyncSession, task: CollabTask) -> list[dict[str, Any]]:
+    """Per acceptance item status: the latest audit result, else the task status.
+
+    The console shows these next to the items so a person sees what still needs
+    judgement before reading the description.
+    """
+    latest: dict[str, str] = {}
+    rows = (await session.execute(
+        text("SELECT items FROM audits WHERE workspace_id = :ws AND task_id = :t "
+             "ORDER BY created_at, id"),
+        {"ws": task.workspace_id, "t": task.id})).scalars().all()
+    for items in rows:
+        for item in items or []:
+            if isinstance(item, dict) and item.get("item_id"):
+                latest[str(item["item_id"])] = str(item.get("result"))
+    done = task.status is TaskStatus.DONE
+    out: list[dict[str, Any]] = []
+    for item in task.acceptance or []:
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("id") or item.get("item_id") or "")
+        out.append({"id": item_id,
+                    "status": latest.get(item_id) or ("PASS" if done else "PENDING")})
     return out
 
 

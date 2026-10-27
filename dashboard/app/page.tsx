@@ -1029,6 +1029,18 @@ export default function ConsolePage() {
     }
   }
 
+  async function openTaskByKey(taskKey: string) {
+    if (!selectedId) return;
+    try {
+      const detail = await api<TaskDetail>(
+        `/v1/admin/workspaces/${selectedId}/tasks/${encodeURIComponent(taskKey)}`,
+      );
+      setTaskDetail(detail);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : t("Unable to load task."));
+    }
+  }
+
   async function reviewTask(decision: "approve" | "reject", feedback: string) {
     if (!selectedId || !taskDetail) return;
     setTaskBusy(true);
@@ -1747,6 +1759,8 @@ export default function ConsolePage() {
           busy={taskBusy}
           onClose={() => setTaskDetail(null)}
           onReview={reviewTask}
+          onOpenTask={(key) => void openTaskByKey(key)}
+          docTitle={(key) => documents.find((document) => document.doc_key === key)?.title}
           onOpenArtifact={(uri) => {
             const docKey = uri.replace(/^doc:\/\/+/, "");
             void openDocument(docKey);

@@ -58,7 +58,8 @@ _DOC_FIELDS = (
     "taint_sources",
 )
 _TASK_FIELDS = (
-    "title", "description", "status", "priority", "assigned_role", "namespace",
+    "title", "project", "repo", "description", "status", "priority", "assigned_role",
+    "namespace",
     "claimed_by", "lease_owner", "lease_expires_at", "input_context",
     "output_artifact", "handoff_brief", "artifact_uri", "artifact_version",
     "artifact_hash", "handed_off_by", "review_round", "review_history",

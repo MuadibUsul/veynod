@@ -423,3 +423,20 @@ async def test_a_new_domain_is_supervised(qc):
                            json={"next_status": "DONE", "brief": BRIEF})
     assert denied.status_code == 403
     assert (await _report(qc, ws, "qc12"))["tier"] == 0
+
+
+async def test_task_detail_exposes_acceptance_state(qc):
+    """Console detail: per-item acceptance status (task-detail-readability-v2)."""
+    ws = await _workspace(qc)
+    task = await _task(qc, ws, "qc-detail")
+    detail = await qc.get(f"/v1/tasks/{task['key']}", headers=ws["key"])
+    assert detail.status_code == 200, detail.text
+    states = {row["id"]: row["status"] for row in detail.json()["acceptance_state"]}
+    assert states == {"A1": "PENDING", "A2": "PENDING"}
+
+    await _pass_gates(qc, ws, task["key"])
+    approved = await _approve(qc, ws, task["key"])
+    assert approved.status_code == 200, approved.text
+    detail = await qc.get(f"/v1/tasks/{task['key']}", headers=ws["key"])
+    states = {row["id"]: row["status"] for row in detail.json()["acceptance_state"]}
+    assert states == {"A1": "PASS", "A2": "PASS"}

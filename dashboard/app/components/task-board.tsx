@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { useI18n } from "../i18n";
 import type { DirectoryEntry, TaskDetail, TaskSummary } from "../types";
@@ -17,6 +17,7 @@ import {
   Spinner,
   StatusPill,
 } from "./ui";
+import { MarkdownContent } from "./markdown";
 
 const COLUMNS: Array<{ title: string; detail: string; statuses: string[]; tone: string }> = [
   { title: "Backlog / Ready", detail: "TODO · READY", statuses: ["TODO", "READY"], tone: "slate" },
@@ -184,6 +185,269 @@ export function TaskBoard({
   );
 }
 
+type Attribution = {
+  project?: string;
+  projectUrl?: string;
+  repo?: string;
+  localPath?: string;
+  deployTarget?: string;
+  docKey?: string;
+  supersedes?: string;
+};
+
+/** Structured fields win; older tasks fall back to the 【项目归属】 section. */
+function parseAttribution(task: TaskDetail): Attribution {
+  const out: Attribution = {};
+  if (task.project) out.project = task.project;
+  if (task.repo) out.repo = task.repo;
+  if (task.supersedes) out.supersedes = task.supersedes;
+  const text = task.description ?? "";
+  const lineValue = (pattern: RegExp) => text.match(pattern)?.[1]?.trim();
+  if (!out.project) {
+    const value = lineValue(/(?:产品|项目)[：:]\s*([^\n]+)/);
+    if (value) {
+      const url = value.match(/[（(](https?:\/\/[^）)]+)[）)]/);
+      out.project = value.replace(/[（(].*$/, "").trim();
+      if (url) out.projectUrl = url[1];
+    }
+  }
+  if (!out.repo) {
+    out.repo = lineValue(/(?:GitHub|仓库)[：:]\s*([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)/);
+  }
+  out.localPath = lineValue(/本地路径[：:]\s*([^\n]+)/);
+  out.deployTarget = lineValue(/部署目标[：:]\s*([^\n]+)/);
+  if (!out.docKey) {
+    out.docKey = text.match(/doc:\/\/([a-z0-9-]+)/)?.[1];
+  }
+  if (!out.supersedes) {
+    const old = text.match(/替代旧单[（(]([^）)]+)[）)]/)
+      ?? text.match(/替代[：:]\s*([A-Za-z0-9_./-]+)/);
+    if (old) out.supersedes = old[1].trim();
+  }
+  return out;
+}
+
+function isPendingValue(value?: string): boolean {
+  return Boolean(value && /待确认|待 owner|待定|PENDING/i.test(value));
+}
+
+function hasMarkdown(text: string): boolean {
+  return /(^|\n)\s{0,3}(#{1,6}\s|[-*+]\s|\d+\.\s|>\s|\|)|```|`[^`]+`|\*\*|\[[^\]]+\]\(/.test(text);
+}
+
+/** Turn bare doc:// references into links; inline code is left untouched. */
+function linkDocRefs(text: string, docTitle?: (key: string) => string | undefined): string {
+  return text
+    .split(/(`[^`]*`)/g)
+    .map((part, index) => {
+      if (index % 2 === 1) return part;
+      return part.replace(/doc:\/\/([a-z0-9-]+)/g, (match, key: string) => {
+        const title = docTitle?.(key);
+        return `[${title ?? match}](${match})`;
+      });
+    })
+    .join("");
+}
+
+const ACCEPTANCE_TONE: Record<string, string> = {
+  PASS: "mint",
+  FAIL: "rose",
+  PENDING: "slate",
+};
+
+const ACCEPTANCE_LABEL: Record<string, string> = {
+  PASS: "Passed",
+  FAIL: "Failed",
+  PENDING: "Pending",
+};
+
+function TaskFields({
+  task,
+  onOpenTask,
+  onOpenDoc,
+  docTitle,
+}: {
+  task: TaskDetail;
+  onOpenTask?: (taskKey: string) => void;
+  onOpenDoc?: (docKey: string) => void;
+  docTitle?: (docKey: string) => string | undefined;
+}) {
+  const { t } = useI18n();
+  const attribution = parseAttribution(task);
+  const fields: ReactNode[] = [];
+  if (attribution.project) {
+    fields.push(
+      <span key="project" className="task-field">
+        <span>{t("Project")}</span>
+        {attribution.projectUrl ? (
+          <a href={attribution.projectUrl} target="_blank" rel="noopener noreferrer">
+            {attribution.project}
+          </a>
+        ) : (
+          <strong>{attribution.project}</strong>
+        )}
+      </span>,
+    );
+  }
+  if (attribution.repo) {
+    const repo = attribution.repo;
+    const repoUrl = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)
+      ? `https://github.com/${repo}`
+      : undefined;
+    fields.push(
+      <span key="repo" className="task-field">
+        <span>{t("Repo")}</span>
+        {repoUrl ? (
+          <a href={repoUrl} target="_blank" rel="noopener noreferrer" className="mono">
+            {repo}
+          </a>
+        ) : (
+          <strong className="mono">{repo}</strong>
+        )}
+      </span>,
+    );
+  }
+  if (attribution.supersedes) {
+    fields.push(
+      <span key="supersedes" className="task-field">
+        <span>{t("Supersedes")}</span>
+        {onOpenTask ? (
+          <button
+            type="button"
+            className="link-button mono"
+            onClick={() => onOpenTask(attribution.supersedes!)}
+          >
+            {attribution.supersedes}
+          </button>
+        ) : (
+          <span className="mono">{attribution.supersedes}</span>
+        )}
+      </span>,
+    );
+  }
+  if (attribution.docKey) {
+    fields.push(
+      <span key="doc" className="task-field">
+        <span>{t("Requirement doc")}</span>
+        <button
+          type="button"
+          className="link-button"
+          disabled={!onOpenDoc}
+          onClick={() => attribution.docKey && onOpenDoc?.(attribution.docKey)}
+        >
+          {docTitle?.(attribution.docKey) ?? attribution.docKey}
+        </button>
+      </span>,
+    );
+  }
+  const pairs: Array<[string, string | undefined]> = [
+    ["Local path", attribution.localPath],
+    ["Deploy target", attribution.deployTarget],
+  ];
+  for (const [label, value] of pairs) {
+    if (!value) continue;
+    fields.push(
+      <span key={label} className="task-field">
+        <span>{t(label)}</span>
+        {isPendingValue(value) ? (
+          <span className="pending-badge">{value}</span>
+        ) : (
+          <span className="mono">{value}</span>
+        )}
+      </span>,
+    );
+  }
+  if (fields.length === 0) return null;
+  return <div className="task-fields">{fields}</div>;
+}
+
+function AcceptanceSection({ task }: { task: TaskDetail }) {
+  const { t } = useI18n();
+  const items = task.acceptance ?? [];
+  if (items.length === 0) return null;
+  const states = new Map((task.acceptance_state ?? []).map((entry) => [entry.id, entry.status]));
+  return (
+    <div className="detail-section acceptance-section">
+      <div className="detail-section-head">
+        <h3>{t("Acceptance")}</h3>
+        {task.acceptance_locked && (
+          <span className="lock-chip">
+            <IconLock size={11} /> {t("Locked after first claim")}
+          </span>
+        )}
+      </div>
+      <ol className="acceptance-list">
+        {items.map((item, index) => {
+          const id = item.id ?? item.item_id ?? `item-${index}`;
+          const status = states.get(id) ?? "PENDING";
+          return (
+            <li key={id} className="acceptance-item">
+              <span className={`status-pill acceptance-status tone-${ACCEPTANCE_TONE[status] ?? "slate"}`}>
+                {t(ACCEPTANCE_LABEL[status] ?? "Pending")}
+              </span>
+              <span className="acceptance-id mono">{id}</span>
+              <span className="acceptance-kind">{item.kind === "AUTO" ? "AUTO" : "MANUAL"}</span>
+              <div className="acceptance-text">{item.statement ?? item.text ?? ""}</div>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
+function KeyValueSection({
+  title,
+  value,
+}: {
+  title: string;
+  value: Record<string, unknown>;
+}) {
+  const { t } = useI18n();
+  const [raw, setRaw] = useState(false);
+  const entries = Object.entries(value ?? {});
+  return (
+    <details className="detail-section kv-block" open={entries.length <= 6}>
+      <summary className="kv-summary">
+        <h3>{title}</h3>
+        <span className="muted">{entries.length}</span>
+        <button
+          type="button"
+          className="button ghost small"
+          onClick={(event) => {
+            event.preventDefault();
+            setRaw((current) => !current);
+          }}
+        >
+          {raw ? t("Key-value") : t("Raw JSON")}
+        </button>
+      </summary>
+      {raw ? (
+        <pre className="json-block">{pretty(value)}</pre>
+      ) : entries.length > 0 ? (
+        <table className="kv-table">
+          <tbody>
+            {entries.map(([key, item]) => (
+              <tr key={key}>
+                <th>{key}</th>
+                <td>
+                  {item !== null && typeof item === "object" ? (
+                    <code>{JSON.stringify(item)}</code>
+                  ) : (
+                    String(item ?? "—")
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="muted">{t("Empty")}</p>
+      )}
+    </details>
+  );
+}
+
 export function TaskDetailModal({
   task,
   directory = [],
@@ -191,6 +455,8 @@ export function TaskDetailModal({
   onClose,
   onReview,
   onOpenArtifact,
+  onOpenTask,
+  docTitle,
 }: {
   task: TaskDetail;
   directory?: DirectoryEntry[];
@@ -198,6 +464,8 @@ export function TaskDetailModal({
   onClose: () => void;
   onReview: (decision: "approve" | "reject", feedback: string) => Promise<void>;
   onOpenArtifact: (artifactUri: string) => void;
+  onOpenTask?: (taskKey: string) => void;
+  docTitle?: (docKey: string) => string | undefined;
 }) {
   const { t } = useI18n();
   const [feedback, setFeedback] = useState(task.human_feedback ?? "");
@@ -208,6 +476,7 @@ export function TaskDetailModal({
   const reviewable = ["REVIEWING", "AWAITING_HUMAN", "ESCALATED_TO_HUMAN"].includes(
     task.status,
   );
+  const openDoc = (docKey: string) => onOpenArtifact(`doc://${docKey}`);
 
   return (
     <Modal
@@ -249,7 +518,39 @@ export function TaskDetailModal({
         </>
       }
     >
+      <TaskFields task={task} onOpenTask={onOpenTask} onOpenDoc={openDoc} docTitle={docTitle} />
+
+      <AcceptanceSection task={task} />
+
+      {task.description && (
+        <div className="detail-section description-section">
+          <h3>{t("Description")}</h3>
+          {hasMarkdown(task.description) ? (
+            <MarkdownContent
+              content={linkDocRefs(task.description, docTitle)}
+              onDocLink={openDoc}
+              docTitle={docTitle}
+            />
+          ) : (
+            <p className="detail-description">{task.description}</p>
+          )}
+        </div>
+      )}
+
       <div className="detail-grid">
+        <div className="detail-cell">
+          <span>{t("Claim / lease")}</span>
+          <strong>
+            {task.claimed_by ? directoryDisplayName(directory, task.claimed_by) : t("unclaimed")}
+            {task.lease_active ? ` · ${t("live")}` : ""}
+          </strong>
+        </div>
+        <div className="detail-cell">
+          <span>{t("Assignee")}</span>
+          <strong>
+            {task.assignee ? directoryDisplayName(directory, task.assignee) : t("Anyone")}
+          </strong>
+        </div>
         <div className="detail-cell">
           <span>{t("Assigned role")}</span>
           <strong>{task.assigned_role ? t(task.assigned_role) : t("Any role")}</strong>
@@ -259,37 +560,10 @@ export function TaskDetailModal({
           <strong>{task.priority > 0 ? `P${task.priority}` : t("Normal")}</strong>
         </div>
         <div className="detail-cell">
-          <span>{t("Version")}</span>
-          <strong>v{task.version}</strong>
-        </div>
-        <div className="detail-cell">
           <span>{t("Namespace")}</span>
           <strong>{task.namespace}</strong>
         </div>
-        <div className="detail-cell">
-          <span>{t("Project")}</span>
-          <strong>{task.project || "—"}</strong>
-        </div>
-        <div className="detail-cell">
-          <span>{t("Repository")}</span>
-          <strong>{task.repo || "—"}</strong>
-        </div>
-        <div className="detail-cell">
-          <span>{t("Claim / lease")}</span>
-          <strong>
-            {task.claimed_by ? directoryDisplayName(directory, task.claimed_by) : t("unclaimed")}
-            {task.lease_active ? ` · ${t("live")}` : ""}
-          </strong>
-        </div>
-        <div className="detail-cell">
-          <span>{t("Ping-pong")}</span>
-          <strong>
-            {task.ping_pong_count} / {task.max_retries}
-          </strong>
-        </div>
       </div>
-
-      {task.description && <p className="detail-description">{task.description}</p>}
 
       {task.review_feedback && (
         <div className="detail-section">
@@ -347,14 +621,8 @@ export function TaskDetailModal({
       </div>
 
       <div className="detail-columns">
-        <div className="detail-section">
-          <h3>{t("Input context")}</h3>
-          <pre className="json-block">{pretty(task.input_context)}</pre>
-        </div>
-        <div className="detail-section">
-          <h3>{t("Output artifact")}</h3>
-          <pre className="json-block">{pretty(task.output_artifact)}</pre>
-        </div>
+        <KeyValueSection title={t("Input context")} value={task.input_context ?? {}} />
+        <KeyValueSection title={t("Output artifact")} value={task.output_artifact ?? {}} />
       </div>
 
       {(task.reject_history ?? []).length > 0 && (
@@ -376,6 +644,10 @@ export function TaskDetailModal({
         </label>
       )}
       <div className="detail-footer-meta">
+        {t("Version")} v{task.version} · {t("Ping-pong")} {task.ping_pong_count} /{" "}
+        {task.max_retries}
+        {task.review_round ? ` · ${t("Review round")} ${task.review_round}` : ""}
+        {" · "}
         {t("Created by")} {task.created_by} · {relativeTime(task.created_at)} ·{" "}
         {t("Updated")} {relativeTime(task.updated_at)}
       </div>

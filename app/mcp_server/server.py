@@ -758,7 +758,8 @@ async def workspace_sync(
             {
                 key: item.get(key)
                 for key in (
-                    "task_key", "title", "status", "priority", "assigned_role",
+                    "task_key", "title", "project", "repo", "status", "priority",
+                    "assigned_role",
                     "namespace", "claimed_by", "lease_active", "version",
                     "handoff_summary", "artifact_uri", "reviewed_by",
                 )
@@ -828,6 +829,9 @@ async def create_task(
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
     """Create a task for an agent role (EXECUTOR/ANALYST/AUDITOR).
+
+    project and repo are optional routing labels. Omit both for a task that is
+    not tied to a project or repository; a blank string is rejected.
 
     acceptance [{id, text, kind: AUTO|MANUAL}] lists what the change is judged
     against; it locks at the first claim and an approval must PASS every item.

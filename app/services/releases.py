@@ -29,6 +29,22 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.7.0",
+        "date": "2026-10-27",
+        "summary": "Task protocol v0.2: ingress schemas and storage invariants.",
+        "highlights": [
+            "@veynod/protocol exports TriState, CreateTaskPayloadSchema, "
+            "HandoffBriefingSchema and ReviewSubmissionSchema; an empty acceptance, "
+            "a vague statement or a namespace-prefixed context URI is a 422.",
+            "Schema 3.41 adds task constraints (acceptance is an array, IN_PROGRESS "
+            "carries a lease, REVIEWING carries a briefing) and the "
+            "trg_enforce_task_immutability trigger: the first claim locks acceptance "
+            "and pinned context documents, and terminal tasks are immutable.",
+            "Changing acceptance after the lock stays limited to the task's creator "
+            "or a person; a terminal task answers 409 terminal_state_immutable.",
+        ],
+    },
+    {
         "version": "3.6.8",
         "date": "2026-10-27",
         "summary": "Consistent agent display names with a traceable rename history.",
