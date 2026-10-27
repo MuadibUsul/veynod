@@ -191,6 +191,7 @@ BEGIN
             WHEN 'DOC_INDEXED' THEN 'doc.indexed'
             WHEN 'DOC_INDEX_FAILED' THEN 'doc.index_failed'
             WHEN 'DOC_PURGED' THEN 'doc.purged'
+            WHEN 'MESSAGE_SENT' THEN 'conversation.message'
             WHEN 'LEASE_EXPIRED' THEN 'task.lease_expired'
             WHEN 'TASK_HEARTBEAT_MISSED' THEN 'task.heartbeat_missed'
             WHEN 'TASK_HANDOFF' THEN 'task.handoff'
