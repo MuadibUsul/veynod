@@ -564,6 +564,8 @@ class CollabTask(Base):
     )
     task_key: Mapped[str] = mapped_column(String(128), nullable=False)
     title: Mapped[str] = mapped_column(String(256), nullable=False)
+    project: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    repo: Mapped[str | None] = mapped_column(String(256), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[TaskStatus] = mapped_column(
         Enum(

@@ -418,6 +418,8 @@ async def _create_task_core(
         workspace_id=principal.workspace.id,
         task_key=task_key,
         title=request.title,
+        project=request.project,
+        repo=request.repo,
         description=request.description,
         status=status,
         priority=request.priority,
@@ -1020,6 +1022,8 @@ async def handoff_task(
         next_request = TaskCreateRequest(
             task_key=request.create_next.task_key,
             title=request.create_next.title,
+            project=request.create_next.project,
+            repo=request.create_next.repo,
             assigned_role=request.create_next.assigned_role,
             priority=request.create_next.priority,
             namespace=request.create_next.namespace or task.namespace,

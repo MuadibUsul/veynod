@@ -103,6 +103,8 @@ class HandoffBrief(StrictModel):
 class NextTaskSpec(StrictModel):
     task_key: str = Field(pattern=_KEY_PATTERN + "$", min_length=1, max_length=128)
     title: str = Field(min_length=1, max_length=256)
+    project: str | None = Field(default=None, min_length=1, max_length=128)
+    repo: str | None = Field(default=None, min_length=1, max_length=256)
     assigned_role: RoleName | None = None
     priority: int = Field(default=0, ge=-100, le=100)
     namespace: Namespace | None = Field(
@@ -174,6 +176,8 @@ class TaskCreateRequest(StrictModel):
         default=None, pattern=_KEY_PATTERN + "$", max_length=128
     )
     title: str = Field(min_length=1, max_length=256)
+    project: str | None = Field(default=None, min_length=1, max_length=128)
+    repo: str | None = Field(default=None, min_length=1, max_length=256)
     description: str | None = Field(default=None, max_length=20_000)
     status: Literal["TODO", "READY"] = "READY"
     priority: int = Field(default=0, ge=-100, le=100)
@@ -931,6 +935,8 @@ class TaskSummary(BaseModel):
     alias: str | None = Field(default=None, description="Current human-readable alias")
     task_key: str
     title: str
+    project: str | None = None
+    repo: str | None = None
     status: TaskStatus
     priority: int
     assigned_role: str | None

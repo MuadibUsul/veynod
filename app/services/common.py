@@ -132,6 +132,8 @@ def task_summary(task: CollabTask) -> TaskSummary:
         alias=task.task_key,
         task_key=task.task_key,
         title=task.title,
+        project=task.project,
+        repo=task.repo,
         status=task.status,
         priority=task.priority,
         assigned_role=task.assigned_role,
@@ -384,6 +386,8 @@ def document_snapshot(document: SharedDocument) -> dict[str, Any]:
 def task_snapshot(task: CollabTask) -> dict[str, Any]:
     return {
         "title": task.title,
+        "project": task.project,
+        "repo": task.repo,
         "description": task.description,
         "status": task.status.value,
         "priority": task.priority,

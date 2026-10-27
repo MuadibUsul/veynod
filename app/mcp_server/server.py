@@ -803,6 +803,8 @@ async def workspace_sync(
 async def create_task(
     title: str,
     task_key: str | None = None,
+    project: str | None = None,
+    repo: str | None = None,
     description: str | None = None,
     assigned_role: Literal["ANALYST", "AUDITOR", "EXECUTOR"] | None = None,
     priority: int = 0,
@@ -847,6 +849,8 @@ async def create_task(
             body = TaskCreateRequest(
                 task_key=task_key,
                 title=title,
+                project=project,
+                repo=repo,
                 description=description,
                 status=status,
                 priority=priority,

@@ -64,6 +64,8 @@ export interface TaskSummary {
   id: string;
   task_key: string;
   title: string;
+  project?: string | null;
+  repo?: string | null;
   status: TaskStatus;
   priority: number;
   assigned_role: string | null;

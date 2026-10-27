@@ -122,6 +122,8 @@ CREATE TABLE IF NOT EXISTS collab_tasks (
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     task_key VARCHAR(128) NOT NULL,
     title VARCHAR(256) NOT NULL,
+    project VARCHAR(128),
+    repo VARCHAR(256),
     description TEXT,
     status task_status NOT NULL DEFAULT 'READY',
     priority INT NOT NULL DEFAULT 0 CHECK (priority BETWEEN -100 AND 100),

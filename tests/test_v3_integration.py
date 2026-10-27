@@ -93,6 +93,54 @@ async def handoff(
     return response.json()
 
 
+async def test_task_project_repo_create_read_list_claim_and_legacy_flow(
+    client, admin_headers, workspace,
+):
+    commander = workspace["headers"]
+    executor = await make_agent(client, admin_headers, workspace, "EXECUTOR")
+    auditor = await make_agent(client, admin_headers, workspace, "AUDITOR")
+
+    routed_key = task_key("ROUTED")
+    created = await create_task(
+        client, commander, routed_key, assigned_role="EXECUTOR",
+        project="Veynod", repo="MuadibUsul/AgentGraph",
+    )
+    assert (created["project"], created["repo"]) == (
+        "Veynod", "MuadibUsul/AgentGraph",
+    )
+    read = await client.get(f"/v1/tasks/{routed_key}", headers=executor["headers"])
+    assert read.status_code == 200
+    assert (read.json()["project"], read.json()["repo"]) == (
+        "Veynod", "MuadibUsul/AgentGraph",
+    )
+    listed = await client.get(
+        "/v1/tasks", headers=executor["headers"],
+        params={"task_key": routed_key, "detail": "summary"},
+    )
+    assert listed.status_code == 200
+    assert (listed.json()["items"][0]["project"], listed.json()["items"][0]["repo"]) == (
+        "Veynod", "MuadibUsul/AgentGraph",
+    )
+    routed_claim = await claim(client, executor["headers"], routed_key)
+    assert routed_claim["task"]["project"] == "Veynod"
+    assert routed_claim["task"]["repo"] == "MuadibUsul/AgentGraph"
+
+    legacy_key = task_key("LEGACY")
+    legacy = await create_task(client, commander, legacy_key, assigned_role="EXECUTOR")
+    assert legacy["project"] is None and legacy["repo"] is None
+    legacy_claim = await claim(client, executor["headers"], legacy_key)
+    assert legacy_claim["task"]["project"] is None
+    assert legacy_claim["task"]["repo"] is None
+    handed_off = await handoff(client, executor["headers"], legacy_key)
+    reviewed = await client.post(
+        f"/v1/tasks/{legacy_key}/review", headers=auditor["headers"],
+        json={"decision": "approve", "feedback": "verified",
+              "expected_version": handed_off["task"]["version"]},
+    )
+    assert reviewed.status_code == 200
+    assert reviewed.json()["task"]["status"] == "DONE"
+
+
 async def read_sse_event(lines, timeout: float = 12.0) -> dict:
     event_id = None
     while True:

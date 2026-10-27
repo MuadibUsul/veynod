@@ -128,6 +128,16 @@ def test_task_dependencies_are_deduplicated():
         TaskCreateRequest(title="x", task_key="bad key!")
 
 
+def test_task_project_and_repo_are_optional_but_not_blank():
+    assert TaskCreateRequest(title="legacy").project is None
+    task = TaskCreateRequest(
+        title="routed", project=" Veynod ", repo=" MuadibUsul/AgentGraph "
+    )
+    assert (task.project, task.repo) == ("Veynod", "MuadibUsul/AgentGraph")
+    with pytest.raises(ValidationError):
+        TaskCreateRequest(title="blank", project=" ")
+
+
 def test_link_no_self_loop():
     node = uuid.uuid4()
     with pytest.raises(ValidationError):

@@ -278,6 +278,8 @@ def _task_view(task: CollabTask) -> dict[str, Any]:
         "task_id": task.canonical_id,
         "task_key": task.task_key,
         "title": task.title,
+        "project": task.project,
+        "repo": task.repo,
         "status": task.status.value,
         "assignee": task.claimed_by,
         "assigned_role": task.assigned_role,

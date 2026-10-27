@@ -267,6 +267,14 @@ export function TaskDetailModal({
           <strong>{task.namespace}</strong>
         </div>
         <div className="detail-cell">
+          <span>{t("Project")}</span>
+          <strong>{task.project || "—"}</strong>
+        </div>
+        <div className="detail-cell">
+          <span>{t("Repository")}</span>
+          <strong>{task.repo || "—"}</strong>
+        </div>
+        <div className="detail-cell">
           <span>{t("Claim / lease")}</span>
           <strong>
             {task.claimed_by ? directoryDisplayName(directory, task.claimed_by) : t("unclaimed")}
@@ -390,6 +398,8 @@ export function CreateTaskModal({
   const [role, setRole] = useState("EXECUTOR");
   const [priority, setPriority] = useState(0);
   const [namespace, setNamespace] = useState("");
+  const [project, setProject] = useState("");
+  const [repo, setRepo] = useState("");
   const [description, setDescription] = useState("");
   const [context, setContext] = useState("{}");
   const [error, setError] = useState<string | null>(null);
@@ -408,6 +418,8 @@ export function CreateTaskModal({
         assigned_role: role,
         priority,
         namespace: namespace.trim() || undefined,
+        project: project.trim() || undefined,
+        repo: repo.trim() || undefined,
         description: description.trim() || undefined,
         input_context: inputContext,
       });
@@ -464,6 +476,18 @@ export function CreateTaskModal({
             <span>{t("Namespace")}</span>
             <input value={namespace} onChange={(e) => setNamespace(e.target.value)}
               placeholder={t("Automatic")} />
+          </label>
+        </div>
+        <div className="form-grid">
+          <label className="field">
+            <span>{t("Project (optional)")}</span>
+            <input value={project} onChange={(e) => setProject(e.target.value)}
+              placeholder="Veynod" maxLength={128} />
+          </label>
+          <label className="field">
+            <span>{t("Repository (optional)")}</span>
+            <input value={repo} onChange={(e) => setRepo(e.target.value)}
+              placeholder="MuadibUsul/AgentGraph" maxLength={256} />
           </label>
         </div>
         <label className="field">
