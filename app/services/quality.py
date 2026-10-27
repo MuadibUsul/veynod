@@ -331,6 +331,10 @@ async def update_acceptance(session: AsyncSession, principal: Principal, ref: st
                             request: AcceptanceUpdateRequest) -> dict[str, Any]:
     task = await _task(session, principal, ref, for_update=True)
     ensure_namespace(principal, task.namespace, write=True)
+    if task.status in ("DONE", "FAILED"):
+        raise ApiError(409, "terminal_state_immutable",
+                       "a terminal task's acceptance cannot change; create a new task",
+                       details={"task_key": task.task_key, "status": task.status})
     if not principal.is_human:
         if task.acceptance_locked and principal.agent_signature != task.created_by:
             raise ApiError(403, "acceptance_locked",
@@ -346,6 +350,12 @@ async def update_acceptance(session: AsyncSession, principal: Principal, ref: st
     before = task.acceptance or []
     after = [item.model_dump() for item in request.acceptance]
     if task.acceptance_locked:
+        # v3.41 keeps acceptance immutable after the lock. The checks above are
+        # the authorization decision, so this transaction asserts it for the
+        # trigger; any other writer is rejected by the database.
+        await session.execute(
+            text("SELECT set_config('veynod.acceptance_change', 'authorized', true)")
+        )
         history = list(task.review_history or [])
         history.append({"type": "acceptance_change", "by": principal.agent_signature,
                         "before_hash": _hash(before), "after_hash": _hash(after),

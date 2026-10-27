@@ -264,6 +264,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `alias_tombstoned` | 409 | `fix_request` |
 | `artifact_archived` | 409 | `fix_request` |
 | `auto_release_cap_reached` | 409 | `fix_request` |
+| `blob_referenced` | 409 | `fix_request` |
 | `claim_required` | 409 | `fix_request` |
 | `dependency_cycle` | 409 | `fix_request` |
 | `google_email_mismatch` | 409 | `fix_request` |
@@ -274,15 +275,20 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `last_owner_required` | 409 | `fix_request` |
 | `locate_required` | 409 | `fix_request` |
 | `log_document_append_only` | 409 | `fix_request` |
+| `no_active_generation` | 409 | `fix_request` |
 | `not_a_log_document` | 409 | `fix_request` |
+| `parts_incomplete` | 409 | `fix_request` |
 | `policy_exists` | 409 | `fix_request` |
 | `proposal_required` | 409 | `fix_request` |
 | `quality_circuit_open` | 409 | `fix_request` |
 | `quality_gates_unmet` | 409 | `fix_request` |
 | `task_exists` | 409 | `fix_request` |
 | `tenant_has_children` | 409 | `fix_request` |
+| `terminal_state_immutable` | 409 | `fix_request` |
+| `upload_incomplete` | 409 | `fix_request` |
 | `workspace_confirmation_mismatch` | 409 | `fix_request` |
 | `batch_too_large` | 413 | `fix_request` |
+| `blob_too_large` | 413 | `fix_request` |
 | `content_too_large` | 413 | `fix_request` |
 | `payload_too_large` | 413 | `fix_request` |
 | `acceptance_items_incomplete` | 422 | `fix_request` |
@@ -294,6 +300,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `context_doc_not_found` | 422 | `fix_request` |
 | `continuation_required` | 422 | `fix_request` |
 | `duplicate_key_in_batch` | 422 | `fix_request` |
+| `expected_version_required` | 422 | `fix_request` |
 | `export_format_unsupported` | 422 | `fix_request` |
 | `insecure_target_url` | 422 | `fix_request` |
 | `invalid_address` | 422 | `fix_request` |
@@ -304,6 +311,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `invalid_handoff_brief` | 422 | `fix_request` |
 | `invalid_json_patch` | 422 | `fix_request` |
 | `invalid_last_event_id` | 422 | `fix_request` |
+| `invalid_part` | 422 | `fix_request` |
 | `invalid_public_key` | 422 | `fix_request` |
 | `invalid_section` | 422 | `fix_request` |
 | `invalid_sort` | 422 | `fix_request` |
@@ -332,6 +340,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `too_many_headers` | 422 | `fix_request` |
 | `ttl_exceeds_parent` | 422 | `fix_request` |
 | `unknown_principal` | 422 | `fix_request` |
+| `unsupported_part_encoding` | 422 | `fix_request` |
 | `url_not_allowed` | 422 | `fix_request` |
 | `validation_error` | 422 | `fix_request` |
 | `google_audience_mismatch` | 401 | `reauth` |
@@ -389,10 +398,12 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `stale_fencing_token` | 409 | `abandon` |
 | `task_not_reviewable` | 409 | `abandon` |
 | `token_already_expired` | 409 | `abandon` |
+| `blob_purged` | 410 | `abandon` |
 | `cli_session_consumed` | 410 | `abandon` |
 | `cli_session_expired` | 410 | `abandon` |
 | `gone` | 410 | `abandon` |
 | `oauth_request_expired` | 410 | `abandon` |
+| `upload_expired` | 410 | `abandon` |
 | `reviewer_conflict` | 422 | `abandon` |
 | `share_cross_root_not_allowed` | 422 | `abandon` |
 | `budget_exceeded` | 402 | `escalate_human` |
@@ -413,6 +424,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `taint_blocked` | 409 | `escalate_human` |
 | `task_claimed` | 409 | `escalate_human` |
 | `tree_quota_exceeded` | 409 | `escalate_human` |
+| `agent_document_quota_exceeded` | 429 | `escalate_human` |
 | `budget_exhausted` | 429 | `escalate_human` |
 | `circuit_open` | 429 | `escalate_human` |
 | `mcp_not_configured` | 500 | `escalate_human` |
