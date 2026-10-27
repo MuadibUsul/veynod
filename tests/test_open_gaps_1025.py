@@ -105,3 +105,18 @@ async def test_unchanged_schema_files_are_not_reapplied():
     finally:
         await conn.close()
     assert recorded == 1
+
+
+async def test_every_exported_table_exists():
+    """An export entry for a table no migration creates (super_admin_grants)
+    failed every export, and with it every backup."""
+    from app.services.exports import EXPORTED
+
+    conn = await asyncpg.connect(_dsn())
+    try:
+        missing = [table for table in EXPORTED
+                   if not await conn.fetchval("SELECT to_regclass($1) IS NOT NULL",
+                                              f"public.{table}")]
+    finally:
+        await conn.close()
+    assert missing == []
