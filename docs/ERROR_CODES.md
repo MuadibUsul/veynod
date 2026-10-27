@@ -68,6 +68,7 @@ do not edit by hand. Every error body is
 | `alias_tombstoned` | 409 | `fix_request` | `fix_request_then_resend` | Choose another alias; tombstones never reuse. |
 | `artifact_archived` | 409 | `fix_request` | `fix_request_then_resend` | Restore the document or use another. |
 | `auto_release_cap_reached` | 409 | `fix_request` | `fix_request_then_resend` | Hand off to REVIEWING; an audit releases it today. |
+| `blob_referenced` | 409 | `fix_request` | `fix_request_then_resend` | Detach the blob first, or force-delete as its owner. |
 | `claim_required` | 409 | `fix_request` | `fix_request_then_resend` | Claim the task before this transition. |
 | `dependency_cycle` | 409 | `fix_request` | `fix_request_then_resend` | Remove the cyclic depends_on link. |
 | `google_email_mismatch` | 409 | `fix_request` | `fix_request_then_resend` | Use the Google account for this email. |
@@ -78,15 +79,19 @@ do not edit by hand. Every error body is
 | `last_owner_required` | 409 | `fix_request` | `fix_request_then_resend` | Assign another owner first. |
 | `locate_required` | 409 | `fix_request` | `fix_request_then_resend` | Run locate_personal_data first. |
 | `log_document_append_only` | 409 | `fix_request` | `append_entries` | Use append_entries instead. |
+| `no_active_generation` | 409 | `fix_request` | `fix_request_then_resend` | Pick an identity that has a token. |
 | `not_a_log_document` | 409 | `fix_request` | `fix_request_then_resend` | Write with upsert_shared_doc instead. |
+| `parts_incomplete` | 409 | `fix_request` | `fix_request_then_resend` | Upload the missing parts first. |
 | `policy_exists` | 409 | `fix_request` | `fix_request_then_resend` | Update the existing policy instead. |
 | `proposal_required` | 409 | `fix_request` | `propose_document_change` | Submit propose_document_change instead. |
 | `quality_circuit_open` | 409 | `fix_request` | `fix_request_then_resend` | The domain's circuit is open: hand off to REVIEWING. |
 | `quality_gates_unmet` | 409 | `fix_request` | `fix_request_then_resend` | Report the gates in details.missing as PASS, then retry. |
 | `task_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another task_key. |
 | `tenant_has_children` | 409 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
+| `upload_incomplete` | 409 | `fix_request` | `fix_request_then_resend` | Upload the remaining parts first. |
 | `workspace_confirmation_mismatch` | 409 | `fix_request` | `fix_request_then_resend` | Confirm with the exact name. |
 | `batch_too_large` | 413 | `fix_request` | `fix_request_then_resend` | Split the batch per details. |
+| `blob_too_large` | 413 | `fix_request` | `fix_request_then_resend` | Send a smaller blob; details.limit_bytes is the cap. |
 | `content_too_large` | 413 | `fix_request` | `split_into_parts` | Split into parts (details.action). |
 | `payload_too_large` | 413 | `fix_request` | `fix_request_then_resend` | Send a smaller archive (details.limit_bytes). |
 | `acceptance_items_incomplete` | 422 | `fix_request` | `fix_request_then_resend` | Give a PASS result for every acceptance item. |
@@ -98,6 +103,7 @@ do not edit by hand. Every error body is
 | `context_doc_not_found` | 422 | `fix_request` | `fix_request_then_resend` | Fix the context pointers per details. |
 | `continuation_required` | 422 | `fix_request` | `fix_request_then_resend` | Attach a continuation pack. |
 | `duplicate_key_in_batch` | 422 | `fix_request` | `fix_request_then_resend` | Deduplicate keys per details. |
+| `expected_version_required` | 422 | `fix_request` | `fix_request_then_resend` | Read get_agent and pass expected_version before renaming. |
 | `export_format_unsupported` | 422 | `fix_request` | `fix_request_then_resend` | Use a supported export format. |
 | `insecure_target_url` | 422 | `fix_request` | `fix_request_then_resend` | Use an https URL. |
 | `invalid_address` | 422 | `fix_request` | `fix_request_then_resend` | Fix the address per details. |
@@ -108,6 +114,7 @@ do not edit by hand. Every error body is
 | `invalid_handoff_brief` | 422 | `fix_request` | `fix_request_then_resend` | Fix the L1 brief per details. |
 | `invalid_json_patch` | 422 | `fix_request` | `fix_request_then_resend` | Fix the JSON Patch operations. |
 | `invalid_last_event_id` | 422 | `fix_request` | `fix_request_then_resend` | Send a non-negative integer. |
+| `invalid_part` | 422 | `fix_request` | `fix_request_then_resend` | Give the part document part_index metadata. |
 | `invalid_public_key` | 422 | `fix_request` | `fix_request_then_resend` | Send a base64 X25519 public key (32 bytes). |
 | `invalid_section` | 422 | `fix_request` | `fix_request_then_resend` | Use an existing section heading. |
 | `invalid_sort` | 422 | `fix_request` | `fix_request_then_resend` | Use a supported sort. |
@@ -136,6 +143,7 @@ do not edit by hand. Every error body is
 | `too_many_headers` | 422 | `fix_request` | `fix_request_then_resend` | Send at most 64 headers. |
 | `ttl_exceeds_parent` | 422 | `fix_request` | `fix_request_then_resend` | Lower the TTL per details. |
 | `unknown_principal` | 422 | `fix_request` | `fix_request_then_resend` | Fix the principal reference per details. |
+| `unsupported_part_encoding` | 422 | `fix_request` | `fix_request_then_resend` | Use plain base64 part bodies. |
 | `url_not_allowed` | 422 | `fix_request` | `fix_request_then_resend` | Use an allowed URL per details. |
 | `validation_error` | 422 | `fix_request` | `fix_request_then_resend` | Fix the fields listed in details. |
 | `google_audience_mismatch` | 401 | `reauth` | `stop_and_reauthenticate` | Sign in with this deployment's client. |
@@ -193,10 +201,12 @@ do not edit by hand. Every error body is
 | `stale_fencing_token` | 409 | `abandon` | `abandon_and_release_local_state` | Drop local state and claim again. |
 | `task_not_reviewable` | 409 | `abandon` | `abandon_and_release_local_state` | The task is not awaiting review. |
 | `token_already_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Ask the issuer to issue again. |
+| `blob_purged` | 410 | `abandon` | `abandon_and_release_local_state` | The attachment is gone; remove the reference. |
 | `cli_session_consumed` | 410 | `abandon` | `abandon_and_release_local_state` | The key was collected once; start a new setup. |
 | `cli_session_expired` | 410 | `abandon` | `abandon_and_release_local_state` | Run `npx veynod init` again for a new code. |
 | `gone` | 410 | `abandon` | `abandon_and_release_local_state` | Give up; details carry the tombstone. |
 | `oauth_request_expired` | 410 | `abandon` | `abandon_and_release_local_state` | Start the connection again from your client. |
+| `upload_expired` | 410 | `abandon` | `abandon_and_release_local_state` | Start a new upload. |
 | `reviewer_conflict` | 422 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `share_cross_root_not_allowed` | 422 | `abandon` | `abandon_and_release_local_state` | Use cross-tree collaboration instead. |
 | `budget_exceeded` | 402 | `escalate_human` | `stop_and_escalate_to_human` | Ask a human to raise the budget. |
@@ -217,6 +227,7 @@ do not edit by hand. Every error body is
 | `taint_blocked` | 409 | `escalate_human` | `stop_and_escalate_to_human` | A human must verify tainted content. |
 | `task_claimed` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Ask the holder or a person to cancel it. |
 | `tree_quota_exceeded` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Revoke unused child tokens or ask a human for more quota. |
+| `agent_document_quota_exceeded` | 429 | `escalate_human` | `stop_and_escalate_to_human` | Daily quota reached; ask the owner for a larger quota. |
 | `budget_exhausted` | 429 | `escalate_human` | `stop_and_escalate_to_human` | Wait for resets_at or ask the issuer for more budget. |
 | `circuit_open` | 429 | `escalate_human` | `stop_and_escalate_to_human` | Stop the loop; call agent_escalate_to_human. |
 | `mcp_not_configured` | 500 | `escalate_human` | `stop_and_escalate_to_human` | An operator must set MCP_API_KEY. |

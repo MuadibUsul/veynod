@@ -138,6 +138,22 @@ REGISTRY: dict[str, ErrorSpec] = {
         409, REFRESH_AND_RETRY, "Review details.conflicts; retry with force=true if intended."
     ),
     # --- fix_request (PRD appendix A)
+    "blob_too_large": _spec(
+        413, FIX_REQUEST, "Send a smaller blob; details.limit_bytes is the cap."
+    ),
+    "blob_referenced": _spec(
+        409, FIX_REQUEST, "Detach the blob first, or force-delete as its owner."
+    ),
+    "expected_version_required": _spec(
+        422, FIX_REQUEST, "Read get_agent and pass expected_version before renaming."
+    ),
+    "invalid_part": _spec(422, FIX_REQUEST, "Give the part document part_index metadata."),
+    "no_active_generation": _spec(409, FIX_REQUEST, "Pick an identity that has a token."),
+    "parts_incomplete": _spec(409, FIX_REQUEST, "Upload the missing parts first."),
+    "unsupported_part_encoding": _spec(
+        422, FIX_REQUEST, "Use plain base64 part bodies."
+    ),
+    "upload_incomplete": _spec(409, FIX_REQUEST, "Upload the remaining parts first."),
     "cursor_invalid": _spec(400, FIX_REQUEST, "Fix the cursor per details."),
     "tenant_id_not_allowed": _spec(
         400, FIX_REQUEST, "Remove tenant_id from the request.", "remove_tenant_id"
@@ -278,6 +294,8 @@ REGISTRY: dict[str, ErrorSpec] = {
     "google_identity_mismatch": _spec(401, REAUTH, "Sign in with the linked Google identity."),
     "google_token_invalid": _spec(401, REAUTH, "Obtain a fresh Google credential."),
     # --- abandon
+    "blob_purged": _spec(410, ABANDON, "The attachment is gone; remove the reference."),
+    "upload_expired": _spec(410, ABANDON, "Start a new upload."),
     "depth_limit_exceeded": _spec(403, ABANDON, "Give up this action."),
     "forbidden": _spec(403, ABANDON, "Give up this action."),
     "feature_disabled": _spec(
@@ -350,6 +368,9 @@ REGISTRY: dict[str, ErrorSpec] = {
         422, ABANDON, "Use cross-tree collaboration instead."
     ),
     # --- escalate_human
+    "agent_document_quota_exceeded": _spec(
+        429, ESCALATE_HUMAN, "Daily quota reached; ask the owner for a larger quota."
+    ),
     "tenant_deleting": _spec(
         403, ESCALATE_HUMAN, "Stop; only an owner can cancel deletion or fetch the export."
     ),

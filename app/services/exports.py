@@ -132,6 +132,10 @@ EPHEMERAL = frozenset({
     "oauth_clients", "oauth_requests",
     # Conflict counters, per-minute metrics and situation alerts (R2.3).
     "doc_contention", "principal_metrics", "situation_alerts",
+    # Blob storage and share links (v3.40) are not part of agentgraph-export/1
+    # yet: blob bytes are not serialized, and share tokens must not travel.
+    "blobs", "document_blobs", "blob_uploads", "blob_upload_parts",
+    "cleanup_grants", "share_links", "share_link_accesses",
     # Tree governance (R2.4): policies, confirmations, shares and admin access
     # sessions belong to the live tree, not to one node's data.
     "tenant_policies", "tenant_confirmations", "tenant_shares", "admin_access_sessions",

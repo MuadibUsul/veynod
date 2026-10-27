@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from app import docs_site
+from app.services.directory import default_agent_id
 
 pytestmark = pytest.mark.integration
 
@@ -148,7 +149,8 @@ async def test_published_mcp_example_calls_get_orientation(
         capture_output=True, text=True, timeout=120,
     )
     assert result.returncode == 0, result.stderr
-    assert f"connected as {signature}" in result.stdout
+    # Orientation prints the stable agent_id, not the raw token label.
+    assert f"connected as {default_agent_id(signature)}" in result.stdout
     # The server name and variable are the ones `npx veynod init` writes.
     cursor = json.loads(configs["cursor"])["mcpServers"]["veynod"]
     claude = json.loads(configs["claude_desktop"])["mcpServers"]["veynod"]
