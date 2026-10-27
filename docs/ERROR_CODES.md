@@ -77,6 +77,8 @@ do not edit by hand. Every error body is
 | `idempotency_key_reused` | 409 | `fix_request` | `use_new_idempotency_key` | Generate a new idempotency key; confirm this is a different request. |
 | `increment_out_of_order` | 409 | `fix_request` | `fix_request_then_resend` | Import details.prev_export_id first, then this increment. |
 | `last_owner_required` | 409 | `fix_request` | `fix_request_then_resend` | Assign another owner first. |
+| `lease_renew_limit` | 409 | `fix_request` | `fix_request_then_resend` | This claim reached 12 renewals; claim the task again. |
+| `lease_renew_too_early` | 409 | `fix_request` | `fix_request_then_resend` | Renew only in the last 300 seconds of the lease. |
 | `locate_required` | 409 | `fix_request` | `fix_request_then_resend` | Run locate_personal_data first. |
 | `log_document_append_only` | 409 | `fix_request` | `append_entries` | Use append_entries instead. |
 | `no_active_generation` | 409 | `fix_request` | `fix_request_then_resend` | Pick an identity that has a token. |
@@ -189,6 +191,7 @@ do not edit by hand. Every error body is
 | `invalid_state_transition` | 409 | `abandon` | `abandon_and_release_local_state` | Re-read the task; give up this action. |
 | `invalid_transition` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `lease_conflict` | 409 | `abandon` | `abandon_and_release_local_state` | Another agent holds the lease; do not preempt. |
+| `lease_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Your lease ended before NOW(); claim the task again. |
 | `lease_lost` | 409 | `abandon` | `abandon_and_release_local_state` | Drop local state and claim again. |
 | `lineage_unavailable` | 409 | `abandon` | `abandon_and_release_local_state` | This subject has no signed lineage; give up. |
 | `link_exists` | 409 | `abandon` | `abandon_and_release_local_state` | The link already exists. |

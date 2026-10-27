@@ -273,6 +273,8 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `idempotency_key_reused` | 409 | `fix_request` |
 | `increment_out_of_order` | 409 | `fix_request` |
 | `last_owner_required` | 409 | `fix_request` |
+| `lease_renew_limit` | 409 | `fix_request` |
+| `lease_renew_too_early` | 409 | `fix_request` |
 | `locate_required` | 409 | `fix_request` |
 | `log_document_append_only` | 409 | `fix_request` |
 | `no_active_generation` | 409 | `fix_request` |
@@ -385,6 +387,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `invalid_state_transition` | 409 | `abandon` |
 | `invalid_transition` | 409 | `abandon` |
 | `lease_conflict` | 409 | `abandon` |
+| `lease_expired` | 409 | `abandon` |
 | `lease_lost` | 409 | `abandon` |
 | `lineage_unavailable` | 409 | `abandon` |
 | `link_exists` | 409 | `abandon` |

@@ -147,6 +147,7 @@ def task_summary(task: CollabTask) -> TaskSummary:
         review_feedback=task.review_feedback,
         reviewed_by=task.reviewed_by,
         ping_pong_count=task.ping_pong_count,
+        retry_count=task.ping_pong_count,
         max_retries=task.max_retries,
         version=task.version,
         lease_epoch=task.lease_epoch,

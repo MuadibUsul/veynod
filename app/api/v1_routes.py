@@ -95,6 +95,7 @@ from app.schemas import (
     TaskCreateRequest,
     TaskEscalateRequest,
     TaskHandoffRequest,
+    TaskLeaseRenewRequest,
     TaskListResponse,
     TaskOut,
     TaskReleaseRequest,
@@ -506,6 +507,23 @@ async def renew_task(
     session: AsyncSession = Depends(get_db),
 ) -> TaskOut:
     return await services.renew_task(session, principal, task_key, body)
+
+
+@router.post(
+    "/tasks/{task_key}/lease/renew",
+    response_model=TaskOut,
+    summary="Explicit lease renewal: <300 s left, at most 12 per claim",
+)
+async def renew_task_lease(
+    task_key: str,
+    body: TaskLeaseRenewRequest | None = None,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> TaskOut:
+    from app.services.tasks import renew_lease_explicit
+
+    return await renew_lease_explicit(
+        session, principal, task_key, body or TaskLeaseRenewRequest())
 
 
 @router.post(

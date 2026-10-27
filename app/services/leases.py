@@ -14,7 +14,7 @@ import base64
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Principal, effective_agent, require_permission
@@ -91,6 +91,7 @@ def clear_task_lease(task: CollabTask) -> None:
     task.claimed_by = None
     task.lease_owner = None
     task.lease_expires_at = None
+    task.lease_renew_count = 0
     task.lease_epoch += 1
 
 
@@ -184,16 +185,28 @@ async def require_holder(
 ) -> None:
     """The caller must hold a live lease on the task.
 
-    Under 2026-11 a caller whose own lease expired or was revoked gets
-    ``lease_lost`` (with the current holder); otherwise ``lease_conflict``.
+    The liveness test is one SQL statement against the database clock, so a
+    lease that expired a millisecond ago is refused even when the reaper has not
+    swept it yet. A caller still recorded as the holder with an expired lease
+    gets ``lease_expired``; a lease that was revoked, released or reaped gets
+    ``lease_lost``; anyone else gets ``lease_conflict``.
     """
-    live = (
-        task.lease_owner == agent
-        and task.lease_expires_at is not None
-        and task.lease_expires_at > now
-    )
+    live = await session.scalar(text(
+        "SELECT 1 FROM collab_tasks WHERE id = :id AND lease_owner = :agent "
+        "AND lease_expires_at IS NOT NULL AND lease_expires_at > NOW()"
+    ), {"id": task.id, "agent": agent})
     if live:
         return
+    if (task.status is TaskStatus.IN_PROGRESS and task.lease_owner == agent
+            and task.lease_expires_at is not None and task.lease_expires_at <= now):
+        raise ApiError(
+            409,
+            "lease_expired",
+            "your lease ended before NOW(); claim the task again",
+            details={"task_key": task.task_key,
+                     "lease_expires_at": task.lease_expires_at.isoformat(),
+                     "fencing_token": task.lease_epoch},
+        )
     if at_least(LATEST_VERSION):
         previous = await session.scalar(
             select(Lease)

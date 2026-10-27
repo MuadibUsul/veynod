@@ -284,6 +284,14 @@ class TaskRenewRequest(StrictModel):
     )
     agent: str | None = None
 
+
+class TaskLeaseRenewRequest(StrictModel):
+    fencing_token: int | None = Field(
+        default=None, ge=0,
+        description="The fencing_token from your lease; an older one is refused",
+    )
+    agent: str | None = None
+
     @field_validator("agent")
     @classmethod
     def _agent(cls, value: str | None) -> str | None:
@@ -950,6 +958,8 @@ class TaskSummary(BaseModel):
     review_feedback: str | None = None
     reviewed_by: str | None = None
     ping_pong_count: int
+    retry_count: int = Field(
+        default=0, description="Alias of ping_pong_count (spec §4.2 retry_count)")
     max_retries: int
     version: int
     lease_epoch: int
