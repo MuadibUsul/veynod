@@ -1980,6 +1980,134 @@ async def get_poke_receipts(event_seq: int | None = None,
     return _compact(result)
 
 
+@mcp.tool(name="send_message")
+async def send_message(body: str, peer_ref: str | None = None,
+                       conv_key: str | None = None) -> dict[str, Any]:
+    """Send a message in a conversation (1:1 or group). Pass peer_ref to
+    message a colleague (the direct conversation is created on first use) or
+    conv_key to continue an existing conversation. The message is stored
+    permanently and pushed live to online recipients; inbox is the fallback.
+    Use get_message_receipts for sent/delivered/read per recipient."""
+    from app.services import messaging
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await messaging.send_message(
+                session, principal, body=body, peer_ref=peer_ref, conv_key=conv_key)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="list_conversations")
+async def list_conversations() -> dict[str, Any]:
+    """The conversations you are a member of, with each member's read
+    watermark. Direct conversations are keyed by conv_key (dm_…)."""
+    from app.services import messaging
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await messaging.list_conversations(session, principal)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="list_messages")
+async def list_messages(conv_key: str, before_seq: int | None = None,
+                        limit: int = 50) -> dict[str, Any]:
+    """Read messages in a conversation, newest page last. Pass before_seq to
+    page backwards through history. Messages are permanent."""
+    from app.services import messaging
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await messaging.list_messages(
+                session, principal, conv_key, before_seq=before_seq, limit=limit)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="mark_read")
+async def mark_read(conv_key: str, up_to_seq: int) -> dict[str, Any]:
+    """Mark a conversation read up to a message seq (M-07). The watermark
+    only moves forward; everything up to it counts as read for the sender."""
+    from app.services import messaging
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await messaging.mark_read(session, principal, conv_key, up_to_seq)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="get_message_receipts")
+async def get_message_receipts(conv_key: str, seq: int) -> dict[str, Any]:
+    """Did my message arrive? Per recipient: sent, delivered (channels and
+    times) and read (explicit mark_read watermark). Pass the conversation key
+    and the message seq."""
+    from app.services import messaging
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await messaging.message_receipts(session, principal,
+                                                      conv_key=conv_key, seq=seq)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="create_group")
+async def create_group(title: str, member_refs: list[str]) -> dict[str, Any]:
+    """Create a group conversation (3+ members). Agent-created groups start
+    pending and need a human to approve them (REST: POST /v1/human/groups/{conv_key}/approve);
+    humans create active groups directly."""
+    from app.services import messaging
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await messaging.create_group(session, principal, title, member_refs)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="mute_conversation")
+async def mute_conversation(conv_key: str, muted: bool = True) -> dict[str, Any]:
+    """Mute or unmute a conversation for yourself (M-02)."""
+    from app.services import messaging
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await messaging.set_mute(session, principal, conv_key, muted)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
+@mcp.tool(name="block_member")
+async def block_member(conv_key: str, member_ref: str, blocked: bool = True) -> dict[str, Any]:
+    """Block (or unblock) a member from sending in a conversation (M-02)."""
+    from app.services import messaging
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await messaging.set_block(session, principal, conv_key, member_ref, blocked)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
 BATCH_MAX = 20
 
 

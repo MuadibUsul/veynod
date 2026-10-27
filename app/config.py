@@ -73,6 +73,9 @@ class Settings(BaseSettings):
     lease_default_ttl_seconds: int = Field(default=900, ge=60, le=3_600)
     orphan_escalation_threshold: int = Field(default=3, ge=1, le=100)
     default_max_retries: int = Field(default=3, ge=1, le=100)
+    # L3 messaging (M-14): unread-message and unclaimed-task timeout escalation.
+    message_unread_escalation_seconds: int = Field(default=1800, ge=30, le=86_400)
+    task_unclaimed_timeout_seconds: int = Field(default=7200, ge=60, le=86_400)
     max_reject_history: int = Field(default=20, ge=1, le=500)
     human_override_default_lock: bool = True
 
@@ -209,6 +212,7 @@ class Settings(BaseSettings):
     rate_limit_enabled: bool = True
     rate_limit_default_per_minute: int = Field(default=600, ge=1, le=1_000_000)
     rate_limit_window_seconds: int = Field(default=60, ge=1, le=3_600)
+    message_rate_limit_per_minute: int = Field(default=120, ge=1, le=1_000_000)
     default_monthly_token_budget: int = Field(default=10_000_000, ge=0)
     default_monthly_cost_budget_usd: float = Field(default=1000.0, ge=0)
     default_max_concurrent_leases: int = Field(default=100, ge=1)
@@ -233,6 +237,10 @@ class Settings(BaseSettings):
     developer_max_slots: int = 100
     pro_max_documents: int = 500_000
     pro_max_slots: int = 1_000
+    # L3 messaging (M-11): permanent messages are quota-bounded per tier.
+    free_max_messages: int = 100_000
+    developer_max_messages: int = 1_000_000
+    pro_max_messages: int = 10_000_000
     # PRD AG-ST-03: documents up to 1 MiB of UTF-8; larger content uses parts.
     max_document_content_bytes: int = 1_048_576
     # Character ceiling for request validation only; the byte limit decides.

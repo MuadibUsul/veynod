@@ -66,6 +66,20 @@ def _in_workspace(payload: str, workspace: str) -> bool:
         return False
 
 
+def _message_of(row: dict[str, Any]) -> dict[str, Any] | None:
+    """The message carried by a conversation.message event, or None."""
+    details = (row.get("payload") or {}).get("details") or {}
+    if details.get("delivery_kind") != "message.sent":
+        return None
+    return {
+        "conv_key": details.get("conv_key"),
+        "seq": details.get("seq"),
+        "message_id": details.get("message_id"),
+        "sender": details.get("sender"),
+        "body": details.get("body"),
+    }
+
+
 def _frame(row: dict[str, Any], *, replay: bool) -> str:
     pushed = datetime.now(timezone.utc)
     body = inbox.envelope(row)
@@ -76,7 +90,11 @@ def _frame(row: dict[str, Any], *, replay: bool) -> str:
         "platform_ms": int((pushed - row["created_at"]).total_seconds() * 1000),
     }
     body["replay"] = replay
-    return (f"id: {row['seq']}\nevent: poke\n"
+    message = _message_of(row)
+    event = "message" if message else "poke"
+    if message:
+        body["message"] = message
+    return (f"id: {row['seq']}\nevent: {event}\n"
             f"data: {json.dumps(body, ensure_ascii=False, default=str)}\n\n")
 
 
@@ -110,7 +128,14 @@ async def _poke_stream(principal: Principal, last_event_id: int | None,
             frame = _frame(row, replay=replay)
             # Recorded as the frame is handed to the connection: a client that
             # hangs up right after reading must not leave the receipt unwritten.
-            await pokes.record_delivery(principal.workspace.id, seq, me, "stream")
+            message = _message_of(row)
+            if message and message.get("message_id"):
+                from app.services import messaging
+
+                await messaging.record_stream_delivery(
+                    principal.workspace.id, message["message_id"], me)
+            else:
+                await pokes.record_delivery(principal.workspace.id, seq, me, "stream")
             yield frame
 
     try:
