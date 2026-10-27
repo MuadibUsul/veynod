@@ -539,11 +539,16 @@ def _auth() -> list[dict[str, Any]]:
           "to get <agent_id>-v1; issue POST /v1/agents/{ref}/generations for the next "
           "generation. The old credential stops working, while tasks and mentions that "
           "use the old label keep resolving. GET /v1/agents/{ref}/references lists task, "
-          "mention and document references before a rename.",
+          "mention and document references before a rename. Change display_name with "
+          "PATCH /v1/agents/{ref} and the version returned by GET /v1/agents/{ref}; "
+          "a stale version returns 409. GET /v1/agents/{ref}/name-history lists "
+          "previous names, actors and timestamps for that stable identity.",
           "令牌有三层身份：可自由填写的显示名、稳定的 agent_id（小写、给机器认）和凭据代际。"
           "用 agent_id 新建令牌会得到 <agent_id>-v1；调用 POST /v1/agents/{ref}/generations "
           "签发下一代的凭据。旧凭据会失效，但使用旧标签的任务和提及仍然可以解析。改名之前可用 "
-          "GET /v1/agents/{ref}/references 列出任务、提及和文档引用。"),
+          "GET /v1/agents/{ref}/references 列出任务、提及和文档引用。修改显示名时，"
+          "PATCH /v1/agents/{ref} 必须携带从 GET /v1/agents/{ref} 读到的版本；版本过期返回 409。"
+          "GET /v1/agents/{ref}/name-history 可按稳定身份查询旧名称、操作者与时间。"),
         p("Owners can merge duplicate identities with POST /v1/agents/merge; it defaults "
           "to dry_run=true, keeps the newest active credential, and returns the task/"
           "document migration report.",

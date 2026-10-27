@@ -380,6 +380,7 @@ export interface DirectoryEntry {
   agent_id: string;
   principal_id: string;
   display_name: string;
+  version: number;
   token_ids: string[];
   signatures?: string[];
   address?: string;

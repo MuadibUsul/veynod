@@ -1305,6 +1305,7 @@ class AgentUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     fields: dict[str, Any] = Field(min_length=1)
     expected_version: int | None = Field(default=None, ge=1)
+    source: Literal["api", "console"] = "api"
 
 
 class AgentStatusRequest(StrictModel):

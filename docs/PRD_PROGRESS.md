@@ -245,7 +245,7 @@ Migration 3.37.0. Numbers are the playtest's.
 
 | Item | Notes |
 |---|---|
-| Release version | Fixed in 3.6.0; current 3.6.7 (release notes in `app/services/releases.py`). `.env.example` no longer pins `APP_VERSION`: a deployment that sets it hides every later release. |
+| Release version | Fixed in 3.6.0; current 3.6.8 (release notes in `app/services/releases.py`). `.env.example` no longer pins `APP_VERSION`: a deployment that sets it hides every later release. |
 | Inbox stream pool | `/v1/inbox/stream` is not one of the stream paths, so an open stream holds one of the token's request slots instead of its stream slot (counts only under `BUDGET_MODE=enforce`). |
 | Watermark transfer | `POST /v1/human/transfer-responsibilities` with `watermarks` still answers "named watermarks arrive with AG-EV-01", though they exist (AG-EV-04). |
 | `include_cold` | `list_documents` accepts it and ignores it, though AG-ST-11 computes `cold`. |
