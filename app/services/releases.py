@@ -29,6 +29,17 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.13.2",
+        "date": "2026-10-27",
+        "summary": "Owner-only DONE approval is now opt-in (OWNER_ONLY_DONE).",
+        "highlights": [
+            "The 3.12.0 rule that only the human OWNER approves DONE is off by default: "
+            "any principal allowed to review may approve DONE again.",
+            "Set OWNER_ONLY_DONE=true to enforce it; denials still return 403 "
+            "role_permission_denied.",
+        ],
+    },
+    {
         "version": "3.13.1",
         "date": "2026-10-27",
         "summary": "Fix scheduled backups: no more phantom table in the export list.",

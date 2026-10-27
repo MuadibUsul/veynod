@@ -1162,7 +1162,10 @@ def _require_approve_done(principal: Principal) -> None:
 
     Under QUALITY_CONTROL an AUDITOR releases through the tier gates; that is
     an explicitly configured, gated delegation, not an owner decision.
+    Enforced only with OWNER_ONLY_DONE=true.
     """
+    if not settings.owner_only_done:
+        return
     if has_capability(principal, "task:approve_done"):
         return
     if settings.quality_control and principal.role is RoleScope.AUDITOR:

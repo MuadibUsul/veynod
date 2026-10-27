@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ app
     app_name: str = "Veynod"
     # Bump on every release and add notes in app/services/releases.py.
-    app_version: str = "3.13.1"
+    app_version: str = "3.13.2"
     environment: Literal["development", "staging", "production", "test"] = "development"
     debug: bool = False
     host: str = "0.0.0.0"
@@ -110,6 +110,9 @@ class Settings(BaseSettings):
     # QUALITY_CONTROL=true enforces the release matrix (tiers, gates, audit
     # view, cited clauses, circuit) on reviews and hand-offs.
     quality_control: bool = False
+    # Role rules v0.2 §2.6 (only the human OWNER approves DONE). Off for now:
+    # any principal allowed to review may approve DONE, as before 3.12.0.
+    owner_only_done: bool = False
     quality_tier1_sample_rate: float = Field(default=0.10, ge=0, le=1)  # Q-1
     quality_tier2_sample_rate: float = Field(default=0.20, ge=0, le=1)  # Q-2
     quality_auto_merge_daily_cap: int = Field(default=20, ge=0)  # Q-3

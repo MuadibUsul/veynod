@@ -90,8 +90,8 @@ async def test_delta_adds_and_removes_permissions(tree):  # noqa: F811
 
 
 async def test_bad_deltas_are_refused(tree):  # noqa: F811
-    """D-02: unknown permissions are 422 and change nothing (agent tokens are never
-    COMMANDER, so a commander delta cannot be expressed)."""
+    """D-02: unknown permissions are 422 and change nothing. COMMANDER is a mintable
+    role since 3.12.0; its writes are gated by CommanderGrants instead."""
     client = tree
     ws = await _workspace(client)
     scout = await _mint(client, ws, "SCOUT")
@@ -102,7 +102,7 @@ async def test_bad_deltas_are_refused(tree):  # noqa: F811
     commander = await client.post(f"/v1/admin/workspaces/{ws['id']}/agent-tokens",
                                   headers=ADMIN, json={"agent_signature": "boss",
                                                        "role_scope": "COMMANDER"})
-    assert commander.status_code == 422
+    assert commander.status_code == 201, commander.text
     view = (await client.get("/v1/tokens/self", headers=scout["headers"])).json()
     assert view["permission_delta"] == {"add": [], "remove": []}
 

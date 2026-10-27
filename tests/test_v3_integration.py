@@ -825,6 +825,15 @@ async def test_mcp_v3_tools(client, api_base_url, admin_headers, workspace):
                         "subscribe",
                         "list_subscriptions",
                         "unsubscribe",
+                        "update_task",
+                        "send_message",
+                        "list_conversations",
+                        "list_messages",
+                        "mark_read",
+                        "mute_conversation",
+                        "create_group",
+                        "block_member",
+                        "get_message_receipts",
                         "get_api_docs",
                     }
                     sync = await session.call_tool("workspace_sync", {})
@@ -1280,6 +1289,15 @@ async def test_dashboard_root_and_openapi(client):
         "vote_on_proposal",
         "list_document_proposals",
         "draft_external_action",
+        "update_task",
+        "send_message",
+        "list_conversations",
+        "list_messages",
+        "mark_read",
+        "mute_conversation",
+        "create_group",
+        "block_member",
+        "get_message_receipts",
         "get_api_docs",
     }
     openapi = await client.get("/openapi.json")

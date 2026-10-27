@@ -689,15 +689,6 @@ async def _run_export(export_id: str) -> None:
             group = _GROUP_OF.get(target)
             if group is not None and group not in groups:
                 continue
-            if table not in pks:
-                # A listed table this database does not have (an entry ahead of
-                # its migration) must not fail every export and backup; one
-                # that exists without a primary key still fails below.
-                if not await session.scalar(text("SELECT to_regclass(:t) IS NOT NULL"),
-                                            {"t": f"public.{table}"}):
-                    logger.warning("export %s: table %s does not exist; skipped",
-                                   export_id, table)
-                    continue
             columns = await _columns(session, table)
             rows = await _table_rows(
                 session, table, excluded, pks[table], tenants, workspaces, namespace,
