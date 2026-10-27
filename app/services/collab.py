@@ -94,6 +94,29 @@ async def my_refs(session: AsyncSession, principal: Principal) -> list[str]:
     return refs
 
 
+async def created_by_matches(session: AsyncSession, principal: Principal,
+                             created_by: str | None) -> bool:
+    """Creator check by stable identity, not by token instance (R-02).
+
+    A new credential generation of the same agent keeps every signature of the
+    identity in the directory entry, so its tasks stay manageable after a
+    rotation or a revocation.
+    """
+    if not created_by:
+        return False
+    if principal.is_human or principal.is_commander:
+        return True
+    if created_by == principal.agent_signature:
+        return True
+    entry = await _my_entry(session, principal)
+    if entry is None:
+        return False
+    names = {str(entry["agent_id"]), str(entry["principal_id"]),
+             *(entry.get("signatures") or []),
+             *(entry.get("legacy_names") or [])}
+    return created_by in names
+
+
 async def suggest_principal(session: AsyncSession, workspace_id: Any, ref: str) -> list[str]:
     """R-05 did-you-mean: labels are case-sensitive; offer the closest known ones."""
     import difflib

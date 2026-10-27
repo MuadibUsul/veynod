@@ -83,11 +83,13 @@ from app.services.slots import (
 )
 from app.services.tasks import (
     cancel_task,
+    claim_orphan_tasks,
     claim_task,
     create_task,
     escalate_task,
     get_task,
     handoff_task,
+    list_orphan_tasks,
     list_tasks,
     reap_expired_task_leases,
     reassign_task,
@@ -156,6 +158,8 @@ __all__ = [
     "normalize_document_html",
     "normalize_workspace_html_documents",
     "list_links",
+    "list_orphan_tasks",
+    "claim_orphan_tasks",
     "list_slots",
     "list_tasks",
     "list_timeline",

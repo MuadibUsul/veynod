@@ -1466,9 +1466,10 @@ async def cancel_own_task(session: AsyncSession, principal: Principal, task_key:
     task = await _get_task(session, principal.workspace.id, task_key)
     ensure_namespace(principal, task.namespace, write=True)
     if not (principal.is_human or principal.is_commander):
-        if task.created_by != principal.agent_signature:
+        if not await collab.created_by_matches(session, principal, task.created_by):
             raise Forbidden("only the task's creator, or a person, cancels it")
-        if task.claimed_by and task.claimed_by != principal.agent_signature:
+        if task.claimed_by and not await collab.created_by_matches(
+                session, principal, task.claimed_by):
             raise ApiError(409, "task_claimed",
                            f"{task.claimed_by} holds this task; ask them or a person",
                            details={"claimed_by": task.claimed_by})
@@ -1478,6 +1479,87 @@ async def cancel_own_task(session: AsyncSession, principal: Principal, task_key:
     return await cancel_task(session, principal.workspace.id, task.task_key, reason=reason,
                              expected_version=expected_version,
                              actor=principal.agent_signature)
+
+
+# ------------------------------------------------ orphaned tasks (R-07)
+
+
+_ORPHAN_SQL = (
+    "SELECT t.id FROM collab_tasks t WHERE t.workspace_id = :ws "
+    "AND t.status NOT IN ('DONE', 'FAILED', 'CANCELLED') "
+    "AND EXISTS (SELECT 1 FROM agent_directory d WHERE d.tenant_id = :tenant "
+    "AND t.created_by = ANY(d.signatures) "
+    "AND NOT EXISTS (SELECT 1 FROM agent_tokens tok "
+    "WHERE tok.canonical_id = ANY(d.token_ids) AND tok.is_active "
+    "AND tok.revoked_at IS NULL "
+    "AND (tok.expires_at IS NULL OR tok.expires_at > NOW())))"
+)
+
+
+async def list_orphan_tasks(session: AsyncSession, principal: Principal) -> list[dict[str, Any]]:
+    """Tasks whose creator identity has no active credential (R-07)."""
+    if not (principal.is_human or principal.is_commander):
+        raise Forbidden("people and commanders read orphaned tasks")
+    ids = (await session.execute(text(_ORPHAN_SQL + " ORDER BY t.created_at"), {
+        "ws": principal.workspace.id, "tenant": principal.tenant_id})).scalars().all()
+    out: list[dict[str, Any]] = []
+    for task_id in ids:
+        task = await session.get(CollabTask, task_id)
+        if task is not None:
+            out.append(task_summary(task).model_dump(mode="json"))
+    return out
+
+
+async def claim_orphan_tasks(session: AsyncSession, principal: Principal,
+                             task_keys: list[str], assignee: str | None = None,
+                             reason: str | None = None) -> dict[str, Any]:
+    """Give orphaned tasks an owner again: reassign, audit, return the result."""
+    if not (principal.is_human or principal.is_commander):
+        raise Forbidden("people and commanders claim orphaned tasks")
+    target = (assignee or "").strip() or (
+        f"human:{principal.user_id}" if principal.user_id is not None
+        else f"agent:{principal.agent_signature}")
+    if not target.startswith(("agent:", "human:")) or any(ch.isspace() for ch in target):
+        raise ApiError(422, "validation_error", "assignee must be agent:<id> or human:<id>",
+                       details={"field": "assignee"})
+    orphan_ids = set((await session.execute(text(_ORPHAN_SQL), {
+        "ws": principal.workspace.id, "tenant": principal.tenant_id})).scalars().all())
+    batch = uuid.uuid4()
+    claimed: list[str] = []
+    skipped: list[str] = []
+    for key in task_keys:
+        task = await _get_task(session, principal.workspace.id, key, for_update=True)
+        if task.id not in orphan_ids:
+            skipped.append(task.task_key)
+            continue
+        before = task_snapshot(task)
+        task.assignee = target
+        task.version += 1
+        task.updated_at = utcnow()
+        await session.flush()
+        await record_audit(
+            session,
+            workspace_id=principal.workspace.id,
+            session_batch_id=batch,
+            agent_signature=principal.agent_signature,
+            target_table="collab_tasks",
+            target_record_id=task.id,
+            operation="UPDATE",
+            before=before,
+            after=task_snapshot(task),
+        )
+        await append_event(
+            session,
+            workspace_id=principal.workspace.id,
+            agent=principal.agent_signature,
+            event_type="TASK_REASSIGNED",
+            payload={"task_key": task.task_key, "assignee": target,
+                     "reason": (reason or "orphaned creator identity")[:500]},
+            namespace=task.namespace,
+        )
+        claimed.append(task.task_key)
+    await session.commit()
+    return {"assignee": target, "claimed": claimed, "skipped": skipped}
 
 
 # ------------------------------------------------ collaboration (PRD R2.1)

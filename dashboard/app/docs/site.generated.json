@@ -764,6 +764,26 @@
          "name": "ref",
          "required": true,
          "type": "string"
+        }
+       ],
+       "path": "/v1/agents/{ref}/generations",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Credential generations of a stable agent identity"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "ref",
+         "required": true,
+         "type": "string"
         },
         {
          "description": "",
@@ -4704,6 +4724,48 @@
         "422"
        ],
        "summary": "Tick, skip, close or reopen the getting-started checklist"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/human/orphan-tasks",
+       "responses": [
+        "200"
+       ],
+       "summary": "Open tasks whose creator identity has no active credential"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "task_keys",
+         "required": true,
+         "type": "string[]"
+        },
+        {
+         "description": "agent:<id> or human:<id>; defaults to the caller",
+         "name": "assignee",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "reason",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/human/orphan-tasks/claim",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Reassign orphaned tasks to an owner (a person or a commander)"
       },
       {
        "body": [],

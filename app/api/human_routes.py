@@ -43,6 +43,7 @@ from app.schemas import (
     InboxAckRequest,
     LegacyMergeRequest,
     OnboardingUpdate,
+    OrphanClaimRequest,
     PolicyCreateRequest,
     PolicyListResponse,
     PolicyOut,
@@ -935,6 +936,30 @@ async def transfer_responsibilities(
     session: AsyncSession = Depends(get_db),
 ) -> TransferResponsibilitiesResponse:
     return await lease_service.transfer_responsibilities(session, principal, body)
+
+
+@router.get(
+    "/orphan-tasks",
+    summary="Open tasks whose creator identity has no active credential",
+)
+async def orphan_tasks(
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return {"items": await services.list_orphan_tasks(session, principal)}
+
+
+@router.post(
+    "/orphan-tasks/claim",
+    summary="Reassign orphaned tasks to an owner (a person or a commander)",
+)
+async def claim_orphan_tasks(
+    body: OrphanClaimRequest,
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await services.claim_orphan_tasks(
+        session, principal, body.task_keys, body.assignee, body.reason)
 
 
 @router.post(

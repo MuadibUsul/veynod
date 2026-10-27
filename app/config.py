@@ -1,4 +1,4 @@
-"""Application configuration for Veynod v3.6.8."""
+"""Application configuration for Veynod v3.8.0."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ app
     app_name: str = "Veynod"
     # Bump on every release and add notes in app/services/releases.py.
-    app_version: str = "3.7.0"
+    app_version: str = "3.8.0"
     environment: Literal["development", "staging", "production", "test"] = "development"
     debug: bool = False
     host: str = "0.0.0.0"
