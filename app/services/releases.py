@@ -29,6 +29,19 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.6.8",
+        "date": "2026-10-27",
+        "summary": "Consistent agent display names with a traceable rename history.",
+        "highlights": [
+            "Agent token cards show the directory display name and stable agent_id; "
+            "the console has a separate name and history control.",
+            "GET /v1/agents/{ref}/name-history follows the stable principal across "
+            "renames and returns the actor, source and timestamp.",
+            "PATCH /v1/agents/{ref} requires expected_version for name changes and "
+            "rejects concurrent updates instead of silently overwriting them.",
+        ],
+    },
+    {
         "version": "3.6.7",
         "date": "2026-10-26",
         "summary": "Public read-only demo workspace and a reusable multi-agent template.",

@@ -294,6 +294,14 @@ const ZH: Record<string, string> = {
   "Lowercase machine identity. New tokens get a -v1 suffix and later generations increment it.":
     "小写机器身份。新令牌自动加 -v1，后续代际递增。",
   "Display name (optional)": "显示名（可选）",
+  "Name & history": "名称与更名记录",
+  "Save name": "保存名称",
+  "Rename history": "更名记录",
+  "No rename history": "暂无更名记录",
+  "Unable to load name history": "无法加载更名记录",
+  "Unable to rename agent": "无法更改 Agent 名称",
+  "Display name updated.": "显示名称已更新。",
+  "The stable agent id and token signature stay the same.": "稳定 agent_id 与令牌签名保持不变。",
   "Free-form name for people; it never affects task or mention matching.":
     "给人看的自由名称，不影响任务或提及匹配。",
   "Agent signature (legacy)": "Agent 标识（兼容旧方式）",

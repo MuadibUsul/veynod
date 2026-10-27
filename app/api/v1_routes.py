@@ -992,6 +992,19 @@ async def agent_references(
     return await token_naming.references(session, principal, ref)
 
 
+@router.get("/agents/{ref}/name-history",
+            summary="Rename history for a stable agent identity")
+async def agent_name_history(
+    ref: str,
+    cursor: str | None = Query(default=None, max_length=256),
+    limit: int = Query(default=50, ge=1, le=100),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    require_permission(principal, "workspace:read")
+    return await directory.name_history(session, principal, ref, cursor=cursor, limit=limit)
+
+
 @router.patch("/agents/{ref}", summary="Change directory fields (per-field permissions)")
 async def update_agent(
     ref: str,
@@ -1000,7 +1013,7 @@ async def update_agent(
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     return await directory.update_agent(session, principal, ref, body.fields,
-                                        body.expected_version)
+                                        body.expected_version, body.source)
 
 
 @router.get("/tokens/{ref}", summary="Inspect a token (self, an ancestor or a descendant)")

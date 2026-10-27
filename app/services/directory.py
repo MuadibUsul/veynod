@@ -11,8 +11,10 @@ birth; older tokens call ``register_agent`` once. Under API version
 from __future__ import annotations
 
 import base64
+import binascii
 import json
 import re
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -313,6 +315,67 @@ async def get_agent(session: AsyncSession, principal: Principal, ref: str) -> di
     return (await _with_presence(session, principal.workspace.id, [entry]))[0]
 
 
+async def name_history(session: AsyncSession, principal: Principal, ref: str, *,
+                       cursor: str | None = None, limit: int = 50) -> dict[str, Any]:
+    """Read immutable rename events by stable directory identity, including older events."""
+    entry = await _resolve(session, principal.workspace, ref)
+    aliases = (await session.execute(
+        text("SELECT alias FROM agent_aliases WHERE tenant_id = :tenant "
+             "AND principal_id = :principal"),
+        {"tenant": principal.workspace.tenant_id, "principal": entry["principal_id"]},
+    )).scalars().all()
+    names = list({entry["agent_id"], *(entry["legacy_names"] or []), *aliases})
+    params: dict[str, Any] = {
+        "workspace": principal.workspace.id,
+        "principal": str(entry["principal_id"]),
+        "names": names,
+        "limit": limit + 1,
+    }
+    before = ""
+    if cursor:
+        try:
+            value = json.loads(base64.urlsafe_b64decode(cursor.encode()).decode())
+            params["before_at"] = datetime.fromisoformat(value["at"])
+            params["before_id"] = str(uuid.UUID(value["id"]))
+            before = "AND (created_at, id) < (:before_at, CAST(:before_id AS uuid)) "
+        except (binascii.Error, KeyError, ValueError, TypeError, UnicodeError) as exc:
+            raise ApiError(400, "cursor_invalid", "the cursor is not valid") from exc
+    rows = (await session.execute(text(
+        "SELECT id, created_at, agent_signature, payload FROM timeline_streams "
+        "WHERE workspace_id = :workspace AND event_type = 'AGENT_RENAMED' "
+        "AND (payload->>'principal_id' = :principal OR "
+        "(NOT (payload ? 'principal_id') AND "
+        "(payload->>'agent_id' = ANY(CAST(:names AS text[])) OR "
+        "payload->>'previous_agent_id' = ANY(CAST(:names AS text[]))))) "
+        f"{before}ORDER BY created_at DESC, id DESC LIMIT :limit"
+    ), params)).mappings().all()
+    page = rows[:limit]
+    items = []
+    for row in page:
+        payload = row["payload"] or {}
+        details = payload.get("details") or {}
+        items.append({
+            "event_id": str(row["id"]),
+            "principal_id": str(entry["principal_id"]),
+            "agent_id": payload.get("agent_id"),
+            "previous_agent_id": payload.get("previous_agent_id"),
+            "previous_display_name": payload.get("previous_display_name"),
+            "display_name": payload.get("display_name"),
+            "changed_by": details.get("changed_by") or row["agent_signature"],
+            "actor_principal_id": (payload.get("actor_stamp") or {}).get("principal_id"),
+            "source": details.get("source") or "legacy",
+            "created_at": row["created_at"].isoformat(),
+        })
+    next_cursor = None
+    if len(rows) > limit:
+        last = page[-1]
+        next_cursor = base64.urlsafe_b64encode(json.dumps({
+            "at": last["created_at"].isoformat(), "id": str(last["id"]),
+        }).encode()).decode()
+    return {"agent_id": entry["agent_id"], "principal_id": str(entry["principal_id"]),
+            "items": items, "next_cursor": next_cursor}
+
+
 async def me(session: AsyncSession, principal: Principal) -> dict[str, Any] | None:
     row = await _by_token(session, principal.token_cid)
     return entry_out(row) if row else None
@@ -367,7 +430,8 @@ async def list_agents(session: AsyncSession, principal: Principal, *, role: str 
 
 
 async def update_agent(session: AsyncSession, principal: Principal, ref: str,
-                       fields: dict[str, Any], expected_version: int | None) -> dict[str, Any]:
+                       fields: dict[str, Any], expected_version: int | None,
+                       source: str = "api") -> dict[str, Any]:
     row = await _resolve(session, principal.workspace, ref)
     own = principal.token_cid in (row["token_ids"] or [])
     if principal.is_human:
@@ -380,6 +444,20 @@ async def update_agent(session: AsyncSession, principal: Principal, ref: str,
         if field not in writable:
             raise ApiError(403, "field_not_writable", f"'{field}' cannot be changed by you",
                            details={"field": field, "writable": sorted(writable)})
+    if "display_name" in fields:
+        name = fields["display_name"]
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 64:
+            raise ApiError(422, "validation_error", "display_name must be 1-64 characters",
+                           details={"field": "display_name"})
+        fields = {**fields, "display_name": name.strip()}
+    changing_name = any(
+        key in fields and fields[key] != row[key]
+        for key in ("display_name", "agent_id")
+    )
+    if changing_name and expected_version is None:
+        raise ApiError(422, "expected_version_required",
+                       "pass the directory version you read before renaming",
+                       details={"current_version": row["version"]})
     if expected_version is not None and expected_version != row["version"]:
         raise ApiError(409, "version_conflict", "the entry changed since you read it",
                        details={"current_version": row["version"]})
@@ -405,12 +483,7 @@ async def update_agent(session: AsyncSession, principal: Principal, ref: str,
         if await _taken(session, principal.workspace.tenant_id, new_id):
             raise ApiError(409, "agent_id_taken", "this agent_id is already registered",
                            details={"agent_id": new_id})
-        await session.execute(
-            text("INSERT INTO agent_aliases (workspace_id, alias, principal_id) "
-                 "VALUES (:ws, :alias, :p)"),
-            {"ws": principal.workspace.id, "alias": row["agent_id"], "p": row["principal_id"]},
-        )
-    sets, params = [], {"p": row["principal_id"]}
+    sets, params = [], {"p": row["principal_id"], "read_version": row["version"]}
     for key, value in fields.items():
         if key == "capabilities":
             sets.append("capabilities = CAST(:capabilities AS text[])")
@@ -422,10 +495,18 @@ async def update_agent(session: AsyncSession, principal: Principal, ref: str,
         updated = (
             await session.execute(
                 text(f"UPDATE agent_directory SET {', '.join(sets)}, version = version + 1, "
-                     "updated_at = NOW() WHERE principal_id = :p RETURNING *"),
+                     "updated_at = NOW() WHERE principal_id = :p "
+                     "AND version = :read_version RETURNING *"),
                 params,
             )
-        ).mappings().one()
+        ).mappings().one_or_none()
+        if updated is None:
+            current_version = (await session.execute(
+                text("SELECT version FROM agent_directory WHERE principal_id = :p"),
+                {"p": row["principal_id"]},
+            )).scalar_one()
+            raise ApiError(409, "version_conflict", "the entry changed since you read it",
+                           details={"current_version": current_version})
         migration = None
         if "status" in fields and fields["status"] != row["status"]:
             await _status_event(session, dict(updated), row["status"])
@@ -433,6 +514,12 @@ async def update_agent(session: AsyncSession, principal: Principal, ref: str,
         if renamed:
             from app.services.token_naming import migrate_rename
 
+            await session.execute(
+                text("INSERT INTO agent_aliases (workspace_id, alias, principal_id) "
+                     "VALUES (:ws, :alias, :p)"),
+                {"ws": principal.workspace.id, "alias": row["agent_id"],
+                 "p": row["principal_id"]},
+            )
             migration = await migrate_rename(session, principal.workspace,
                                              dict(row), dict(updated))
         if (
@@ -441,14 +528,19 @@ async def update_agent(session: AsyncSession, principal: Principal, ref: str,
         ):
             await _announce(
                 session, updated["workspace_id"], "AGENT_RENAMED",
-                {"agent_id": updated["agent_id"], "previous_agent_id": row["agent_id"],
+                {"principal_id": str(updated["principal_id"]),
+                 "agent_id": updated["agent_id"], "previous_agent_id": row["agent_id"],
                  "display_name": updated["display_name"],
                  "previous_display_name": row["display_name"],
                  "details": {
+                     "principal_id": str(updated["principal_id"]),
                      "agent_id": updated["agent_id"], "previous_agent_id": row["agent_id"],
                      "display_name": updated["display_name"],
                      "previous_display_name": row["display_name"],
                      "changed_by": principal.agent_signature,
+                     "source": source,
+                     "previous_version": row["version"],
+                     "version": updated["version"],
                      **(migration or {}),
                  },
                  "actor_stamp": {

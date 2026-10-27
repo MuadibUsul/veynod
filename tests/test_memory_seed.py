@@ -3,6 +3,7 @@ A-06; A-07, the did-you-mean on a wrongly cased label, is in test_poke_delivery)
 
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
 
@@ -129,7 +130,8 @@ async def test_agent_rename_emits_an_event(client):
 
     updated = await client.patch(
         f"/v1/agents/{entry['agent_id']}", headers=ws["human"],
-        json={"fields": {"display_name": "Runner Two"}},
+        json={"fields": {"display_name": "Runner Two"},
+              "expected_version": entry["version"], "source": "console"},
     )
     assert updated.status_code == 200, updated.text
     assert updated.json()["display_name"] == "Runner Two"
@@ -143,3 +145,54 @@ async def test_agent_rename_emits_an_event(client):
     assert renamed[-1]["details"]["display_name"] == "Runner Two"
     assert renamed[-1]["details"]["changed_by"]
     assert renamed[-1]["actor"]["type"] == "human"
+
+    history = await client.get(
+        f"/v1/agents/{entry['principal_id']}/name-history", headers=ws["human"])
+    assert history.status_code == 200, history.text
+    item = history.json()["items"][0]
+    assert item["principal_id"] == entry["principal_id"]
+    assert item["previous_display_name"] == "Runner One"
+    assert item["display_name"] == "Runner Two"
+    assert item["source"] == "console"
+
+    stale = await client.patch(
+        f"/v1/agents/{entry['agent_id']}", headers=ws["human"],
+        json={"fields": {"display_name": "Runner Three"},
+              "expected_version": entry["version"]},
+    )
+    assert stale.status_code == 409 and stale.json()["error"]["code"] == "version_conflict"
+    assert (await client.get(f"/v1/agents/{entry['agent_id']}/name-history",
+                             headers=ws["human"])).json()["items"] == [item]
+
+    again = await client.patch(
+        f"/v1/agents/{entry['agent_id']}", headers=ws["human"],
+        json={"fields": {"display_name": "Runner Three"},
+              "expected_version": updated.json()["version"]},
+    )
+    assert again.status_code == 200, again.text
+    page = (await client.get(f"/v1/agents/{entry['agent_id']}/name-history",
+                             headers=ws["human"], params={"limit": 1})).json()
+    assert page["items"][0]["display_name"] == "Runner Three"
+    assert page["next_cursor"]
+    older = (await client.get(f"/v1/agents/{entry['agent_id']}/name-history",
+                              headers=ws["human"],
+                              params={"cursor": page["next_cursor"]})).json()
+    assert older["items"] == [item]
+
+
+async def test_concurrent_agent_rename_has_one_winner(client):
+    ws = await _workspace(client)
+    agent = await _agent(client, ws)
+    entry = (await client.post("/v1/agents/register", headers=agent["headers"],
+                               json={"display_name": "Original"})).json()
+    url = f"/v1/agents/{entry['agent_id']}"
+    responses = await asyncio.gather(*(
+        client.patch(url, headers=ws["human"], json={
+            "fields": {"display_name": name}, "expected_version": entry["version"]})
+        for name in ("First", "Second")
+    ))
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    history = (await client.get(f"{url}/name-history", headers=ws["human"])).json()
+    assert len(history["items"]) == 1
+    current = (await client.get(url, headers=ws["human"])).json()
+    assert history["items"][0]["display_name"] == current["display_name"]

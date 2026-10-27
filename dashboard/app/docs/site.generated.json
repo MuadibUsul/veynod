@@ -707,6 +707,12 @@
          "name": "expected_version",
          "required": false,
          "type": "integer | null"
+        },
+        {
+         "description": "",
+         "name": "source",
+         "required": false,
+         "type": "string"
         }
        ],
        "description": "",
@@ -746,6 +752,40 @@
         "422"
        ],
        "summary": "Issue the next credential generation for the same agent_id"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "ref",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "cursor",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "limit",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/agents/{ref}/name-history",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Rename history for a stable agent identity"
       },
       {
        "body": [],
@@ -1318,6 +1358,246 @@
       {
        "body": [],
        "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "file_name",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "media_type",
+         "required": false,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/blobs",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Upload a binary blob"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "limit",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/blobs",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "List blob metadata and storage totals"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/blobs/gc",
+       "responses": [
+        "200"
+       ],
+       "summary": "Run the unreferenced-blob GC (commander)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "file_name",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "apply",
+         "required": false,
+         "type": "boolean"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/blobs/migrate-parts",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Reassemble base64 part documents into a blob"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "file_name",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "media_type",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "total_parts",
+         "required": false,
+         "type": "integer | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/blobs/uploads",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Start a resumable blob upload"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "DELETE",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "upload_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/blobs/uploads/{upload_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Cancel a resumable upload"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "upload_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/blobs/uploads/{upload_id}/complete",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Finish a resumable upload and create the blob"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "PUT",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "upload_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "part_index",
+         "required": true,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/blobs/uploads/{upload_id}/parts/{part_index}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Upload one part"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "blob_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/blobs/{blob_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Download a blob by id"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "DELETE",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "blob_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "force",
+         "required": false,
+         "type": "boolean"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "reason",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "path": "/v1/blobs/{blob_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Delete or owner-force-delete a blob"
+      }
+     ],
+     "group": "blobs"
+    },
+    {
+     "endpoints": [
+      {
+       "body": [],
+       "description": "",
        "method": "GET",
        "parameters": [
         {
@@ -1337,6 +1617,79 @@
       }
      ],
      "group": "budgets"
+    },
+    {
+     "endpoints": [
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/cleanup-grants",
+       "responses": [
+        "200"
+       ],
+       "summary": "List cleanup grants"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "grantee",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "namespace",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "doc_key_prefix",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "expires_hours",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/cleanup-grants",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Delegate scoped document cleanup to an agent"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "DELETE",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "grant_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/cleanup-grants/{grant_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Revoke a cleanup grant"
+      }
+     ],
+     "group": "cleanup-grants"
     },
     {
      "endpoints": [
@@ -1842,6 +2195,86 @@
         "422"
        ],
        "summary": "Soft-archive a shared document (creator or commander)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "doc_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/documents/{doc_key}/blobs",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "List a document's blob attachments"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "blob_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "file_name",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "doc_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/documents/{doc_key}/blobs",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Attach a blob to a document"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "DELETE",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "doc_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "blob_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/documents/{doc_key}/blobs/{blob_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Detach a blob from a document"
       },
       {
        "body": [
@@ -2380,6 +2813,65 @@
         "422"
        ],
        "summary": "Headings with section_hash, for patch_doc_section without a version"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "expiry",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "custom_hours",
+         "required": false,
+         "type": "integer | null"
+        },
+        {
+         "description": "",
+         "name": "custom_days",
+         "required": false,
+         "type": "integer | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "doc_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/documents/{doc_key}/share-links",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Create a public, read-only share link for one document"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "doc_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/documents/{doc_key}/share-links",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "List share links for one document"
       },
       {
        "body": [
@@ -7048,6 +7540,51 @@
       {
        "body": [],
        "description": "",
+       "method": "DELETE",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "link_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/share-links/{link_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Revoke a public share link"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "link_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/share-links/{link_id}/accesses",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Read a share link's access log"
+      }
+     ],
+     "group": "share-links"
+    },
+    {
+     "endpoints": [
+      {
+       "body": [],
+       "description": "",
        "method": "GET",
        "parameters": [],
        "path": "/v1/shares",
@@ -9882,8 +10419,8 @@
     },
     {
      "text": {
-      "en": "A token has three identity layers: a free-form display name, a stable agent_id (lowercase, machine-facing) and a credential generation. Mint from an agent_id to get <agent_id>-v1; issue POST /v1/agents/{ref}/generations for the next generation. The old credential stops working, while tasks and mentions that use the old label keep resolving. GET /v1/agents/{ref}/references lists task, mention and document references before a rename.",
-      "zh": "令牌有三层身份：可自由填写的显示名、稳定的 agent_id（小写、给机器认）和凭据代际。用 agent_id 新建令牌会得到 <agent_id>-v1；调用 POST /v1/agents/{ref}/generations 签发下一代的凭据。旧凭据会失效，但使用旧标签的任务和提及仍然可以解析。改名之前可用 GET /v1/agents/{ref}/references 列出任务、提及和文档引用。"
+      "en": "A token has three identity layers: a free-form display name, a stable agent_id (lowercase, machine-facing) and a credential generation. Mint from an agent_id to get <agent_id>-v1; issue POST /v1/agents/{ref}/generations for the next generation. The old credential stops working, while tasks and mentions that use the old label keep resolving. GET /v1/agents/{ref}/references lists task, mention and document references before a rename. Change display_name with PATCH /v1/agents/{ref} and the version returned by GET /v1/agents/{ref}; a stale version returns 409. GET /v1/agents/{ref}/name-history lists previous names, actors and timestamps for that stable identity.",
+      "zh": "令牌有三层身份：可自由填写的显示名、稳定的 agent_id（小写、给机器认）和凭据代际。用 agent_id 新建令牌会得到 <agent_id>-v1；调用 POST /v1/agents/{ref}/generations 签发下一代的凭据。旧凭据会失效，但使用旧标签的任务和提及仍然可以解析。改名之前可用 GET /v1/agents/{ref}/references 列出任务、提及和文档引用。修改显示名时，PATCH /v1/agents/{ref} 必须携带从 GET /v1/agents/{ref} 读到的版本；版本过期返回 409。GET /v1/agents/{ref}/name-history 可按稳定身份查询旧名称、操作者与时间。"
      },
      "type": "p"
     },

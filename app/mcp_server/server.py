@@ -2950,12 +2950,13 @@ async def list_agents(
 async def update_agent(
     agent_id: str, fields: dict[str, Any], expected_version: int | None = None
 ) -> dict[str, Any]:
-    """Change your own entry: display_name, capabilities, description, status."""
+    """Change your own entry: display_name, capabilities, description, status.
+    Pass expected_version from get_agent when changing the display name."""
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
         try:
             result = await directory_service.update_agent(
-                session, principal, agent_id, fields, expected_version)
+                session, principal, agent_id, fields, expected_version, "mcp")
         except ApiError as exc:
             raise _api_error(exc) from exc
     return _compact(result)

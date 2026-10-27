@@ -91,7 +91,10 @@ async def test_display_name_change_does_not_change_matching(client):
     task_key = task.json()["task_key"]
 
     renamed = await client.patch("/v1/agents/zcode-deploy", headers=agent,
-                                 json={"fields": {"display_name": "中文显示名"}})
+                                 json={"fields": {"display_name": "中文显示名"},
+                                       "expected_version": (await client.get(
+                                           "/v1/agents/zcode-deploy", headers=agent
+                                       )).json()["version"]})
     assert renamed.status_code == 200, renamed.text
     assert renamed.json()["display_name"] == "中文显示名"
     mine = await client.get("/v1/tasks", headers=agent, params={"claimable_by_me": "true"})
@@ -122,7 +125,10 @@ async def test_rename_lists_and_migrates_task_references(client):
     assert doc_key in {item["doc_key"] for item in body["documents"]}
 
     renamed = await client.patch("/v1/agents/zcode-deploy", headers=ws["human"],
-                                 json={"fields": {"agent_id": "zcode-runner"}})
+                                 json={"fields": {"agent_id": "zcode-runner"},
+                                       "expected_version": (await client.get(
+                                           "/v1/agents/zcode-deploy", headers=ws["human"]
+                                       )).json()["version"]})
     assert renamed.status_code == 200, renamed.text
     report = renamed.json()["migration"]
     assert report["assignee_updated"] >= 1

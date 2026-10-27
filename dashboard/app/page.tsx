@@ -378,6 +378,13 @@ export default function ConsolePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connected, selectedId, adminToken, apiBase, sessionMode, operatorLocked]);
 
+  useEffect(() => {
+    if (!connected || !selectedId || !sessionMode || tab !== "agents") return;
+    refreshRef.current(true);
+    const timer = window.setInterval(() => refreshRef.current(true), 15000);
+    return () => window.clearInterval(timer);
+  }, [connected, selectedId, sessionMode, tab]);
+
   async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const headers = new Headers(init?.headers);
     const credential = sessionMode ? sessionToken : adminToken;
@@ -758,6 +765,9 @@ export default function ConsolePage() {
 
   async function refreshLive(id: string) {
     const jobs: Promise<unknown>[] = [
+      api<{ items: DirectoryEntry[] }>(
+        `/v1/admin/workspaces/${id}/agents`,
+      ).then((value) => setDirectory(value.items)),
       api<Stats>(`/v1/admin/workspaces/${id}/stats`).then((nextStats) => {
         setStats(nextStats);
         setLoading(false);

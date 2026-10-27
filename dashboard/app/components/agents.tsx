@@ -45,6 +45,18 @@ interface NamespaceListResponse {
   items: NamespaceOption[];
 }
 
+interface NameHistory {
+  items: Array<{
+    event_id: string;
+    previous_display_name: string;
+    display_name: string;
+    changed_by: string;
+    source: string;
+    created_at: string;
+  }>;
+  next_cursor: string | null;
+}
+
 function namespaceTimestamp(item: NamespaceOption): number {
   const raw = item.last_updated_at ?? item.created_at;
   const parsed = raw ? Date.parse(raw) : 0;
@@ -122,10 +134,10 @@ export function AgentsView({
   const { t } = useI18n();
   // Live presence (an open inbox stream), keyed by token id.
   const presence = new Map<string, NonNullable<DirectoryEntry["presence"]>>();
-  const displayNames = new Map<string, string>();
+  const byToken = new Map<string, DirectoryEntry>();
   for (const entry of directory) {
     for (const id of entry.token_ids) {
-      displayNames.set(id, entry.display_name);
+      byToken.set(id, entry);
       if (entry.presence) presence.set(id, entry.presence);
     }
   }
@@ -268,6 +280,11 @@ export function AgentsView({
   }
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<AgentToken | null>(null);
+  const [renaming, setRenaming] = useState<DirectoryEntry | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [nameHistory, setNameHistory] = useState<NameHistory["items"]>([]);
+  const [historyCursor, setHistoryCursor] = useState<string | null>(null);
   const [editRole, setEditRole] = useState("EXECUTOR");
   const [editNamespaces, setEditNamespaces] = useState("");
   const [editAdd, setEditAdd] = useState("");
@@ -423,6 +440,51 @@ export function AgentsView({
     }
   }
 
+  async function loadNameHistory(entry: DirectoryEntry, cursor?: string) {
+    try {
+      const result = await request<NameHistory>(
+        `/v1/agents/${encodeURIComponent(entry.principal_id)}/name-history?limit=25${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+      );
+      setNameHistory((current) => cursor ? [...current, ...result.items] : result.items);
+      setHistoryCursor(result.next_cursor);
+    } catch (caught) {
+      setRenameError(caught instanceof Error ? caught.message : t("Unable to load name history"));
+    }
+  }
+
+  function openNameHistory(entry: DirectoryEntry) {
+    setRenaming(entry);
+    setRenameName(entry.display_name);
+    setRenameError(null);
+    setNameHistory([]);
+    setHistoryCursor(null);
+    void loadNameHistory(entry);
+  }
+
+  async function saveName(event: React.FormEvent) {
+    event.preventDefault();
+    if (!renaming) return;
+    setBusy(true);
+    setRenameError(null);
+    try {
+      await request(`/v1/agents/${encodeURIComponent(renaming.principal_id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          fields: { display_name: renameName.trim() },
+          expected_version: renaming.version,
+          source: "console",
+        }),
+      });
+      setRenaming(null);
+      await onRefresh();
+      notify(t("Display name updated."));
+    } catch (caught) {
+      setRenameError(caught instanceof Error ? caught.message : t("Unable to rename agent"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="tab-stack">
       <div className="role-grid">
@@ -530,7 +592,10 @@ export function AgentsView({
                           <IconAgents size={14} />
                         </span>
                         <span title={token.agent_signature}>
-                          {displayNames.get(token.canonical_id ?? "") ?? token.agent_signature}
+                          {byToken.get(token.canonical_id ?? "")?.display_name ?? token.agent_signature}
+                          {byToken.get(token.canonical_id ?? "") && (
+                            <small className="field-hint"> · agent:{byToken.get(token.canonical_id ?? "")?.agent_id}</small>
+                          )}
                         </span>
                         {(() => {
                           const live = presence.get(token.canonical_id ?? "");
@@ -603,6 +668,16 @@ export function AgentsView({
                     </td>
                     <td>{relativeTime(token.created_at)}</td>
                     <td>
+                      {byToken.get(token.canonical_id ?? "") && (
+                        <button
+                          type="button"
+                          className="button ghost small"
+                          disabled={busy}
+                          onClick={() => openNameHistory(byToken.get(token.canonical_id ?? "")!)}
+                        >
+                          {t("Name & history")}
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="button ghost small"
@@ -706,9 +781,51 @@ export function AgentsView({
         )}
       </section>
 
+      {renaming && (
+        <Modal
+          title={t("Name & history")}
+          subtitle={`agent:${renaming.agent_id} · ${renaming.principal_id}`}
+          onClose={() => setRenaming(null)}
+          footer={
+            <>
+              <button type="button" className="button ghost" onClick={() => setRenaming(null)}>{t("Cancel")}</button>
+              <button type="submit" form="agent-name-form" className="button primary"
+                disabled={busy || !renameName.trim() || renameName.trim() === renaming.display_name}>
+                {busy ? <Spinner /> : null} {t("Save name")}
+              </button>
+            </>
+          }
+        >
+          <form id="agent-name-form" onSubmit={saveName}>
+            <label className="field">
+              <span>{t("Display name")}</span>
+              <input maxLength={64} value={renameName} onChange={(event) => setRenameName(event.target.value)} />
+              <small className="field-hint">{t("The stable agent id and token signature stay the same.")}</small>
+            </label>
+          </form>
+          {renameError && <div className="inline-error">{renameError}</div>}
+          <h3>{t("Rename history")}</h3>
+          {nameHistory.length === 0 ? <p className="field-hint">{t("No rename history")}</p> : (
+            <ul>
+              {nameHistory.map((item) => (
+                <li key={item.event_id}>
+                  <strong>{item.previous_display_name} → {item.display_name}</strong>
+                  <small className="field-hint"> · {new Date(item.created_at).toLocaleString()} · {item.changed_by} · {item.source}</small>
+                </li>
+              ))}
+            </ul>
+          )}
+          {historyCursor && (
+            <button type="button" className="button ghost small" onClick={() => void loadNameHistory(renaming, historyCursor)}>
+              {t("Load more")}
+            </button>
+          )}
+        </Modal>
+      )}
+
       {editing && (
         <Modal
-          title={t("Edit {name}", { name: displayNames.get(editing.canonical_id ?? "") ?? editing.agent_signature })}
+          title={t("Edit {name}", { name: byToken.get(editing.canonical_id ?? "")?.display_name ?? editing.agent_signature })}
           subtitle={t("Role package plus a permission delta. Changes apply to the next request.")}
           onClose={() => setEditing(null)}
           footer={
