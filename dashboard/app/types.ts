@@ -409,7 +409,14 @@ export interface DirectoryEntry {
   token_ids: string[];
   signatures?: string[];
   address?: string;
-  presence?: { online: boolean; connections: number; last_seen_at: string | null };
+  presence?: {
+    online: boolean;
+    connections: number;
+    last_seen_at: string | null;
+    // Blueprint L2: online, offline (wakeable), degraded (wake failing), unwakeable.
+    state?: "online" | "offline" | "degraded" | "unwakeable";
+    wakeable?: boolean;
+  };
 }
 
 // Refs a task's assignee may use for this directory entry (agent:<id>, agent:<prn>).

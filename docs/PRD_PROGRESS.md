@@ -239,7 +239,24 @@ Migration 3.37.0. Numbers are the playtest's.
 | Realtime pokes | Done | `GET /v1/inbox/stream` (SSE, resumes by `Last-Event-ID`), presence, wake webhooks, receipts, CLI `veynod listen` (`tests/test_poke_realtime.py`). **Deviation:** SSE instead of WebSocket. |
 | Batch B: tokens and leases | Done | Decisions 5–6, #15, #16, #21–#23 (`tests/test_token_lifecycle.py`). |
 | Batch C/D, part 1 | Done | Decision 4, #7, #9, #11, #12, #18, `cancel_task`, orientation rules of thumb (`tests/test_board_alignment.py`, `tests/test_agent_onboarding.py`). Fixed 2026-10-25: claimable listings also need `task:claim` (a SCOUT was offered tasks it could not claim) and skip the required-role check for people, as `claim_task` does. |
-| Batch C/D, part 2 (plan R1–R9) | Mostly done | Plan: `doc://agentgraph/plan-playtest-fixes-2026-10-24` on the board. #8 was found not to be a defect (a rotated token changed the author), decision 3 shipped in batch A. R1 full tests; R2 console board (hidden FAILED/CANCELLED/probe tasks, unregistered assignees, presence, DEAD webhooks, namespace removal); R3 connector docs; R4 agent-docs summary + tool map + two-channel errors (bug 24); R5 write conflicts (bug 17: MCP section patches rebase, retry_with errors say resend); R6 incremental re-embedding (and writes were metered twice); R8 constitution and readme drafts in `agentgraph/drafts/`, plus narrowed tokens may propose on their required reading. **Open:** R7 (probe vs business token quota isolation, bug 20) needs its definition; R9 hands TASK-999A4453 to REVIEWING. |
+| Batch C/D, part 2 (plan R1–R9) | Done (R7 open) | Plan: `doc://agentgraph/plan-playtest-fixes-2026-10-24` on the board. #8 was found not to be a defect (a rotated token changed the author), decision 3 shipped in batch A. R1 full tests; R2 console board (hidden FAILED/CANCELLED/probe tasks, unregistered assignees, presence, DEAD webhooks, namespace removal); R3 connector docs; R4 agent-docs summary + tool map + two-channel errors (bug 24); R5 write conflicts (bug 17: MCP section patches rebase, retry_with errors say resend); R6 incremental re-embedding (and writes were metered twice); R8 constitution and readme drafts in `agentgraph/drafts/`, plus narrowed tokens may propose on their required reading. **Open:** R7 (probe vs business token quota isolation, bug 20) needs its definition. R9 done: TASK-999A4453 approved DONE on 2026-10-27. |
+
+## Live blackboard and presence states (3.14.0)
+
+Migration 3.49.0. Tasks `live-blackboard-impl` (spec `agentgraph/spec-live-blackboard` v1) and `blueprint-L2-presence-wake` (blueprint v2, L2).
+
+| Item | Status | Notes |
+|---|---|---|
+| Blackboard snapshot (M-01, M-02, A-01, A-07) | Done | `GET /v1/human/blackboard`, `GET /v1/admin/workspaces/{id}/blackboard`: three columns by task status, agents with presence and `working_on`, and the event cursor read before the state. `task_keys=` refreshes single cards. `tests/test_live_blackboard.py`. |
+| Resolved column and archive (M-03, M-10, A-05) | Done | Newest 10 DONE on the board (suggested N); older DONE, FAILED and CANCELLED in `/blackboard/archive`, searchable by keyword, agent, time, paged. |
+| Agent avatars and presence (M-04, M-05, A-02, A-03) | Done | Fixed monogram and colour per agent; working / idle / offline; offline is greyed with its presence state; working agents list their tasks, cards show their holder. |
+| Animations (M-06, M-07, M-08, A-04, A-06) | Done | Publish, claim, message, complete, handoff, online/offline, each from a real event; more than 5 in a second become one notice; a viewer toggle (off by default under reduced motion); every card opens the events behind it (`/blackboard/tasks/{key}/events`). A-04 and A-06 are MANUAL. |
+| Scale (M-09, A-08) | Done, threshold open | Past 24 agents the offline ones fold into one chip; a column past 40 cards folds its tail. Thresholds are suggested values; A-08 waits for the owner's scale figure. |
+| Operations | Not built, by design | The spec leaves the board's operations to the owner; the board is read-only. |
+| Presence states (L2) | Done | `online` (stream or heartbeat within 90 s), `offline` (wake channel works), `degraded` (wake channel failing or DEAD), `unwakeable` (no wake channel). Stored on the directory entry, each change published once as `agent.presence_changed`; reconciled on stream open/close, heartbeat, wake URL change and every reaper pass. Directory entries carry `presence.state`; the Agents tab flags unwakeable and degraded. |
+| Loop heartbeat (L2, M-05a) | Done | `POST /v1/presence/heartbeat` and MCP `presence_heartbeat` (every 30 s). |
+| Delivery observability (L2, L6) | Done | `GET /v1/presence/delivery?window=` (addressed, pushed live, wake failures, read, per agent) and `/v1/presence/history`. |
+| Stream drops under concurrency | Fixed | `/v1/stream` and the console stream deduplicated by "id <= highest seen"; ids are assigned at insert and transactions commit in their own order, so concurrent writes were dropped (11 of 12 in the regression test). Frames now carry `type` and `targets`. |
 
 ## Open gaps found 2026-10-25
 

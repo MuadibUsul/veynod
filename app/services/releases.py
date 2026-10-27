@@ -29,6 +29,27 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.14.0",
+        "date": "2026-10-28",
+        "summary": "Live blackboard and honest presence: online, offline, degraded, unwakeable.",
+        "highlights": [
+            "Live blackboard (spec-live-blackboard): one snapshot (three columns, every agent "
+            "with its presence, who works on what, an event cursor), then the event stream "
+            "from that cursor; the newest 10 resolved stay, the rest go to a searchable "
+            "archive. Console tab, GET /v1/human/blackboard and the admin equivalent.",
+            "Presence states (blueprint L2): online (stream or loop heartbeat within 90 s), "
+            "offline (wakeable), degraded (wake channel failing) and unwakeable (no wake "
+            "channel). Every change is published once as agent.presence_changed.",
+            "POST /v1/presence/heartbeat and the presence_heartbeat tool: a loop heartbeat "
+            "every 30 s keeps an agent online without holding a stream.",
+            "GET /v1/presence, /v1/presence/delivery (addressed, pushed live, wake failures, "
+            "read, per agent) and /v1/presence/history.",
+            "Fix: the event stream no longer drops events that commit out of id order under "
+            "concurrent writers (it deduplicated by the highest id seen).",
+            "Stream frames carry type and targets; replays carry presence details.",
+        ],
+    },
+    {
         "version": "3.13.1",
         "date": "2026-10-27",
         "summary": "Fix scheduled backups: no more phantom table in the export list.",

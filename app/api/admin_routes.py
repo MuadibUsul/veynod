@@ -847,6 +847,85 @@ async def list_workspace_agents(
     return await directory.list_agents(session, principal_for_admin(workspace), limit=200)
 
 
+@router.get("/workspaces/{workspace_id}/blackboard",
+            summary="Live blackboard snapshot: three columns, agents, presence, event cursor")
+async def blackboard_snapshot(
+    workspace_id: uuid.UUID,
+    resolved_limit: int = Query(default=10, ge=1, le=100),
+    task_keys: str | None = Query(default=None, max_length=8000),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import blackboard
+
+    workspace = await services.get_workspace(session, workspace_id)
+    keys = [key for key in (task_keys or "").split(",") if key] if task_keys else None
+    return await blackboard.snapshot(session, principal_for_admin(workspace),
+                                     resolved_limit=resolved_limit, task_keys=keys)
+
+
+@router.get("/workspaces/{workspace_id}/blackboard/archive",
+            summary="Archived blackboard tasks, searchable by time, agent and keyword")
+async def blackboard_archive(
+    workspace_id: uuid.UUID,
+    q: str | None = Query(default=None, max_length=200),
+    agent: str | None = Query(default=None, max_length=256),
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    resolved_limit: int = Query(default=10, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=50, ge=1, le=200),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import blackboard
+
+    workspace = await services.get_workspace(session, workspace_id)
+    return await blackboard.archive(session, principal_for_admin(workspace), q=q, agent=agent,
+                                    since=since, until=until, resolved_limit=resolved_limit,
+                                    cursor=cursor, limit=limit)
+
+
+@router.get("/workspaces/{workspace_id}/blackboard/tasks/{task_key}/events",
+            summary="The events behind a blackboard card")
+async def blackboard_card_events(
+    workspace_id: uuid.UUID,
+    task_key: str,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import blackboard
+
+    workspace = await services.get_workspace(session, workspace_id)
+    return await blackboard.card_events(session, principal_for_admin(workspace), task_key)
+
+
+@router.get("/workspaces/{workspace_id}/presence/delivery",
+            summary="Delivery rates per agent: addressed, pushed live, wake failures, read")
+async def presence_delivery(
+    workspace_id: uuid.UUID,
+    window: str = Query(default="24h"),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import presence
+
+    workspace = await services.get_workspace(session, workspace_id)
+    return await presence.delivery_report(session, principal_for_admin(workspace), window)
+
+
+@router.get("/workspaces/{workspace_id}/presence/history",
+            summary="Presence changes over a window, newest first")
+async def presence_history(
+    workspace_id: uuid.UUID,
+    agent: str | None = Query(default=None, max_length=256),
+    window: str = Query(default="24h"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import presence
+
+    workspace = await services.get_workspace(session, workspace_id)
+    return await presence.history(session, principal_for_admin(workspace), agent=agent,
+                                  window=window, limit=limit)
+
+
 @router.get("/workspaces/{workspace_id}/alerts", summary="Situation alerts (AG-TC-05)")
 async def situation_alerts(
     workspace_id: uuid.UUID,

@@ -4031,6 +4031,115 @@
        "body": [],
        "description": "",
        "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "resolved_limit",
+         "required": false,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "task_keys",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "path": "/v1/human/blackboard",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Live blackboard snapshot: three columns, agents, presence, event cursor"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "q",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "agent",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "since",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "until",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "resolved_limit",
+         "required": false,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "cursor",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "limit",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/human/blackboard/archive",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Archived blackboard tasks, searchable by time, agent and keyword"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "task_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/human/blackboard/tasks/{task_key}/events",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The events behind a blackboard card"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
        "parameters": [],
        "path": "/v1/human/budget",
        "responses": [
@@ -6850,6 +6959,87 @@
       }
      ],
      "group": "policies"
+    },
+    {
+     "endpoints": [
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/presence",
+       "responses": [
+        "200"
+       ],
+       "summary": "Presence of every agent: online, offline, degraded or unwakeable"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "window",
+         "required": false,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/presence/delivery",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Delivery rates per agent: addressed, pushed live, wake failures, read"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/presence/heartbeat",
+       "responses": [
+        "200"
+       ],
+       "summary": "Loop heartbeat: online for 90 s; send one every 30 s"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "agent",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "window",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "limit",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/presence/history",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Presence changes over a window, newest first"
+      }
+     ],
+     "group": "presence"
     },
     {
      "endpoints": [

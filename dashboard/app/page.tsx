@@ -6,6 +6,7 @@ import { AgentsView } from "./components/agents";
 import { AuditView } from "./components/audit";
 import { SituationView } from "./components/situation";
 import { Blackboard } from "./components/blackboard";
+import { LiveBoard } from "./components/live-board";
 import { DocumentsView } from "./components/documents";
 import { GovernanceView } from "./components/governance";
 import { AnimatedNumber, spotlight, useSlidingIndicator } from "./components/motion";
@@ -88,6 +89,7 @@ function sessionPath(path: string, workspaceId: string, method: string): string 
     return `/v1/human${rest}`;
   }
   if (rest === "/namespaces") return "/v1/human/namespaces";
+  if (rest.startsWith("/blackboard")) return `/v1/human${rest}`;
   if (rest === "/agents") return "/v1/agents?limit=200";
   if (rest.startsWith("/document-parts")) return `/v1/human${rest}`;
   if (rest === "/audit" || rest.startsWith("/audit?")) return `/v1/human/audit${rest.slice(6)}`;
@@ -129,7 +131,7 @@ function sessionPath(path: string, workspaceId: string, method: string): string 
   }
   return path;
 }
-type Tab = "situation" | "blackboard" | "tasks" | "documents" | "agents" | "governance" | "audit";
+type Tab = "situation" | "live" | "blackboard" | "tasks" | "documents" | "agents" | "governance" | "audit";
 
 export default function ConsolePage() {
   const { t, lang } = useI18n();
@@ -1185,6 +1187,7 @@ export default function ConsolePage() {
 
   const tabs: Array<{ id: Tab; label: string; count?: number; alert?: number; icon: JSX.Element }> = [
     { id: "situation", label: t("Situation"), icon: <IconPulse /> },
+    { id: "live", label: t("Live blackboard"), icon: <IconAgents /> },
     { id: "blackboard", label: t("Blackboard"), count: slots.length, icon: <IconBoard /> },
     { id: "tasks", label: t("Tasks"), count: tasks.length, alert: approvals.length, icon: <IconTasks /> },
     { id: "documents", label: t("Documents"), count: docTotal, icon: <IconDocuments /> },
@@ -1587,6 +1590,14 @@ export default function ConsolePage() {
                 </div>
               ) : (
                 <>
+                  {tab === "live" && (
+                    <LiveBoard
+                      apiBase={apiBase}
+                      credential={sessionMode ? sessionToken : adminToken}
+                      workspaceId={selectedWorkspace.id}
+                      sessionMode={sessionMode}
+                    />
+                  )}
                   {tab === "blackboard" && (
                     <Blackboard
                       slots={slots}

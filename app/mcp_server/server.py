@@ -1966,6 +1966,24 @@ async def set_wake_url(url: str | None) -> dict[str, Any]:
     return _compact(result)
 
 
+@mcp.tool(name="presence_heartbeat")
+async def presence_heartbeat() -> dict[str, Any]:
+    """Tell Veynod your loop is alive. Send one every 30 s from the loop that
+    does the work (an open inbox stream counts too); three missed heartbeats
+    (90 s) and the board shows you offline, degraded (wake failing) or
+    unwakeable (no wake URL)."""
+    from app.services import digest, presence
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await presence.heartbeat(principal,
+                                              await digest.owner_ref(session, principal))
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
 @mcp.tool(name="get_poke_receipts")
 async def get_poke_receipts(event_seq: int | None = None,
                             task_key: str | None = None) -> dict[str, Any]:

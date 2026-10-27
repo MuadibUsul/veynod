@@ -1443,6 +1443,53 @@ async def set_wake_url(
     return await pokes.set_wake_url(session, principal, url)
 
 
+@router.post("/presence/heartbeat",
+             summary="Loop heartbeat: online for 90 s; send one every 30 s")
+async def presence_heartbeat(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import digest, presence
+
+    return await presence.heartbeat(principal, await digest.owner_ref(session, principal))
+
+
+@router.get("/presence",
+            summary="Presence of every agent: online, offline, degraded or unwakeable")
+async def list_presence(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import presence
+
+    return await presence.list_states(session, principal)
+
+
+@router.get("/presence/delivery",
+            summary="Delivery rates per agent: addressed, pushed live, wake failures, read")
+async def presence_delivery(
+    window: str = Query(default="24h"),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import presence
+
+    return await presence.delivery_report(session, principal, window)
+
+
+@router.get("/presence/history", summary="Presence changes over a window, newest first")
+async def presence_history(
+    agent: str | None = Query(default=None, max_length=256),
+    window: str = Query(default="24h"),
+    limit: int = Query(default=200, ge=1, le=1000),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import presence
+
+    return await presence.history(session, principal, agent=agent, window=window, limit=limit)
+
+
 @router.post("/tasks/{task_key}/cancel",
              summary="Withdraw a task (its creator while unclaimed, or a person)")
 async def cancel_task(
