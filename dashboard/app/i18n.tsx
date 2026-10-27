@@ -15,6 +15,8 @@ import { setFormatLanguage, type FormatLanguage } from "./types";
 export type Language = FormatLanguage;
 
 const ZH: Record<string, string> = {
+  "Project (optional)": "项目（可选）",
+  "Repository (optional)": "代码仓库（可选）",
   // Merged reading of hand-split documents
   "Unable to load the parts": "无法加载分篇",
   "This document is one part of {name}": "本文档是 {name} 的一部分",

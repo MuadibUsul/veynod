@@ -8227,6 +8227,18 @@
         },
         {
          "description": "",
+         "name": "project",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "repo",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
          "name": "description",
          "required": false,
          "type": "string | null"

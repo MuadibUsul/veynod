@@ -64,6 +64,10 @@ export interface TaskSummary {
   id: string;
   task_key: string;
   title: string;
+  // Optional routing metadata. Null when a task omits them. The detail view
+  // prefers these and falls back to the 【项目归属】 section of the description.
+  project?: string | null;
+  repo?: string | null;
   status: TaskStatus;
   priority: number;
   assigned_role: string | null;
@@ -115,10 +119,6 @@ export interface TaskDetail extends TaskSummary {
   acceptance_state?: AcceptanceState[];
   review_round?: number;
   context_docs?: unknown[];
-  // Structured attribution once task-project-repo-field lands; the console
-  // falls back to the 【项目归属】 section of the description until then.
-  project?: string;
-  repo?: string;
   supersedes?: string;
 }
 

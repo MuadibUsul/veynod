@@ -15,7 +15,7 @@ from typing import Any, Literal
 Detail = Literal["summary", "standard", "full"]
 LEVELS = ("summary", "standard", "full")
 
-TASK_FIELDS = ("task_key", "title", "status", "priority", "namespace", "version",
+TASK_FIELDS = ("task_key", "title", "project", "repo", "status", "priority", "namespace", "version",
                "updated_at", "assigned_role", "claimed_by")
 DOCUMENT_FIELDS = ("doc_key", "namespace", "title", "version", "updated_at",
                    "verification_status", "tainted")
@@ -23,7 +23,7 @@ SLOT_FIELDS = ("slot_key", "namespace", "version", "updated_at", "locked_by",
                "locked_by_human")
 TIMELINE_CAP = {"summary": 20, "standard": 50}
 NAMESPACE_FIELDS = ("namespace", "my_access", "documents", "unverified", "last_updated_at")
-ORIENTATION_TASK_FIELDS = ("task_id", "task_key", "title", "status", "assignee",
+ORIENTATION_TASK_FIELDS = ("task_id", "task_key", "title", "project", "repo", "status", "assignee",
                            "assigned_role", "namespace")
 
 

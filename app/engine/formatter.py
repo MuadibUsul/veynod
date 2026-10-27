@@ -163,6 +163,10 @@ def render_task_card(task: Any) -> str:
         f"claimed_by={task.claimed_by or 'none'} lease={lease} "
         f"ping_pong={task.ping_pong_count}/{task.max_retries}",
     ]
+    project = getattr(task, "project", None)
+    repo = getattr(task, "repo", None)
+    if project or repo:
+        lines.append(f"project={project or '-'} repo={repo or '-'}")
     if task.handoff_brief:
         lines.append(
             render_handoff_brief(

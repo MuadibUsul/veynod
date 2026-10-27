@@ -290,17 +290,20 @@ function TaskFields({
     );
   }
   if (attribution.repo) {
+    const repo = attribution.repo;
+    const repoUrl = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)
+      ? `https://github.com/${repo}`
+      : undefined;
     fields.push(
       <span key="repo" className="task-field">
         <span>{t("Repo")}</span>
-        <a
-          href={`https://github.com/${attribution.repo}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mono"
-        >
-          {attribution.repo}
-        </a>
+        {repoUrl ? (
+          <a href={repoUrl} target="_blank" rel="noopener noreferrer" className="mono">
+            {repo}
+          </a>
+        ) : (
+          <strong className="mono">{repo}</strong>
+        )}
       </span>,
     );
   }
@@ -667,6 +670,8 @@ export function CreateTaskModal({
   const [role, setRole] = useState("EXECUTOR");
   const [priority, setPriority] = useState(0);
   const [namespace, setNamespace] = useState("");
+  const [project, setProject] = useState("");
+  const [repo, setRepo] = useState("");
   const [description, setDescription] = useState("");
   const [context, setContext] = useState("{}");
   const [error, setError] = useState<string | null>(null);
@@ -685,6 +690,8 @@ export function CreateTaskModal({
         assigned_role: role,
         priority,
         namespace: namespace.trim() || undefined,
+        project: project.trim() || undefined,
+        repo: repo.trim() || undefined,
         description: description.trim() || undefined,
         input_context: inputContext,
       });
@@ -741,6 +748,18 @@ export function CreateTaskModal({
             <span>{t("Namespace")}</span>
             <input value={namespace} onChange={(e) => setNamespace(e.target.value)}
               placeholder={t("Automatic")} />
+          </label>
+        </div>
+        <div className="form-grid">
+          <label className="field">
+            <span>{t("Project (optional)")}</span>
+            <input value={project} onChange={(e) => setProject(e.target.value)}
+              placeholder="Veynod" maxLength={128} />
+          </label>
+          <label className="field">
+            <span>{t("Repository (optional)")}</span>
+            <input value={repo} onChange={(e) => setRepo(e.target.value)}
+              placeholder="MuadibUsul/AgentGraph" maxLength={256} />
           </label>
         </div>
         <label className="field">

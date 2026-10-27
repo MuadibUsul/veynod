@@ -51,6 +51,19 @@ preserved: that transaction sets the transaction-local GUC
 `veynod.acceptance_change = 'authorized'` after its own authorization and audit
 record. Any other writer is rejected by the trigger.
 
+## Optional project and repo columns (schema 3.42)
+
+REST `POST /v1/tasks`, MCP `create_task`, and handoff `create_next` accept
+optional nullable `project` and `repo` strings and store them on
+`collab_tasks` (`sql/migrations/v3_42_task_project_repo.sql`). Omitting them
+leaves NULL, so claim, handoff and review keep working for older tasks. A
+blank string is rejected.
+
+These columns are not a substitute for `ProjectAttributionSchema`. The v0.2
+create payload still requires tri-state `attribution.project` and
+`attribution.repo` (`VALUE` / `PENDING` / `NA`). A null column only means the
+caller did not send the optional routing labels.
+
 ## Scope notes
 
 - `task_key` kebab-case is enforced by this ingress layer, not by a database
