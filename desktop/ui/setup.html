@@ -75,6 +75,12 @@
           <span id="runtime-state" class="sub"></span>
         </div>
         <div id="runtime-details" class="runtimes"></div>
+        <div class="row" style="margin-top: 12px">
+          <input id="cwd" placeholder="C:\path\to\your\project" style="flex: 1; min-width: 220px" />
+          <button id="wake" class="secondary" disabled>Test wake</button>
+          <span id="wake-state" class="sub"></span>
+        </div>
+        <div id="wake-result" class="sub"></div>
         <div id="runtime-error" class="error"></div>
       </section>
 
@@ -142,6 +148,7 @@
             $("runtimes").appendChild(li);
           }
           $("describe").disabled = select.options.length === 0;
+          $("wake").disabled = select.options.length === 0;
           $("key").focus();
         } catch (error) {
           $("env-state").textContent = "";
@@ -176,6 +183,32 @@
           $("runtime-details").innerHTML = bits.join("");
         } catch (error) {
           $("runtime-state").textContent = "";
+          showError("runtime-error", String(error));
+        }
+      });
+
+      $("cwd").addEventListener("input", () => {
+        $("wake").disabled = !$("cwd").value.trim() || !$("runtime").value;
+      });
+      $("runtime").addEventListener("change", () => {
+        $("wake").disabled = !$("cwd").value.trim();
+      });
+
+      $("wake").addEventListener("click", async () => {
+        const runtime = $("runtime").value;
+        const cwd = $("cwd").value.trim();
+        if (!runtime || !cwd) return;
+        showError("runtime-error", "");
+        $("wake-state").textContent = "waking…";
+        $("wake-result").textContent = "";
+        try {
+          const value = await invoke("test_wake", { runtime, cwd });
+          $("wake-state").textContent = "";
+          $("wake-result").textContent = value.ok
+            ? `delivered: ${value.landed} · session ${value.status || "unknown"}`
+            : `not delivered: ${value.reason || "unknown"}`;
+        } catch (error) {
+          $("wake-state").textContent = "";
           showError("runtime-error", String(error));
         }
       });

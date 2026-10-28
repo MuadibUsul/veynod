@@ -3,11 +3,13 @@
 // the client never imports OAR in the webview.
 import { createInterface } from "node:readline";
 import { describe } from "./describe.mjs";
+import { wake } from "./wake.mjs";
 import { inventory } from "./inventory.mjs";
 
 const methods = {
   inventory,
   describe: (params) => describe(params.runtime),
+  wake: (params) => wake(params),
 };
 
 async function handle(line) {
@@ -31,6 +33,13 @@ if (process.argv.includes("--inventory")) {
 } else if (process.argv.includes("--describe")) {
   const index = process.argv.indexOf("--describe");
   console.log(JSON.stringify(await describe(process.argv[index + 1]), null, 2));
+} else if (process.argv.includes("--wake")) {
+  const index = process.argv.indexOf("--wake");
+  console.log(JSON.stringify(await wake({
+    runtime: process.argv[index + 1],
+    cwd: process.argv[index + 2],
+    prompt: process.argv.slice(index + 3).join(" "),
+  }), null, 2));
 } else {
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity });
   for await (const line of rl) {

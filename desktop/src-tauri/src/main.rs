@@ -295,6 +295,24 @@ fn local_runtimes(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
+fn test_wake(app: AppHandle, runtime: String, cwd: String, prompt: Option<String>) -> Result<Value, String> {
+    let script = sidecar_script(&app)?;
+    let output = Command::new(node_binary(&app))
+        .arg(script)
+        .arg("--wake")
+        .arg(runtime)
+        .arg(cwd)
+        .arg(prompt.unwrap_or_else(|| "Reply with the single word OK.".to_string()))
+        .output()
+        .map_err(|error| format!("cannot start Node for the wake test: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("the wake result was not JSON: {error}"))
+}
+
+#[tauri::command]
 fn local_status() -> Result<Value, String> {
     let config = load_config();
     let key = config.agents.iter().find_map(|agent| read_key(agent));
@@ -394,7 +412,7 @@ fn main() {
         ))
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
-            setup_state, local_runtimes, describe_runtime, local_status, test_agent, save_agent, open_dashboard
+            setup_state, local_runtimes, describe_runtime, local_status, test_wake, test_agent, save_agent, open_dashboard
         ])
         .setup(|app| {
             match app.autolaunch().enable() {
