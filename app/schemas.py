@@ -1130,6 +1130,8 @@ class TaskActionResponse(BaseModel):
     escalation: dict[str, Any] | None = None
     effective_status: TaskStatus | None = None
     reassigned: bool | None = None
+    awaiting_deploy: bool | None = None
+    deploy_evidence: dict[str, Any] | None = None
     artifact_uri: str | None = None
     session_batch_id: uuid.UUID
     status: TaskStatus
