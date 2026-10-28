@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Core permissions for the local window","local":true,"windows":["main"],"permissions":["core:default"]}}
+{"default":{"identifier":"default","description":"Core permissions for the local window","local":true,"windows":["main","status","inbox"],"permissions":["core:default"]}}
