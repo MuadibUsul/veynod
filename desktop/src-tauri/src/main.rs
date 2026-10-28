@@ -456,7 +456,9 @@ fn daemon_command(app: &AppHandle) -> Result<Command, String> {
         return Err("the wake daemon (desktop/sidecar/daemon.mjs) is missing".into());
     }
     let mut command = hidden_node(app, &dir);
-    command.arg(daemon);
+    command
+        .arg(daemon)
+        .env("VEYNOD_PARENT_PID", std::process::id().to_string());
     Ok(command)
 }
 
@@ -887,7 +889,13 @@ fn open_setup(app: AppHandle) -> Result<(), String> {
 
 fn main() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            // The installer asks a running client to leave through this path
+            // so the tray icon is removed instead of being force-killed.
+            if args.iter().any(|arg| arg == "--quit") {
+                app.exit(0);
+                return;
+            }
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.show();
                 let _ = window.set_focus();
@@ -923,6 +931,10 @@ fn main() {
             quit_client
         ])
         .setup(|app| {
+            if std::env::args().any(|arg| arg == "--quit") {
+                app.handle().exit(0);
+                return Ok(());
+            }
             match app.autolaunch().enable() {
                 Ok(_) => log_line("autostart enabled"),
                 Err(error) => log_line(&format!("autostart failed: {error}")),
