@@ -1490,6 +1490,199 @@ async def presence_history(
     return await presence.history(session, principal, agent=agent, window=window, limit=limit)
 
 
+# ------------------------------------------------- diagrams (spec-diagram-dispatch)
+
+
+@router.get("/diagrams", summary="Diagrams in this workspace")
+async def list_diagrams(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.list_diagrams(session, principal)
+
+
+@router.post("/diagrams", status_code=201,
+             summary="Draft a diagram: chunks with contract, done criteria, dependencies")
+async def create_diagram(
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.create(session, principal, body)
+
+
+@router.get("/diagrams/{diagram_key}",
+            summary="A diagram with its command view: progress, blocked, merge queue")
+async def get_diagram(
+    diagram_key: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.view(session, principal, diagram_key)
+
+
+@router.put("/diagrams/{diagram_key}", summary="Edit a draft diagram (drafts only)")
+async def edit_diagram(
+    diagram_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.edit_draft(session, principal, diagram_key, body)
+
+
+@router.post("/diagrams/{diagram_key}/confirm", summary="A person confirms the diagram")
+async def confirm_diagram(
+    diagram_key: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.confirm(session, principal, diagram_key)
+
+
+@router.post("/diagrams/{diagram_key}/freeze", summary="A person freezes the baseline")
+async def freeze_diagram(
+    diagram_key: str,
+    body: dict | None = None,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.freeze(session, principal, diagram_key,
+                                 (body or {}).get("layers"))
+
+
+@router.post("/diagrams/{diagram_key}/chunks/{chunk_key}/dispatch",
+             summary="Dispatch a chunk as a task, or block it on unmerged dependencies")
+async def dispatch_chunk(
+    diagram_key: str,
+    chunk_key: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.dispatch(session, principal, diagram_key, chunk_key)
+
+
+@router.post("/diagrams/{diagram_key}/chunks/{chunk_key}/gate",
+             summary="Record a chunk's gate result (pass, or fail with evidence)")
+async def gate_chunk(
+    diagram_key: str,
+    chunk_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.gate(session, principal, diagram_key, chunk_key, body)
+
+
+@router.post("/diagrams/{diagram_key}/chunks/{chunk_key}/merge",
+             summary="Merge a gated chunk (never by its implementer)")
+async def merge_chunk(
+    diagram_key: str,
+    chunk_key: str,
+    body: dict | None = None,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.merge(session, principal, diagram_key, chunk_key, body or {})
+
+
+@router.post("/diagrams/{diagram_key}/changes", status_code=201,
+             summary="Propose a diagram change with its impact")
+async def propose_diagram_change(
+    diagram_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.propose(session, principal, diagram_key, body)
+
+
+@router.post("/diagrams/{diagram_key}/increments", status_code=201,
+             summary="Fast lane: file a person's request as a diagram change")
+async def request_diagram_increment(
+    diagram_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.request_increment(session, principal, diagram_key, body)
+
+
+@router.get("/diagrams/{diagram_key}/changes/{change_key}", summary="One diagram change")
+async def get_diagram_change(
+    diagram_key: str,
+    change_key: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.change_view(session, principal, diagram_key, change_key)
+
+
+@router.post("/diagrams/{diagram_key}/changes/{change_key}/decide",
+             summary="Approve or reject a change (a person, or a super admin for the owner)")
+async def decide_diagram_change(
+    diagram_key: str,
+    change_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.decide(session, principal, diagram_key, change_key, body)
+
+
+@router.post("/diagrams/{diagram_key}/changes/{change_key}/revoke",
+             summary="A person revokes an approved change")
+async def revoke_diagram_change(
+    diagram_key: str,
+    change_key: str,
+    body: dict | None = None,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.revoke(session, principal, diagram_key, change_key, body or {})
+
+
+@router.get("/diagrams/{diagram_key}/replay",
+            summary="Replay a diagram's chain, or one chunk's with its task events")
+async def replay_diagram(
+    diagram_key: str,
+    chunk: str | None = Query(default=None, max_length=64),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.replay(session, principal, diagram_key, chunk)
+
+
 @router.post("/tasks/{task_key}/cancel",
              summary="Withdraw a task (its creator while unclaimed, or a person)")
 async def cancel_task(

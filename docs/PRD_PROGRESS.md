@@ -264,6 +264,24 @@ Migration 3.49.0. Tasks `live-blackboard-impl` (spec `agentgraph/spec-live-black
 | Call-cost (L6, feedback-call-cost) | Already in place | The `batch` tool and `detail=summary` answer both proposals of that document. |
 | Stream drops under concurrency | Fixed | `/v1/stream` and the console stream deduplicated by "id <= highest seen"; ids are assigned at insert and transactions commit in their own order, so concurrent writes were dropped (11 of 12 in the regression test). Frames now carry `type` and `targets`. |
 
+## Diagrams and chunked dispatch, lightweight stage (3.14.0)
+
+Migration 3.50.0. Task `diagram-dispatch-impl-v3`, spec `agentgraph/spec-diagram-dispatch` v3. `tests/test_diagrams.py`.
+
+| Spec item | Status | Notes |
+|---|---|---|
+| A-01 end to end, A-06 by hand | Done | Draft → person confirms → person freezes → dispatch (one task per chunk, EXECUTOR) → unmerged dependency blocks with its reason → gate (recorded) → merge → dependents dispatched automatically (M-14). |
+| A-02 frozen diagram | Done | Direct edits after confirmation: 403 `diagram_frozen`; changes go through `/changes`, rejected changes leave it untouched, approved ones bump the version and the baseline follows an interface change. |
+| A-03 gate and merge | Done | A failed gate needs evidence and puts the chunk in rework; merging needs a passing gate on the current submission; the implementer (every name of their directory entry, every lease holder) gets 403 `merge_by_implementer`. |
+| A-04 command view | Basic | `GET /v1/diagrams/{key}`: status distribution, blocked list with reasons, merge queue, board consistency (chunk status is derived from its task, the board is the truth). Not yet tested at 5-30 agents. |
+| A-05 replay | Done | `/replay` for the diagram and `?chunk=` with the task's own events. |
+| A-07 self-check | Done | Two or more "no" answers mark the diagram at risk; nothing is blocked. |
+| M-01 document | Done | `doc://diagrams/<key>` rewritten on every version (Markdown + frontmatter). |
+| A-16 fast lane | Done | `POST /increments` files a person's verbatim request as a change; a chunk in flight gets a new chunk depending on it, an undispatched one is folded in. |
+| A-17 super admin for the owner | Done | `decision_kind = super_admin_for_owner` vs `person`; only a person revokes (`/revoke`), which retires added chunks and withdraws their unclaimed tasks. |
+| A-18 no injection | Done | Updating or removing a chunk that is dispatched, in progress, in review or merged returns 409 `chunk_in_flight`. |
+| Stage 2-4 (A-08..A-15: contract-first topology, context slicing and write-scope enforcement, sandbox CI gate, triptych review, merge queue, trust and token quotas, circuit breaker, dynamic replanning) | Open | The chunk already stores write scope, read-only interfaces and the dispatch slice in `input_context`; enforcement and automation are the next stages. |
+
 ## Open gaps found 2026-10-25
 
 | Item | Notes |

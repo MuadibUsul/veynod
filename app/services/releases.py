@@ -56,6 +56,15 @@ RELEASE_NOTES: list[dict[str, Any]] = [
             "Situation alert stuck_task (high): a task its holder left (orphaned, back to "
             "READY) unclaimed for 30 minutes, or a handoff waiting 45 minutes, is raised "
             "within the hour. GET /v1/presence reports wake_coverage.",
+            "Diagrams and chunked dispatch, lightweight stage (spec-diagram-dispatch v3, "
+            "schema 3.50): /v1/diagrams drafts a diagram of chunks (contract, done "
+            "criteria, dependencies, write scope); a person confirms and freezes it; "
+            "dispatch creates one task per chunk or blocks it on unmerged dependencies "
+            "and releases it on merge; gate and merge are recorded separately and the "
+            "implementer never merges; changes carry their impact and are decided by a "
+            "person or by a super admin for the owner, revocable by a person; the fast "
+            "lane files a person's request as a change, and work in flight is never "
+            "rewritten. Every step replays from the event log.",
         ],
     },
     {
