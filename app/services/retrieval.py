@@ -98,6 +98,7 @@ async def reindex_document_chunks(
         document.embedding = None
     document.embedding_model = provider.model
     await session.flush()
+    document._chunk_count = len(chunks)  # saves the write response a count query
     return len(chunks)
 
 

@@ -24,6 +24,7 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import batch_memo
 from app.auth import Principal
 from app.database import async_session_factory
 from app.errors import ApiError
@@ -144,7 +145,9 @@ async def collect(
     exclude_document_id: uuid.UUID | None,
 ) -> Provenance:
     result = Provenance()
-    external = await _external_principal(session, principal)
+    external = await batch_memo.shared(
+        ("external_principal", principal.workspace.id, tuple(principal.lineage or ())),
+        lambda: _external_principal(session, principal))
     if external is not None:
         result.add_source({"kind": "principal", "ref": f"agent:{external}",
                            "lineage": list(principal.lineage or [])})
@@ -172,7 +175,10 @@ async def collect(
         raise ApiError(422, "context_doc_not_found", "derived_from names missing versions",
                        details={"field": "derived_from", "missing": missing})
 
-    for read in await read_window(session, principal):
+    reads = await batch_memo.shared(
+        ("read_window", principal.workspace.id, reader_key(principal)),
+        lambda: read_window(session, principal))
+    for read in reads:
         if read["document_id"] == exclude_document_id:
             continue
         result.add_edge(read["document_id"], read["version"], "read_window")
@@ -182,16 +188,20 @@ async def collect(
                 "version": read["version"]}})
 
     if not principal.is_human:
-        pinned_sets = (
-            await session.execute(
-                select(CollabTask.context_versions_pinned).where(
-                    CollabTask.workspace_id == principal.workspace.id,
-                    CollabTask.lease_owner == agent,
-                    CollabTask.status == TaskStatus.IN_PROGRESS,
-                    CollabTask.context_versions_pinned.is_not(None),
+        async def load_pinned() -> list[Any]:
+            return list((
+                await session.execute(
+                    select(CollabTask.context_versions_pinned).where(
+                        CollabTask.workspace_id == principal.workspace.id,
+                        CollabTask.lease_owner == agent,
+                        CollabTask.status == TaskStatus.IN_PROGRESS,
+                        CollabTask.context_versions_pinned.is_not(None),
+                    )
                 )
-            )
-        ).scalars().all()
+            ).scalars().all())
+
+        pinned_sets = await batch_memo.shared(
+            ("pinned_sets", principal.workspace.id, agent), load_pinned)
         for pinned in pinned_sets:
             for key, version in (pinned or {}).items():
                 namespace, _, doc_key = key.partition(":")

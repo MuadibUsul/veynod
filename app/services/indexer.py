@@ -47,8 +47,11 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-async def _row(session: AsyncSession, document: SharedDocument) -> DocumentIndex:
-    row = await session.get(DocumentIndex, document.id)
+async def _row(
+    session: AsyncSession, document: SharedDocument, *, created: bool = False
+) -> DocumentIndex:
+    # A document created in this transaction cannot have a row yet.
+    row = None if created else await session.get(DocumentIndex, document.id)
     if row is None:
         row = DocumentIndex(document_id=document.id, workspace_id=document.workspace_id)
         session.add(row)
@@ -56,7 +59,8 @@ async def _row(session: AsyncSession, document: SharedDocument) -> DocumentIndex
 
 
 async def after_write(
-    session: AsyncSession, document: SharedDocument, *, defer: bool = False
+    session: AsyncSession, document: SharedDocument, *, defer: bool = False,
+    created: bool = False,
 ) -> DocumentIndex:
     """Index now (baseline) or enqueue (2026-11) after a write has been flushed.
 
@@ -65,8 +69,9 @@ async def after_write(
     grows with document size and can outlast the console's request timeout.
     With the daily embedding quota spent (enforce mode) the write is still
     stored, and indexing waits for the quota reset (AG-ST-15 point 3).
+    ``created``: the document was inserted in this transaction.
     """
-    row = await _row(session, document)
+    row = await _row(session, document, created=created)
     if await budget.defer_embedding(document.workspace_id):
         waiting = row.state in ("pending", "deferred") and row.pending_version
         if waiting and row.pending_version < document.version:
@@ -96,13 +101,15 @@ async def after_write(
     else:
         from app.services.retrieval import reindex_document_chunks
 
-        await reindex_document_chunks(session, document)
+        # Set before reindexing so its flush writes the row once; a failure
+        # below aborts the whole write anyway.
         row.state = "indexed"
         row.pending_version = None
         row.indexed_version = document.version
         row.indexed_at = _now()
         row.last_lag_ms = 0
         row.updated_at = _now()
+        await reindex_document_chunks(session, document)
     await session.flush()
     document._index_status = status_of(row, document)
     return row

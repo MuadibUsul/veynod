@@ -28,7 +28,8 @@ _pool_kwargs: dict[str, object] = {
     "max_overflow": settings.db_max_overflow,
     "pool_timeout": settings.db_pool_timeout,
 }
-if settings.environment == "test":
+if settings.db_null_pool if settings.db_null_pool is not None else (
+        settings.environment == "test"):
     # Tests use short-lived event loops; pooled asyncpg connections would be
     # bound to a loop that no longer exists.
     from sqlalchemy.pool import NullPool

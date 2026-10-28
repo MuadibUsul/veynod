@@ -43,7 +43,7 @@ from app.api.stream_routes import admin_router as admin_stream_router
 from app.api.stream_routes import router as stream_router
 from app.api.v1_routes import router as v1_router
 from app.api.wellknown_routes import router as wellknown_router
-from app.concurrency import ConcurrencyLimitMiddleware
+from app.concurrency import ConcurrencyLimitMiddleware, DatabaseAdmissionMiddleware
 from app.config import get_settings
 from app.database import apply_schema, check_database, engine
 from app.engine.embeddings import close_embedding_provider, configured_embedding_model
@@ -291,7 +291,9 @@ async def security_headers(request: Request, call_next):
     return response
 
 
-# Innermost: count in-flight requests per token only for authenticated calls.
+# Innermost: only writes every other layer accepted wait for a database slot.
+app.add_middleware(DatabaseAdmissionMiddleware)
+# Next: count in-flight requests per token only for authenticated calls.
 app.add_middleware(ConcurrencyLimitMiddleware)
 app.add_middleware(MetricsMiddleware)
 app.add_middleware(RequestContextMiddleware)
