@@ -14,6 +14,7 @@ type Automation = {
   updated_by: string | null;
   updated_at: string | null;
   version: number;
+  controls_deploy_gate?: boolean;
 };
 
 const MODES: Array<{ mode: Mode; title: string; body: string }> = [
@@ -44,6 +45,7 @@ export function AutomationModeCard({
   const { t } = useI18n();
   const [mode, setMode] = useState<Mode>("manual");
   const [autoDeploy, setAutoDeploy] = useState(false);
+  const [controlsGate, setControlsGate] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +57,7 @@ export function AutomationModeCard({
         if (cancelled) return;
         setMode(value.mode);
         setAutoDeploy(value.auto_deploy_allowed);
+        setControlsGate(Boolean(value.controls_deploy_gate));
         setLoaded(true);
       })
       .catch((caught: unknown) => {
@@ -120,6 +123,11 @@ export function AutomationModeCard({
               <small>
                 {t("When this is on, changes that pass every check may go live without another click. You can turn it off at any time.")}
               </small>
+              {controlsGate && (
+                <small>
+                  {t("This switch decides whether this server updates itself. “Ask me every step” also stops automatic updates.")}
+                </small>
+              )}
             </span>
           </label>
           <div className="automation-actions">

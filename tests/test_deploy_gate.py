@@ -61,6 +61,29 @@ async def gate(api_base_url) -> AsyncIterator[httpx.AsyncClient]:
             yield http
 
 
+@pytest.fixture(scope="module")
+async def owned_gate(api_base_url) -> AsyncIterator[dict]:
+    """A gate whose board workspace has a human owner (Loop R-02)."""
+    password = "correct-horse-battery"
+    email = f"gate-owner-{uuid.uuid4().hex[:8]}@example.test"
+    async with httpx.AsyncClient(base_url=api_base_url, timeout=60) as shared:
+        created = (await shared.post("/v1/admin/workspaces", headers=ADMIN, json={
+            "name": f"gate-owner-{uuid.uuid4().hex[:6]}", "tier": "pro"})).json()
+        wid = created["workspace"]["id"]
+        made = await shared.post(f"/v1/admin/workspaces/{wid}/human-users", headers=ADMIN,
+                                 json={"email": email, "display_name": "Owner",
+                                       "role": "OWNER", "password": password})
+        assert made.status_code in (200, 201), made.text
+    env = {**GATE_ENV, "DEPLOY_GATE_BOARD_WORKSPACE_ID": wid}
+    async with run_server(env, ".server-deploy-gate-owner.log") as base_url:
+        async with httpx.AsyncClient(base_url=base_url, timeout=60) as http:
+            login = await http.post("/v1/auth/login",
+                                    json={"email": email, "password": password})
+            assert login.status_code == 200, login.text
+            yield {"http": http, "workspace_id": wid,
+                   "owner": {"Authorization": f"Bearer {login.json()['token']}"}}
+
+
 def _sha() -> str:
     return hashlib.sha1(uuid.uuid4().bytes).hexdigest()
 
@@ -288,3 +311,61 @@ async def test_task_evidence_reads_the_board_without_changing_it(client, admin_h
     assert tasks["missing-one"] == {"task_key": "missing-one", "found": False}
     after = await client.get("/v1/tasks/gate-evidence", headers=key)
     assert after.json()["status"] == "READY" and after.json()["version"] == 1
+
+
+async def test_automatic_deploys_need_the_owner_switch_too(owned_gate):
+    gate, owner = owned_gate["http"], owned_gate["owner"]
+    await _reset()
+    await gate.post("/v1/admin/deploy-gate/authorize", headers=ADMIN)
+
+    async def automatic() -> dict:
+        await _deliver(gate, "push", _push(_sha()))
+        claimed = await gate.post("/v1/deploy-gate/runner/claim", json={"host": "vps"},
+                                  headers=RUNNER)
+        assert claimed.status_code == 200, claimed.text
+        return claimed.json()
+
+    async def owner_sets(mode: str, allowed: bool) -> None:
+        changed = await gate.put("/v1/human/automation", headers=owner, json={
+            "mode": mode, "auto_deploy_allowed": allowed, "reason": "test"})
+        assert changed.status_code == 200, changed.text
+        assert changed.json()["controls_deploy_gate"] is True
+
+    claim = await automatic()  # the owner has not chosen yet: manual
+    assert claim["deploy_allowed"] is False
+    state = claim["state"]
+    assert state["owner"] == {"linked": True, "workspace_id": owned_gate["workspace_id"],
+                              "mode": "manual", "auto_deploy_allowed": False, "allows": False}
+    assert state["auto_deploy_effective"] is False
+    assert state["auto_deploy_blocked_by"] == "owner"
+
+    for mode, allowed, expected in (("full", True, True), ("semi", True, True),
+                                    ("manual", True, False), ("full", False, False)):
+        await owner_sets(mode, allowed)
+        claim = await automatic()
+        assert claim["deploy_allowed"] is expected, (mode, allowed)
+        assert claim["state"]["auto_deploy_effective"] is expected
+
+    # The operator's own "Deploy now" is an explicit authorization for that run.
+    manual = await gate.post("/v1/admin/deploy-gate/trigger", json={"reason": "operator"},
+                             headers=ADMIN)
+    assert manual.status_code == 201, manual.text
+    claim = (await gate.post("/v1/deploy-gate/runner/claim", json={"host": "vps"},
+                             headers=RUNNER)).json()
+    assert claim["deploy_allowed"] is True
+
+    # Either side can stop automatic deploys.
+    await owner_sets("full", True)
+    await gate.post("/v1/admin/deploy-gate/revoke", json={"reason": "freeze"}, headers=ADMIN)
+    claim = await automatic()
+    assert claim["deploy_allowed"] is False
+    assert claim["state"]["auto_deploy_blocked_by"] == "operator"
+
+    overview = (await gate.get("/v1/admin/deploy-gate", headers=ADMIN)).json()
+    assert overview["state"]["owner"]["mode"] == "full"
+    audit = (await gate.get("/v1/admin/deploy-gate/audit?limit=100", headers=ADMIN)).json()
+    switches = [item for item in audit["items"] if item["action"] == "owner_switch"]
+    assert len(switches) == 5
+    assert switches[0]["details"]["mode"] == "full"
+    claims = [item for item in audit["items"] if item["action"] == "claimed"]
+    assert {"owner_allows", "owner_mode", "operator_authorized"} <= set(claims[0]["details"])

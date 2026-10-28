@@ -804,6 +804,8 @@ class AutomationModeOut(BaseModel):
     updated_by: str | None = None
     updated_at: datetime | None = None
     version: int = 0
+    # This workspace's switch also governs the server's deploy gate.
+    controls_deploy_gate: bool = False
 
 
 class SuperAdminTokenIssueRequest(StrictModel):
