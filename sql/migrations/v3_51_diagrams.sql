@@ -1,4 +1,4 @@
--- v3.50 Diagrams and chunked dispatch, lightweight stage (agentgraph/spec-diagram-dispatch v3).
+-- v3.51 Diagrams and chunked dispatch, lightweight stage (agentgraph/spec-diagram-dispatch v3).
 --
 -- * diagrams: the planning layer. A diagram is drafted, confirmed by a person
 --   (the gate), frozen to a baseline (version + hash + frozen layers), and only

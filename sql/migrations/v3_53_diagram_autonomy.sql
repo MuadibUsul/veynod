@@ -1,4 +1,4 @@
--- v3.52 Diagram dispatch, merge queue and autonomy (spec-diagram-dispatch v3, sections 11-13).
+-- v3.53 Diagram dispatch, merge queue and autonomy (spec-diagram-dispatch v3, sections 11-13).
 --
 -- * Merge queue (M-27): an approved chunk is queued, not merged. The queue is
 --   serial: only its head is rebased and re-tested (by the queue controller),

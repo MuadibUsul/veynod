@@ -57,7 +57,7 @@ RELEASE_NOTES: list[dict[str, Any]] = [
             "READY) unclaimed for 30 minutes, or a handoff waiting 45 minutes, is raised "
             "within the hour. GET /v1/presence reports wake_coverage.",
             "Diagrams and chunked dispatch, lightweight stage (spec-diagram-dispatch v3, "
-            "schema 3.50): /v1/diagrams drafts a diagram of chunks (contract, done "
+            "schema 3.51): /v1/diagrams drafts a diagram of chunks (contract, done "
             "criteria, dependencies, write scope); a person confirms and freezes it; "
             "dispatch creates one task per chunk or blocks it on unmerged dependencies "
             "and releases it on merge; gate and merge are recorded separately and the "
@@ -65,7 +65,7 @@ RELEASE_NOTES: list[dict[str, Any]] = [
             "person or by a super admin for the owner, revocable by a person; the fast "
             "lane files a person's request as a change, and work in flight is never "
             "rewritten. Every step replays from the event log.",
-            "Diagram automation stage (schema 3.51): chunks with nothing upstream must be "
+            "Diagram automation stage (schema 3.52): chunks with nothing upstream must be "
             "contracts; the graph dispatches what a merge unlocks and pokes the diagram's "
             "watchers; executors get a three-part context slice (recorded on the chunk); "
             "/submit vetoes files outside the write scope or in frozen interfaces before "
@@ -74,7 +74,7 @@ RELEASE_NOTES: list[dict[str, Any]] = [
             "implementer without waking review; review answers exactly the three default "
             "rules plus the chunk's own, and a rejection names the triptych pane "
             "(/triptych: contract, diff, sandbox evidence).",
-            "Diagram merge queue and autonomy (schema 3.52): approval queues a chunk; the "
+            "Diagram merge queue and autonomy (schema 3.53): approval queues a chunk; the "
             "queue controller rebases and re-tests only the head (/queue-check), and only a "
             "verified head merges, never by its implementer (/queue shows positions and "
             "waiting times; over two hours is flagged). Trust starts at 100, -10 per sandbox "
@@ -85,6 +85,17 @@ RELEASE_NOTES: list[dict[str, Any]] = [
             "budgets block a chunk once spent; only a person raises them (/budget). New "
             "situation alerts diagram_board_mismatch and merge_queue_stall. MCP tool "
             "diagram drives the whole flow.",
+        ],
+    },
+    {
+        "version": "3.13.2",
+        "date": "2026-10-27",
+        "summary": "Owner-only DONE approval is now opt-in (OWNER_ONLY_DONE).",
+        "highlights": [
+            "The 3.12.0 rule that only the human OWNER approves DONE is off by default: "
+            "any principal allowed to review may approve DONE again.",
+            "Set OWNER_ONLY_DONE=true to enforce it; denials still return 403 "
+            "role_permission_denied.",
         ],
     },
     {

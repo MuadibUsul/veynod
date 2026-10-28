@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import uuid
 from datetime import datetime, timedelta
+from typing import Any
 
 from sqlalchemy import and_, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -710,6 +711,18 @@ async def revoke_holder(
 # ------------------------------------------------------------------ succession
 
 
+async def _watermark_refs(session: AsyncSession, workspace_id: Any, ref: str,
+                          label: str) -> list[str]:
+    """The principal_ref values a watermark of this agent may be stored under:
+    agent:<prn> (its directory entry) first, then the label forms."""
+    prn = await session.scalar(text(
+        "SELECT principal_id FROM agent_directory WHERE workspace_id = :ws "
+        "AND (agent_id = :a OR principal_id = :a OR :a = ANY(signatures)) LIMIT 1"),
+        {"ws": workspace_id, "a": label})
+    refs = [f"agent:{prn}"] if prn else []
+    return list(dict.fromkeys([*refs, ref, f"agent:{label}"]))
+
+
 async def transfer_responsibilities(
     session: AsyncSession, principal: Principal, request: TransferResponsibilitiesRequest
 ) -> TransferResponsibilitiesResponse:
@@ -799,7 +812,23 @@ async def transfer_responsibilities(
             )
             result.maintained_docs.append(document.doc_key)
     if "watermarks" in include:
-        result.skipped["watermarks"] = "named watermarks arrive with AG-EV-01"
+        # Named watermarks (AG-EV-04): the successor continues where the source
+        # stopped; a position it already holds further ahead is kept.
+        refs = await _watermark_refs(session, workspace_id, source_ref, source_agent)
+        target_owner = (await _watermark_refs(session, workspace_id, target_ref,
+                                              target_agent))[0]
+        rows = (await session.execute(text(
+            "SELECT name, max(seq) AS seq FROM watermarks WHERE workspace_id = :ws "
+            "AND principal_ref = ANY(CAST(:refs AS text[])) GROUP BY name"),
+            {"ws": workspace_id, "refs": refs})).all()
+        for name, seq in rows:
+            await session.execute(text(
+                "INSERT INTO watermarks (workspace_id, principal_ref, name, seq) "
+                "VALUES (:ws, :p, :n, :s) ON CONFLICT (workspace_id, principal_ref, name) "
+                "DO UPDATE SET seq = GREATEST(watermarks.seq, EXCLUDED.seq), "
+                "updated_at = NOW()"),
+                {"ws": workspace_id, "p": target_owner, "n": name, "s": int(seq or 0)})
+            result.watermarks.append(name)
     await session.flush()
     await record_audit(
         session,

@@ -235,12 +235,22 @@ _INCREMENTAL_MIGRATIONS: list[tuple[str, Path]] = [
     ("3.46.0", _MIGRATIONS_DIR / "v3_46_group_conversations.sql"),
     ("3.47.0", _MIGRATIONS_DIR / "v3_47_message_escalations.sql"),
     ("3.48.0", _MIGRATIONS_DIR / "v3_48_commander_grants.sql"),
-    ("3.49.0", _MIGRATIONS_DIR / "v3_49_presence_states.sql"),
-    ("3.50.0", _MIGRATIONS_DIR / "v3_50_diagrams.sql"),
-    ("3.51.0", _MIGRATIONS_DIR / "v3_51_diagram_automation.sql"),
-    ("3.52.0", _MIGRATIONS_DIR / "v3_52_diagram_autonomy.sql"),
+    ("3.49.0", _MIGRATIONS_DIR / "v3_49_blob_tenants.sql"),
+    ("3.50.0", _MIGRATIONS_DIR / "v3_50_presence_states.sql"),
+    ("3.51.0", _MIGRATIONS_DIR / "v3_51_diagrams.sql"),
+    ("3.52.0", _MIGRATIONS_DIR / "v3_52_diagram_automation.sql"),
+    ("3.53.0", _MIGRATIONS_DIR / "v3_53_diagram_autonomy.sql"),
 ]
 CURRENT_SCHEMA_VERSION = _INCREMENTAL_MIGRATIONS[-1][0]
+
+
+def _schema_fingerprint(root: Path) -> str:
+    """Every schema file plus the vector dimension: unchanged means nothing to do."""
+    digest = hashlib.sha256(str(settings.embedding_dimensions).encode())
+    for path in sorted((root / "sql").rglob("*.sql")):
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(path.read_bytes())
+    return "files:" + digest.hexdigest()[:24]
 
 
 async def apply_schema(dsn: str | None = None) -> None:
@@ -289,6 +299,14 @@ async def apply_schema(dsn: str | None = None) -> None:
             )
             """
         )
+        # A server starting beside others that already serve this database
+        # must not re-run init.sql's DDL under their reads (it could deadlock
+        # them): when the schema files are the ones last applied, stop here.
+        fingerprint = _schema_fingerprint(root)
+        if await conn.fetchval("SELECT 1 FROM schema_migrations WHERE version = $1",
+                               fingerprint):
+            logger.info("database schema is up to date (%s)", fingerprint)
+            return
         has_v2 = await conn.fetchval(
             """
             SELECT to_regclass('memory_crystals') IS NOT NULL
@@ -388,6 +406,9 @@ async def apply_schema(dsn: str | None = None) -> None:
         # Current function definitions win over the ones older migrations set.
         for path in sorted((root / "sql" / "functions").glob("*.sql")):
             await conn.execute(path.read_text(encoding="utf-8"))
+        await conn.execute(
+            "INSERT INTO schema_migrations(version) VALUES ($1) ON CONFLICT DO NOTHING",
+            fingerprint)
         logger.info(
             "database schema is up to date (v%s)", _INCREMENTAL_MIGRATIONS[-1][0]
         )

@@ -1,4 +1,4 @@
--- v3.51 Diagram dispatch, automation stage (spec-diagram-dispatch v3, sections 8-10, 14).
+-- v3.52 Diagram dispatch, automation stage (spec-diagram-dispatch v3, sections 8-10, 14).
 --
 -- * watchers: who is poked when a chunk unblocks or merges (M-14, M-26).
 -- * commands: compile / lint / test commands the sandbox runs (M-19, section 14).

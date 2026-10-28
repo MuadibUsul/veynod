@@ -18,6 +18,7 @@ from sqlalchemy import (
     cast,
     false,
     func,
+    not_,
     or_,
     select,
     text,
@@ -725,6 +726,7 @@ async def list_documents(
     order: str | None = None,
     fields: list[str] | None = None,
     written_by_subtree: str | None = None,
+    include_cold: bool = True,
     review_verdict: str | None = None,
 ) -> DocumentListResponse:
     """Complete enumeration (PRD AG-ST-01).
@@ -784,6 +786,9 @@ async def list_documents(
         conditions.extend(_frontmatter_conditions(filters))
     if not include_archived:
         conditions.append(SharedDocument.archived_at.is_(None))
+    if not include_cold:
+        # AG-ST-11: unread for 90 days and in no open task's context.
+        conditions.append(not_(lifecycle.conditions(["cold"])["cold"]))
     unfiltered = list(conditions)  # before the trust filters, for the hidden count
     granted: frozenset[str] = frozenset()
     if not (include_unverified or principal.is_commander or can(principal, "doc:verify")):
@@ -838,7 +843,8 @@ async def list_documents(
             filter_hash=hashlib.sha256(
                 json.dumps(
                     [principal.agent_signature, namespace, filters or {}, include_archived,
-                     include_unverified, include_tainted, verification_status, tainted,
+                     include_unverified, include_tainted, include_cold, verification_status,
+                     tainted,
                      updated_after.isoformat() if updated_after else None,
                      updated_before.isoformat() if updated_before else None,
                      written_by_subtree, order]

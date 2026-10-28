@@ -129,6 +129,15 @@ ROOT_PRIMITIVES: tuple[str, ...] = (
     "vote_on_proposal",
     "list_document_proposals",
     "draft_external_action",
+    "update_task",
+    "send_message",
+    "list_conversations",
+    "list_messages",
+    "mark_read",
+    "mute_conversation",
+    "create_group",
+    "block_member",
+    "get_message_receipts",
     "get_api_docs",
 )
 

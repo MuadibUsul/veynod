@@ -243,7 +243,7 @@ Migration 3.37.0. Numbers are the playtest's.
 
 ## Live blackboard and presence states (3.14.0)
 
-Migration 3.49.0. Tasks `live-blackboard-impl` (spec `agentgraph/spec-live-blackboard` v1) and `blueprint-L2-presence-wake` (blueprint v2, L2).
+Migration 3.50.0. Tasks `live-blackboard-impl` (spec `agentgraph/spec-live-blackboard` v1) and `blueprint-L2-presence-wake` (blueprint v2, L2).
 
 | Item | Status | Notes |
 |---|---|---|
@@ -266,7 +266,7 @@ Migration 3.49.0. Tasks `live-blackboard-impl` (spec `agentgraph/spec-live-black
 
 ## Diagrams and chunked dispatch (3.14.0)
 
-Migrations 3.50.0-3.52.0. Task `diagram-dispatch-impl-v3`, spec `agentgraph/spec-diagram-dispatch` v3. `tests/test_diagrams.py`.
+Migrations 3.51.0-3.53.0. Task `diagram-dispatch-impl-v3`, spec `agentgraph/spec-diagram-dispatch` v3. `tests/test_diagrams.py`.
 
 | Spec item | Status | Notes |
 |---|---|---|
@@ -295,7 +295,8 @@ Migrations 3.50.0-3.52.0. Task `diagram-dispatch-impl-v3`, spec `agentgraph/spec
 | Item | Notes |
 |---|---|
 | Release version | Fixed in 3.6.0; current 3.6.8 (release notes in `app/services/releases.py`). `.env.example` no longer pins `APP_VERSION`: a deployment that sets it hides every later release. |
-| Inbox stream pool | `/v1/inbox/stream` is not one of the stream paths, so an open stream holds one of the token's request slots instead of its stream slot (counts only under `BUDGET_MODE=enforce`). |
-| Watermark transfer | `POST /v1/human/transfer-responsibilities` with `watermarks` still answers "named watermarks arrive with AG-EV-01", though they exist (AG-EV-04). |
-| `include_cold` | `list_documents` accepts it and ignores it, though AG-ST-11 computes `cold`. |
-| Schema apply under traffic | A server starting while another serves requests on the same database can deadlock in `apply_schema` (init.sql DDL against live reads) and exit; seen with concurrent test servers. |
+| Inbox stream pool | Fixed 2026-10-27: `/v1/inbox/stream` is a stream path (stream slot, not a request slot). |
+| Watermark transfer | Fixed 2026-10-27: `include: ["watermarks"]` copies the source's named watermarks to the successor (keeping a position the successor already holds further ahead) and lists them under `watermarks`. |
+| `include_cold` | Fixed 2026-10-27: `include_cold=false` leaves out cold documents (AG-ST-11). |
+| Schema apply under traffic | Fixed 2026-10-27: `apply_schema` records a fingerprint of every schema file (and the vector dimension); a server whose files match it skips the DDL instead of re-running init.sql under live reads. |
+| Playtest leftovers | 2026-10-27: REST `review_task` checks `task:review` before the body (#22 was MCP-only); #5's not_found for a forbidden namespace no longer reproduces (8 read paths answer 403 `NAMESPACE_FORBIDDEN`); "my own task events don't reach my inbox" is by design (the actor is never a recipient), now said in the agent guide. |

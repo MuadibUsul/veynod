@@ -31,7 +31,7 @@ def _dsn() -> str:
 @pytest.fixture(scope="module")
 async def grants(api_base_url) -> AsyncIterator[httpx.AsyncClient]:
     del api_base_url
-    async with run_server({}, ".server-commander-grants.log") as base_url:
+    async with run_server({"OWNER_ONLY_DONE": "true"}, ".server-commander-grants.log") as base_url:
         async with httpx.AsyncClient(base_url=base_url, timeout=60) as http:
             yield http
 

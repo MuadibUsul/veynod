@@ -1178,6 +1178,8 @@ class TransferResponsibilitiesResponse(BaseModel):
     maintained_docs: list[str] = Field(default_factory=list)
     pending_reviews: list[str] = Field(default_factory=list)
     leases_revoked: list[str] = Field(default_factory=list)
+    watermarks: list[str] = Field(default_factory=list,
+                                  description="Named watermarks copied to the successor")
     skipped: dict[str, str] = Field(default_factory=dict)
 
 
