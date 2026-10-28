@@ -35,14 +35,14 @@
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
 <script>document.documentElement.classList.add("js");</script>
 <style>
   :root {
-    --bg: #0a0b0f;
-    --bg-1: #0e1015;
-    --surface: #12151c;
-    --surface-2: #1a1e28;
+    --bg: #000000;
+    --bg-1: #131209;
+    --surface: #181818;
+    --surface-2: #1f1f1f;
     --line: rgba(255, 255, 255, .07);
     --line-2: rgba(255, 255, 255, .12);
     --grid: rgba(255, 255, 255, .035);
@@ -56,8 +56,8 @@
     --red: #ff5a5f;
     --green: #34d399;
     --shadow: 0 30px 80px rgba(0, 0, 0, .45);
-    --sans: "Inter", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
-    --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    --sans: "Geist", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    --mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
     color-scheme: dark;
   }
   @media (prefers-color-scheme: light) {
@@ -110,7 +110,7 @@
     top: 0;
     z-index: 20;
     border-bottom: 1px solid transparent;
-    transition: background .2s ease, border-color .2s ease;
+    transition: background .2s cubic-bezier(.22, 1, .36, 1), border-color .2s cubic-bezier(.22, 1, .36, 1);
   }
   .nav.scrolled {
     background: color-mix(in srgb, var(--bg) 82%, transparent);
@@ -149,7 +149,7 @@
     font-size: 14.5px;
     font-weight: 560;
     white-space: nowrap;
-    transition: transform .15s ease, background .15s ease, border-color .15s ease, box-shadow .15s ease;
+    transition: transform .2s cubic-bezier(.22, 1, .36, 1), background .2s cubic-bezier(.22, 1, .36, 1), border-color .2s cubic-bezier(.22, 1, .36, 1), box-shadow .2s cubic-bezier(.22, 1, .36, 1);
   }
   .btn:hover { transform: translateY(-1px); }
   .btn:focus-visible, .lang:focus-visible, #copy:focus-visible, #copy-curl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -163,7 +163,7 @@
   .btn-primary:hover { background: #7462f7; box-shadow: 0 10px 36px rgba(101, 80, 240, .5), inset 0 1px 0 rgba(255, 255, 255, .2); }
   .btn-ghost { background: color-mix(in srgb, var(--surface) 70%, transparent); color: var(--text); }
   .btn-ghost:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--line-2)); }
-  .btn .arrow { transition: transform .15s ease; }
+  .btn .arrow { transition: transform .2s cubic-bezier(.22, 1, .36, 1); }
   .btn:hover .arrow { transform: translateX(2px); }
 
   /* ----------------------------------------------------------- hero */
@@ -182,7 +182,7 @@
     position: absolute;
     inset: 0;
     pointer-events: none;
-    background: radial-gradient(48% 55% at 72% 40%, rgba(139, 124, 255, .16), transparent 70%);
+    display: none;
   }
   .hero .wrap { position: relative; display: grid; grid-template-columns: minmax(0, 1.12fr) minmax(0, .88fr); gap: 56px; align-items: center; }
   .kicker {
@@ -205,15 +205,17 @@
     font-size: clamp(40px, 4.1vw, 58px);
     line-height: 1.02;
     letter-spacing: -.045em;
-    font-weight: 680;
+    font-weight: 600;
   }
   html[data-lang="zh"] .hero-display { letter-spacing: -.02em; line-height: 1.12; }
   .shine {
-    background: linear-gradient(100deg, var(--text) 0%, var(--accent-ink) 45%, var(--accent) 100%);
+    /* The one gradient the visual system allows: hero heading text (Part B5). */
+    background: linear-gradient(90deg, #ffffff, #9b9b9b);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
   }
+  @media (prefers-color-scheme: light) { .shine { background: linear-gradient(90deg, #000000, #666666); -webkit-background-clip: text; background-clip: text; } }
   .lede { max-width: 540px; margin: 24px 0 0; color: var(--dim); font-size: 18px; line-height: 1.6; }
   .cta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
   .hero-meta { display: flex; gap: 16px; margin-top: 28px; color: var(--mute); font-size: 12px; letter-spacing: .04em; }
@@ -225,7 +227,7 @@
     margin: 0;
     border: 1px solid rgba(255, 255, 255, .1);
     border-radius: 16px;
-    background: linear-gradient(180deg, #161a24, #0e1016);
+    background: #181818;
     box-shadow: var(--shadow), inset 0 1px 0 rgba(255, 255, 255, .05);
     color: #e8eaf0;
     overflow: hidden;
@@ -235,7 +237,7 @@
     position: absolute;
     inset: 0 16% auto;
     height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(139, 124, 255, .8), transparent);
+    display: none;
   }
   .term-bar, .term-foot {
     display: flex;
@@ -284,7 +286,7 @@
     box-shadow: inset 0 0 0 1px rgba(139, 124, 255, .35);
   }
   .entry .value { color: #d2ccff; }
-  .entry-arrow { margin-left: 6px; color: #8b7cff; transition: transform .15s ease; }
+  .entry-arrow { margin-left: 6px; color: #8b7cff; transition: transform .2s cubic-bezier(.22, 1, .36, 1); }
   .entry:hover { background: rgba(139, 124, 255, .24); }
   .entry:hover .entry-arrow { transform: translate(1px, -1px); }
   .entry:focus-visible { outline: 2px solid #8b7cff; outline-offset: 2px; }
@@ -338,7 +340,7 @@
   .panel h3 { display: flex; align-items: center; gap: 10px; margin: 0 0 18px; font-size: 15px; font-weight: 600; }
   .panel h3 i { width: 8px; height: 8px; border-radius: 50%; }
   .panel.before h3 i { background: var(--red); box-shadow: 0 0 12px var(--red); }
-  .panel.after { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: linear-gradient(180deg, var(--accent-soft), transparent 70%), color-mix(in srgb, var(--surface) 80%, transparent); }
+  .panel.after { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); background: color-mix(in srgb, var(--surface) 80%, transparent); }
   .panel.after h3 i { background: var(--accent); box-shadow: 0 0 12px var(--accent); }
   .panel ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
   .panel li { display: grid; grid-template-columns: 20px 1fr; gap: 10px; color: var(--dim); font-size: 15px; }
@@ -348,7 +350,7 @@
   .panel.after li { color: var(--text); }
 
   .features { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin-top: 56px; border: 1px solid var(--line); border-radius: 18px; background: var(--line); overflow: hidden; }
-  .feature { position: relative; padding: 30px 28px 32px; background: var(--bg); transition: background .2s ease; }
+  .feature { position: relative; padding: 30px 28px 32px; background: var(--bg); transition: background .2s cubic-bezier(.22, 1, .36, 1); }
   .feature:hover { background: color-mix(in srgb, var(--surface) 85%, var(--bg)); }
   .feature::after {
     content: "";
@@ -357,9 +359,9 @@
     right: 28px;
     top: 0;
     height: 1px;
-    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    background: var(--accent);
     opacity: 0;
-    transition: opacity .2s ease;
+    transition: opacity .2s cubic-bezier(.22, 1, .36, 1);
   }
   .feature:hover::after { opacity: 1; }
   .f-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 26px; }
@@ -375,7 +377,7 @@
   }
   .f-icon svg { width: 20px; height: 20px; }
   .f-index { color: var(--mute); font-family: var(--mono); font-size: 12px; }
-  .feature h3 { margin: 0; font-size: 18px; font-weight: 620; letter-spacing: -.02em; }
+  .feature h3 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: -.02em; }
   .feature p { margin: 10px 0 0; color: var(--dim); font-size: 14.5px; line-height: 1.6; }
   .feature .tag { display: inline-block; margin-top: 16px; color: var(--mute); font-family: var(--mono); font-size: 11.5px; }
 
@@ -386,10 +388,7 @@
     line-height: .9;
     letter-spacing: -.07em;
     font-variant-numeric: tabular-nums;
-    background: linear-gradient(180deg, var(--text) 20%, var(--accent) 120%);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    color: var(--text);
   }
   .stat h2 { font-size: clamp(28px, 3.2vw, 40px); }
   .stat .section-lede code { font-family: var(--mono); font-size: 15px; color: var(--text); }

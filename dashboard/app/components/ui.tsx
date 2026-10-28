@@ -112,6 +112,15 @@ export function IconPlus({ size = 16 }: { size?: number }) {
   );
 }
 
+export function IconSidebar({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2.5" stroke="currentColor" strokeWidth="1.6" />
+      <path d="M9.5 4.5v15" stroke="currentColor" strokeWidth="1.6" />
+    </svg>
+  );
+}
+
 export function IconRefresh({ size = 16 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>

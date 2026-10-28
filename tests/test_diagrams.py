@@ -280,6 +280,10 @@ async def test_frozen_diagram_changes_and_section_16(client):
                                 headers=ws["person"], json={"note": "not this sprint"})
     assert revoked.json()["status"] == "revoked"
     final = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    # The view lists the latest decisions, the revoked one first, for the console.
+    assert final["pending_changes"] == []
+    assert final["recent_changes"][0]["change_key"] == lane["change_key"]
+    assert final["recent_changes"][0]["status"] == "revoked"
     assert "api-paging" not in final["progress"]["distribution"] or all(
         c["status"] == "retired" for c in final["chunks"] if c["chunk_key"] == "api-paging")
     chain = (await client.get(f"/v1/diagrams/{key}/replay", headers=ws["key"])).json()

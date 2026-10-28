@@ -29,6 +29,30 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.20.0",
+        "date": "2026-10-28",
+        "summary": "The console opens on the project diagram; the agent loop comes second "
+        "and everything else waits under More.",
+        "highlights": [
+            "Three entries instead of eight: Diagram, Loop and More. The four counters, the "
+            "getting started checklist and the New task button no longer sit above the work.",
+            "Diagram: an infinite canvas to think on. Drag or scroll to move, pinch or "
+            "Ctrl/Cmd + scroll to zoom, double click a chunk to ask for a change there. No "
+            "page title above it; small controls float at its edges. Chunks sit in "
+            "dependency order with their state, and everything a person does happens on "
+            "it: confirm, freeze, approve or reject a "
+            "change with its impact, revoke a decision, and send a new request in your own "
+            "words to the planner. Waiting on earlier chunks no longer reads as trouble.",
+            "Loop: the automation mode, what needs you (reviews and high alerts), delivered "
+            "work to try and accept, and the live board of agents at work.",
+            "The diagram view lists its latest decisions (recent_changes).",
+            "The sidebar folds away (button or Ctrl/Cmd + B) and remembers it.",
+            "Visual system (elayadesign ai-design-skills, Part B) across the console, the "
+            "docs and the home page: Geist type, flat neutral dark surfaces, spacing and "
+            "radius on one scale, one decelerating motion curve, reduced motion honored.",
+        ],
+    },
+    {
         "version": "3.19.0",
         "date": "2026-10-28",
         "summary": "Probe tokens: trying things out no longer uses up real tokens' quota "

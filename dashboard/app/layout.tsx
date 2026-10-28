@@ -5,12 +5,13 @@ import "./globals.css";
 import "./v3.css";
 import "./cult.css";
 import "./brand.css";
+import "./focus.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://veynod.com"),
   title: "Veynod Console",
   description:
-    "Human-in-the-loop shared blackboard for multi-agent teams: tasks, state grid, documents, agents and audit.",
+    "Set the project diagram and watch the agent loop build it: a human-in-the-loop blackboard for multi-agent teams.",
   // The console is a customer surface. Public docs override this.
   robots: { index: false, follow: false },
 };
@@ -25,7 +26,7 @@ export default function RootLayout({
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
         <link
           rel="stylesheet"
-          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap"
         />
       </head>
       <body>

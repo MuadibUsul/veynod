@@ -1,0 +1,160 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+
+import { useI18n } from "../i18n";
+import type { ApiRequest } from "../types";
+import { relativeTime } from "../types";
+import { AcceptanceCard } from "./acceptance";
+import { AutomationModeCard } from "./automation";
+import { LiveBoard } from "./live-board";
+
+/*
+ * How the agent loop is doing, second only to the diagram. One strip says
+ * what needs a person (if anything), then the live board shows the agents at
+ * work. Everything else lives under "More".
+ */
+
+type Alert = {
+  alert_id: string;
+  rule: string;
+  severity: "high" | "medium" | "low";
+  subject: { kind: string; ref: string };
+  last_seen: string;
+};
+
+const MODE_LABEL: Record<string, string> = {
+  manual: "Ask me every step",
+  semi: "Small calls automatically",
+  full: "Do it all, I only accept the result",
+};
+
+const RULE_LABEL: Record<string, string> = {
+  stuck_task: "A task's holder is gone",
+  retry_storm: "An agent keeps retrying",
+  idle_spin: "An agent is spinning idle",
+  unclaimed_task: "A task waits for someone",
+  diagram_board_mismatch: "The diagram disagrees with the board",
+  merge_queue_stall: "The merge queue is stuck",
+  repeated_orphan: "A task keeps losing its holder",
+  conflict_anomaly: "Agents keep colliding on a document",
+  cost_anomaly: "Spending jumped",
+  index_backlog: "Search indexing is behind",
+  taint_spread: "Untrusted content is spreading",
+};
+
+export function LoopView({
+  workspaceId,
+  apiBase,
+  credential,
+  sessionMode,
+  request,
+  notify,
+  waitingReview,
+  onOpenTasks,
+  onOpenSituation,
+}: {
+  workspaceId: string;
+  apiBase: string;
+  credential: string;
+  sessionMode: boolean;
+  request: ApiRequest;
+  notify: (message: string) => void;
+  waitingReview: number;
+  onOpenTasks: () => void;
+  onOpenSituation: () => void;
+}) {
+  const { t } = useI18n();
+  const [mode, setMode] = useState<string | null>(null);
+  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [editingMode, setEditingMode] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const result = await request<{ items: Alert[] }>(
+        `/v1/admin/workspaces/${workspaceId}/alerts?state=open`,
+      );
+      setAlerts(result.items.filter((item) => item.severity === "high"));
+    } catch {
+      setAlerts([]);
+    }
+    if (sessionMode) {
+      try {
+        setMode((await request<{ mode: string }>("/v1/human/automation")).mode);
+      } catch {
+        setMode(null);
+      }
+    }
+  }, [request, workspaceId, sessionMode]);
+
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => void load(), 30000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+
+  const needs = alerts.length + waitingReview;
+
+  return (
+    <div className="loop">
+      <section className="loop-strip" aria-label={t("Loop status")}>
+        {mode && (
+          <div className="loop-mode">
+            <span className="loop-label">{t("Automation")}</span>
+            <strong>{t(MODE_LABEL[mode] ?? mode)}</strong>
+            <button type="button" className="button ghost small"
+              aria-expanded={editingMode} onClick={() => setEditingMode((value) => !value)}>
+              {editingMode ? t("Done") : t("Change")}
+            </button>
+          </div>
+        )}
+        <div className={`loop-needs${needs ? " has" : ""}`}>
+          <span className="loop-label">{t("Needs you")}</span>
+          {needs === 0 ? (
+            <strong>{t("Nothing right now")}</strong>
+          ) : (
+            <ul>
+              {waitingReview > 0 && (
+                <li>
+                  <button type="button" className="loop-link" onClick={onOpenTasks}>
+                    {waitingReview} {t("tasks wait for your review")}
+                  </button>
+                </li>
+              )}
+              {alerts.slice(0, 3).map((alert) => (
+                <li key={alert.alert_id}>
+                  <button type="button" className="loop-link" onClick={onOpenSituation}>
+                    {t(RULE_LABEL[alert.rule] ?? alert.rule)}
+                    <small> · {alert.subject.ref} · {relativeTime(alert.last_seen)}</small>
+                  </button>
+                </li>
+              ))}
+              {alerts.length > 3 && (
+                <li>
+                  <button type="button" className="loop-link" onClick={onOpenSituation}>
+                    {t("and")} {alerts.length - 3} {t("more")}
+                  </button>
+                </li>
+              )}
+            </ul>
+          )}
+        </div>
+      </section>
+
+      {editingMode && sessionMode && <AutomationModeCard request={request} notify={notify} />}
+      {sessionMode && (
+        <details className="loop-accept">
+          <summary>{t("Try and accept delivered work")}</summary>
+          <AcceptanceCard request={request} notify={notify} />
+        </details>
+      )}
+
+      <LiveBoard
+        apiBase={apiBase}
+        credential={credential}
+        workspaceId={workspaceId}
+        sessionMode={sessionMode}
+      />
+    </div>
+  );
+}
