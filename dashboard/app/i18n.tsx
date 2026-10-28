@@ -746,7 +746,7 @@ const ZH: Record<string, string> = {
   "Waiting for the gate": "等待检查",
   "Being checked": "检查中",
   "Stopped before going live": "上线前被拦下",
-  "Live": "已上线",
+  "Live on the server": "已上线",
   "Rolled back": "已退回",
   "Did not finish": "没有完成",
   "Merged on GitHub": "GitHub 上的合并",

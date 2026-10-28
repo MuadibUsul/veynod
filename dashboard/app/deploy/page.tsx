@@ -53,7 +53,7 @@ const STATUS_LABELS: Record<Run["status"], string> = {
   running: "Being checked",
   skipped: "Skipped",
   blocked: "Stopped before going live",
-  deployed: "Live",
+  deployed: "Live on the server",
   rolled_back: "Rolled back",
   failed: "Did not finish",
 };
