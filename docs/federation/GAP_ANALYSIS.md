@@ -23,6 +23,12 @@
 | N-13 | P1 | main 上全量测试 17 个失败，其中 13 个是因为 3.12.0 有意变更后测试没有更新（DONE 只能由 OWNER 批准、COMMANDER 可铸造、MCP 工具清单），另外根页面的 `ROOT_PRIMITIVES` 漏列了新工具 | 见 CURRENT_BASELINE §7 | 先修复测试和 `ROOT_PRIMITIVES`，让测试套件全绿，再开 F-01；与 N-07 一起处理 | F-01 前置 |
 | N-10 | P2 | SSE 撤销最多晚 30 秒才断流 | `app/api/stream_routes.py` `_stream_events()` | 联邦流在 grant 撤销时主动推送关闭（通过事件），不等下一次轮询 | F-03 / F-04 |
 
+**处理状态（2026-10-28 更新）**：
+- N-11、N-12 已由 [MuadibUsul/veynod#33](https://github.com/MuadibUsul/veynod/pull/33)（main `6ae7ba7`，3.13.2）修复。
+- N-13：#33 修复了过时测试；剩下的 `test_feedback` 环境依赖问题在分支 `claude/fedv2-f01-prereq` 中修正。
+- N-07：**不改动**。CI 只能手动触发是 owner 在 10-26 有意为之（提交 `0f60bfa`）；联邦 PR 改为由执行方手动 dispatch CI（见 ADR-014 的修订）。
+- 其余各项按“落地任务”一栏在对应的联邦任务中处理。
+
 ## 2. 愿景 G01–G18 与源码对照
 
 | ID | 缺口 | 现有基础（路径 + 符号） | 状态 | 还缺什么 | 落地任务 |
