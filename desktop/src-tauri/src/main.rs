@@ -304,6 +304,30 @@ fn main() {
             start_watchers(app.handle().clone());
             Ok(())
         })
+        .on_page_load(|webview, payload| {
+            if let tauri::webview::PageLoadEvent::Finished = payload.event() {
+                // A desktop window should not present the web page's page-level
+                // scrollbars. Lock the document to the viewport; panels inside
+                // the dashboard keep their own scroll containers.
+                let _ = webview.eval(
+                    r#"(() => {
+                        if (document.getElementById('veynod-native-shell')) return;
+                        const style = document.createElement('style');
+                        style.id = 'veynod-native-shell';
+                        style.textContent = `
+                            html, body {
+                                overflow: hidden !important;
+                                overscroll-behavior: none !important;
+                                scrollbar-width: none !important;
+                            }
+                            ::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }
+                            body { overscroll-behavior-y: none !important; }
+                        `;
+                        document.head && document.head.appendChild(style);
+                    })();"#,
+                );
+            }
+        })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
