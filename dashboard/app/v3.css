@@ -5318,3 +5318,64 @@ body::before {
     grid-template-columns: 1fr;
   }
 }
+
+/* Owner acceptance (Loop v1): try delivered work, answer in plain words. */
+.acceptance-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 14px;
+}
+.acceptance-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+}
+.acceptance-item header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.acceptance-item header small,
+.acceptance-report dt {
+  color: var(--muted, #9aa0b4);
+}
+.acceptance-report {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0;
+}
+.acceptance-report dd {
+  margin: 0;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+.acceptance-verdict {
+  margin: 0;
+}
+.acceptance-verdict.works {
+  color: var(--ok, #4ade80);
+}
+.acceptance-verdict.broken,
+.acceptance-verdict.change {
+  color: var(--warn, #fbbf24);
+}
+.acceptance-note textarea {
+  width: 100%;
+  margin-bottom: 8px;
+}
+.acceptance-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+@media (max-width: 900px) {
+  .acceptance-report {
+    grid-template-columns: 1fr;
+  }
+}

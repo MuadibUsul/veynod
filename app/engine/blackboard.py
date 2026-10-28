@@ -53,6 +53,30 @@ def lease_can_be_taken(
     return not lease_is_active(owner, expires_at, now)
 
 
+OWNER_REPORT_FIELDS = ("what_changed", "how_to_try", "not_yet_done")
+
+
+def _owner_report(report: Any) -> dict[str, str]:
+    """The plain-words report for the owner (Loop A-08): three short answers."""
+    if not isinstance(report, dict) or set(report) - set(OWNER_REPORT_FIELDS):
+        raise ApiError(422, "invalid_handoff_brief",
+                       "owner_report has what_changed, how_to_try and not_yet_done",
+                       details={"field": "owner_report", "fields": list(OWNER_REPORT_FIELDS)})
+    cleaned = {}
+    for field in OWNER_REPORT_FIELDS:
+        value = report.get(field, "")
+        if not isinstance(value, str) or len(value) > 2_000:
+            raise ApiError(422, "invalid_handoff_brief",
+                           f"owner_report.{field} must be text of at most 2000 characters",
+                           details={"field": f"owner_report.{field}"})
+        cleaned[field] = value.strip()
+    for field in ("what_changed", "how_to_try"):
+        if not cleaned[field]:
+            raise ApiError(422, "invalid_handoff_brief", f"owner_report.{field} is empty",
+                           details={"field": f"owner_report.{field}"})
+    return cleaned
+
+
 def validate_handoff_brief(brief: dict[str, Any] | None) -> dict[str, Any]:
     """Validate and normalize the L1 handoff contract."""
     if not isinstance(brief, dict):
@@ -92,6 +116,8 @@ def validate_handoff_brief(brief: dict[str, Any] | None) -> dict[str, Any]:
         "unverified_hypotheses": [item.strip() for item in hypotheses if item.strip()],
         "risk_flag": brief["risk_flag"],
     }
+    if "owner_report" in brief:
+        normalized["owner_report"] = _owner_report(brief["owner_report"])
     for key, value in brief.items():
         if key not in normalized:
             normalized[key] = value

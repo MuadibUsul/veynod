@@ -104,6 +104,7 @@ do not edit by hand. Every error body is
 | `content_too_large` | 413 | `fix_request` | `split_into_parts` | Split into parts (details.action). |
 | `payload_too_large` | 413 | `fix_request` | `fix_request_then_resend` | Send a smaller archive (details.limit_bytes). |
 | `acceptance_items_incomplete` | 422 | `fix_request` | `fix_request_then_resend` | Give a PASS result for every acceptance item. |
+| `acceptance_note_required` | 422 | `fix_request` | `fix_request_then_resend` | Say in plain words what does not work or what to change. |
 | `ambiguous_artifact` | 422 | `fix_request` | `fix_request_then_resend` | Provide artifact_text or artifact_uri, not both. |
 | `assignee_cannot_reach_namespace` | 422 | `fix_request` | `fix_request_then_resend` | Use a namespace the assignee reads, or widen its token. |
 | `audit_view_required` | 422 | `fix_request` | `fix_request_then_resend` | Call get_audit_view, then resend. |
@@ -204,6 +205,7 @@ do not edit by hand. Every error body is
 | `circuit_not_open` | 409 | `abandon` | `abandon_and_release_local_state` | The domain's circuit is already closed. |
 | `claim_already_refuted` | 409 | `abandon` | `abandon_and_release_local_state` | The claim was refuted; report a new commit. |
 | `cli_session_decided` | 409 | `abandon` | `abandon_and_release_local_state` | Run `npx veynod init` again for a new code. |
+| `decide_with_safe_default` | 409 | `abandon` | `decide_with_safe_default_and_continue` | Automation is on: choose the safest default, note it on the task and continue; ask the owner only about details.owner_topics. |
 | `document_archived` | 409 | `abandon` | `abandon_and_release_local_state` | Give up, or ask for restore_document. |
 | `escape_closed` | 409 | `abandon` | `abandon_and_release_local_state` | The escape is already FIXED or WAIVED. |
 | `external_action_error` | 409 | `abandon` | `abandon_and_release_local_state` | Re-read the action state. |
@@ -278,6 +280,7 @@ Soft constraints reported in `warnings[]`; the request still succeeds.
 | code | meaning |
 |---|---|
 | `duplicate_content` | Another document in the namespace already holds exactly this text. |
+| `owner_report_missing` | Full automation: the handoff brief should carry owner_report {what_changed, how_to_try, not_yet_done} in plain words. |
 | `listing_hides_documents` | The legacy listing hides drafts and tainted documents; the warning says how many and which flags show them. |
 | `uri_namespace_prefix` | The address carried a namespace prefix; use doc://<doc_key>. |
 | `document_namespace_inferred` | The new document's namespace came from its key prefix or the token's only writable namespace. |

@@ -112,3 +112,159 @@ async def test_only_the_owner_can_change_the_mode_and_values_are_valid(loop):
     invalid = await loop.put("/v1/human/automation", headers=ws["owner"], json={
         "mode": "turbo"})
     assert invalid.status_code == 422, invalid.text
+
+
+async def _mode(client: httpx.AsyncClient, ws: dict, mode: str) -> None:
+    changed = await client.put("/v1/human/automation", headers=ws["owner"], json={
+        "mode": mode, "auto_deploy_allowed": False})
+    assert changed.status_code == 200, changed.text
+
+
+BRIEF = {"summary": "built it", "key_metrics": {}, "unverified_hypotheses": [],
+         "risk_flag": False}
+REPORT = {"what_changed": "The report page has an export button.",
+          "how_to_try": "Open Reports and press Export.", "not_yet_done": ""}
+
+
+async def _claimed_task(client: httpx.AsyncClient, ws: dict, **extra) -> str:
+    key = f"LOOP-{uuid.uuid4().hex[:6].upper()}"
+    created = await client.post("/v1/tasks", headers=ws["key"], json={
+        "task_key": key, "title": "add an export button", "assigned_role": "EXECUTOR",
+        **extra})
+    assert created.status_code == 201, created.text
+    claimed = await client.post(f"/v1/tasks/{key}/claim", headers=ws["agent"], json={})
+    assert claimed.status_code == 200, claimed.text
+    return key
+
+
+async def test_automation_keeps_technical_questions_from_the_owner(loop):
+    ws = await _workspace(loop)
+    question = {"question": "Should the export use CSV or JSON?"}
+    manual = await loop.post("/v1/escalations", headers=ws["agent"], json=question)
+    assert manual.status_code == 201, manual.text
+
+    await _mode(loop, ws, "semi")
+    refused = await loop.post("/v1/escalations", headers=ws["agent"], json=question)
+    assert refused.status_code == 409, refused.text
+    error = refused.json()["error"]
+    assert error["code"] == "decide_with_safe_default"
+    assert error["action"] == "decide_with_safe_default_and_continue"
+    assert "money" in error["details"]["owner_topics"]
+    money = await loop.post("/v1/escalations", headers=ws["agent"], json={
+        "question": "This needs a paid plan. Buy it?", "topic": "money"})
+    assert money.status_code == 201, money.text
+    # People are never screened.
+    person = await loop.post("/v1/escalations", headers=ws["owner"], json=question)
+    assert person.status_code == 201, person.text
+
+    await _mode(loop, ws, "full")
+    orientation = (await loop.get("/v1/orientation", headers=ws["agent"])).json()
+    rules = orientation["automation"]["rules"]
+    assert rules["owner_questions_block"] is False
+    assert rules["after_max_rejections"] == "handoff to the next executor"
+    key = await _claimed_task(loop, ws)
+    whole = await loop.post(f"/v1/tasks/{key}/escalate", headers=ws["agent"], json={
+        "reason": "unsure which library to use"})
+    assert whole.status_code == 409, whole.text
+    asked = await loop.post(f"/v1/tasks/{key}/escalate", headers=ws["agent"], json={
+        "reason": "legal check", "question": "Can we store customer emails?",
+        "topic": "legal"})
+    assert asked.status_code == 200, asked.text
+    # Full automation: the agent keeps working; the owner answers at acceptance.
+    assert asked.json()["escalation"]["blocking"] is False
+    assert asked.json()["task"]["status"] == "IN_PROGRESS"
+
+    conn = await asyncpg.connect(_dsn())
+    try:
+        declined = await conn.fetchval(
+            "SELECT count(*) FROM timeline_streams WHERE workspace_id = $1::uuid "
+            "AND event_type = 'AUTOMATION_QUESTION_DECLINED'", ws["id"])
+    finally:
+        await conn.close()
+    assert declined == 2
+
+
+async def _reject_until_limit(client: httpx.AsyncClient, ws: dict) -> dict:
+    key = await _claimed_task(client, ws, max_retries=1)
+    handed = await client.post(f"/v1/tasks/{key}/handoff", headers=ws["agent"], json={
+        "next_status": "REVIEWING", "brief": BRIEF})
+    assert handed.status_code == 200, handed.text
+    rejected = await client.post(f"/v1/tasks/{key}/review", headers=ws["key"], json={
+        "decision": "reject", "feedback": "the button does nothing"})
+    assert rejected.status_code == 200, rejected.text
+    return {"key": key, "handoff": handed.json(), "review": rejected.json()}
+
+
+async def test_full_automation_hands_on_instead_of_escalating(loop):
+    manual_ws = await _workspace(loop)
+    manual = await _reject_until_limit(loop, manual_ws)
+    assert manual["review"]["task"]["status"] == "ESCALATED_TO_HUMAN"
+
+    ws = await _workspace(loop)
+    await _mode(loop, ws, "full")
+    full = await _reject_until_limit(loop, ws)
+    assert full["review"]["task"]["status"] == "HANDOFF"
+    assert full["review"]["escalated"] is False
+    warnings = {item["code"] for item in full["handoff"].get("warnings", [])}
+    assert "owner_report_missing" in warnings
+    conn = await asyncpg.connect(_dsn())
+    try:
+        relayed = await conn.fetchval(
+            "SELECT count(*) FROM timeline_streams WHERE workspace_id = $1::uuid "
+            "AND event_type = 'TASK_RELAYED'", ws["id"])
+    finally:
+        await conn.close()
+    assert relayed == 1
+
+
+async def test_owner_accepts_in_plain_words_and_feedback_becomes_a_task(loop):
+    ws = await _workspace(loop)
+    await _mode(loop, ws, "full")
+    key = await _claimed_task(loop, ws, priority=40)
+    bad = await loop.post(f"/v1/tasks/{key}/handoff", headers=ws["agent"], json={
+        "next_status": "REVIEWING", "brief": {**BRIEF, "owner_report": {"what_changed": ""}}})
+    assert bad.status_code == 422, bad.text
+    handed = await loop.post(f"/v1/tasks/{key}/handoff", headers=ws["agent"], json={
+        "next_status": "REVIEWING", "brief": {**BRIEF, "owner_report": REPORT}})
+    assert handed.status_code == 200, handed.text
+    assert "owner_report_missing" not in {
+        item["code"] for item in handed.json().get("warnings", [])}
+    approved = await loop.post(f"/v1/tasks/{key}/review", headers=ws["key"], json={
+        "decision": "approve", "next_status": "HANDOFF"})
+    assert approved.status_code == 200, approved.text
+
+    listed = await loop.get("/v1/human/acceptance", headers=ws["owner"])
+    assert listed.status_code == 200, listed.text
+    item = next(entry for entry in listed.json()["items"] if entry["task_key"] == key)
+    assert item["owner_report"]["how_to_try"] == REPORT["how_to_try"]
+    assert item["acceptance"] is None
+
+    reviewer = await loop.post(f"/v1/human/acceptance/{key}", headers=ws["reviewer"],
+                               json={"verdict": "works"})
+    assert reviewer.status_code == 403, reviewer.text
+    silent = await loop.post(f"/v1/human/acceptance/{key}", headers=ws["owner"],
+                             json={"verdict": "broken"})
+    assert silent.status_code == 422, silent.text
+    assert silent.json()["error"]["code"] == "acceptance_note_required"
+
+    words = "Export downloads an empty file.\nIt should have this month's rows."
+    changed = await loop.post(f"/v1/human/acceptance/{key}", headers=ws["owner"],
+                              json={"verdict": "change", "note": words})
+    assert changed.status_code == 200, changed.text
+    follow_key = changed.json()["follow_up_task_key"]
+    assert follow_key
+    follow = await loop.get(f"/v1/tasks/{follow_key}", headers=ws["agent"])
+    assert follow.status_code == 200, follow.text
+    task = follow.json()
+    assert task["status"] == "READY"
+    assert task["priority"] == 40
+    assert "Export downloads an empty file." in task["description"]
+    assert task["input_context"]["acceptance_of"] == key
+
+    works = await loop.post(f"/v1/human/acceptance/{key}", headers=ws["owner"],
+                            json={"verdict": "works"})
+    assert works.status_code == 200, works.text
+    assert works.json()["follow_up_task_key"] is None
+    latest = await loop.get("/v1/human/acceptance", headers=ws["owner"])
+    item = next(entry for entry in latest.json()["items"] if entry["task_key"] == key)
+    assert item["acceptance"]["verdict"] == "works"

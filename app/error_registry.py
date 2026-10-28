@@ -436,6 +436,15 @@ REGISTRY: dict[str, ErrorSpec] = {
     "already_decided": _spec(409, ABANDON, "The change was decided already."),
     "stale_change": _spec(
         409, ABANDON, "The diagram moved on; file the change again on details.current_version."),
+    # Automation (Loop v1).
+    "acceptance_note_required": _spec(
+        422, FIX_REQUEST, "Say in plain words what does not work or what to change."),
+    "decide_with_safe_default": _spec(
+        409, ABANDON,
+        "Automation is on: choose the safest default, note it on the task and continue; "
+        "ask the owner only about details.owner_topics.",
+        action="decide_with_safe_default_and_continue",
+    ),
     # --- escalate_human
     "agent_document_quota_exceeded": _spec(
         429, ESCALATE_HUMAN, "Daily quota reached; ask the owner for a larger quota."
@@ -484,6 +493,8 @@ REGISTRY: dict[str, ErrorSpec] = {
 # Soft-constraint warnings (PRD §6 warnings[]): never errors, never rejections.
 WARNING_CODES: dict[str, str] = {
     "duplicate_content": "Another document in the namespace already holds exactly this text.",
+    "owner_report_missing": "Full automation: the handoff brief should carry owner_report "
+                            "{what_changed, how_to_try, not_yet_done} in plain words.",
     "listing_hides_documents": "The legacy listing hides drafts and tainted documents; the "
                                "warning says how many and which flags show them.",
     "uri_namespace_prefix": "The address carried a namespace prefix; use doc://<doc_key>.",

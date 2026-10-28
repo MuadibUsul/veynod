@@ -29,6 +29,31 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.16.0",
+        "date": "2026-10-28",
+        "summary": "Automation mode now changes behaviour; the owner accepts work in plain words.",
+        "highlights": [
+            "Under semi or full automation an agent's technical question to a person is "
+            "refused with decide_with_safe_default (choose the safest default, note it, "
+            "continue). Escalations take a topic: only money, identity, legal, "
+            "data_deletion and external_commitment reach the owner, and under full "
+            "automation they never block the agent. Each refusal is logged as "
+            "AUTOMATION_QUESTION_DECLINED.",
+            "Under full automation a task rejected max_retries times, or orphaned past the "
+            "threshold, goes to the next executor (HANDOFF, TASK_RELAYED) instead of "
+            "escalating to a person.",
+            "get_orientation automation.rules tells agents what the mode lets them decide.",
+            "Handoff briefs take owner_report {what_changed, how_to_try, not_yet_done} in "
+            "plain words; under full automation a handoff without it gets the "
+            "owner_report_missing warning.",
+            "Owner acceptance: GET /v1/human/acceptance lists work delivered in the last 30 "
+            "days with its owner_report; POST /v1/human/acceptance/{task_key} records works, "
+            "broken or change. Broken and change open a follow-up task carrying the owner's "
+            "words. The console Governance tab has a Try and accept panel.",
+            "Schema 3.56 adds owner_acceptance with tenant isolation.",
+        ],
+    },
+    {
         "version": "3.15.0",
         "date": "2026-10-28",
         "summary": "Automation mode: manual, semi-automatic or full automatic, owner-only.",
