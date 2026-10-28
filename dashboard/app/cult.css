@@ -32,11 +32,11 @@
   position: relative;
   isolation: isolate;
   transition:
-    background var(--ds-motion-fast) ease,
-    border-color var(--ds-motion-fast) ease,
-    color var(--ds-motion-fast) ease,
-    box-shadow var(--ds-motion-normal) ease,
-    transform var(--ds-motion-fast) ease;
+    background var(--ds-motion-fast) var(--ds-ease),
+    border-color var(--ds-motion-fast) var(--ds-ease),
+    color var(--ds-motion-fast) var(--ds-ease),
+    box-shadow var(--ds-motion-normal) var(--ds-ease),
+    transform var(--ds-motion-fast) var(--ds-ease);
 }
 
 .button.primary {
@@ -117,7 +117,7 @@
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.015));
   box-shadow: var(--cult-highlight), 0 1px 2px rgba(0, 0, 0, 0.35);
-  transition: transform var(--ds-motion-fast) ease, box-shadow var(--ds-motion-normal) ease;
+  transition: transform var(--ds-motion-fast) var(--ds-ease), box-shadow var(--ds-motion-normal) var(--ds-ease);
 }
 
 .icon-button:active:not(:disabled) {
@@ -145,8 +145,8 @@
   border-color: transparent;
   box-shadow: var(--cult-shadow-card), var(--cult-highlight);
   transition:
-    transform var(--ds-motion-normal) var(--cult-ease),
-    box-shadow var(--ds-motion-slow) var(--cult-ease);
+    transform var(--ds-motion-normal) var(--cult-var(--ds-ease)),
+    box-shadow var(--ds-motion-slow) var(--cult-var(--ds-ease));
 }
 
 .stat-card::before {
@@ -161,7 +161,7 @@
     rgba(139, 124, 255, 0.14),
     transparent 62%
   );
-  transition: opacity var(--ds-motion-slow) ease;
+  transition: opacity var(--ds-motion-slow) var(--ds-ease);
 }
 
 .stat-card:hover {
@@ -229,9 +229,9 @@
 .segmented button,
 .language-toggle button {
   transition:
-    background var(--ds-motion-normal) var(--cult-ease),
-    color var(--ds-motion-fast) ease,
-    box-shadow var(--ds-motion-normal) var(--cult-ease);
+    background var(--ds-motion-normal) var(--cult-var(--ds-ease)),
+    color var(--ds-motion-fast) var(--ds-ease),
+    box-shadow var(--ds-motion-normal) var(--cult-var(--ds-ease));
 }
 
 .segmented button.active,
@@ -265,12 +265,12 @@
   box-shadow: 0 0 12px rgba(139, 124, 255, 0.7);
   pointer-events: none;
   transition:
-    transform var(--ds-motion-slow) var(--cult-ease),
-    width var(--ds-motion-slow) var(--cult-ease);
+    transform var(--ds-motion-slow) var(--cult-var(--ds-ease)),
+    width var(--ds-motion-slow) var(--cult-var(--ds-ease));
 }
 
 .tab-button {
-  transition: color var(--ds-motion-fast) ease, background var(--ds-motion-fast) ease;
+  transition: color var(--ds-motion-fast) var(--ds-ease), background var(--ds-motion-fast) var(--ds-ease);
 }
 
 /* ------------------------------------------------------- fields and pills */
@@ -279,7 +279,7 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
 select,
 textarea {
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.35);
-  transition: border-color var(--ds-motion-fast) ease, box-shadow var(--ds-motion-normal) ease;
+  transition: border-color var(--ds-motion-fast) var(--ds-ease), box-shadow var(--ds-motion-normal) var(--ds-ease);
 }
 
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible,
@@ -325,9 +325,9 @@ textarea:focus-visible {
 .doc-item,
 .circuit-list li {
   transition:
-    background var(--ds-motion-fast) ease,
-    transform var(--ds-motion-normal) var(--cult-ease),
-    box-shadow var(--ds-motion-normal) var(--cult-ease);
+    background var(--ds-motion-fast) var(--ds-ease),
+    transform var(--ds-motion-normal) var(--cult-var(--ds-ease)),
+    box-shadow var(--ds-motion-normal) var(--cult-var(--ds-ease));
 }
 
 .doc-item.active {

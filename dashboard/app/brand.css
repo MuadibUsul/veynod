@@ -40,7 +40,7 @@
 
 .brand-name,
 .auth-brand strong {
-  font-family: "Inter", var(--ds-font-body);
+  font-family: var(--ds-font-body);
   letter-spacing: -0.03em;
 }
 
@@ -70,7 +70,7 @@
 }
 
 .auth-story h1 {
-  font-family: "Inter", var(--ds-font-body);
+  font-family: var(--ds-font-body);
   font-weight: 650;
   letter-spacing: -0.045em;
 }
@@ -302,7 +302,7 @@
   color: var(--ds-text-primary);
   text-align: left;
   cursor: pointer;
-  transition: border-color 140ms ease, transform 140ms ease;
+  transition: border-color 200ms var(--ds-ease), transform 200ms var(--ds-ease);
 }
 
 .upgrade-card:hover { border-color: rgba(139, 124, 255, 0.6); transform: translateY(-1px); }

@@ -65,7 +65,7 @@
   color: var(--muted);
   font-size: 12px;
   white-space: nowrap;
-  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+  transition: background 200ms var(--ds-ease), color 200ms var(--ds-ease), border-color 200ms var(--ds-ease);
 }
 
 .tab-button:hover {
@@ -504,7 +504,7 @@
   background: linear-gradient(180deg, rgba(20, 29, 44, 0.8), rgba(12, 18, 27, 0.75));
   color: var(--text);
   text-align: left;
-  transition: border-color 140ms ease, transform 140ms ease;
+  transition: border-color 200ms var(--ds-ease), transform 200ms var(--ds-ease);
 }
 
 .kanban-card:hover {
@@ -895,7 +895,7 @@
   font-size: 12.5px;
   line-height: 1.6;
   resize: vertical;
-  transition: border-color 140ms ease;
+  transition: border-color 200ms var(--ds-ease);
 }
 
 .field textarea:focus {
@@ -1186,7 +1186,7 @@
   background: transparent;
   color: var(--muted);
   text-align: left;
-  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+  transition: background 200ms var(--ds-ease), border-color 200ms var(--ds-ease), color 200ms var(--ds-ease);
 }
 
 .doc-item:hover {
@@ -1651,7 +1651,7 @@
   color: var(--text);
   font-size: 12px;
   transform: translateY(-160%);
-  transition: transform var(--ds-motion-fast, 140ms) ease;
+  transition: transform var(--ds-motion-fast, 200ms) var(--ds-ease);
 }
 
 .skip-link:focus {
@@ -2606,7 +2606,7 @@ body::before {
   border-radius: var(--ds-radius-md);
   background: var(--ds-surface-panel);
   box-shadow: var(--ds-shadow-panel);
-  transition: border-color var(--ds-motion-fast) ease;
+  transition: border-color var(--ds-motion-fast) var(--ds-ease);
 }
 
 .stat-card:hover {
@@ -2780,9 +2780,9 @@ body::before {
   font-size: 13px;
   font-weight: 550;
   transition:
-    background-color var(--ds-motion-fast) ease,
-    border-color var(--ds-motion-fast) ease,
-    color var(--ds-motion-fast) ease;
+    background-color var(--ds-motion-fast) var(--ds-ease),
+    border-color var(--ds-motion-fast) var(--ds-ease),
+    color var(--ds-motion-fast) var(--ds-ease);
 }
 
 .button:active:not(:disabled) {
@@ -2939,7 +2939,7 @@ body::before {
   border-color: var(--ds-border-subtle);
   border-radius: var(--ds-radius-sm);
   background: var(--ds-surface-panel);
-  transition: border-color var(--ds-motion-fast) ease;
+  transition: border-color var(--ds-motion-fast) var(--ds-ease);
 }
 
 .kanban-card:hover {
@@ -4257,7 +4257,7 @@ body::before {
   color: var(--ds-text-secondary);
   font-size: 12px;
   font-weight: 550;
-  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+  transition: background 200ms var(--ds-ease), border-color 200ms var(--ds-ease), color 200ms var(--ds-ease);
 }
 
 .auth-tab:hover {
@@ -4325,7 +4325,7 @@ body::before {
   background: transparent;
   color: var(--ds-text-muted);
   cursor: pointer;
-  transition: color 140ms ease, background 140ms ease;
+  transition: color 200ms var(--ds-ease), background 200ms var(--ds-ease);
 }
 
 .password-toggle:hover {
@@ -4355,7 +4355,7 @@ body::before {
   font-size: 12.5px;
   font-weight: 650;
   box-shadow: 0 10px 30px rgba(101, 80, 240, 0.16);
-  transition: transform 140ms ease, box-shadow 140ms ease, background 140ms ease;
+  transition: transform 200ms var(--ds-ease), box-shadow 200ms var(--ds-ease), background 200ms var(--ds-ease);
 }
 
 .auth-submit:hover:not(:disabled) {
@@ -4914,7 +4914,7 @@ body::before {
   border-radius: var(--ds-radius-sm);
   background: var(--ds-surface-inset);
   cursor: text;
-  transition: border-color 140ms ease, box-shadow 140ms ease;
+  transition: border-color 200ms var(--ds-ease), box-shadow 200ms var(--ds-ease);
 }
 
 .namespace-selected:focus-within {

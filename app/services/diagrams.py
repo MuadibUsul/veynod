@@ -1672,6 +1672,12 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
         "SELECT change_key, summary, source, created_at FROM diagram_changes WHERE "
         "diagram_id = :d AND status = 'pending' ORDER BY id"), {"d": diagram["id"]})
     ).mappings().all()
+    # The latest decisions, so a person can revoke an approval from the same view (M-34).
+    decided = (await session.execute(text(
+        "SELECT change_key, summary, source, status, decided_by, decision_kind, decided_at "
+        "FROM diagram_changes WHERE diagram_id = :d AND status <> 'pending' "
+        "ORDER BY decided_at DESC NULLS LAST, id DESC LIMIT 10"), {"d": diagram["id"]})
+    ).mappings().all()
     serial = (await queue(session, principal, key))["items"]
     warnings += [{"chunk_key": item["chunk_key"], "kind": "queue_wait",
                   "detail": f"waiting {item['waiting_seconds'] // 60} minutes in the merge "
@@ -1702,6 +1708,8 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
                               "rule": "the task board is the truth (spec M-08)"},
         "pending_changes": [{**dict(row), "created_at": _iso(row["created_at"])}
                             for row in pending],
+        "recent_changes": [{**dict(row), "decided_at": _iso(row["decided_at"])}
+                           for row in decided],
     }
 
 

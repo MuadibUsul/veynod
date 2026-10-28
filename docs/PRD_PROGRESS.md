@@ -290,6 +290,17 @@ Migrations 3.51.0-3.53.0. Task `diagram-dispatch-impl-v3`, spec `agentgraph/spec
 | A-15 trust and tokens (M-22) | Done (3.52) | Trust 100, -10 per sandbox or queue test failure, -20 per rejection, per chunk, with a ledger (`trust_log`). Past `token_budget` (reported through `/usage`) the chunk is BLOCKED (`budget`) and people are told; only a person raises it (`/budget`). |
 | MCP | Done (3.52) | Tool `diagram` (action + args) covers every agent-side step; confirming, freezing, revoking and budgets stay with people. |
 
+## Console focus (3.20.0)
+
+Task `console-focus-diagram-loop`. The owner asked for one focus: how the project diagram is set, then how the agent loop is doing; nothing else should compete for attention.
+
+| Item | Status | Notes |
+|---|---|---|
+| A-01 diagram first | Done | The console opens on Diagram: chunks in dependency columns with edges and states, confirm, freeze, decide changes with their impact, revoke recent decisions, send a new request to the planner (a task for an ANALYST, filed as a change by the planner). |
+| A-02 loop second | Done | Loop: automation mode, what needs a person (reviews, high alerts), try and accept, live board. |
+| A-03 three entries | Done | Diagram, Loop, More; tasks, agents, documents, situation, governance, state slots and audit are one click away under More. |
+| A-04 visual system | Done | Geist, flat surfaces, spacing and radius scales, one motion curve, reduced motion; console, docs and home page. Full CSS audit of every legacy pixel value is not done: tokens, transitions and gradients are. |
+
 ## Loop: automation mode (3.15.0-3.18.0)
 
 Task `auto-loop-mode-impl-v2`, spec `agentgraph/spec-auto-loop-mode` v2 (pinned with `agentgraph/spec-local-harness-client` v1). Tests: `tests/test_automation_mode.py`, `tests/test_deploy_evidence.py`, `tests/test_recoverable_deletes.py`, `tests/test_deploy_gate.py`, `tests/test_deploy_gate_runner.py`.

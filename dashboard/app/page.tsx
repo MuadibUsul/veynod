@@ -2,16 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { AcceptanceCard } from "./components/acceptance";
 import { AgentsView } from "./components/agents";
-import { AutomationModeCard } from "./components/automation";
 import { AuditView } from "./components/audit";
 import { SituationView } from "./components/situation";
 import { Blackboard } from "./components/blackboard";
-import { LiveBoard } from "./components/live-board";
+import { DiagramView } from "./components/diagram-view";
+import { LoopView } from "./components/loop-view";
 import { DocumentsView } from "./components/documents";
 import { GovernanceView } from "./components/governance";
-import { AnimatedNumber, spotlight, useSlidingIndicator } from "./components/motion";
+import { useSlidingIndicator } from "./components/motion";
 import { AgentConnect, GettingStarted, type OnboardingStepId } from "./components/onboarding";
 import { SupportAccessCard } from "./components/support-access";
 import { UpgradeCard } from "./components/upgrade";
@@ -133,7 +132,18 @@ function sessionPath(path: string, workspaceId: string, method: string): string 
   }
   return path;
 }
-type Tab = "situation" | "live" | "blackboard" | "tasks" | "documents" | "agents" | "governance" | "audit";
+type Tab =
+  | "diagram"
+  | "loop"
+  | "situation"
+  | "blackboard"
+  | "tasks"
+  | "documents"
+  | "agents"
+  | "governance"
+  | "audit";
+// The two things a person watches; everything else waits under "More".
+const PRIMARY: Tab[] = ["diagram", "loop"];
 
 export default function ConsolePage() {
   const { t, lang } = useI18n();
@@ -173,7 +183,12 @@ export default function ConsolePage() {
   const [humanUsers, setHumanUsers] = useState<HumanUser[]>([]);
   const [audit, setAudit] = useState<AuditPayload>({ batches: [], diffs: [] });
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
-  const [tab, setTab] = useState<Tab>("situation");
+  const [tab, setTab] = useState<Tab>("diagram");
+  const [lastMore, setLastMore] = useState<Tab>("tasks");
+  useEffect(() => {
+    // "More" reopens on whichever secondary view was used last.
+    if (!PRIMARY.includes(tab)) setLastMore(tab);
+  }, [tab]);
   const tabBarRef = useRef<HTMLDivElement>(null);
   const tabIndicator = useSlidingIndicator(tabBarRef, tab);
   const [selectedDocKey, setSelectedDocKey] = useState<string | null>(null);
@@ -1141,19 +1156,19 @@ export default function ConsolePage() {
   ) {
     let nextIndex = index;
     if (event.key === "ArrowRight" || event.key === "ArrowDown") {
-      nextIndex = (index + 1) % tabs.length;
+      nextIndex = (index + 1) % navItems.length;
     } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
-      nextIndex = (index - 1 + tabs.length) % tabs.length;
+      nextIndex = (index - 1 + navItems.length) % navItems.length;
     } else if (event.key === "Home") {
       nextIndex = 0;
     } else if (event.key === "End") {
-      nextIndex = tabs.length - 1;
+      nextIndex = navItems.length - 1;
     } else {
       return;
     }
     event.preventDefault();
-    const next = tabs[nextIndex];
-    setTab(next.id);
+    const next = navItems[nextIndex];
+    next.go();
     document.getElementById(`view-tab-${next.id}`)?.focus();
   }
 
@@ -1188,9 +1203,6 @@ export default function ConsolePage() {
   }
 
   const tabs: Array<{ id: Tab; label: string; count?: number; alert?: number; icon: JSX.Element }> = [
-    { id: "situation", label: t("Situation"), icon: <IconPulse /> },
-    { id: "live", label: t("Live blackboard"), icon: <IconAgents /> },
-    { id: "blackboard", label: t("Blackboard"), count: slots.length, icon: <IconBoard /> },
     { id: "tasks", label: t("Tasks"), count: tasks.length, alert: approvals.length, icon: <IconTasks /> },
     { id: "documents", label: t("Documents"), count: docTotal, icon: <IconDocuments /> },
     { id: "agents", label: t("Agents"), count: agents.length, icon: <IconAgents /> },
@@ -1201,7 +1213,21 @@ export default function ConsolePage() {
       alert: proposals.filter((item) => item.status === "PENDING").length,
       icon: <IconLayers />,
     },
+    { id: "situation", label: t("Situation"), icon: <IconPulse /> },
+    { id: "blackboard", label: t("State slots"), count: slots.length, icon: <IconBoard /> },
     { id: "audit", label: t("Audit"), count: audit.total_batches ?? audit.batches.length, icon: <IconAudit /> },
+  ];
+  const inMore = !PRIMARY.includes(tab);
+  const openMore = (next?: Tab) => {
+    const target = next ?? lastMore;
+    setLastMore(target);
+    setTab(target);
+  };
+  const navItems: Array<{ id: string; label: string; active: boolean; alert?: number; go: () => void }> = [
+    { id: "diagram", label: t("Diagram"), active: tab === "diagram", go: () => setTab("diagram") },
+    { id: "loop", label: t("Loop"), active: tab === "loop", alert: approvals.length,
+      go: () => setTab("loop") },
+    { id: "more", label: t("More"), active: inMore, go: () => openMore() },
   ];
 
   if (!mounted) {
@@ -1214,7 +1240,7 @@ export default function ConsolePage() {
   }
 
   return (
-    <div className="shell" data-console-build={CONSOLE_BUILD}>
+    <div className="shell" data-console-build={CONSOLE_BUILD} data-session={sessionMode ? "true" : "false"}>
       <a className="skip-link" href="#main-content">
         {t("Skip to workspace content")}
       </a>
@@ -1389,15 +1415,17 @@ export default function ConsolePage() {
             >
               <IconRefresh /> {t("Refresh")}
             </button>
-            <button
-              type="button"
-              className="button ghost"
-              onClick={() => setShowCreateTask(true)}
-              disabled={!connected || !selectedId}
-              data-modal-trigger="new-task"
-            >
-              <IconPlus /> {t("New task")}
-            </button>
+            {!PRIMARY.includes(tab) && (
+              <button
+                type="button"
+                className="button ghost"
+                onClick={() => setShowCreateTask(true)}
+                disabled={!connected || !selectedId}
+                data-modal-trigger="new-task"
+              >
+                <IconPlus /> {t("New task")}
+              </button>
+            )}
           </div>
         </header>
 
@@ -1477,13 +1505,11 @@ export default function ConsolePage() {
             <section className="workspace-view">
               <div className="workspace-hero">
                 <div>
-                  <div className="eyebrow">{t("Shared workspace")}</div>
                   <h1>{selectedWorkspace.name}</h1>
                   <div className="hero-meta">
                     <span className={`tier tier-${selectedWorkspace.tier}`}>{tierLabel(selectedWorkspace.tier)}</span>
                     <span>{t("Created")} {shortDate(selectedWorkspace.created_at)}</span>
                     <span>{t("Active")} {relativeTime(stats?.last_activity_at ?? selectedWorkspace.last_activity_at)}</span>
-                    {stats && <span>{stats.embedding_provider} · {stats.embedding_dimensions}d</span>}
                     {lastEvent && <span>{t("Event")} {lastEvent.table}/{lastEvent.action}</span>}
                   </div>
                 </div>
@@ -1496,34 +1522,7 @@ export default function ConsolePage() {
                 )}
               </div>
 
-              <div className="stat-grid">
-                <div className="stat-card" onPointerMove={spotlight}>
-                  <div className="stat-icon mint"><IconDocuments /></div>
-                  <div className="stat-label">{t("Shared documents")}</div>
-                  <div className="stat-value"><AnimatedNumber value={stats?.documents ?? 0} format={formatNumber} /></div>
-                  <div className="stat-foot">{t("frontmatter + Markdown · versioned")}</div>
-                </div>
-                <div className="stat-card" onPointerMove={spotlight}>
-                  <div className="stat-icon sky"><IconTasks /></div>
-                  <div className="stat-label">{t("Tasks on the board")}</div>
-                  <div className="stat-value"><AnimatedNumber value={stats?.tasks ?? 0} format={formatNumber} /></div>
-                  <div className="stat-foot">{t("claims, leases, review gates")}</div>
-                </div>
-                <div className="stat-card" onPointerMove={spotlight}>
-                  <div className="stat-icon violet"><IconLayers /></div>
-                  <div className="stat-label">{t("State slots")}</div>
-                  <div className="stat-value"><AnimatedNumber value={stats?.slots ?? 0} format={formatNumber} /></div>
-                  <div className="stat-foot">{t("human-locked live state")}</div>
-                </div>
-                <div className="stat-card" onPointerMove={spotlight}>
-                  <div className="stat-icon amber"><IconAgents /></div>
-                  <div className="stat-label">{t("Scoped agents")}</div>
-                  <div className="stat-value"><AnimatedNumber value={stats?.agent_tokens ?? 0} format={formatNumber} /></div>
-                  <div className="stat-foot">{t("Awaiting human review: {count}", { count: approvals.length })}</div>
-                </div>
-              </div>
-
-              {sessionMode && (
+              {sessionMode && checklistOpen && (
                 <GettingStarted
                   request={api}
                   refreshKey={onboardingTick}
@@ -1549,23 +1548,22 @@ export default function ConsolePage() {
                 role="tablist"
                 aria-label={t("Workspace views")}
               >
-                {tabs.map((item) => (
+                {navItems.map((item, index) => (
                   <button
                     key={item.id}
                     type="button"
                     role="tab"
                     id={`view-tab-${item.id}`}
-                    aria-selected={tab === item.id}
-                    aria-controls={`view-panel-${item.id}`}
-                    tabIndex={tab === item.id ? 0 : -1}
-                    className={`tab-button ${tab === item.id ? "active" : ""}`}
-                    onClick={() => setTab(item.id)}
-                    onKeyDown={(event) => handleTabKeyDown(event, tabs.indexOf(item))}
+                    aria-selected={item.active}
+                    aria-controls="view-panel"
+                    tabIndex={item.active ? 0 : -1}
+                    className={`tab-button ${item.active ? "active" : ""}`}
+                    onClick={item.go}
+                    onKeyDown={(event) => handleTabKeyDown(event, index)}
                   >
-                    {item.icon}
                     <span>{item.label}</span>
-                    {typeof item.count === "number" && item.count > 0 && (
-                      <span className={`tab-count ${item.alert ? "alert" : ""}`}>{item.count}</span>
+                    {typeof item.alert === "number" && item.alert > 0 && (
+                      <span className="tab-count alert">{item.alert}</span>
                     )}
                   </button>
                 ))}
@@ -1581,11 +1579,30 @@ export default function ConsolePage() {
                 )}
               </div>
 
+              {inMore && (
+                <nav className="more-nav" aria-label={t("More views")}>
+                  {tabs.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`more-link${tab === item.id ? " active" : ""}`}
+                      aria-current={tab === item.id ? "page" : undefined}
+                      onClick={() => openMore(item.id)}
+                    >
+                      {item.label}
+                      {typeof item.count === "number" && item.count > 0 && (
+                        <span className={`more-count${item.alert ? " alert" : ""}`}>{item.count}</span>
+                      )}
+                    </button>
+                  ))}
+                </nav>
+              )}
+
               <div
                 className="tab-panel"
                 role="tabpanel"
-                id={`view-panel-${tab}`}
-                aria-labelledby={`view-tab-${tab}`}
+                id="view-panel"
+                aria-labelledby={`view-tab-${inMore ? "more" : tab}`}
               >
               {loading && !stats ? (
                 <div className="card skeleton-card">
@@ -1595,12 +1612,26 @@ export default function ConsolePage() {
                 </div>
               ) : (
                 <>
-                  {tab === "live" && (
-                    <LiveBoard
+                  {tab === "diagram" && (
+                    <DiagramView
+                      workspaceId={selectedWorkspace.id}
+                      request={api}
+                      sessionMode={sessionMode}
+                      notify={setNotice}
+                      onOpenTask={(key) => void openTaskByKey(key)}
+                    />
+                  )}
+                  {tab === "loop" && (
+                    <LoopView
+                      workspaceId={selectedWorkspace.id}
                       apiBase={apiBase}
                       credential={sessionMode ? sessionToken : adminToken}
-                      workspaceId={selectedWorkspace.id}
                       sessionMode={sessionMode}
+                      request={api}
+                      notify={setNotice}
+                      waitingReview={approvals.length}
+                      onOpenTasks={() => openMore("tasks")}
+                      onOpenSituation={() => openMore("situation")}
                     />
                   )}
                   {tab === "blackboard" && (
@@ -1676,12 +1707,6 @@ export default function ConsolePage() {
                   )}
                   {tab === "governance" && sessionMode && sessionToken && (
                     <SupportAccessCard apiBase={apiBase} sessionToken={sessionToken} />
-                  )}
-                  {tab === "governance" && (
-                    <AutomationModeCard request={api} notify={setNotice} />
-                  )}
-                  {tab === "governance" && (
-                    <AcceptanceCard request={api} notify={setNotice} />
                   )}
                   {tab === "governance" && (
                     <GovernanceView
