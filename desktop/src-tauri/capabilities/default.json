@@ -2,6 +2,12 @@
   "$schema": "https://schema.tauri.app/config/2/capability",
   "identifier": "default",
   "description": "Core permissions for the local window",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "windows": [
+    "main",
+    "status",
+    "inbox"
+  ],
+  "permissions": [
+    "core:default"
+  ]
 }
