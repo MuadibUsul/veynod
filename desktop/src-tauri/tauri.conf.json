@@ -41,7 +41,8 @@
       "../sidecar/bridge.mjs",
       "../sidecar/inventory.mjs",
       "../sidecar/package.json",
-      "../sidecar/node_modules/**/*"
+      "../sidecar/node_modules/**/*",
+      "../sidecar/runtime/node.exe"
     ]
   }
 }

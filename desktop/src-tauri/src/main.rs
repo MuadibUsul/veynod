@@ -238,6 +238,16 @@ fn start_watchers(app: AppHandle) {
     }
 }
 
+fn node_binary(app: &AppHandle) -> String {
+    if let Ok(resources) = app.path().resource_dir() {
+        let bundled = resources.join("sidecar").join("runtime").join("node.exe");
+        if bundled.is_file() {
+            return bundled.to_string_lossy().into_owned();
+        }
+    }
+    std::env::var("VEYNOD_NODE").unwrap_or_else(|_| "node".to_string())
+}
+
 fn sidecar_script(app: &AppHandle) -> Result<PathBuf, String> {
     if let Ok(resources) = app.path().resource_dir() {
         let bundled = resources.join("sidecar").join("bridge.mjs");
@@ -272,8 +282,7 @@ fn setup_state() -> SetupState {
 #[tauri::command]
 fn local_runtimes(app: AppHandle) -> Result<Value, String> {
     let script = sidecar_script(&app)?;
-    let node = std::env::var("VEYNOD_NODE").unwrap_or_else(|_| "node".to_string());
-    let output = Command::new(node)
+    let output = Command::new(node_binary(&app))
         .arg(script)
         .arg("--inventory")
         .output()
@@ -283,6 +292,22 @@ fn local_runtimes(app: AppHandle) -> Result<Value, String> {
     }
     serde_json::from_slice(&output.stdout)
         .map_err(|error| format!("the runtime inventory was not JSON: {error}"))
+}
+
+#[tauri::command]
+fn describe_runtime(app: AppHandle, runtime: String) -> Result<Value, String> {
+    let script = sidecar_script(&app)?;
+    let output = Command::new(node_binary(&app))
+        .arg(script)
+        .arg("--describe")
+        .arg(runtime)
+        .output()
+        .map_err(|error| format!("cannot start Node for the runtime details: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("the runtime details were not JSON: {error}"))
 }
 
 #[tauri::command]
@@ -346,7 +371,7 @@ fn main() {
         ))
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
-            setup_state, local_runtimes, test_agent, save_agent, open_dashboard
+            setup_state, local_runtimes, describe_runtime, test_agent, save_agent, open_dashboard
         ])
         .setup(|app| {
             match app.autolaunch().enable() {

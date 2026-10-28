@@ -67,7 +67,19 @@
       </section>
 
       <section class="card">
-        <h2>2 · Connect your agent</h2>
+        <h2>2 · Read the runtime</h2>
+        <p>Choose a runtime to see its plan, quota windows and models. This is read-only.</p>
+        <div class="row">
+          <select id="runtime" style="padding:10px 12px;border-radius:9px;border:1px solid rgba(255,255,255,.16);background:#0e0d16;color:#fff;font:inherit"></select>
+          <button id="describe" disabled>Read quota &amp; models</button>
+          <span id="runtime-state" class="sub"></span>
+        </div>
+        <div id="runtime-details" class="runtimes"></div>
+        <div id="runtime-error" class="error"></div>
+      </section>
+
+      <section class="card">
+        <h2>3 · Connect your agent</h2>
         <p>Paste an agent key from the Veynod console. It is stored only on this computer and never sent anywhere except veynod.com.</p>
         <input id="key" type="password" autocomplete="off" placeholder="agt_…" />
         <div class="row" style="margin-top: 12px">
@@ -78,7 +90,7 @@
       </section>
 
       <section class="card">
-        <h2>3 · Start</h2>
+        <h2>4 · Start</h2>
         <p>After the key is accepted the console opens; closing the window keeps Veynod in the tray.</p>
         <button id="open" class="secondary">Open the console</button>
       </section>
@@ -111,7 +123,15 @@
         try {
           const items = await invoke("local_runtimes");
           $("env-state").textContent = "";
+          const select = $("runtime");
+          select.innerHTML = "";
           for (const item of items) {
+            if (item.available) {
+              const option = document.createElement("option");
+              option.value = item.id;
+              option.textContent = item.id;
+              select.appendChild(option);
+            }
             const li = document.createElement("li");
             const mark = item.available ? "●" : "○";
             const cls = item.available ? "ok" : "bad";
@@ -121,10 +141,42 @@
             li.innerHTML = `<span class="${cls}">${mark}</span> <strong>${item.id}</strong> · ${detail}`;
             $("runtimes").appendChild(li);
           }
+          $("describe").disabled = select.options.length === 0;
           $("key").focus();
         } catch (error) {
           $("env-state").textContent = "";
           showError("env-error", String(error));
+        }
+      });
+
+      $("describe").addEventListener("click", async () => {
+        const runtime = $("runtime").value;
+        if (!runtime) return;
+        showError("runtime-error", "");
+        $("runtime-state").textContent = "reading…";
+        $("runtime-details").innerHTML = "";
+        try {
+          const value = await invoke("describe_runtime", { runtime });
+          $("runtime-state").textContent = "";
+          if (!value.ok) {
+            showError("runtime-error", value.reason || value.kind || "runtime unavailable");
+            return;
+          }
+          const bits = [];
+          if (value.usage) {
+            bits.push(`<li><strong>${runtime}</strong> · plan ${value.usage.plan || "unknown"}${value.usage.rate_limited ? " · currently rate limited" : ""}</li>`);
+            for (const window of value.usage.windows || []) {
+              const left = Math.max(0, Math.round((1 - Number(window.used_ratio || 0)) * 100));
+              bits.push(`<li>${window.label} · ${left}% left${window.resets_at ? " · resets " + new Date(window.resets_at).toLocaleString() : ""}</li>`);
+            }
+          }
+          if (value.models && value.models.length) {
+            bits.push(`<li>Models: ${value.models.map((item) => item.display_name).join(", ")}</li>`);
+          }
+          $("runtime-details").innerHTML = bits.join("");
+        } catch (error) {
+          $("runtime-state").textContent = "";
+          showError("runtime-error", String(error));
         }
       });
 
