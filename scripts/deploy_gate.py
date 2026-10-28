@@ -34,7 +34,10 @@ Usage: deploy_gate.py run | status
 from __future__ import annotations
 
 import argparse
-import fcntl
+try:
+    import fcntl
+except ImportError:  # the runner is Linux-only; tests import this module
+    fcntl = None
 import json
 import os
 import re
@@ -865,6 +868,9 @@ def main(argv: list[str] | None = None) -> int:
     config.workdir.mkdir(parents=True, exist_ok=True)
     with (config.workdir / "gate.lock").open("w") as lock:
         try:
+            if fcntl is None:
+                print("the deploy gate runner needs fcntl (Linux)")
+                return 1
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             print("another gate cycle is running")
