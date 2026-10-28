@@ -10901,7 +10901,7 @@
          "type": "integer"
         },
         {
-         "description": "A token for trying things out: its own quota, usage charged to itself only, cannot issue, lives at most PROBE_TOKEN_MAX_TTL_HOURS",
+         "description": "A token for trying things out: its own quota, usage charged to itself only, cannot issue, lives at most 24 hours by default",
          "name": "probe",
          "required": false,
          "type": "boolean"

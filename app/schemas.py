@@ -1399,7 +1399,7 @@ class TokenIssueRequest(StrictModel):
     max_descendants: int = Field(default=0, ge=0, le=10_000)
     probe: bool = Field(
         default=False, description="A token for trying things out: its own quota, usage "
-        "charged to itself only, cannot issue, lives at most PROBE_TOKEN_MAX_TTL_HOURS")
+        "charged to itself only, cannot issue, lives at most 24 hours by default")
     budget: TokenBudget | None = None
     agent: AgentProfile
     purpose: str = Field(min_length=1, max_length=200)
