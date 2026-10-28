@@ -26,6 +26,11 @@ gate_module = importlib.util.module_from_spec(_spec)
 sys.modules["deploy_gate"] = gate_module  # dataclasses resolve their module
 _spec.loader.exec_module(gate_module)
 
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="the deploy gate runner is a Linux-only VPS program (fcntl, POSIX paths)",
+)
+
 DEPLOYED = "a" * 40
 CANDIDATE = "b" * 40
 MIDDLE = "c" * 40
