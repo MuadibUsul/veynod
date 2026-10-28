@@ -746,6 +746,22 @@ const ZH: Record<string, string> = {
   "Waiting for the gate": "等待检查",
   "Being checked": "检查中",
   "Stopped before going live": "上线前被拦下",
+  "Automation mode": "自动化模式",
+  "How much should agents do without asking you?": "你希望 agent 在多少事情上自己决定？",
+  "Ask me every step": "每一步都问我",
+  "Agents stop and ask before each step. Nothing changes without your yes.":
+    "agent 每一步都停下来问；没有你点头，什么都不改。",
+  "Small calls automatically": "小事自己定",
+  "Agents decide the small things themselves and ask once when money, deletion or an outside promise is involved.":
+    "小事 agent 自己定；涉及花钱、删数据或对外承诺时，攒一批问一次。",
+  "Do it all, I only accept the result": "全做完，我只验收",
+  "Agents claim, build, test, review, merge and deploy. You only try the result and say whether it works.":
+    "agent 认领、实现、自测、评审、合并、上线；你只在界面里试，能用或哪里要改。",
+  "When this is on, changes that pass every check may go live without another click. You can turn it off at any time.":
+    "开启后，通过全部检查的改动可以不再点一次就上线；随时可以关掉。",
+  "Save mode": "保存模式",
+  "Only the owner can change this.": "只有 owner 能改这一项。",
+  "Automation mode updated.": "自动化模式已更新。",
   "Live on the server": "已上线",
   "Rolled back": "已退回",
   "Did not finish": "没有完成",

@@ -5260,3 +5260,61 @@ body::before {
 .presence-flag { margin-left: 6px; padding: 0 6px; border-radius: var(--ds-radius-pill); font-size: 11px; }
 .presence-flag.unwakeable { color: var(--danger); background: var(--danger-soft); }
 .presence-flag.degraded { color: var(--amber); background: var(--amber-soft); }
+
+/* Automation mode (Loop v1): three plain-language choices. */
+.automation-modes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0 16px;
+}
+.automation-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px;
+  text-align: left;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.automation-mode small {
+  color: var(--muted, #9aa0b4);
+  line-height: 1.45;
+}
+.automation-mode.selected {
+  border-color: var(--accent, #7c6cf6);
+  background: rgba(124, 108, 246, 0.14);
+  box-shadow: 0 0 0 1px var(--accent, #7c6cf6) inset;
+}
+.automation-auto-deploy {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+.automation-auto-deploy input {
+  margin-top: 3px;
+}
+.automation-auto-deploy span {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.automation-auto-deploy small {
+  color: var(--muted, #9aa0b4);
+  line-height: 1.45;
+}
+.automation-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+@media (max-width: 900px) {
+  .automation-modes {
+    grid-template-columns: 1fr;
+  }
+}

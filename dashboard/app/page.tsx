@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AgentsView } from "./components/agents";
+import { AutomationModeCard } from "./components/automation";
 import { AuditView } from "./components/audit";
 import { SituationView } from "./components/situation";
 import { Blackboard } from "./components/blackboard";
@@ -1674,6 +1675,9 @@ export default function ConsolePage() {
                   )}
                   {tab === "governance" && sessionMode && sessionToken && (
                     <SupportAccessCard apiBase={apiBase} sessionToken={sessionToken} />
+                  )}
+                  {tab === "governance" && (
+                    <AutomationModeCard request={api} notify={setNotice} />
                   )}
                   {tab === "governance" && (
                     <GovernanceView

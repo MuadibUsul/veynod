@@ -22,6 +22,8 @@ from app.schemas import (
     AgentTokenListResponse,
     AgentTokenUpdateRequest,
     AuditListResponse,
+    AutomationModeOut,
+    AutomationModeRequest,
     BatchUndoResponse,
     BudgetOut,
     BudgetUpdateRequest,
@@ -77,6 +79,7 @@ from app.schemas import (
 )
 from app.services import addresses as address_service
 from app.services import agent_onboarding as agent_onboarding_service
+from app.services import automation as automation_service
 from app.services import budget as budget_service
 from app.services import exports as export_service
 from app.services import grants as grant_service
@@ -202,6 +205,37 @@ async def workspace_overview(
     session: AsyncSession = Depends(get_db),
 ) -> WorkspaceStatsResponse:
     return await services.workspace_stats(session, principal.workspace)
+
+
+@router.get(
+    "/automation",
+    response_model=AutomationModeOut,
+    summary="The workspace automation mode (manual / semi / full)",
+)
+async def get_automation(
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await automation_service.get_mode(session, principal.workspace.id)
+
+
+@router.put(
+    "/automation",
+    response_model=AutomationModeOut,
+    summary="Change the automation mode (human owner only)",
+)
+async def set_automation(
+    body: AutomationModeRequest,
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await automation_service.set_mode(
+        session,
+        principal,
+        mode=body.mode,
+        auto_deploy_allowed=body.auto_deploy_allowed,
+        reason=body.reason,
+    )
 
 
 @router.post(

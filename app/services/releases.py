@@ -29,6 +29,23 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.15.0",
+        "date": "2026-10-28",
+        "summary": "Automation mode: manual, semi-automatic or full automatic, owner-only.",
+        "highlights": [
+            "GET/PUT /v1/human/automation stores the owner's choice per workspace and "
+            "returns it immediately; only the human owner (or the operator console) may "
+            "change it, and every change writes an audit row and an "
+            "AUTOMATION_MODE_CHANGED event.",
+            "Agents see the mode and the auto-deploy flag in get_orientation, so a full "
+            "automatic workspace can proceed without asking technical questions while "
+            "manual and semi keep their existing checkpoints.",
+            "The console Governance tab has three plain-language buttons plus a separate "
+            "Allow automatic deploys switch; turning it off is one click.",
+            "Schema 3.55 adds automation_modes with tenant isolation.",
+        ],
+    },
+    {
         "version": "3.14.0",
         "date": "2026-10-28",
         "summary": "Live blackboard and honest presence: online, offline, degraded, unwakeable.",

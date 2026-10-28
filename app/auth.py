@@ -677,7 +677,7 @@ ALL_PERMISSIONS = tuple(sorted(set().union(*PERMISSIONS.values()) - {"*"}))
 # belong to the human OWNER. A role's permission package (including "*") never
 # implies them, and no token delegation may add them.
 ROLE_CAPABILITY_MATRIX: dict[str, frozenset[str]] = {
-    "OWNER": frozenset({"task:approve_done", "task:reassign", "grant:issue"}),
+    "OWNER": frozenset({"task:approve_done", "task:reassign", "grant:issue", "automation:set"}),
     "ADMIN": frozenset({"task:reassign"}),
     "COMMANDER": frozenset(),
     "SUPER_ADMIN": frozenset(),
