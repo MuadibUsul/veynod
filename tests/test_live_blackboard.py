@@ -87,7 +87,7 @@ async def _stream_since(base_url, workspace, admin_headers, cursor, want, timeou
 
     try:
         await asyncio.wait_for(read(), timeout=timeout)
-    except TimeoutError:
+    except (TimeoutError, asyncio.TimeoutError):
         pass
     return events
 
@@ -303,7 +303,7 @@ async def test_stream_keeps_events_committed_out_of_id_order(client, admin_heade
 
     try:
         await asyncio.wait_for(read(), timeout=20)
-    except TimeoutError:
+    except (TimeoutError, asyncio.TimeoutError):
         pass
     await writer
     missing = set(created) - {event.get("task_key") for event in events}
