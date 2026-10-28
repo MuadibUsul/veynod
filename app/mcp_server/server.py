@@ -1984,6 +1984,76 @@ async def presence_heartbeat() -> dict[str, Any]:
     return _compact(result)
 
 
+_DIAGRAM_ACTIONS = {
+    # action: (service function, needs diagram_key, needs chunk_key, takes body)
+    "list": ("list_diagrams", False, False, False),
+    "get": ("view", True, False, False),
+    "create": ("create", False, False, True),
+    "edit": ("edit_draft", True, False, True),
+    "dispatch": ("dispatch", True, True, False),
+    "submit": ("submit", True, True, True),
+    "ci": ("record_ci", True, True, True),
+    "review": ("gate", True, True, True),
+    "triptych": ("triptych", True, True, False),
+    "queue": ("queue", True, False, False),
+    "queue_check": ("queue_check", True, True, True),
+    "merge": ("merge", True, True, True),
+    "propose": ("propose", True, False, True),
+    "increment": ("request_increment", True, False, True),
+    "decide": ("decide", True, False, True),
+    "signal": ("signal", True, True, True),
+    "escalate": ("escalate", True, True, True),
+    "usage": ("report_usage", True, True, True),
+    "replay": ("replay", True, False, False),
+}
+
+
+@mcp.tool(name="diagram")
+async def diagram(action: str, diagram_key: str | None = None, chunk_key: str | None = None,
+                  change_key: str | None = None,
+                  args: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Diagrams and chunked dispatch (spec-diagram-dispatch v3), one tool.
+
+    action: list | get | create | edit | dispatch | submit | ci | review |
+    triptych | queue | queue_check | merge | propose | increment | decide |
+    signal | escalate | usage | replay. args is the body of the matching
+    REST call (POST /v1/diagrams/...): create {diagram_key, title, chunks,
+    watchers}; submit {files, commit, diff}; ci {results: {compile, lint,
+    test}}; review {result, semantic, inconsistent_pane, evidence};
+    queue_check {result, evidence}; propose {summary, patch}; increment
+    {request_text, target_chunk, chunk}; decide {decision} (with change_key);
+    signal {reason}; escalate {mode: upgrade|spec}; usage {tokens}. Confirming,
+    freezing, revoking and budgets are people's decisions (console or REST)."""
+    from app.services import diagrams as service
+
+    spec = _DIAGRAM_ACTIONS.get(action)
+    if spec is None:
+        raise _api_error(ApiError(422, "validation_error", f"unknown action '{action}'",
+                                  details={"actions": sorted(_DIAGRAM_ACTIONS)}))
+    name, needs_diagram, needs_chunk, takes_body = spec
+    if (needs_diagram and not diagram_key) or (needs_chunk and not chunk_key) or (
+            action == "decide" and not change_key):
+        raise _api_error(ApiError(422, "validation_error",
+                                  f"{action} needs diagram_key{', chunk_key' * needs_chunk}"
+                                  f"{', change_key' * (action == 'decide')}"))
+    call = [diagram_key] if needs_diagram else []
+    if needs_chunk:
+        call.append(chunk_key)
+    if action == "decide":
+        call.append(change_key)
+    if takes_body:
+        call.append(args or {})
+    elif action == "replay" and args and args.get("chunk"):
+        call.append(args["chunk"])
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            result = await getattr(service, name)(session, principal, *call)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
 @mcp.tool(name="get_poke_receipts")
 async def get_poke_receipts(event_seq: int | None = None,
                             task_key: str | None = None) -> dict[str, Any]:

@@ -140,6 +140,8 @@ const ZH: Record<string, string> = {
   "Idle loop": "空转",
   "Unclaimed task": "无人认领的任务",
   "Stuck task (holder gone)": "卡住的任务（持有者已离开）",
+  "Diagram disagrees with the board": "图与任务板不一致",
+  "Merge queue stalled": "合并队列积压",
   "Repeatedly orphaned task": "反复成为孤儿的任务",
   "Conflict hotspot": "冲突热点",
   "Cost anomaly": "成本异常",

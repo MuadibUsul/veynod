@@ -11,8 +11,13 @@ locks), A-10 (deterministic gate first, focused review, triptych).
 
 from __future__ import annotations
 
+import asyncio
+import json
+import os
+import time
 import uuid
 
+import asyncpg
 import pytest
 
 pytestmark = pytest.mark.integration
@@ -183,8 +188,8 @@ async def test_end_to_end_lightweight_path(client):
     one = (await client.get(f"/v1/diagrams/{key}/replay", headers=ws["key"],
                             params={"chunk": "api"})).json()
     assert [e["type"] for e in one["events"]] == [
-        "timeline.chunk_dispatched", "timeline.chunk_gated", "timeline.chunk_gated",
-        "timeline.chunk_merged"]
+        "timeline.chunk_dispatched", "timeline.chunk_gated", "timeline.chunk_trust_charged",
+        "timeline.chunk_gated", "timeline.chunk_merged"]
     assert any(e["type"] == "task.claimed" for e in one["task_events"])
 
 
@@ -489,6 +494,386 @@ async def test_deterministic_gate_then_focused_review(client):
     approved = (await client.post(f"/v1/diagrams/{key}/chunks/api/gate",
                                   headers=reviewer["headers"],
                                   json={"result": "pass", "semantic": rules})).json()
-    assert approved["status"] == "ready_to_merge"
+    assert approved["status"] == "queued"  # M-27: approval queues, it does not merge
     shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
     assert shown["progress"]["merge_queue"][0]["chunk_key"] == "api"
+
+
+# ------------------------------------------------------------ stages 3 and 4
+
+
+async def _with_contract(client, ws, architect, chunks, key=None):
+    """Freeze a diagram, merge its contract through the lightweight path, and return
+    the chunks the merge released (each dispatched beforehand, waiting on it)."""
+    key, view = await _frozen(client, ws, architect,
+                              [_chunk("contract", layer="interface"), *chunks], key)
+    for chunk in chunks:
+        await client.post(f"/v1/diagrams/{key}/chunks/{chunk['chunk_key']}/dispatch",
+                          headers=architect["headers"])
+    contract = (await client.post(f"/v1/diagrams/{key}/chunks/contract/dispatch",
+                                  headers=architect["headers"])).json()
+    builder = await _agent(client, ws)
+    gatekeeper = await _agent(client, ws, "AUDITOR")
+    await _deliver(client, builder, contract["task_key"])
+    await client.post(f"/v1/diagrams/{key}/chunks/contract/gate", headers=gatekeeper["headers"],
+                      json={"result": "pass"})
+    merged = (await client.post(f"/v1/diagrams/{key}/chunks/contract/merge",
+                                headers=ws["person"], json={})).json()
+    return key, {item["chunk_key"]: item for item in merged["unblocked"]}
+
+
+def _rules(extra=()):
+    return {rule: {"result": "pass"} for rule in
+            ("no_cheating", "contract_compliance", "no_architecture_rot", *extra)}
+
+
+async def _submit_green(client, key, chunk_key, executor, ci, commit):
+    submitted = await client.post(f"/v1/diagrams/{key}/chunks/{chunk_key}/submit",
+                                  headers=executor["headers"],
+                                  json={"commit": commit, "files": [f"src/{chunk_key}.py"]})
+    assert submitted.status_code == 200 and submitted.json()["accepted"] is True, submitted.text
+    green = await client.post(f"/v1/diagrams/{key}/chunks/{chunk_key}/ci", headers=ci["headers"],
+                              json={"results": {"compile": {"exit_code": 0},
+                                                "test": {"exit_code": 0}}})
+    assert green.json()["review_woken"] is True, green.text
+
+
+async def test_serial_merge_queue(client):
+    """A-11 / A-14: approval queues; the controller verifies the head; one at a time."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    ci = await _agent(client, ws)
+    controller = await _agent(client, ws)
+    reviewer = await _agent(client, ws, "AUDITOR")
+    names = ["p1", "p2", "p3", "p4", "p5"]
+    key, released = await _with_contract(client, ws, architect,
+                                         [_chunk(name, deps=["contract"]) for name in names])
+    assert sorted(released) == names
+    executors = {}
+    for name in names:  # five parallel READY chunks, five executors
+        executors[name] = await _agent(client, ws)
+        claimed = await client.post(f"/v1/tasks/{released[name]['task_key']}/claim",
+                                    headers=executors[name]["headers"], json={})
+        assert claimed.status_code == 200, claimed.text
+        await _submit_green(client, key, name, executors[name], ci, f"c-{name}")
+        approved = (await client.post(f"/v1/diagrams/{key}/chunks/{name}/gate",
+                                      headers=reviewer["headers"],
+                                      json={"result": "pass", "semantic": _rules()})).json()
+        assert approved["status"] == "queued"
+
+    line = (await client.get(f"/v1/diagrams/{key}/queue", headers=ws["key"])).json()
+    assert [item["chunk_key"] for item in line["items"]] == names
+    assert [item["position"] for item in line["items"]] == [1, 2, 3, 4, 5]
+    assert line["head"] == "p1" and all("waiting_seconds" in item for item in line["items"])
+    # Not merged straight from approval, and not out of order.
+    direct = await client.post(f"/v1/diagrams/{key}/chunks/p2/merge", headers=ws["person"],
+                               json={})
+    assert direct.json()["error"]["code"] == "queue_not_verified"
+    assert direct.json()["error"]["details"]["position"] == 2
+    jumped = await client.post(f"/v1/diagrams/{key}/chunks/p2/queue-check",
+                               headers=controller["headers"], json={"result": "pass"})
+    assert jumped.json()["error"]["code"] == "not_queue_head"
+    by_owner = await client.post(f"/v1/diagrams/{key}/chunks/p1/queue-check",
+                                 headers=executors["p1"]["headers"], json={"result": "pass"})
+    assert by_owner.status_code == 403
+
+    merged_order = []
+    for name in names:
+        if name == "p3":
+            # A rebase conflict goes back to its implementer with the evidence.
+            back = (await client.post(f"/v1/diagrams/{key}/chunks/p3/queue-check",
+                                      headers=controller["headers"],
+                                      json={"result": "rebase_conflict",
+                                            "evidence": "CONFLICT in src/shared_util.py"})).json()
+            assert back["status"] == "rework"
+            continue
+        verified = (await client.post(f"/v1/diagrams/{key}/chunks/{name}/queue-check",
+                                      headers=controller["headers"],
+                                      json={"result": "pass", "rebased_commit": f"r-{name}"})
+                    ).json()
+        assert verified["status"] == "verified"
+        refused = await client.post(f"/v1/diagrams/{key}/chunks/{name}/merge",
+                                    headers=executors[name]["headers"], json={})
+        assert refused.status_code == 403
+        merged = (await client.post(f"/v1/diagrams/{key}/chunks/{name}/merge",
+                                    headers=ws["person"], json={})).json()
+        assert merged["merge"]["via_queue"] is True and merged["merge"]["artifact"] == f"r-{name}"
+        merged_order.append(name)
+    assert merged_order == ["p1", "p2", "p4", "p5"]
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    assert shown["progress"]["merge_queue"] == []
+    p3 = next(c for c in shown["chunks"] if c["chunk_key"] == "p3")
+    assert p3["status"] == "rework" and p3["queue_check"]["result"] == "rebase_conflict"
+    inbox = (await client.get("/v1/inbox", headers=executors["p3"]["headers"])).json()["items"]
+    assert any("chunk_queue_returned" in str(item.get("kind") or item.get("type"))
+               for item in inbox)
+
+
+async def test_trust_circuit_breaker_and_upgrade(client):
+    """A-12 / A-15 (trust): -10 per sandbox failure, -20 per rejection, warn at two,
+    break at three, upgrade restarts at 80 with the escalation counted."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    ci = await _agent(client, ws)
+    reviewer = await _agent(client, ws, "AUDITOR")
+    executor = await _agent(client, ws)
+    strong = await _agent(client, ws)
+    key, released = await _with_contract(client, ws, architect, [_chunk("calc", deps=["contract"])])
+    task_key = released["calc"]["task_key"]
+    await client.post(f"/v1/tasks/{task_key}/claim", headers=executor["headers"], json={})
+
+    await client.post(f"/v1/diagrams/{key}/chunks/calc/submit", headers=executor["headers"],
+                      json={"commit": "x0", "files": ["src/calc.py"]})
+    red = (await client.post(f"/v1/diagrams/{key}/chunks/calc/ci", headers=ci["headers"],
+                             json={"results": {"compile": {"exit_code": 0},
+                                               "test": {"exit_code": 1, "stderr": "1 failed"}}})
+           ).json()
+    assert red["status"] == "rework"
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    assert shown["progress"]["trust"]["calc"] == 90
+
+    reject = {"result": "fail", "evidence": "hard-coded expected value",
+              "inconsistent_pane": "middle",
+              "semantic": {**_rules(), "no_cheating": {"result": "fail"}}}
+    statuses = []
+    for attempt in range(3):
+        await _submit_green(client, key, "calc", executor, ci, f"x{attempt + 1}")
+        result = (await client.post(f"/v1/diagrams/{key}/chunks/calc/gate",
+                                    headers=reviewer["headers"], json=reject)).json()
+        statuses.append((result["status"], result["review_reject_count"]))
+        if result["status"] == "blocked":
+            break
+    # 90 -> 70 -> 50 (under 60: the circuit breaks at the second rejection already).
+    assert statuses[0] == ("rework", 1)
+    assert statuses[1][0] == "blocked"
+    chunk = next(c for c in (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])
+                             ).json()["chunks"] if c["chunk_key"] == "calc")
+    assert chunk["block_kind"] == "circuit" and "trust" in chunk["block_reason"]
+    task = (await client.get(f"/v1/tasks/{task_key}", headers=ws["key"])).json()
+    assert task["status"] == "CANCELLED"  # the implementer lost the chunk
+    assert [entry["cost"] for entry in chunk["trust_log"]] == [10, 20, 20]
+
+    by_implementer = await client.post(f"/v1/diagrams/{key}/chunks/calc/escalate",
+                                       headers=executor["headers"], json={"mode": "upgrade"})
+    assert by_implementer.status_code == 403
+    upgraded = (await client.post(f"/v1/diagrams/{key}/chunks/calc/escalate",
+                                  headers=architect["headers"],
+                                  json={"mode": "upgrade", "note": "stronger model",
+                                        "assignee": f"agent:{strong['signature']}"})).json()
+    assert upgraded["trust_score"] == 80 and upgraded["escalation_count"] == 1
+    new_task = (await client.get(f"/v1/tasks/{upgraded['dispatch']['task_key']}",
+                                 headers=ws["key"])).json()
+    assert new_task["assignee"] == f"agent:{strong['signature']}"
+    assert new_task["input_context"]["escalation"]["escalation"] == 1
+    chunk = next(c for c in (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])
+                             ).json()["chunks"] if c["chunk_key"] == "calc")
+    assert chunk["review_reject_count"] == 0 and chunk["status"] == "dispatched"
+    chain = [e["type"] for e in (await client.get(f"/v1/diagrams/{key}/replay", headers=ws["key"],
+                                                  params={"chunk": "calc"})).json()["events"]]
+    assert "timeline.chunk_circuit_broken" in chain and "timeline.chunk_escalated" in chain
+
+
+async def test_three_rejections_break_and_warning_at_two(client):
+    """A-12: with trust to spare, the second rejection warns and the third breaks."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    reviewer = await _agent(client, ws, "AUDITOR")
+    executor = await _agent(client, ws)
+    watcher = await _agent(client, ws)
+    key = f"cb-{uuid.uuid4().hex[:6]}"
+    await client.post("/v1/diagrams", headers=architect["headers"], json={
+        "diagram_key": key, "title": "x", "watchers": [f"agent:{watcher['signature']}"],
+        "chunks": [_chunk("solo", layer="interface")]})
+    await client.post(f"/v1/diagrams/{key}/confirm", headers=ws["person"])
+    await client.post(f"/v1/diagrams/{key}/freeze", headers=ws["person"], json={})
+    solo = (await client.post(f"/v1/diagrams/{key}/chunks/solo/dispatch",
+                              headers=architect["headers"])).json()
+    # The lightweight path counts rejections too; trust stays 100 - 20 * n.
+    for attempt in range(3):
+        await _deliver(client, executor, solo["task_key"]) if attempt == 0 else None
+        result = (await client.post(f"/v1/diagrams/{key}/chunks/solo/gate",
+                                    headers=reviewer["headers"],
+                                    json={"result": "fail", "evidence": f"round {attempt}"})).json()
+        if attempt < 2:
+            assert result["status"] == "rework"
+        if attempt == 1:
+            inbox = (await client.get("/v1/inbox", headers=watcher["headers"])).json()["items"]
+            assert any("chunk_rejection_warning" in str(i.get("kind") or i.get("type"))
+                       for i in inbox)
+            # Back for another round: the implementer resubmits.
+            await client.post(f"/v1/tasks/{solo['task_key']}/claim", headers=executor["headers"],
+                              json={})
+    assert result["status"] == "blocked" and result["circuit"]["reason"].startswith("3 ")
+    spec = (await client.post(f"/v1/diagrams/{key}/chunks/solo/escalate",
+                              headers=ws["person"], json={"mode": "spec"})).json()
+    assert spec["suspended"] == ["solo"]
+
+
+async def test_token_budget_blocks_until_a_person_raises_it(client):
+    """A-15 (tokens)."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    executor = await _agent(client, ws)
+    key, released = await _with_contract(client, ws, architect,
+                                         [_chunk("big", deps=["contract"], token_budget=1000)])
+    await client.post(f"/v1/tasks/{released['big']['task_key']}/claim",
+                      headers=executor["headers"], json={})
+    first = (await client.post(f"/v1/diagrams/{key}/chunks/big/usage",
+                               headers=executor["headers"], json={"tokens": 600})).json()
+    assert first["blocked"] is False
+    over = (await client.post(f"/v1/diagrams/{key}/chunks/big/usage",
+                              headers=executor["headers"], json={"tokens": 500})).json()
+    assert over["blocked"] is True and over["token_consumed"] == 1100
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    big = next(c for c in shown["chunks"] if c["chunk_key"] == "big")
+    assert big["status"] == "blocked" and big["block_kind"] == "budget"
+    assert shown["progress"]["tokens"]["big"] == {"consumed": 1100, "budget": 1000}
+    assert any(w["kind"] == "budget" for w in shown["warnings"])
+    agent_renews = await client.post(f"/v1/diagrams/{key}/chunks/big/budget",
+                                     headers=architect["headers"], json={"token_budget": 5000})
+    assert agent_renews.status_code == 403  # never renewed automatically or by an agent
+    renewed = (await client.post(f"/v1/diagrams/{key}/chunks/big/budget", headers=ws["person"],
+                                 json={"token_budget": 5000})).json()
+    assert renewed["resumed"] is True
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    assert next(c for c in shown["chunks"] if c["chunk_key"] == "big")["status"] != "blocked"
+
+
+async def test_need_graph_mutation_suspends_and_replans(client):
+    """A-13: the subgraph is suspended, merged work stays, a change resumes it."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    executor = await _agent(client, ws)
+    key, released = await _with_contract(client, ws, architect, [
+        _chunk("store", deps=["contract"]), _chunk("report", deps=["store"]),
+        _chunk("export", deps=["contract"])])
+    assert sorted(released) == ["export", "store"]
+    await client.post(f"/v1/diagrams/{key}/chunks/report/dispatch", headers=architect["headers"])
+    old_task = released["store"]["task_key"]
+    await client.post(f"/v1/tasks/{old_task}/claim", headers=executor["headers"], json={})
+    others = await client.post(f"/v1/diagrams/{key}/chunks/store/signal",
+                               headers=architect["headers"], json={"reason": "x"})
+    assert others.status_code == 403
+    signalled = (await client.post(f"/v1/diagrams/{key}/chunks/store/signal",
+                                   headers=executor["headers"],
+                                   json={"reason": "the storage driver has no transactions"})
+                 ).json()
+    assert signalled["suspended"] == ["report", "store"]
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    statuses = {c["chunk_key"]: c["status"] for c in shown["chunks"]}
+    assert statuses == {"contract": "merged", "store": "blocked_by_spec",
+                        "report": "blocked_by_spec", "export": "dispatched"}
+    submit = await client.post(f"/v1/diagrams/{key}/chunks/store/submit",
+                               headers=executor["headers"],
+                               json={"commit": "z", "files": ["src/store.py"]})
+    assert submit.status_code == 409  # suspended work does not move
+
+    # The architect re-plans the unfinished subgraph only.
+    merged_edit = await client.post(f"/v1/diagrams/{key}/changes", headers=architect["headers"],
+                                    json={"summary": "touch the contract",
+                                          "patch": {"update": [{"chunk_key": "contract",
+                                                                "scope": "x"}]}})
+    assert merged_edit.json()["error"]["code"] == "chunk_in_flight"
+    change = (await client.post(f"/v1/diagrams/{key}/changes", headers=architect["headers"],
+                                json={"summary": "store keeps an append-only log instead",
+                                      "patch": {"update": [{"chunk_key": "store",
+                                                            "scope": "append-only log",
+                                                            "icd": {"exports": ["append()"]}}],
+                                                "add": [_chunk("compact", deps=["store"])]}})
+              ).json()
+    assert change["status"] == "pending", change
+    decided = (await client.post(f"/v1/diagrams/{key}/changes/{change['change_key']}/decide",
+                                 headers=ws["person"], json={"decision": "approve"})).json()
+    resumed = {item["chunk_key"]: item for item in decided["dispatched"]}
+    assert resumed["store"]["state"] == "dispatched"
+    assert resumed["report"]["state"] == "blocked"  # waits on the new store
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    statuses = {c["chunk_key"]: c["status"] for c in shown["chunks"]}
+    assert statuses["contract"] == "merged" and statuses["export"] == "dispatched"
+    assert statuses["store"] == "dispatched" and statuses["compact"] == "blocked"
+    store = next(c for c in shown["chunks"] if c["chunk_key"] == "store")
+    assert store["task_key"] != old_task and store["graph_mutation_signal"] is None
+    assert (await client.get(f"/v1/tasks/{old_task}", headers=ws["key"])).json()["status"] == \
+        "CANCELLED"
+    chain = [e["type"] for e in (await client.get(f"/v1/diagrams/{key}/replay",
+                                                  headers=ws["key"])).json()["events"]]
+    assert "timeline.subgraph_suspended" in chain and "timeline.subgraph_resumed" in chain
+
+
+async def test_command_view_at_thirty_agents_and_board_alerts(client):
+    """A-04: one read gives the distribution and the blocked list for a 30-chunk,
+    30-agent diagram; a chunk that disagrees with the board raises an alert."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    names = [f"w{index:02d}" for index in range(29)]
+    key, released = await _with_contract(client, ws, architect,
+                                         [_chunk(name, deps=["contract"]) for name in names])
+    assert len(released) == 29
+    agents = [await _agent(client, ws) for _ in range(30)]
+
+    async def claim(index):
+        return await client.post(f"/v1/tasks/{released[names[index]]['task_key']}/claim",
+                                 headers=agents[index]["headers"], json={})
+
+    claimed = await asyncio.gather(*[claim(index) for index in range(20)])
+    assert all(response.status_code == 200 for response in claimed)
+    started = time.monotonic()
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    elapsed = time.monotonic() - started
+    assert elapsed < 3, elapsed
+    assert shown["progress"]["distribution"] == {"merged": 1, "in_progress": 20,
+                                                 "dispatched": 9}
+    assert shown["progress"]["total"] == 30 and shown["board_consistency"]["ok"] is True
+
+    # The board is the truth: a chunk whose task vanished is flagged and alerted.
+    conn = await asyncpg.connect(os.environ["TEST_DATABASE_URL"].replace(
+        "postgresql+asyncpg://", "postgresql://", 1))
+    try:
+        await conn.execute("UPDATE diagram_chunks SET task_key = 'GONE-1' WHERE chunk_key = 'w28' "
+                           "AND workspace_id = $1::uuid", ws["id"])
+    finally:
+        await conn.close()
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    assert shown["board_consistency"]["ok"] is False
+    assert any(w["kind"] == "board_mismatch" for w in shown["warnings"])
+    found = None
+    for _ in range(90):
+        alerts = (await client.get(f"/v1/admin/workspaces/{ws['id']}/alerts",
+                                   headers=ADMIN)).json()["items"]
+        found = next((a for a in alerts if a["rule"] == "diagram_board_mismatch"), None)
+        if found:
+            break
+        await asyncio.sleep(1)
+    assert found is not None and found["subject"]["ref"] == f"{key}:w28"
+
+
+async def test_diagram_mcp_tool(client):
+    """Agents drive the same flow over MCP with one tool."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+
+    async def call(headers, **arguments):
+        response = await client.post("/mcp/", headers={
+            **headers, "Accept": "application/json, text/event-stream",
+            "Content-Type": "application/json"}, json={
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "diagram", "arguments": arguments}})
+        assert response.status_code == 200, response.text
+        text = response.text
+        if text.startswith("event:") or "data:" in text[:20]:
+            text = next(line[5:] for line in text.splitlines() if line.startswith("data:"))
+        return json.loads(text)["result"]
+
+    key = f"mcp-{uuid.uuid4().hex[:6]}"
+    created = await call(architect["headers"], action="create", args={
+        "diagram_key": key, "title": "over MCP", "chunks": [_chunk("api", layer="interface")]})
+    assert not created.get("isError"), created
+    listed = await call(architect["headers"], action="list")
+    assert key in str(listed["content"][0]["text"])
+    wrong = await call(architect["headers"], action="explode", diagram_key=key)
+    assert wrong.get("isError") is True
+    await client.post(f"/v1/diagrams/{key}/confirm", headers=ws["person"])
+    await client.post(f"/v1/diagrams/{key}/freeze", headers=ws["person"], json={})
+    dispatched = await call(architect["headers"], action="dispatch", diagram_key=key,
+                            chunk_key="api")
+    assert '"dispatched"' in dispatched["content"][0]["text"]

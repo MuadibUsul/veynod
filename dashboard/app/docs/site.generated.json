@@ -2011,6 +2011,33 @@
          "type": "string"
         }
        ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/budget",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A person sets or raises a chunk's token budget"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
        "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/ci",
        "responses": [
         "200",
@@ -2044,6 +2071,33 @@
         "422"
        ],
        "summary": "Dispatch a chunk as a task, or block it on unmerged dependencies"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/escalate",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "After a broken circuit: upgrade the executor or go to the spec"
       },
       {
        "body": [],
@@ -2119,6 +2173,60 @@
          "type": "string"
         }
        ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/queue-check",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Queue controller: the head rebased and re-tested, or returned"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/signal",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The contract cannot work: ask for a graph change, suspend the subgraph"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
        "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/submit",
        "responses": [
         "200",
@@ -2152,6 +2260,33 @@
         "422"
        ],
        "summary": "The review triptych: contract, diff, sandbox evidence"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/usage",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Report tokens spent on a chunk; over budget blocks it"
       },
       {
        "body": [],
@@ -2212,6 +2347,26 @@
         "422"
        ],
        "summary": "Fast lane: file a person's request as a diagram change"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/queue",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The serial merge queue: positions and waiting times"
       },
       {
        "body": [],

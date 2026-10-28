@@ -37,6 +37,7 @@ RULES = {
     "retry_storm": "high", "idle_spin": "medium", "unclaimed_task": "medium",
     "repeated_orphan": "high", "conflict_anomaly": "medium", "cost_anomaly": "high",
     "index_backlog": "high", "taint_spread": "high", "stuck_task": "high",
+    "diagram_board_mismatch": "medium", "merge_queue_stall": "medium",
 }
 
 _Key = tuple[str, str, datetime]
@@ -203,6 +204,24 @@ async def _findings(session: AsyncSession) -> list[dict[str, Any]]:
         add("stuck_task", row["workspace_id"], "task", row["task_key"],
             id=row["canonical_id"], status=row["status"], orphaned_from=row["orphaned_from"],
             waiting_since=row["updated_at"].isoformat())
+    # spec-diagram-dispatch M-08 / M-29: a chunk that disagrees with the task
+    # board, and approved work left in the merge queue for over two hours.
+    for row in (await session.execute(text(
+            "SELECT c.workspace_id, d.diagram_key, c.chunk_key, c.task_key, t.status::text "
+            "AS task_status FROM diagram_chunks c JOIN diagrams d ON d.id = c.diagram_id "
+            "LEFT JOIN collab_tasks t ON t.workspace_id = c.workspace_id AND t.task_key = "
+            "c.task_key WHERE c.task_key IS NOT NULL AND c.state NOT IN ('retired', 'suspended') "
+            "AND (t.id IS NULL OR (c.state = 'merged' AND t.status IN ('FAILED', 'CANCELLED'))) "
+            "LIMIT 500"))).mappings():
+        add("diagram_board_mismatch", row["workspace_id"], "chunk",
+            f"{row['diagram_key']}:{row['chunk_key']}", task_key=row["task_key"],
+            task_status=row["task_status"] or "missing")
+    for row in (await session.execute(text(
+            "SELECT c.workspace_id, d.diagram_key, c.chunk_key, c.queued_at FROM diagram_chunks c "
+            "JOIN diagrams d ON d.id = c.diagram_id WHERE c.queued_at < NOW() - INTERVAL "
+            "'2 hours' AND c.state = 'dispatched' LIMIT 500"))).mappings():
+        add("merge_queue_stall", row["workspace_id"], "chunk",
+            f"{row['diagram_key']}:{row['chunk_key']}", queued_since=row["queued_at"].isoformat())
     for row in (await session.execute(text(
             "SELECT workspace_id, task_key, canonical_id, orphan_count FROM collab_tasks "
             "WHERE orphan_count >= 2 AND status NOT IN ('DONE', 'FAILED', 'CANCELLED') "

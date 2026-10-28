@@ -26,6 +26,8 @@ const RULE_LABELS: Record<string, string> = {
   idle_spin: "Idle loop",
   unclaimed_task: "Unclaimed task",
   stuck_task: "Stuck task (holder gone)",
+  diagram_board_mismatch: "Diagram disagrees with the board",
+  merge_queue_stall: "Merge queue stalled",
   repeated_orphan: "Repeatedly orphaned task",
   conflict_anomaly: "Conflict hotspot",
   cost_anomaly: "Cost anomaly",

@@ -74,6 +74,17 @@ RELEASE_NOTES: list[dict[str, Any]] = [
             "implementer without waking review; review answers exactly the three default "
             "rules plus the chunk's own, and a rejection names the triptych pane "
             "(/triptych: contract, diff, sandbox evidence).",
+            "Diagram merge queue and autonomy (schema 3.52): approval queues a chunk; the "
+            "queue controller rebases and re-tests only the head (/queue-check), and only a "
+            "verified head merges, never by its implementer (/queue shows positions and "
+            "waiting times; over two hours is flagged). Trust starts at 100, -10 per sandbox "
+            "failure, -20 per rejection; two rejections warn, three or trust under 60 break "
+            "the circuit (task withdrawn) and /escalate upgrades the executor (trust 80, "
+            "escalation counted) or goes to the spec. /signal (NEED_GRAPH_MUTATION) "
+            "suspends the unmerged subgraph until an approved change resumes it. Token "
+            "budgets block a chunk once spent; only a person raises them (/budget). New "
+            "situation alerts diagram_board_mismatch and merge_queue_stall. MCP tool "
+            "diagram drives the whole flow.",
         ],
     },
     {

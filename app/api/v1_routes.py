@@ -1631,6 +1631,88 @@ async def chunk_triptych(
     return await diagrams.triptych(session, principal, diagram_key, chunk_key)
 
 
+@router.post("/diagrams/{diagram_key}/chunks/{chunk_key}/queue-check",
+             summary="Queue controller: the head rebased and re-tested, or returned")
+async def queue_check_chunk(
+    diagram_key: str,
+    chunk_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.queue_check(session, principal, diagram_key, chunk_key, body)
+
+
+@router.post("/diagrams/{diagram_key}/chunks/{chunk_key}/escalate",
+             summary="After a broken circuit: upgrade the executor or go to the spec")
+async def escalate_chunk(
+    diagram_key: str,
+    chunk_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.escalate(session, principal, diagram_key, chunk_key, body)
+
+
+@router.post("/diagrams/{diagram_key}/chunks/{chunk_key}/signal",
+             summary="The contract cannot work: ask for a graph change, suspend the subgraph")
+async def signal_chunk(
+    diagram_key: str,
+    chunk_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.signal(session, principal, diagram_key, chunk_key, body)
+
+
+@router.post("/diagrams/{diagram_key}/chunks/{chunk_key}/usage",
+             summary="Report tokens spent on a chunk; over budget blocks it")
+async def chunk_usage(
+    diagram_key: str,
+    chunk_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.report_usage(session, principal, diagram_key, chunk_key, body)
+
+
+@router.post("/diagrams/{diagram_key}/chunks/{chunk_key}/budget",
+             summary="A person sets or raises a chunk's token budget")
+async def chunk_budget(
+    diagram_key: str,
+    chunk_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.set_budget(session, principal, diagram_key, chunk_key, body)
+
+
+@router.get("/diagrams/{diagram_key}/queue",
+            summary="The serial merge queue: positions and waiting times")
+async def diagram_queue(
+    diagram_key: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.queue(session, principal, diagram_key)
+
+
 @router.post("/diagrams/{diagram_key}/chunks/{chunk_key}/merge",
              summary="Merge a gated chunk (never by its implementer)")
 async def merge_chunk(

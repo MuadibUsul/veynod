@@ -264,9 +264,9 @@ Migration 3.49.0. Tasks `live-blackboard-impl` (spec `agentgraph/spec-live-black
 | Call-cost (L6, feedback-call-cost) | Already in place | The `batch` tool and `detail=summary` answer both proposals of that document. |
 | Stream drops under concurrency | Fixed | `/v1/stream` and the console stream deduplicated by "id <= highest seen"; ids are assigned at insert and transactions commit in their own order, so concurrent writes were dropped (11 of 12 in the regression test). Frames now carry `type` and `targets`. |
 
-## Diagrams and chunked dispatch, lightweight stage (3.14.0)
+## Diagrams and chunked dispatch (3.14.0)
 
-Migration 3.50.0. Task `diagram-dispatch-impl-v3`, spec `agentgraph/spec-diagram-dispatch` v3. `tests/test_diagrams.py`.
+Migrations 3.50.0-3.52.0. Task `diagram-dispatch-impl-v3`, spec `agentgraph/spec-diagram-dispatch` v3. `tests/test_diagrams.py`.
 
 | Spec item | Status | Notes |
 |---|---|---|
@@ -283,7 +283,12 @@ Migration 3.50.0. Task `diagram-dispatch-impl-v3`, spec `agentgraph/spec-diagram
 | A-08 contract first, topology unlock (M-13, M-14) | Done (3.51) | Confirming or changing a diagram whose upstream-free chunks are not interface chunks: 422 `contract_first`. A merge dispatches the waiting chunks it unlocks and pokes the diagram's `watchers` (`chunk_unblocked`, `chunk_merged`). |
 | A-09 context slice, write scope, file locks (M-15..M-18) | Done (3.51) | The task gets description + acceptance, direct upstream interfaces and its write scope only (no diagram document); `context_slice` records it. `/submit` vetoes files outside `allowed_write_paths` or in the baseline's frozen interface files, before any review. Dispatched chunks lock their paths (glob overlap, across diagrams): `block_kind = file_lock` names the holder; merging releases. |
 | A-10 deterministic gate, focused review (M-19..M-21) | Done (3.51) | `/ci` records compile/lint/test for the current commit (not by the implementer); red returns stderr verbatim to the implementer and review stays closed (`ci_not_green`). The review answers exactly the three default rules plus the chunk's `semantic_rules` (`review_out_of_scope` otherwise); a rejection names the pane (left contract, middle diff, right evidence); `/triptych` serves the three. Running the sandbox itself is the CI runner's job. |
-| Stage 3-4 (A-11..A-15: merge queue, merge pokes at scale, trust and token quotas, circuit breaker, dynamic replanning) | Open | Approved chunks wait in `progress.merge_queue`; the serial queue with rebase and incremental tests is next. |
+| A-04 command view at scale | Done (3.52) | 30 chunks, 30 agents, 20 claiming at once: one read returns distribution, blocked list, merge queue, trust, tokens and warnings. Board mismatches show in `warnings` and raise the `diagram_board_mismatch` alert. |
+| A-11 / A-14 merge queue (M-27..M-29) | Done (3.52) | Approval queues (`queued`); `/queue-check` by the queue controller (not the implementer) on the head only (`not_queue_head`); `pass` makes it `verified`, a rebase conflict or failing incremental tests return it with evidence; merging needs a verified head and someone other than the implementer, and releases the next. `/queue` shows positions and waiting time; over two hours is a warning and the `merge_queue_stall` alert. Rebasing and testing are the controller's job. |
+| A-12 circuit breaker (M-23) | Done (3.52) | Two consecutive rejections warn the watchers; three, or trust under 60, break the circuit: the task is withdrawn and the chunk is BLOCKED (`circuit`). `/escalate` `upgrade` re-dispatches it to a named or capable executor (trust 80, `escalation_count` + 1, rejection count reset) or `spec` suspends the subgraph. |
+| A-13 replanning (M-24, M-25) | Done (3.52) | `/signal` (NEED_GRAPH_MUTATION, the implementer, with a reason) suspends the chunk and its unmerged downstream (`blocked_by_spec`) and wakes the watchers and the diagram's author. Changes may only touch unfinished chunks; approving one resumes the subgraph: old tasks withdrawn, chunks re-dispatched against the new graph. |
+| A-15 trust and tokens (M-22) | Done (3.52) | Trust 100, -10 per sandbox or queue test failure, -20 per rejection, per chunk, with a ledger (`trust_log`). Past `token_budget` (reported through `/usage`) the chunk is BLOCKED (`budget`) and people are told; only a person raises it (`/budget`). |
+| MCP | Done (3.52) | Tool `diagram` (action + args) covers every agent-side step; confirming, freezing, revoking and budgets stay with people. |
 
 ## Open gaps found 2026-10-25
 

@@ -44,10 +44,20 @@ from app.services.common import append_event
 
 LAYERS = ("interface", "implementation")
 IN_FLIGHT = ("dispatched", "in_progress", "awaiting_gate", "awaiting_ci", "awaiting_review",
-             "ready_to_merge", "merged")
+             "ready_to_merge", "queued", "verified", "merged")
+# Suggested values from the spec (M-22, M-23, M-29), final once the owner confirms.
+TRUST_START = 100
+TRUST_AFTER_UPGRADE = 80
+COST_CI_FAILURE = 10
+COST_REVIEW_REJECTION = 20
+TRUST_FLOOR = 60
+WARN_AFTER_REJECTIONS = 2
+BREAK_AFTER_REJECTIONS = 3
+QUEUE_WAIT_ALERT_SECONDS = 2 * 3600
 SELF_CHECK = ("big", "stable", "machine_checkable", "long")
 CHUNK_FIELDS = ("title", "scope", "layer", "icd", "done_criteria", "depends_on",
-                "allowed_write_paths", "read_only_interfaces", "commands", "semantic_rules")
+                "allowed_write_paths", "read_only_interfaces", "commands", "semantic_rules",
+                "token_budget")
 # M-20: the semantic review checks these three, and only these (plus a chunk's own rules).
 DEFAULT_RULES = ("no_cheating", "contract_compliance", "no_architecture_rot")
 PANES = ("left", "middle", "right")  # M-21: contract, diff, sandbox evidence
@@ -112,6 +122,7 @@ def _clean_chunk(raw: dict[str, Any]) -> dict[str, Any]:
                      if stage in STAGES and cmd},
         "semantic_rules": [str(item) for item in raw.get("semantic_rules") or []
                            if str(item) not in DEFAULT_RULES],
+        "token_budget": int(raw["token_budget"]) if raw.get("token_budget") else None,
     }
 
 
@@ -222,6 +233,8 @@ async def _tasks(session: AsyncSession, principal: Principal,
 def status_of(chunk: dict[str, Any], task: dict[str, Any] | None) -> str:
     """The status readers see: the chunk's own record, read through its task."""
     state = chunk["state"]
+    if state == "suspended":
+        return "blocked_by_spec"  # M-25
     if state in ("pending", "blocked", "merged", "retired"):
         return state
     gate = chunk.get("gate") or {}
@@ -236,7 +249,13 @@ def status_of(chunk: dict[str, Any], task: dict[str, Any] | None) -> str:
             return "rework"
         if gate.get("submission_at") != submission.get("at"):
             return "awaiting_review"
-        return "ready_to_merge" if gate.get("result") == "pass" else "rework"
+        if gate.get("result") != "pass":
+            return "rework"
+        # M-27: approved work waits in the serial queue; only a verified head merges.
+        check = chunk.get("queue_check") or {}
+        if check.get("result") == "pass" and check.get("submission_at") == submission.get("at"):
+            return "verified"
+        return "queued"
     if task is None:
         return "rework" if state == "rework" else "dispatched"
     status = task["status"]
@@ -365,15 +384,17 @@ async def _insert_chunk(session: AsyncSession, principal: Principal, diagram: di
     await session.execute(text(
         "INSERT INTO diagram_chunks (workspace_id, diagram_id, chunk_key, title, scope, layer, "
         "icd, done_criteria, depends_on, allowed_write_paths, read_only_interfaces, commands, "
-        "semantic_rules, origin, increment_of, created_in_version) VALUES (:ws, :d, :k, :t, :s, "
-        ":l, CAST(:icd AS jsonb), CAST(:dc AS jsonb), CAST(:deps AS text[]), CAST(:w AS text[]), "
-        "CAST(:r AS text[]), CAST(:cmd AS jsonb), CAST(:rules AS text[]), :o, :inc, :v)"),
+        "semantic_rules, token_budget, origin, increment_of, created_in_version) VALUES (:ws, :d, "
+        ":k, :t, :s, :l, CAST(:icd AS jsonb), CAST(:dc AS jsonb), CAST(:deps AS text[]), "
+        "CAST(:w AS text[]), CAST(:r AS text[]), CAST(:cmd AS jsonb), CAST(:rules AS text[]), "
+        ":tb, :o, :inc, :v)"),
         {"ws": principal.workspace.id, "d": diagram["id"], "k": chunk["chunk_key"],
          "t": chunk["title"], "s": chunk["scope"], "l": chunk["layer"],
          "icd": json.dumps(chunk["icd"]), "dc": json.dumps(chunk["done_criteria"]),
          "deps": chunk["depends_on"], "w": chunk["allowed_write_paths"],
          "r": chunk["read_only_interfaces"], "cmd": json.dumps(chunk["commands"]),
-         "rules": chunk["semantic_rules"], "o": origin, "inc": increment_of,
+         "rules": chunk["semantic_rules"], "tb": chunk.get("token_budget"), "o": origin,
+         "inc": increment_of,
          "v": diagram["version"]})
 
 
@@ -485,8 +506,8 @@ async def dispatch(session: AsyncSession, principal: Principal, key: str,
 
 
 async def _dispatch_one(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
-                        chunk: dict[str, Any],
-                        chunks: dict[str, dict[str, Any]]) -> dict[str, Any]:
+                        chunk: dict[str, Any], chunks: dict[str, dict[str, Any]],
+                        upgrade: dict[str, Any] | None = None) -> dict[str, Any]:
     waiting = [dep for dep in chunk["depends_on"]
                if chunks.get(dep, {}).get("state") != "merged"]
     kind, reason, detail = None, None, {}
@@ -512,7 +533,8 @@ async def _dispatch_one(session: AsyncSession, principal: Principal, diagram: di
                          chunk_key=chunk["chunk_key"], reason=reason, block_kind=kind, **detail)
         return {"chunk_key": chunk["chunk_key"], "state": "blocked", "block_kind": kind,
                 "block_reason": reason, **detail}
-    task_key, context_slice = await _create_task(session, principal, diagram, chunk, chunks)
+    task_key, context_slice = await _create_task(session, principal, diagram, chunk, chunks,
+                                                 upgrade)
     await session.execute(text(
         "UPDATE diagram_chunks SET state = 'dispatched', block_reason = NULL, block_kind = NULL, "
         "task_key = :t, context_slice = CAST(:cs AS jsonb), updated_at = NOW() WHERE id = :id"),
@@ -549,8 +571,8 @@ async def _lock_conflicts(session: AsyncSession, principal: Principal,
 
 
 async def _create_task(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
-                       chunk: dict[str, Any],
-                       chunks: dict[str, dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+                       chunk: dict[str, Any], chunks: dict[str, dict[str, Any]],
+                       upgrade: dict[str, Any] | None = None) -> tuple[str, dict[str, Any]]:
     """M-16 context slicing: the executor gets exactly three things, the chunk's
     description with its acceptance, its direct upstream interfaces, and its
     write scope. No diagram document, no repository, no upstream implementation,
@@ -569,7 +591,11 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
         task_key = f"{task_key}-{int(taken) + 1}"[:128]
     request = TaskCreateRequest(
         task_key=task_key,
-        title=f"[{diagram['diagram_key']}] {chunk['title']}"[:256],
+        title=(f"[{diagram['diagram_key']}] {chunk['title']}"
+               + (f" (escalation {upgrade['escalation']})" if upgrade else ""))[:256],
+        # M-23 upgrade: a stronger executor, by name or by capability.
+        assignee=(upgrade or {}).get("assignee"),
+        required_capabilities=(upgrade or {}).get("required_capabilities") or [],
         description=(f"{chunk['scope']}\n\nInterface contract (ICD):\n"
                      f"{json.dumps(chunk['icd'], ensure_ascii=False, indent=2)}")[:20_000],
         namespace=diagram["namespace"],
@@ -587,6 +613,9 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
             "allowed_write_paths": chunk["allowed_write_paths"],
             "read_only_interfaces": chunk["read_only_interfaces"],
             "commands": chunk["commands"],
+            "trust_score": chunk.get("trust_score", TRUST_START),
+            "token_budget": chunk.get("token_budget"),
+            "escalation": upgrade,
             "submit_with": f"POST /v1/diagrams/{diagram['diagram_key']}/chunks/"
                            f"{chunk['chunk_key']}/submit",
         },
@@ -665,18 +694,35 @@ async def gate(session: AsyncSession, principal: Principal, key: str, chunk_key:
     record = {"result": result, "evidence": evidence, "checks": body.get("checks") or [],
               "by": _me(principal), "at": _now().isoformat(),
               "task_version": task["version"] if task else None}
-    if chunk.get("submission"):
+    automated = bool(chunk.get("submission"))
+    if automated:
         record.update(_semantic_review(chunk, body, result))
+    rejections = 0 if result == "pass" else chunk["review_reject_count"] + 1
     await session.execute(text(
-        "UPDATE diagram_chunks SET gate = CAST(:g AS jsonb), state = :s, updated_at = NOW() "
+        "UPDATE diagram_chunks SET gate = CAST(:g AS jsonb), state = :s, "
+        "review_reject_count = :n, queued_at = :q, queue_check = NULL, updated_at = NOW() "
         "WHERE id = :id"),
         {"g": json.dumps(record), "s": "dispatched" if result == "pass" else "rework",
+         "n": rejections, "q": _now() if result == "pass" and automated else None,
          "id": chunk["id"]})
     await _event(session, principal, diagram, "CHUNK_GATED", chunk_key=chunk_key,
-                 task_key=chunk["task_key"], result=result, evidence=evidence)
+                 task_key=chunk["task_key"], result=result, evidence=evidence,
+                 inconsistent_pane=record.get("inconsistent_pane"))
+    breaker = None
+    if result == "fail":
+        trust = await _charge(session, principal, diagram, chunk, COST_REVIEW_REJECTION,
+                              "review rejection")
+        breaker = await _after_rejection(session, principal, diagram, chunk, rejections, trust)
+    elif automated:
+        await _event(session, principal, diagram, "CHUNK_QUEUED", chunk_key=chunk_key,
+                     task_key=chunk["task_key"])
     await session.commit()
-    return {"chunk_key": chunk_key, "gate": record,
-            "status": "ready_to_merge" if result == "pass" else "rework"}
+    if result == "pass":
+        status = "queued" if automated else "ready_to_merge"
+    else:
+        status = "blocked" if breaker else "rework"
+    return {"chunk_key": chunk_key, "gate": record, "status": status,
+            "review_reject_count": rejections, "circuit": breaker}
 
 
 def _semantic_review(chunk: dict[str, Any], body: dict[str, Any], result: str) -> dict[str, Any]:
@@ -822,6 +868,11 @@ async def record_ci(session: AsyncSession, principal: Principal, key: str, chunk
                      failed=[stage for stage, _ in failed],
                      stderr={stage: text_[:60_000] for stage, text_ in failed},
                      targets=sorted(implementers) or None)
+        trust = await _charge(session, principal, diagram, chunk, COST_CI_FAILURE,
+                              f"sandbox failure: {', '.join(stage for stage, _ in failed)}")
+        if trust < TRUST_FLOOR:
+            await _break_circuit(session, principal, diagram, chunk,
+                                 f"trust {trust} fell under {TRUST_FLOOR}")
     else:
         await _event(session, principal, diagram, "CHUNK_CI_PASSED", chunk_key=chunk_key,
                      task_key=chunk["task_key"], commit=commit)
@@ -851,6 +902,337 @@ async def triptych(session: AsyncSession, principal: Principal, key: str,
     }
 
 
+# ------------------------------------------------------------------ trust and circuit
+
+
+async def _charge(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
+                  chunk: dict[str, Any], cost: int, why: str) -> int:
+    """M-22: trust starts at 100 and only this chunk pays for its own failures."""
+    entry = {"cost": cost, "why": why, "at": _now().isoformat()}
+    trust = int(await session.scalar(text(
+        "UPDATE diagram_chunks SET trust_score = trust_score - :c, trust_log = trust_log || "
+        "CAST(:e AS jsonb) WHERE id = :id RETURNING trust_score"),
+        {"c": cost, "e": json.dumps([entry]), "id": chunk["id"]}))
+    await _event(session, principal, diagram, "CHUNK_TRUST_CHARGED", chunk_key=chunk["chunk_key"],
+                 task_key=chunk["task_key"], cost=cost, why=why, trust_score=trust)
+    return trust
+
+
+async def _after_rejection(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
+                           chunk: dict[str, Any], rejections: int,
+                           trust: int) -> dict[str, Any] | None:
+    """M-23: two rejections in a row warn the command view; three (or trust under
+    60) break the circuit."""
+    if rejections >= BREAK_AFTER_REJECTIONS or trust < TRUST_FLOOR:
+        reason = (f"{rejections} consecutive review rejections"
+                  if rejections >= BREAK_AFTER_REJECTIONS
+                  else f"trust {trust} fell under {TRUST_FLOOR}")
+        return await _break_circuit(session, principal, diagram, chunk, reason)
+    if rejections >= WARN_AFTER_REJECTIONS:
+        await _event(session, principal, diagram, "CHUNK_REJECTION_WARNING",
+                     chunk_key=chunk["chunk_key"], task_key=chunk["task_key"],
+                     rejections=rejections, trust_score=trust,
+                     hint="consider upgrading the executor before the circuit breaks",
+                     targets=diagram.get("watchers") or None)
+    return None
+
+
+async def _break_circuit(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
+                         chunk: dict[str, Any], reason: str) -> dict[str, Any]:
+    """The implementer loses the chunk (its task is withdrawn); it waits, BLOCKED,
+    for an upgrade or the spec. Not an end state: a trigger (M-23)."""
+    withdrawn = None
+    if chunk["task_key"]:
+        withdrawn = await _cancel_task(session, principal, chunk["task_key"],
+                                       f"circuit broken: {reason}")
+    await session.execute(text(
+        "UPDATE diagram_chunks SET state = 'blocked', block_kind = 'circuit', block_reason = :r, "
+        "queued_at = NULL, updated_at = NOW() WHERE id = :id"),
+        {"r": f"circuit broken: {reason}", "id": chunk["id"]})
+    await _event(session, principal, diagram, "CHUNK_CIRCUIT_BROKEN", chunk_key=chunk["chunk_key"],
+                 task_key=chunk["task_key"], reason=reason, task_withdrawn=withdrawn,
+                 options=["upgrade", "spec"], targets=diagram.get("watchers") or None)
+    return {"reason": reason, "task_withdrawn": withdrawn, "options": ["upgrade", "spec"]}
+
+
+async def _cancel_task(session: AsyncSession, principal: Principal, task_key: str,
+                       reason: str) -> bool:
+    """Withdraw a chunk's task (and end its lease) unless it already finished."""
+    row = (await session.execute(text(
+        "UPDATE collab_tasks SET status = 'CANCELLED', claimed_by = NULL, lease_owner = NULL, "
+        "lease_expires_at = NULL, review_feedback = :r, version = version + 1, "
+        "updated_at = NOW() WHERE workspace_id = :ws AND task_key = :k AND status NOT IN "
+        "('DONE', 'CANCELLED') RETURNING canonical_id"),
+        {"ws": principal.workspace.id, "k": task_key, "r": reason[:2000]})).first()
+    if row is None:
+        return False
+    await session.execute(text(
+        "UPDATE leases SET state = 'released', ended_at = NOW(), end_reason = 'revoked' "
+        "WHERE resource_kind = 'task' AND resource_ref = :ref AND state = 'active'"),
+        {"ref": row[0]})
+    return True
+
+
+def _may_steer(principal: Principal) -> bool:
+    """People, super admins and planners (ANALYST) steer the graph."""
+    return principal.is_human or principal.is_super_admin or principal.role.value in (
+        "ANALYST", "COMMANDER")
+
+
+async def escalate(session: AsyncSession, principal: Principal, key: str, chunk_key: str,
+                   body: dict[str, Any]) -> dict[str, Any]:
+    """After a broken circuit (M-23): upgrade (a stronger executor takes the chunk,
+    trust restarts at 80, the escalation is counted) or spec (BLOCKED_BY_SPEC, the
+    subgraph is suspended and the architect is woken, M-25)."""
+    mode = body.get("mode")
+    if mode not in ("upgrade", "spec"):
+        raise ApiError(422, "validation_error", "mode is upgrade or spec")
+    if not _may_steer(principal):
+        raise Forbidden("a person, a super admin or a planner escalates a chunk")
+    diagram, chunk, task = await _chunk_with_task(session, principal, key, chunk_key)
+    if _me(principal) in await _implementers(session, principal, task, chunk["task_key"]):
+        raise Forbidden("the implementer does not escalate its own chunk")
+    if mode == "spec":
+        suspended = await _suspend(session, principal, diagram, chunk,
+                                   f"escalated to the spec: {body.get('note') or 'circuit broken'}")
+        await session.commit()
+        return {"chunk_key": chunk_key, "mode": mode, "suspended": suspended}
+    if not (chunk["state"] == "blocked" and chunk["block_kind"] == "circuit"):
+        raise ApiError(409, "circuit_closed", "upgrade follows a broken circuit",
+                       details={"state": chunk["state"], "block_kind": chunk["block_kind"]})
+    await session.execute(text(
+        "UPDATE diagram_chunks SET state = 'pending', block_kind = NULL, block_reason = NULL, "
+        "trust_score = :t, review_reject_count = 0, escalation_count = escalation_count + 1, "
+        "submission = NULL, ci = NULL, gate = NULL, queue_check = NULL, task_key = NULL, "
+        "updated_at = NOW() WHERE id = :id"), {"t": TRUST_AFTER_UPGRADE, "id": chunk["id"]})
+    chunks = {c["chunk_key"]: c for c in await _chunks(session, diagram["id"])}
+    upgrade = {"assignee": body.get("assignee"),
+               "required_capabilities": body.get("required_capabilities") or [],
+               "note": body.get("note"), "escalation": chunks[chunk_key]["escalation_count"]}
+    outcome = await _dispatch_one(session, principal, diagram, chunks[chunk_key], chunks,
+                                  upgrade=upgrade)
+    await _event(session, principal, diagram, "CHUNK_ESCALATED", chunk_key=chunk_key,
+                 task_key=outcome.get("task_key"), mode=mode, previous_task=chunk["task_key"],
+                 escalation_count=upgrade["escalation"], trust_score=TRUST_AFTER_UPGRADE,
+                 assignee=upgrade["assignee"])
+    await session.commit()
+    return {"chunk_key": chunk_key, "mode": mode, "dispatch": outcome,
+            "trust_score": TRUST_AFTER_UPGRADE, "escalation_count": upgrade["escalation"]}
+
+
+async def signal(session: AsyncSession, principal: Principal, key: str, chunk_key: str,
+                 body: dict[str, Any]) -> dict[str, Any]:
+    """M-25 NEED_GRAPH_MUTATION: the executor says the contract cannot work, with
+    the reason. It does not change the graph: the subgraph is suspended and the
+    architect is woken to re-plan through a change."""
+    reason = str(body.get("reason") or "").strip()
+    if not reason:
+        raise ApiError(422, "validation_error", "NEED_GRAPH_MUTATION carries its reason")
+    diagram, chunk, task = await _chunk_with_task(session, principal, key, chunk_key)
+    if chunk["state"] in ("merged", "retired"):
+        raise ApiError(409, "invalid_transition", f"chunk '{chunk_key}' is {chunk['state']}")
+    if not principal.is_human and _me(principal) not in await _implementers(
+            session, principal, task, chunk["task_key"]):
+        raise Forbidden("the chunk's implementer raises NEED_GRAPH_MUTATION")
+    record = {"signal": "NEED_GRAPH_MUTATION", "reason": reason, "by": _me(principal),
+              "at": _now().isoformat()}
+    await session.execute(text(
+        "UPDATE diagram_chunks SET graph_mutation_signal = CAST(:g AS jsonb) WHERE id = :id"),
+        {"g": json.dumps(record), "id": chunk["id"]})
+    suspended = await _suspend(session, principal, diagram, chunk,
+                               f"NEED_GRAPH_MUTATION from {chunk_key}: {reason}")
+    await session.commit()
+    return {"chunk_key": chunk_key, "signal": record, "suspended": suspended}
+
+
+async def _suspend(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
+                   root: dict[str, Any], reason: str) -> list[str]:
+    """Suspend the root and everything downstream of it that is not merged."""
+    chunks = {c["chunk_key"]: c for c in await _chunks(session, diagram["id"])}
+    subgraph, frontier = {root["chunk_key"]}, [root["chunk_key"]]
+    while frontier:
+        current = frontier.pop()
+        for other in chunks.values():
+            if current in other["depends_on"] and other["chunk_key"] not in subgraph:
+                subgraph.add(other["chunk_key"])
+                frontier.append(other["chunk_key"])
+    suspended = sorted(k for k in subgraph if chunks[k]["state"] not in ("merged", "retired"))
+    await session.execute(text(
+        "UPDATE diagram_chunks SET state = 'suspended', block_kind = 'spec', block_reason = :r, "
+        "queued_at = NULL, updated_at = NOW() WHERE diagram_id = :d "
+        "AND chunk_key = ANY(CAST(:keys AS text[]))"),
+        {"r": reason, "d": diagram["id"], "keys": suspended})
+    await _event(session, principal, diagram, "SUBGRAPH_SUSPENDED", chunk_key=root["chunk_key"],
+                 reason=reason, suspended=suspended,
+                 targets=sorted({*(diagram.get("watchers") or []),
+                                 _ref(diagram["created_by"])}))
+    return suspended
+
+
+def _ref(name: str) -> str:
+    return name if name.startswith(("agent:", "human:")) else f"agent:{name}"
+
+
+async def _resume(session: AsyncSession, principal: Principal,
+                  diagram: dict[str, Any]) -> list[dict[str, Any]]:
+    """After an approved change: suspended chunks start over on the new graph.
+    Old tasks are withdrawn, merged work is untouched, and dispatch re-checks
+    dependencies and locks (M-25: the inner loop resumes)."""
+    chunks = {c["chunk_key"]: c for c in await _chunks(session, diagram["id"])}
+    suspended = [c for c in chunks.values() if c["state"] == "suspended"]
+    if not suspended:
+        return []
+    for chunk in suspended:
+        if chunk["task_key"]:
+            await _cancel_task(session, principal, chunk["task_key"], "replanned")
+        await session.execute(text(
+            "UPDATE diagram_chunks SET state = 'pending', block_kind = NULL, block_reason = NULL, "
+            "task_key = NULL, submission = NULL, ci = NULL, gate = NULL, queue_check = NULL, "
+            "graph_mutation_signal = NULL, review_reject_count = 0, updated_at = NOW() "
+            "WHERE id = :id"), {"id": chunk["id"]})
+    chunks = {c["chunk_key"]: c for c in await _chunks(session, diagram["id"])}
+    outcomes = [await _dispatch_one(session, principal, diagram, chunks[c["chunk_key"]], chunks)
+                for c in suspended]
+    await _event(session, principal, diagram, "SUBGRAPH_RESUMED",
+                 resumed=[o["chunk_key"] for o in outcomes],
+                 targets=diagram.get("watchers") or None)
+    return outcomes
+
+
+# ------------------------------------------------------------------ budget
+
+
+async def report_usage(session: AsyncSession, principal: Principal, key: str, chunk_key: str,
+                       body: dict[str, Any]) -> dict[str, Any]:
+    """M-22: tokens spent on a chunk. Past its budget it is BLOCKED and the
+    command view is told; nothing renews it but a person."""
+    tokens = body.get("tokens")
+    if not isinstance(tokens, int) or tokens <= 0:
+        raise ApiError(422, "validation_error", "tokens is a positive integer")
+    diagram, chunk, _task = await _chunk_with_task(session, principal, key, chunk_key)
+    consumed = int(await session.scalar(text(
+        "UPDATE diagram_chunks SET token_consumed = token_consumed + :t WHERE id = :id "
+        "RETURNING token_consumed"), {"t": tokens, "id": chunk["id"]}))
+    budget = chunk["token_budget"]
+    over = budget is not None and consumed > budget and chunk["state"] in ("dispatched", "rework")
+    if over:
+        await session.execute(text(
+            "UPDATE diagram_chunks SET state = 'blocked', block_kind = 'budget', "
+            "block_reason = :r, updated_at = NOW() WHERE id = :id"),
+            {"r": f"token budget spent: {consumed} of {budget}", "id": chunk["id"]})
+        await _event(session, principal, diagram, "CHUNK_BUDGET_EXCEEDED", chunk_key=chunk_key,
+                     task_key=chunk["task_key"], consumed=consumed, budget=budget,
+                     note="not renewed automatically; a person raises the budget",
+                     targets=sorted({*(diagram.get("watchers") or []), "human"}))
+    await session.commit()
+    return {"chunk_key": chunk_key, "token_consumed": consumed, "token_budget": budget,
+            "blocked": over}
+
+
+async def set_budget(session: AsyncSession, principal: Principal, key: str, chunk_key: str,
+                     body: dict[str, Any]) -> dict[str, Any]:
+    _require_person(principal, "renewing a token budget")
+    budget = body.get("token_budget")
+    if budget is not None and (not isinstance(budget, int) or budget <= 0):
+        raise ApiError(422, "validation_error", "token_budget is a positive integer or null")
+    diagram, chunk, _task = await _chunk_with_task(session, principal, key, chunk_key)
+    resume = chunk["state"] == "blocked" and chunk["block_kind"] == "budget" and (
+        budget is None or chunk["token_consumed"] <= budget)
+    await session.execute(text(
+        "UPDATE diagram_chunks SET token_budget = :b, state = CASE WHEN :resume THEN "
+        "'dispatched' ELSE state END, block_kind = CASE WHEN :resume THEN NULL ELSE block_kind "
+        "END, block_reason = CASE WHEN :resume THEN NULL ELSE block_reason END, "
+        "updated_at = NOW() WHERE id = :id"),
+        {"b": budget, "resume": resume, "id": chunk["id"]})
+    await _event(session, principal, diagram, "CHUNK_BUDGET_SET", chunk_key=chunk_key,
+                 token_budget=budget, resumed=resume)
+    await session.commit()
+    return {"chunk_key": chunk_key, "token_budget": budget, "resumed": resume}
+
+
+# ------------------------------------------------------------------ merge queue
+
+
+async def _queue(session: AsyncSession, diagram_id: int) -> list[dict[str, Any]]:
+    rows = (await session.execute(text(
+        "SELECT * FROM diagram_chunks WHERE diagram_id = :d AND queued_at IS NOT NULL "
+        "AND state = 'dispatched' ORDER BY queued_at, id"), {"d": diagram_id})).mappings().all()
+    return [dict(row) for row in rows]
+
+
+async def _queue_position(session: AsyncSession, chunk: dict[str, Any]) -> int | None:
+    for index, row in enumerate(await _queue(session, chunk["diagram_id"])):
+        if row["id"] == chunk["id"]:
+            return index + 1
+    return None
+
+
+async def queue(session: AsyncSession, principal: Principal, key: str) -> dict[str, Any]:
+    """M-27 / M-29: the serial queue, its head, and how long each has waited."""
+    diagram = await _diagram(session, principal, key)
+    now = _now()
+    items = []
+    for index, row in enumerate(await _queue(session, diagram["id"])):
+        waited = int((now - row["queued_at"]).total_seconds())
+        items.append({"position": index + 1, "chunk_key": row["chunk_key"],
+                      "task_key": row["task_key"], "queued_at": _iso(row["queued_at"]),
+                      "waiting_seconds": waited,
+                      "overdue": waited > QUEUE_WAIT_ALERT_SECONDS,
+                      "status": status_of(row, None), "head": index == 0})
+    return {"diagram_key": key, "items": items,
+            "head": items[0]["chunk_key"] if items else None,
+            "rule": "one at a time: the controller rebases and re-tests the head; someone "
+                    "other than its implementer merges it (spec M-27, M-28)"}
+
+
+async def queue_check(session: AsyncSession, principal: Principal, key: str, chunk_key: str,
+                      body: dict[str, Any]) -> dict[str, Any]:
+    """The queue controller's result for the head: rebased on main and the
+    incremental tests passed, or sent back (rebase conflict, failing tests)."""
+    result = body.get("result")
+    if result not in ("pass", "rebase_conflict", "test_failed"):
+        raise ApiError(422, "validation_error", "result is pass, rebase_conflict or test_failed")
+    if result != "pass" and not body.get("evidence"):
+        raise ApiError(422, "validation_error", "a returned head carries its evidence")
+    diagram, chunk, task = await _chunk_with_task(session, principal, key, chunk_key)
+    entries = await _queue(session, diagram["id"])
+    if not entries or entries[0]["id"] != chunk["id"]:
+        raise ApiError(409, "not_queue_head", "the queue is serial: only its head is checked",
+                       details={"head": entries[0]["chunk_key"] if entries else None,
+                                "position": await _queue_position(session, chunk)})
+    implementers = await _implementers(session, principal, task, chunk["task_key"])
+    if _me(principal) in implementers:
+        raise Forbidden("the implementer does not verify its own queue entry")
+    submission = chunk.get("submission") or {}
+    record = {"result": result, "evidence": body.get("evidence"),
+              "commit": body.get("rebased_commit") or submission.get("commit"),
+              "submission_at": submission.get("at"), "by": _me(principal),
+              "at": _now().isoformat()}
+    if result == "pass":
+        await session.execute(text(
+            "UPDATE diagram_chunks SET queue_check = CAST(:q AS jsonb), updated_at = NOW() "
+            "WHERE id = :id"), {"q": json.dumps(record), "id": chunk["id"]})
+        await _event(session, principal, diagram, "CHUNK_QUEUE_VERIFIED", chunk_key=chunk_key,
+                     task_key=chunk["task_key"], commit=record["commit"])
+    else:
+        await session.execute(text(
+            "UPDATE diagram_chunks SET queue_check = CAST(:q AS jsonb), queued_at = NULL, "
+            "state = 'rework', updated_at = NOW() WHERE id = :id"),
+            {"q": json.dumps(record), "id": chunk["id"]})
+        await _event(session, principal, diagram, "CHUNK_QUEUE_RETURNED", chunk_key=chunk_key,
+                     task_key=chunk["task_key"], result=result, evidence=record["evidence"],
+                     targets=sorted(implementers) or None)
+        if result == "test_failed":
+            trust = await _charge(session, principal, diagram, chunk, COST_CI_FAILURE,
+                                  "incremental tests failed in the merge queue")
+            if trust < TRUST_FLOOR:
+                await _break_circuit(session, principal, diagram, chunk,
+                                     f"trust {trust} fell under {TRUST_FLOOR}")
+    await session.commit()
+    return {"chunk_key": chunk_key, "queue_check": record,
+            "status": "verified" if result == "pass" else "rework"}
+
+
 async def merge(session: AsyncSession, principal: Principal, key: str, chunk_key: str,
                 body: dict[str, Any]) -> dict[str, Any]:
     """M-10: only after a passing gate, and never by the implementer. Merging
@@ -858,29 +1240,39 @@ async def merge(session: AsyncSession, principal: Principal, key: str, chunk_key
     diagram, chunk, task = await _chunk_with_task(session, principal, key, chunk_key)
     if chunk["state"] == "merged":
         raise ApiError(409, "already_merged", f"chunk '{chunk_key}' is merged")
-    if status_of(chunk, task) != "ready_to_merge":
+    status = status_of(chunk, task)
+    if status == "queued":
+        raise ApiError(409, "queue_not_verified", "approved work merges from the queue: the "
+                       "queue controller rebases and re-tests the head first (spec M-27)",
+                       details={"position": await _queue_position(session, chunk)})
+    if status not in ("ready_to_merge", "verified"):
         raise ApiError(409, "gate_not_passed", "merge follows a passing gate on the current "
-                       "submission", details={"status": status_of(chunk, task)})
+                       "submission", details={"status": status})
     me = _me(principal)
     if me in await _implementers(session, principal, task, chunk["task_key"]):
         raise ApiError(403, "merge_by_implementer", "the implementer cannot merge their own "
                        "chunk (spec M-10)", details={"merger": me})
-    record = {"by": me, "at": _now().isoformat(), "artifact": body.get("artifact"),
-              "note": body.get("note"), "task_status": task["status"] if task else None}
+    record = {"by": me, "at": _now().isoformat(),
+              "artifact": body.get("artifact") or (chunk.get("queue_check") or {}).get("commit"),
+              "note": body.get("note"), "task_status": task["status"] if task else None,
+              "via_queue": status == "verified"}
     await session.execute(text(
         "UPDATE diagram_chunks SET state = 'merged', merge = CAST(:m AS jsonb), "
-        "block_reason = NULL, updated_at = NOW() WHERE id = :id"),
+        "block_reason = NULL, queued_at = NULL, updated_at = NOW() WHERE id = :id"),
         {"m": json.dumps(record), "id": chunk["id"]})
     await _event(session, principal, diagram, "CHUNK_MERGED", chunk_key=chunk_key,
                  task_key=chunk["task_key"], merged_by=me, artifact=body.get("artifact"),
                  targets=diagram.get("watchers") or [])
-    unblocked = await _release_waiting(session, principal, diagram)
+    unblocked = await _release_waiting(session, principal, diagram,
+                                       trigger={"upstream": chunk_key,
+                                                "merge_commit": record["artifact"]})
     await session.commit()
     return {"chunk_key": chunk_key, "state": "merged", "merge": record, "unblocked": unblocked}
 
 
 async def _release_waiting(session: AsyncSession, principal: Principal,
-                           diagram: dict[str, Any]) -> list[dict[str, Any]]:
+                           diagram: dict[str, Any],
+                           trigger: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     chunks = {chunk["chunk_key"]: chunk for chunk in await _chunks(session, diagram["id"])}
     released = []
     for chunk in chunks.values():
@@ -890,9 +1282,12 @@ async def _release_waiting(session: AsyncSession, principal: Principal,
             outcome = await _dispatch_one(session, principal, diagram, chunk, chunks)
             if outcome["state"] == "dispatched":
                 # M-14 / M-26: unlocked by the graph, no one re-dispatches; watchers hear it.
+                # M-26: the minimum to pull and start: upstream, its merge commit, the
+                # baseline, the downstream chunk and its task. Never the code itself.
                 await _event(session, principal, diagram, "CHUNK_UNBLOCKED",
                              chunk_key=chunk["chunk_key"], task_key=outcome.get("task_key"),
-                             targets=diagram.get("watchers") or [])
+                             baseline=(diagram.get("baseline") or {}).get("version"),
+                             **(trigger or {}), targets=diagram.get("watchers") or [])
                 released.append(outcome)
     return released
 
@@ -1055,7 +1450,7 @@ async def decide(session: AsyncSession, principal: Principal, key: str, change_k
          "b": json.dumps(before, default=str), "id": change["id"]})
     await _event(session, principal, diagram, "DIAGRAM_CHANGE_DECIDED", change_key=change_key,
                  decision="approve", decision_kind=kind, version=diagram["version"])
-    dispatched = []
+    dispatched = await _resume(session, principal, diagram)
     if diagram["status"] == "frozen" and change["patch"].get("dispatch_new", True):
         chunks = {c["chunk_key"]: c for c in await _chunks(session, diagram["id"])}
         for item in change["patch"].get("add", []):
@@ -1099,12 +1494,12 @@ async def _set_fields(session: AsyncSession, chunk_id: int, chunk: dict[str, Any
         "done_criteria = CAST(:dc AS jsonb), depends_on = CAST(:deps AS text[]), "
         "allowed_write_paths = CAST(:w AS text[]), read_only_interfaces = CAST(:r AS text[]), "
         "commands = CAST(:cmd AS jsonb), semantic_rules = CAST(:rules AS text[]), "
-        "updated_at = NOW() WHERE id = :id"),
+        "token_budget = :tb, updated_at = NOW() WHERE id = :id"),
         {"t": chunk["title"], "s": chunk["scope"], "l": chunk["layer"],
          "icd": json.dumps(chunk["icd"]), "dc": json.dumps(chunk["done_criteria"]),
          "deps": chunk["depends_on"], "w": chunk["allowed_write_paths"],
          "r": chunk["read_only_interfaces"], "cmd": json.dumps(chunk["commands"]),
-         "rules": chunk["semantic_rules"], "id": chunk_id})
+         "rules": chunk["semantic_rules"], "tb": chunk.get("token_budget"), "id": chunk_id})
 
 
 async def _bump(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
@@ -1226,7 +1621,8 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
     diagram = await _diagram(session, principal, key)
     chunks = await _chunks(session, diagram["id"])
     tasks = await _tasks(session, principal, [c["task_key"] for c in chunks if c["task_key"]])
-    items, distribution, blocked, queue, mismatches = [], {}, [], [], []
+    items, distribution, blocked, mismatches, warnings = [], {}, [], [], []
+    ready = []
     for chunk in chunks:
         task = tasks.get(chunk["task_key"]) if chunk["task_key"] else None
         status = status_of(chunk, task)
@@ -1238,12 +1634,21 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
                                "problem": f"merged, but its task is {task['status']}"})
         if status != "retired":
             distribution[status] = distribution.get(status, 0) + 1
-        if status == "blocked":
+        if status in ("blocked", "blocked_by_spec"):
             blocked.append({"chunk_key": chunk["chunk_key"], "kind": chunk["block_kind"],
                             "reason": chunk["block_reason"]})
-        if status == "ready_to_merge":
-            queue.append({"chunk_key": chunk["chunk_key"], "task_key": chunk["task_key"],
+        if status == "ready_to_merge":  # the lightweight path merges straight from the gate
+            ready.append({"chunk_key": chunk["chunk_key"], "task_key": chunk["task_key"],
                           "gated_at": (chunk["gate"] or {}).get("at")})
+        if chunk["review_reject_count"] >= WARN_AFTER_REJECTIONS and status not in (
+                "merged", "retired"):
+            warnings.append({"chunk_key": chunk["chunk_key"], "kind": "rejections",
+                             "detail": f"{chunk['review_reject_count']} consecutive rejections, "
+                                       f"trust {chunk['trust_score']}"})
+        if chunk["token_budget"] and chunk["token_consumed"] > chunk["token_budget"]:
+            warnings.append({"chunk_key": chunk["chunk_key"], "kind": "budget",
+                             "detail": f"{chunk['token_consumed']} of {chunk['token_budget']} "
+                                       "tokens"})
         items.append({
             "chunk_key": chunk["chunk_key"], "title": chunk["title"], "scope": chunk["scope"],
             "layer": chunk["layer"], "icd": chunk["icd"], "done_criteria": chunk["done_criteria"],
@@ -1256,11 +1661,25 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
             "created_in_version": chunk["created_in_version"],
             "commands": chunk["commands"], "semantic_rules": chunk["semantic_rules"],
             "block_kind": chunk["block_kind"], "context_slice": chunk["context_slice"],
-            "submission": _public_submission(chunk["submission"]), "ci": chunk["ci"]})
+            "submission": _public_submission(chunk["submission"]), "ci": chunk["ci"],
+            "trust_score": chunk["trust_score"], "trust_log": chunk["trust_log"],
+            "token_budget": chunk["token_budget"], "token_consumed": chunk["token_consumed"],
+            "review_reject_count": chunk["review_reject_count"],
+            "escalation_count": chunk["escalation_count"],
+            "graph_mutation_signal": chunk["graph_mutation_signal"],
+            "queue_check": chunk["queue_check"]})
     pending = (await session.execute(text(
         "SELECT change_key, summary, source, created_at FROM diagram_changes WHERE "
         "diagram_id = :d AND status = 'pending' ORDER BY id"), {"d": diagram["id"]})
     ).mappings().all()
+    serial = (await queue(session, principal, key))["items"]
+    warnings += [{"chunk_key": item["chunk_key"], "kind": "queue_wait",
+                  "detail": f"waiting {item['waiting_seconds'] // 60} minutes in the merge "
+                            "queue: split it or add test parallelism (M-29)"}
+                 for item in serial if item["overdue"]]
+    if mismatches:
+        warnings.append({"kind": "board_mismatch", "detail": f"{len(mismatches)} chunk(s) "
+                         "disagree with the task board"})
     return {
         "diagram_key": diagram["diagram_key"], "title": diagram["title"],
         "namespace": diagram["namespace"], "description": diagram["description"],
@@ -1271,8 +1690,14 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
         "confirmed_at": _iso(diagram["confirmed_at"]),
         "self_check": self_check_risk(diagram["self_check"] or {}),
         "chunks": items,
-        "progress": {"distribution": distribution, "blocked": blocked, "merge_queue": queue,
-                     "total": sum(distribution.values())},
+        "progress": {"distribution": distribution, "blocked": blocked, "merge_queue": serial,
+                     "ready_to_merge": ready, "total": sum(distribution.values()),
+                     "trust": {c["chunk_key"]: c["trust_score"] for c in items
+                               if c["status"] not in ("merged", "retired")},
+                     "tokens": {c["chunk_key"]: {"consumed": c["token_consumed"],
+                                                 "budget": c["token_budget"]}
+                                for c in items if c["token_budget"] or c["token_consumed"]}},
+        "warnings": warnings,
         "board_consistency": {"ok": not mismatches, "mismatches": mismatches,
                               "rule": "the task board is the truth (spec M-08)"},
         "pending_changes": [{**dict(row), "created_at": _iso(row["created_at"])}
