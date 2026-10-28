@@ -1549,7 +1549,8 @@ export default function ConsolePage() {
               </button>
             </section>
           ) : (
-            <section className="workspace-view">
+            <section className={`workspace-view${tab === "diagram" ? " canvas-mode" : ""}`}>
+              {tab !== "diagram" && (
               <div className="workspace-hero">
                 <div>
                   <h1>{selectedWorkspace.name}</h1>
@@ -1568,6 +1569,7 @@ export default function ConsolePage() {
                   </div>
                 )}
               </div>
+              )}
 
               {sessionMode && checklistOpen && (
                 <GettingStarted

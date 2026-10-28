@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 
 import { useI18n } from "../i18n";
 import type { ApiRequest } from "../types";
@@ -135,6 +135,32 @@ function layers(chunks: Chunk[]): Chunk[][] {
   return columns.filter(Boolean);
 }
 
+type Panel = "chunk" | "change" | "decide" | "ask" | "history" | "about" | null;
+
+// Canvas geometry: one column per dependency step, read left to right.
+const NODE_W = 240;
+const NODE_H = 92;
+const COL_GAP = 120;
+const ROW_GAP = 28;
+const MIN_ZOOM = 0.25;
+const MAX_ZOOM = 2;
+
+type Placed = { chunk: Chunk; x: number; y: number };
+
+function place(columns: Chunk[][]): { nodes: Placed[]; width: number; height: number } {
+  const rows = Math.max(1, ...columns.map((column) => column.length));
+  const span = rows * NODE_H + (rows - 1) * ROW_GAP;
+  const nodes: Placed[] = [];
+  columns.forEach((column, index) => {
+    const height = column.length * NODE_H + (column.length - 1) * ROW_GAP;
+    const top = (span - height) / 2;
+    column.forEach((chunk, row) => {
+      nodes.push({ chunk, x: index * (NODE_W + COL_GAP), y: top + row * (NODE_H + ROW_GAP) });
+    });
+  });
+  return { nodes, width: columns.length * (NODE_W + COL_GAP) - COL_GAP, height: span };
+}
+
 function storageKey(workspaceId: string) {
   return `veynod.diagram.${workspaceId}`;
 }
@@ -161,7 +187,7 @@ export function DiagramView({
   const [openChunk, setOpenChunk] = useState<string | null>(null);
   const [openChange, setOpenChange] = useState<ChangeDetail | null>(null);
   const [note, setNote] = useState("");
-  const [asking, setAsking] = useState(false);
+  const [panel, setPanel] = useState<Panel>(null);
   const [requestText, setRequestText] = useState("");
   const [requestTarget, setRequestTarget] = useState("");
 
@@ -215,6 +241,7 @@ export function DiagramView({
     }
     setOpenChunk(null);
     setOpenChange(null);
+    setPanel(null);
     void loadDetail(selected);
     const timer = window.setInterval(() => void loadDetail(selected), 15000);
     return () => window.clearInterval(timer);
@@ -244,6 +271,7 @@ export function DiagramView({
       ));
       setNote("");
       setOpenChunk(null);
+      setPanel("change");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
@@ -257,7 +285,10 @@ export function DiagramView({
       { decision, note: note.trim() || undefined },
       decision === "approve" ? "Change approved. The diagram moved to its next version." : "Change rejected.",
     );
-    if (ok) setOpenChange(null);
+    if (ok) {
+      setOpenChange(null);
+      setPanel(null);
+    }
   }
 
   async function sendRequest() {
@@ -287,7 +318,7 @@ export function DiagramView({
       notify(t("Request sent. It comes back here as a change for you to decide."));
       setRequestText("");
       setRequestTarget("");
-      setAsking(false);
+      setPanel(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
@@ -303,6 +334,41 @@ export function DiagramView({
   const done = detail?.progress.distribution.merged ?? 0;
   const total = detail?.progress.total ?? 0;
   const chunk = visibleChunks.find((item) => item.chunk_key === openChunk) ?? null;
+  const pending = detail?.pending_changes ?? [];
+  const history = detail?.recent_changes ?? [];
+
+  function openPanel(next: Panel) {
+    setPanel((current) => (current === next ? null : next));
+  }
+
+  function ask(target: string | null) {
+    setRequestTarget(target ?? "");
+    setPanel("ask");
+  }
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setPanel(null);
+        setOpenChunk(null);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const stage = useRef<HTMLDivElement | null>(null);
+  const [stageHeight, setStageHeight] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    // The canvas takes the rest of the window, whatever sits above it.
+    const fit = () => {
+      const top = stage.current?.getBoundingClientRect().top ?? 0;
+      setStageHeight(Math.max(360, window.innerHeight - top - 12));
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, [list, detail === null]);
 
   if (!sessionMode) {
     return (
@@ -314,16 +380,7 @@ export function DiagramView({
   }
 
   if (list === null) {
-    return (
-      <div className="dg-skeleton" aria-busy="true">
-        <div className="skeleton line w40" />
-        <div className="dg-skeleton-columns">
-          <div className="skeleton block" />
-          <div className="skeleton block" />
-          <div className="skeleton block" />
-        </div>
-      </div>
-    );
+    return <div className="dgx dgx-loading" aria-busy="true"><div className="skeleton block" /></div>;
   }
 
   if (list.length === 0) {
@@ -339,85 +396,182 @@ export function DiagramView({
   }
 
   return (
-    <div className="dg">
-      {list.length > 1 && (
-        <nav className="dg-picker" aria-label={t("Diagrams")}>
-          {list.map((item) => (
-            <button
-              key={item.diagram_key}
-              type="button"
-              className={`dg-pick${item.diagram_key === selected ? " active" : ""}`}
-              aria-current={item.diagram_key === selected ? "page" : undefined}
-              onClick={() => setSelected(item.diagram_key)}
-            >
-              <span>{item.title}</span>
-              <small>{t(DIAGRAM_STATUS[item.status])}</small>
-            </button>
-          ))}
-        </nav>
+    <div className="dgx" ref={stage} style={stageHeight ? { height: stageHeight } : undefined}>
+      {detail && (
+        <InfiniteCanvas
+          key={detail.diagram_key}
+          columns={columns}
+          selected={openChunk}
+          onSelect={(key) => {
+            setOpenChunk(key);
+            setOpenChange(null);
+            setPanel(key ? "chunk" : null);
+          }}
+          onAsk={ask}
+        />
       )}
 
-      {error && <div className="inline-error" role="alert">{error}</div>}
+      <div className="dgx-float dgx-top-left">
+        {list.length > 1 ? (
+          <select
+            className="dgx-switch"
+            aria-label={t("Diagrams")}
+            value={selected ?? ""}
+            onChange={(event) => setSelected(event.target.value)}
+          >
+            {list.map((item) => (
+              <option key={item.diagram_key} value={item.diagram_key}>{item.title}</option>
+            ))}
+          </select>
+        ) : (
+          <strong className="dgx-name">{detail?.title}</strong>
+        )}
+        {detail && (
+          <>
+            <span className={`dg-state ${detail.status}`}>{t(DIAGRAM_STATUS[detail.status])}</span>
+            <span className="dgx-meta">
+              v{detail.version}
+              {total > 0 && <> · {done}/{total}</>}
+            </span>
+            {(detail.description || detail.self_check?.risk) && (
+              <button type="button" className="dgx-icon" aria-label={t("About this diagram")}
+                aria-pressed={panel === "about"} onClick={() => openPanel("about")}>i</button>
+            )}
+          </>
+        )}
+      </div>
 
-      {!detail ? (
-        <div className="dg-skeleton" aria-busy="true"><div className="skeleton block" /></div>
-      ) : (
-        <>
-          <header className="dg-head">
-            <div className="dg-title">
-              <span className={`dg-state ${detail.status}`}>{t(DIAGRAM_STATUS[detail.status])}</span>
-              <h2>{detail.title}</h2>
-              <p>
-                {t("Version")} {detail.version}
-                {total > 0 && <> · {done}/{total} {t("chunks done")}</>}
-              </p>
-              {total > 0 && (
-                <div className="dg-progress" role="progressbar" aria-valuemin={0}
-                  aria-valuemax={total} aria-valuenow={done}>
-                  <span style={{ transform: `scaleX(${total ? done / total : 0})` }} />
-                </div>
-              )}
-            </div>
-            <div className="dg-actions">
-              {detail.status === "draft" && (
-                <button type="button" className="button primary" disabled={busy !== null}
-                  onClick={() => void act("confirm",
-                    `/v1/diagrams/${encodeURIComponent(detail.diagram_key)}/confirm`,
-                    undefined, "Diagram confirmed. Freeze it when the plan is final.")}>
-                  {busy === "confirm" ? <Spinner /> : null}{t("Confirm this diagram")}
-                </button>
-              )}
-              {detail.status === "confirmed" && (
-                <button type="button" className="button primary" disabled={busy !== null}
-                  onClick={() => void act("freeze",
-                    `/v1/diagrams/${encodeURIComponent(detail.diagram_key)}/freeze`,
-                    undefined, "Baseline frozen. Agents can now start on the chunks.")}>
-                  {busy === "freeze" ? <Spinner /> : null}{t("Freeze and start")}
-                </button>
-              )}
-              <button type="button" className="button ghost" onClick={() => setAsking((v) => !v)}
-                aria-expanded={asking}>
-                {t("Ask for a change")}
-              </button>
-            </div>
-          </header>
+      {detail && (
+        <div className="dgx-float dgx-top-right">
+          {pending.length > 0 && (
+            <button type="button" className={`dgx-pill attention${panel === "decide" || panel === "change" ? " on" : ""}`}
+              onClick={() => openPanel("decide")}>
+              {t("Waiting for your decision")} <b>{pending.length}</b>
+            </button>
+          )}
+          {detail.status === "draft" && (
+            <button type="button" className="button primary" disabled={busy !== null}
+              onClick={() => void act("confirm",
+                `/v1/diagrams/${encodeURIComponent(detail.diagram_key)}/confirm`,
+                undefined, "Diagram confirmed. Freeze it when the plan is final.")}>
+              {busy === "confirm" ? <Spinner /> : null}{t("Confirm this diagram")}
+            </button>
+          )}
+          {detail.status === "confirmed" && (
+            <button type="button" className="button primary" disabled={busy !== null}
+              onClick={() => void act("freeze",
+                `/v1/diagrams/${encodeURIComponent(detail.diagram_key)}/freeze`,
+                undefined, "Baseline frozen. Agents can now start on the chunks.")}>
+              {busy === "freeze" ? <Spinner /> : null}{t("Freeze and start")}
+            </button>
+          )}
+          <button type="button" className={`button ghost${panel === "ask" ? " active" : ""}`}
+            onClick={() => (panel === "ask" ? setPanel(null) : ask(openChunk))}>
+            {t("Ask for a change")}
+          </button>
+        </div>
+      )}
 
-          {detail.description && <p className="dg-description">{detail.description}</p>}
+      {detail && total > 0 && (
+        <div className="dgx-progress" role="progressbar" aria-valuemin={0} aria-valuemax={total}
+          aria-valuenow={done} aria-label={t("chunks done")}>
+          <span style={{ transform: `scaleX(${done / total})` }} />
+        </div>
+      )}
 
-          {detail.status === "draft" && detail.self_check?.risk && (
-            <div className="dg-note">
-              {t("The planner left parts of the self check open. You can still confirm it.")}
+      {history.length > 0 && (
+        <div className="dgx-float dgx-bottom-right">
+          <button type="button" className={`dgx-pill${panel === "history" ? " on" : ""}`}
+            onClick={() => openPanel("history")}>
+            {t("Recent decisions")}
+          </button>
+        </div>
+      )}
+
+      {error && <div className="dgx-error" role="alert">{error}</div>}
+
+      {detail && panel && (
+        <aside className="dgx-panel" aria-live="polite">
+          <button type="button" className="dgx-close" aria-label={t("Close")}
+            onClick={() => { setPanel(null); setOpenChunk(null); }}>×</button>
+
+          {panel === "about" && (
+            <div className="dgx-section">
+              <h3>{detail.title}</h3>
+              {detail.description && <p className="dgx-text">{detail.description}</p>}
+              {detail.status === "draft" && detail.self_check?.risk && (
+                <p className="dgx-text muted">
+                  {t("The planner left parts of the self check open. You can still confirm it.")}
+                </p>
+              )}
             </div>
           )}
 
-          {asking && (
-            <form className="dg-ask" onSubmit={(event) => { event.preventDefault(); void sendRequest(); }}>
+          {panel === "chunk" && chunk && (
+            <ChunkPanel chunk={chunk} onOpenTask={onOpenTask} onAsk={() => ask(chunk.chunk_key)} />
+          )}
+
+          {panel === "decide" && (
+            <div className="dgx-section">
+              <h3>{t("Waiting for your decision")}</h3>
+              <ul className="dgx-list">
+                {pending.map((change) => (
+                  <li key={change.change_key}>
+                    <button type="button" className="dg-change" onClick={() => void showChange(change.change_key)}>
+                      <span>{change.summary}</span>
+                      <small>
+                        {change.source === "human_request" ? t("Your request") : t("Proposed by an agent")}
+                        {change.created_at ? ` · ${relativeTime(change.created_at)}` : ""}
+                      </small>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {panel === "change" && openChange && (
+            <div className="dgx-section">
+              <h3>{openChange.summary}</h3>
+              {openChange.request_text && <blockquote className="dg-quote">{openChange.request_text}</blockquote>}
+              <dl className="dg-facts">
+                <dt>{t("Changes")}</dt>
+                <dd>{titlesOf(openChange.impact.chunks, visibleChunks) || "—"}</dd>
+                <dt>{t("Also affects")}</dt>
+                <dd>{titlesOf(openChange.impact.downstream, visibleChunks) || t("Nothing else")}</dd>
+                {(openChange.impact.interfaces ?? []).length > 0 && (
+                  <>
+                    <dt>{t("Contracts touched")}</dt>
+                    <dd>{titlesOf(openChange.impact.interfaces, visibleChunks)}</dd>
+                  </>
+                )}
+                <dt>{t("Proposed by")}</dt>
+                <dd>{openChange.proposed_by}</dd>
+              </dl>
               <label className="field">
-                <span>{t("What should change? Say it in your own words.")}</span>
-                <textarea value={requestText} rows={3} required maxLength={4000}
-                  onChange={(event) => setRequestText(event.target.value)}
-                  placeholder={t("For example: the export page also needs a CSV download.")} />
+                <span>{t("Note (optional)")}</span>
+                <input value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} />
               </label>
+              <div className="dg-panel-actions">
+                <button type="button" className="button primary" disabled={busy !== null}
+                  onClick={() => void decide("approve")}>
+                  {busy === "approve" ? <Spinner /> : null}{t("Approve")}
+                </button>
+                <button type="button" className="button ghost" disabled={busy !== null}
+                  onClick={() => void decide("reject")}>
+                  {busy === "reject" ? <Spinner /> : null}{t("Reject")}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {panel === "ask" && (
+            <form className="dgx-section" onSubmit={(event) => { event.preventDefault(); void sendRequest(); }}>
+              <h3>{t("What should change?")}</h3>
+              <textarea className="dgx-think" value={requestText} rows={8} required maxLength={4000} autoFocus
+                aria-label={t("What should change? Say it in your own words.")}
+                onChange={(event) => setRequestText(event.target.value)}
+                placeholder={t("Say it in your own words. For example: the export page also needs a CSV download.")} />
               <label className="field">
                 <span>{t("About a chunk (optional)")}</span>
                 <select value={requestTarget} onChange={(event) => setRequestTarget(event.target.value)}>
@@ -436,90 +590,14 @@ export function DiagramView({
             </form>
           )}
 
-          {detail.pending_changes.length > 0 && (
-            <section className="dg-decide" aria-label={t("Waiting for your decision")}>
-              <h3>{t("Waiting for your decision")}</h3>
-              <ul>
-                {detail.pending_changes.map((change) => (
-                  <li key={change.change_key}>
-                    <button type="button" className="dg-change"
-                      onClick={() => void showChange(change.change_key)}>
-                      <span>{change.summary}</span>
-                      <small>
-                        {change.source === "human_request" ? t("Your request") : t("Proposed by an agent")}
-                        {change.created_at ? ` · ${relativeTime(change.created_at)}` : ""}
-                      </small>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-
-          <div className="dg-body">
-            <DiagramCanvas
-              columns={columns}
-              selected={openChunk}
-              onSelect={(key) => { setOpenChunk(key); setOpenChange(null); }}
-            />
-
-            {(chunk || openChange) && (
-              <aside className="dg-side" aria-live="polite">
-                {chunk && (
-                  <ChunkPanel chunk={chunk} onClose={() => setOpenChunk(null)} onOpenTask={onOpenTask} />
-                )}
-                {openChange && (
-                  <div className="dg-panel">
-                    <div className="dg-panel-head">
-                      <h3>{openChange.summary}</h3>
-                      <button type="button" className="icon-button" aria-label={t("Close")}
-                        onClick={() => setOpenChange(null)}>×</button>
-                    </div>
-                    {openChange.request_text && (
-                      <blockquote className="dg-quote">{openChange.request_text}</blockquote>
-                    )}
-                    <dl className="dg-facts">
-                      <dt>{t("Changes")}</dt>
-                      <dd>{(openChange.impact.chunks ?? []).join(", ") || "—"}</dd>
-                      <dt>{t("Also affects")}</dt>
-                      <dd>{(openChange.impact.downstream ?? []).join(", ") || t("Nothing else")}</dd>
-                      {(openChange.impact.interfaces ?? []).length > 0 && (
-                        <>
-                          <dt>{t("Contracts touched")}</dt>
-                          <dd>{(openChange.impact.interfaces ?? []).join(", ")}</dd>
-                        </>
-                      )}
-                      <dt>{t("Proposed by")}</dt>
-                      <dd>{openChange.proposed_by}</dd>
-                    </dl>
-                    <label className="field">
-                      <span>{t("Note (optional)")}</span>
-                      <input value={note} maxLength={500} onChange={(event) => setNote(event.target.value)} />
-                    </label>
-                    <div className="dg-panel-actions">
-                      <button type="button" className="button primary" disabled={busy !== null}
-                        onClick={() => void decide("approve")}>
-                        {busy === "approve" ? <Spinner /> : null}{t("Approve")}
-                      </button>
-                      <button type="button" className="button ghost" disabled={busy !== null}
-                        onClick={() => void decide("reject")}>
-                        {busy === "reject" ? <Spinner /> : null}{t("Reject")}
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </aside>
-            )}
-          </div>
-
-          {(detail.recent_changes ?? []).length > 0 && (
-            <details className="dg-history">
-              <summary>{t("Recent decisions")}</summary>
-              <ul>
-                {(detail.recent_changes ?? []).map((change) => (
-                  <li key={change.change_key}>
+          {panel === "history" && (
+            <div className="dgx-section">
+              <h3>{t("Recent decisions")}</h3>
+              <ul className="dgx-list">
+                {history.map((change) => (
+                  <li key={change.change_key} className="dgx-history">
                     <span className={`dg-decision ${change.status}`}>{t(change.status ?? "")}</span>
-                    <span className="dg-history-text">{change.summary}</span>
+                    <span>{change.summary}</span>
                     <small>
                       {change.decision_kind === "super_admin_for_owner"
                         ? t("decided for the owner")
@@ -539,122 +617,221 @@ export function DiagramView({
                   </li>
                 ))}
               </ul>
-            </details>
+            </div>
           )}
-        </>
+        </aside>
       )}
     </div>
   );
 }
 
-function DiagramCanvas({
+function titlesOf(keys: string[] | undefined, chunks: Chunk[]): string {
+  const title = new Map(chunks.map((item) => [item.chunk_key, item.title]));
+  return (keys ?? []).map((key) => title.get(key) ?? key).join(", ");
+}
+
+/**
+ * A plane to think on: drag or scroll to move, pinch or Ctrl/Cmd + scroll to
+ * zoom, double click a chunk (or empty space) to ask for a change there.
+ */
+function InfiniteCanvas({
   columns,
   selected,
   onSelect,
+  onAsk,
 }: {
   columns: Chunk[][];
   selected: string | null;
-  onSelect: (key: string) => void;
+  onSelect: (key: string | null) => void;
+  onAsk: (target: string | null) => void;
 }) {
   const { t } = useI18n();
-  const wrap = useRef<HTMLDivElement | null>(null);
-  const cards = useRef(new Map<string, HTMLButtonElement>());
-  const [edges, setEdges] = useState<Array<{ id: string; d: string; risk: boolean }>>([]);
-  const [size, setSize] = useState({ width: 0, height: 0 });
+  const box = useRef<HTMLDivElement | null>(null);
+  const layout = useMemo(() => place(columns), [columns]);
+  const [view, setView] = useState({ x: 0, y: 0, k: 1 });
+  const drag = useRef<{ id: number; x: number; y: number; moved: boolean } | null>(null);
+  const fitted = useRef(false);
 
-  const draw = useCallback(() => {
-    const root = wrap.current;
-    if (!root) return;
-    const box = root.getBoundingClientRect();
-    const next: Array<{ id: string; d: string; risk: boolean }> = [];
-    columns.flat().forEach((chunk) => {
-      const to = cards.current.get(chunk.chunk_key);
-      if (!to) return;
-      chunk.depends_on.forEach((dep) => {
-        const from = cards.current.get(dep);
-        if (!from) return;
-        const a = from.getBoundingClientRect();
-        const b = to.getBoundingClientRect();
-        const x1 = a.right - box.left + root.scrollLeft;
-        const y1 = a.top + a.height / 2 - box.top + root.scrollTop;
-        const x2 = b.left - box.left + root.scrollLeft;
-        const y2 = b.top + b.height / 2 - box.top + root.scrollTop;
-        const bend = Math.max(24, (x2 - x1) / 2);
-        next.push({
-          id: `${dep}->${chunk.chunk_key}`,
-          d: `M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`,
-          risk: statusOf(chunk).tone === "risk",
-        });
-      });
-    });
-    setEdges(next);
-    setSize({ width: root.scrollWidth, height: root.scrollHeight });
-  }, [columns]);
+  const fit = useCallback(() => {
+    const el = box.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    const pad = 56;
+    const k = Math.min(
+      1,
+      Math.max(MIN_ZOOM, Math.min((width - pad * 2) / Math.max(layout.width, 1),
+                                  (height - pad * 2) / Math.max(layout.height, 1))),
+    );
+    if (k < 0.6) {
+      // Too big to read whole on this screen: start at the first step, readable.
+      setView({ k: 0.6, x: 16, y: (height - layout.height * 0.6) / 2 });
+      return;
+    }
+    setView({ k, x: (width - layout.width * k) / 2, y: (height - layout.height * k) / 2 });
+  }, [layout]);
 
   useLayoutEffect(() => {
-    draw();
-    const root = wrap.current;
-    if (!root || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(() => draw());
-    observer.observe(root);
-    return () => observer.disconnect();
-  }, [draw]);
+    if (!fitted.current) {
+      fit();
+      fitted.current = true;
+    }
+  }, [fit]);
 
-  if (columns.length === 0) {
-    return <div className="focus-empty small">{t("This diagram has no chunks yet.")}</div>;
+  // Keep the chosen chunk in sight when the side panel opens over the canvas.
+  useEffect(() => {
+    const node = layout.nodes.find((item) => item.chunk.chunk_key === selected);
+    const el = box.current;
+    if (!node || !el) return;
+    const { width } = el.getBoundingClientRect();
+    const covered = width > 640 ? Math.min(400, width - 24) : 0;
+    setView((current) => {
+      const right = current.x + (node.x + NODE_W) * current.k;
+      const left = current.x + node.x * current.k;
+      const limit = width - covered - 24;
+      if (right <= limit) return current;
+      return { ...current, x: current.x - Math.min(right - limit, left - 24) };
+    });
+  }, [selected, layout]);
+
+  const zoomAt = useCallback((factor: number, cx: number, cy: number) => {
+    setView((current) => {
+      const k = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current.k * factor));
+      const ratio = k / current.k;
+      return { k, x: cx - (cx - current.x) * ratio, y: cy - (cy - current.y) * ratio };
+    });
+  }, []);
+
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    function onWheel(event: WheelEvent) {
+      event.preventDefault();
+      const rect = el!.getBoundingClientRect();
+      if (event.ctrlKey || event.metaKey) {
+        zoomAt(Math.exp(-event.deltaY * 0.01), event.clientX - rect.left, event.clientY - rect.top);
+      } else {
+        setView((current) => ({ ...current, x: current.x - event.deltaX, y: current.y - event.deltaY }));
+      }
+    }
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [zoomAt]);
+
+  function onPointerDown(event: ReactPointerEvent<HTMLDivElement>) {
+    if ((event.target as HTMLElement).closest(".dgx-node, .dgx-zoom")) return;
+    drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+  function onPointerMove(event: ReactPointerEvent<HTMLDivElement>) {
+    const state = drag.current;
+    if (!state || state.id !== event.pointerId) return;
+    const dx = event.clientX - state.x;
+    const dy = event.clientY - state.y;
+    if (Math.abs(dx) + Math.abs(dy) > 2) state.moved = true;
+    state.x = event.clientX;
+    state.y = event.clientY;
+    setView((current) => ({ ...current, x: current.x + dx, y: current.y + dy }));
+  }
+  function onPointerUp(event: ReactPointerEvent<HTMLDivElement>) {
+    const state = drag.current;
+    drag.current = null;
+    if (state && !state.moved) onSelect(null);
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
   }
 
+  const center = () => {
+    const rect = box.current?.getBoundingClientRect();
+    return rect ? [rect.width / 2, rect.height / 2] as const : [0, 0] as const;
+  };
+  const byKey = new Map(layout.nodes.map((node) => [node.chunk.chunk_key, node]));
+  const grid = 24 * view.k;
+
   return (
-    <div className="dg-canvas" ref={wrap}>
-      <svg className="dg-edges" width={size.width} height={size.height} aria-hidden="true">
-        {edges.map((edge) => (
-          <path key={edge.id} d={edge.d} className={edge.risk ? "risk" : undefined} />
-        ))}
+    <div
+      className="dgx-canvas"
+      ref={box}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={() => { drag.current = null; }}
+      onDoubleClick={(event) => {
+        if (!(event.target as HTMLElement).closest(".dgx-node, .dgx-zoom")) onAsk(null);
+      }}
+      role="application"
+      aria-label={t("Diagram canvas: drag to move, Ctrl or pinch to zoom")}
+    >
+      <svg className="dgx-grid" aria-hidden="true">
+        <defs>
+          <pattern id="dgx-dots" width={grid} height={grid} patternUnits="userSpaceOnUse"
+            x={view.x % grid} y={view.y % grid}>
+            <circle cx={1} cy={1} r={1} />
+          </pattern>
+        </defs>
+        <rect width="100%" height="100%" fill="url(#dgx-dots)" />
       </svg>
-      {columns.map((column, index) => (
-        <div className="dg-column" key={index}>
-          <div className="dg-column-label">
-            {index === 0 ? t("Start here") : t("Step {n}", { n: index + 1 })}
-          </div>
-          {column.map((chunk) => {
-            const status = statusOf(chunk);
+
+      <div className="dgx-world" style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.k})` }}>
+        <svg className="dgx-edges" width={layout.width} height={layout.height} aria-hidden="true">
+          {layout.nodes.flatMap((node) => node.chunk.depends_on.map((dep) => {
+            const from = byKey.get(dep);
+            if (!from) return null;
+            const x1 = from.x + NODE_W;
+            const y1 = from.y + NODE_H / 2;
+            const x2 = node.x;
+            const y2 = node.y + NODE_H / 2;
+            const bend = Math.max(32, (x2 - x1) / 2);
+            const lit = selected !== null && (selected === dep || selected === node.chunk.chunk_key);
             return (
-              <button
-                key={chunk.chunk_key}
-                type="button"
-                ref={(node) => {
-                  if (node) cards.current.set(chunk.chunk_key, node);
-                  else cards.current.delete(chunk.chunk_key);
-                }}
-                className={`dg-chunk tone-${status.tone}${selected === chunk.chunk_key ? " selected" : ""}`}
-                aria-pressed={selected === chunk.chunk_key}
-                onClick={() => onSelect(chunk.chunk_key)}
-              >
-                <span className="dg-chunk-top">
-                  {chunk.layer === "interface" && <span className="dg-tag">{t("Contract")}</span>}
-                  <span className={`dg-status tone-${status.tone}`}>{t(status.label)}</span>
-                </span>
-                <strong>{chunk.title}</strong>
-                {chunk.block_reason && (status.tone === "risk") && (
-                  <small className="dg-reason">{chunk.block_reason}</small>
-                )}
-              </button>
+              <path key={`${dep}->${node.chunk.chunk_key}`}
+                d={`M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`}
+                className={`${statusOf(node.chunk).tone === "risk" ? "risk" : ""}${lit ? " lit" : ""}`} />
             );
-          })}
-        </div>
-      ))}
+          }))}
+        </svg>
+        {layout.nodes.map(({ chunk, x, y }) => {
+          const status = statusOf(chunk);
+          return (
+            <button
+              key={chunk.chunk_key}
+              type="button"
+              className={`dgx-node tone-${status.tone}${selected === chunk.chunk_key ? " selected" : ""}`}
+              style={{ left: x, top: y, width: NODE_W, height: NODE_H }}
+              aria-pressed={selected === chunk.chunk_key}
+              onClick={() => onSelect(selected === chunk.chunk_key ? null : chunk.chunk_key)}
+              onDoubleClick={() => onAsk(chunk.chunk_key)}
+            >
+              <span className="dg-chunk-top">
+                {chunk.layer === "interface" && <span className="dg-tag">{t("Contract")}</span>}
+                <span className={`dg-status tone-${status.tone}`}>{t(status.label)}</span>
+              </span>
+              <strong>{chunk.title}</strong>
+            </button>
+          );
+        })}
+      </div>
+
+      {layout.nodes.length === 0 && (
+        <div className="dgx-hint">{t("This diagram has no chunks yet.")}</div>
+      )}
+
+      <div className="dgx-float dgx-zoom" role="group" aria-label={t("Zoom")}>
+        <button type="button" aria-label={t("Zoom out")} onClick={() => zoomAt(1 / 1.2, ...center())}>−</button>
+        <span>{Math.round(view.k * 100)}%</span>
+        <button type="button" aria-label={t("Zoom in")} onClick={() => zoomAt(1.2, ...center())}>+</button>
+        <button type="button" onClick={fit}>{t("Fit")}</button>
+      </div>
     </div>
   );
 }
 
 function ChunkPanel({
   chunk,
-  onClose,
   onOpenTask,
+  onAsk,
 }: {
   chunk: Chunk;
-  onClose: () => void;
   onOpenTask: (taskKey: string) => void;
+  onAsk: () => void;
 }) {
   const { t } = useI18n();
   const status = statusOf(chunk);
@@ -663,13 +840,10 @@ function ChunkPanel({
         typeof item === "string" ? item : (item as { text?: string })?.text ?? JSON.stringify(item))
     : [];
   return (
-    <div className="dg-panel">
-      <div className="dg-panel-head">
-        <h3>{chunk.title}</h3>
-        <button type="button" className="icon-button" aria-label={t("Close")} onClick={onClose}>×</button>
-      </div>
+    <div className="dgx-section">
+      <h3>{chunk.title}</h3>
       <span className={`dg-status tone-${status.tone}`}>{t(status.label)}</span>
-      {chunk.scope && <p className="dg-scope">{chunk.scope}</p>}
+      {chunk.scope && <p className="dgx-text">{chunk.scope}</p>}
       {chunk.block_reason && (
         <div className={`dg-note${status.tone === "risk" ? " risk" : ""}`}>{chunk.block_reason}</div>
       )}
@@ -691,11 +865,14 @@ function ChunkPanel({
           </>
         )}
       </dl>
-      {chunk.task_key && (
-        <button type="button" className="button ghost small" onClick={() => onOpenTask(chunk.task_key!)}>
-          {t("Open its task")}
-        </button>
-      )}
+      <div className="dg-panel-actions">
+        <button type="button" className="button ghost small" onClick={onAsk}>{t("Ask for a change here")}</button>
+        {chunk.task_key && (
+          <button type="button" className="button ghost small" onClick={() => onOpenTask(chunk.task_key!)}>
+            {t("Open its task")}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
