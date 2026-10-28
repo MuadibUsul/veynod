@@ -200,7 +200,30 @@ F-03 不能复用 `mcp_connections`，也不能把 CLI 重连当成 peer 续连�
 
 ## 7. 测试运行结果
 
-<!-- TEST-RESULTS -->
+环境：本地 PostgreSQL 16.15 + pgvector 0.6.0（apt `postgresql-16-pgvector`），连接用户 `agentgraph`（superuser，与 CI 的
+`pgvector/pgvector:pg16` 服务一致），Python 3.13，按 `requirements-dev.txt` 安装依赖；被测代码为 HEAD `97ea9eb`，没有改动。
+
+```text
+ruff check app tests                          → All checks passed!
+TEST_DATABASE_URL=… pytest -q                 → 17 failed, 395 passed in 1820.83s (0:30:20)
+```
+
+没有运行 `npm test --prefix cli`、`npm test --prefix protocol`、`npm run build --prefix dashboard`（本任务只审后端基线），
+F-05 动控制台之前要补跑。
+
+17 个失败逐个归类（失败后又单独重跑过有疑问的用例）：
+
+| 类别 | 数量 | 用例 | 原因 | 判断 |
+|---|---|---|---|---|
+| A. 测试没跟上 3.12.0 | 10 | `test_event_delivery::test_task_lifecycle_reaches_creator_and_executor`、`test_phase0_fixes::test_review_targets_match_on_rest_and_mcp[approve-DONE-True]`、`test_phase0_fixes::test_review_rounds_and_history`、`test_poke_delivery::test_verdicts_and_subtasks_poke_the_right_people`、`test_production::test_dependency_becomes_ready_when_parent_is_done`、`test_production::test_approved_task_artifact_becomes_verified`、`test_production::test_backfill_verifies_legacy_artifacts_and_clears_downstream_taint`、`test_security_hardening::test_agent_cannot_review_its_own_handoff`、`test_v3_integration::test_task_project_repo_create_read_list_claim_and_legacy_flow`、`test_v3_integration::test_task_lease_handoff_l2_and_dependencies` | 用例用工作区 key 或 AUDITOR 批准 DONE，返回 403 `role_permission_denied`（“only the human OWNER approves DONE”）。3.12.0 的发布说明写明 `task:approve_done` 改为 OWNER 专属 | 产品行为是有意的，**测试没有更新** |
+| B. 测试没跟上 3.12.0 | 1 | `test_token_delegation::test_bad_deltas_are_refused` | 期望铸造 COMMANDER agent token 返回 422，实际 201。3.12.0 发布说明写明“COMMANDER becomes a mintable agent role”，写操作另外由 `CommanderGrant` 把关 | 有意的，测试没有更新；**不是**提权漏洞 |
+| C. MCP 工具清单漂移 | 2 | `test_root_page::test_root_primitive_list_is_the_full_mcp_surface`、`test_v3_integration::test_mcp_v3_tools` | L3 消息和 SUPER_ADMIN 新增了 `send_message`、`mark_read`、`create_group`、`get_message_receipts`、`update_task` 等工具。根页面的 `ROOT_PRIMITIVES`（`app/root_page.py`，`app/capabilities.py` 会用到）没有列出它们，测试里的期望集合也没有更新 | 根页面和能力描述 **漏列了新工具**（小的产品缺陷），测试期望也要同步 |
+| D. **真实的隔离缺口** | 1 | `test_tenants::test_every_owned_row_carries_a_derived_tenant` | `blobs`、`document_blobs`、`blob_uploads`、`cleanup_grants`、`share_links`（v3.40）这 5 张表有 `workspace_id`，但没有 `tenant_id`，**没有启用 RLS**（`relrowsecurity = false`），`agentgraph_app` 却有完整 CRUD。应用层查询都带了 `workspace_id` 过滤（`app/services/blobs.py`、`share_links.py`），所以目前没有发现可利用的泄露，但这 5 张表少了数据库这一层的隔离 | **产品缺陷**，见 GAP N-12 |
+| E. 环境或测试隔离问题 | 2 | `test_events::test_seq_is_gap_free_under_concurrent_writes`（`httpx.ReadTimeout`，单独重跑也一样）；`test_phase3_r32::test_scheduled_exports`（单独重跑也失败） | 前者在本机并发写 1000 个文档时超时，本机单次写入约 400ms，比 CI 慢；后者推断是 `export_schedule.run_due()` 每轮只处理 `plan()` 返回的前 20 个租户，而测试库里已经积累了全量测试建的大量租户，新租户排不进去 | 不代表产品回归；需要在 CI 的干净库上复核 |
+| F. 需要 owner 判断 | 1 | `test_feedback::test_browser_root_serves_human_page_and_json_stays_available` | 浏览器访问 `/` 返回的落地页里没有 `href="/dashboard/"`（`app/root_page.py` 里有这个链接，但实际返回的是另一张落地页） | 可能是有意改版，也可能是控制台入口丢了 |
+
+结论：**main 上有 13 个测试因为代码已经有意变更而过时（A + B + C 中的测试期望部分）**。又因为 CI 只能手动触发（§3），
+这些红灯没有被发现。联邦任务开工前应该先让测试套件恢复全绿（GAP N-13），否则后面任务“测试通过”的证据没有意义。
 
 ## 8. 假设清单（后续任务需要验证）
 

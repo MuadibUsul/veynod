@@ -19,6 +19,8 @@
 | N-08 | P2 | `outbound_allow_private_networks` 的代码默认值是 True，只靠部署配置关掉 | `app/config.py` | 改成默认 False，开发环境通过 `.env` 打开（会改变开发默认行为，需要确认） | F-06 |
 | N-09 | P2 | README 标题仍写 v3.6.7，实际版本 3.13.1；愿景 v0.3 引用的基线也已经过时（schema 3.40 → 3.48） | `README.md:1` | 联邦文档一律以 `app_version` 和 `CURRENT_SCHEMA_VERSION` 为准 | — |
 | N-11 | P1 | 每次启动都重跑 `sql/init.sql`（含 `DROP/CREATE TRIGGER … ON collab_tasks`，需要 AccessExclusiveLock）；advisory lock 只挡 DDL 之间的并发。本地测试时第二个实例启动，与存活实例的写入形成 **死锁**（PG 日志 00:21:37 UTC），存活实例的写事务被回滚 | `app/database.py` `apply_schema()`；`sql/init.sql:384-385` | schema 已是最新版本时跳过 `init.sql` 和 `sql/functions/*.sql`，或者只在迁移中执行触发器 DDL；增加“滚动重启时写入不失败”的测试 | F-01 |
+| N-12 | P1 | v3.40 的 `blobs`、`document_blobs`、`blob_uploads`、`cleanup_grants`、`share_links` 没有 `tenant_id`、**没有启用 RLS**，应用角色有完整 CRUD；main 上现有回归测试 `test_tenants::test_every_owned_row_carries_a_derived_tenant` 因此失败 | `sql/migrations/v3_40_blobs_share_links.sql`；`app/services/blobs.py`、`share_links.py` | 补一份迁移：加 `tenant_id`、租户派生触发器、强制 RLS 和 `tenant_isolation` 策略，与 `v3_48` 一致（公开分享链接按 `token_hash` 查询的路径要走平台会话或专用函数） | F-01 前置 |
+| N-13 | P1 | main 上全量测试 17 个失败，其中 13 个是因为 3.12.0 有意变更后测试没有更新（DONE 只能由 OWNER 批准、COMMANDER 可铸造、MCP 工具清单），另外根页面的 `ROOT_PRIMITIVES` 漏列了新工具 | 见 CURRENT_BASELINE §7 | 先修复测试和 `ROOT_PRIMITIVES`，让测试套件全绿，再开 F-01；与 N-07 一起处理 | F-01 前置 |
 | N-10 | P2 | SSE 撤销最多晚 30 秒才断流 | `app/api/stream_routes.py` `_stream_events()` | 联邦流在 grant 撤销时主动推送关闭（通过事件），不等下一次轮询 | F-03 / F-04 |
 
 ## 2. 愿景 G01–G18 与源码对照
@@ -96,6 +98,9 @@
 ## 5. P1 开工前必须由人决定的事
 
 以下任何一项没有定，F-01 的表结构都可能返工。详情见 [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md)。
+
+另外有三件工程上的前置工作，不需要产品决策，但需要 owner 同意开工：N-12（给 5 张表补 RLS）、N-13（测试套件恢复全绿）、
+N-11（启动时不再重跑 `init.sql`）。
 
 1. **ADR-009**：服务器能不能读联邦正文（明文 / 端到端加密 / 混合）。这决定 `federation_messages.payload` 存明文还是密文。
 2. **ADR-010**：是否先把数据库连接角色改成非超级用户（N-01）。
