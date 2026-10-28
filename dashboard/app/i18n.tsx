@@ -19,6 +19,8 @@ const ZH: Record<string, string> = {
   "Waiting on earlier chunks": "等前面的块",
   "Waiting for a file": "等文件释放",
   "a person": "一位成员",
+  "Show sidebar": "展开侧边栏",
+  "Hide sidebar": "收起侧边栏",
   "Diagram": "图",
   "Loop": "Loop",
   "More": "更多",

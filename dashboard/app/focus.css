@@ -117,6 +117,24 @@ body::before,
   line-height: 16px;
 }
 
+/* ------------------------------------------------- collapsible sidebar */
+.shell.sidebar-collapsed {
+  grid-template-columns: minmax(0, 1fr);
+}
+.shell.sidebar-collapsed > .sidebar {
+  display: none;
+}
+.topbar {
+  gap: var(--ds-space-3);
+}
+.sidebar-toggle {
+  flex: 0 0 auto;
+}
+.topbar .breadcrumbs {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 /* --------------------------------------------- primary nav and "More" */
 .tab-bar .tab-button {
   font-size: 14px;

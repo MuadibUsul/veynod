@@ -35,6 +35,7 @@ import {
   IconLock,
   IconPlus,
   IconRefresh,
+  IconSidebar,
   IconTasks,
   IconUnlock,
   Modal,
@@ -79,6 +80,7 @@ const CONSOLE_BUILD = "3.6.0";
 const TOKEN_KEY = "agentgraph.admin_token";
 const SESSION_KEY = "agentgraph.session_token";
 const BASE_KEY = "agentgraph.api_base";
+const SIDEBAR_KEY = "veynod.sidebar";
 
 function sessionPath(path: string, workspaceId: string, method: string): string {
   const prefix = `/v1/admin/workspaces/${workspaceId}`;
@@ -185,6 +187,40 @@ export default function ConsolePage() {
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [tab, setTab] = useState<Tab>("diagram");
   const [lastMore, setLastMore] = useState<Tab>("tasks");
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  useEffect(() => {
+    try {
+      setSidebarCollapsed(window.localStorage.getItem(SIDEBAR_KEY) === "collapsed");
+    } catch {
+      // Private windows keep no memory; the sidebar starts open.
+    }
+  }, []);
+  function toggleSidebar() {
+    setSidebarCollapsed((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem(SIDEBAR_KEY, next ? "collapsed" : "open");
+      } catch {
+        // The choice still holds for this page.
+      }
+      return next;
+    });
+  }
+  useEffect(() => {
+    // Ctrl/Cmd + B toggles the sidebar, as in most editors.
+    function onKey(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "b") {
+        const target = event.target as HTMLElement | null;
+        if (target && (target.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))) {
+          return;
+        }
+        event.preventDefault();
+        toggleSidebar();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   useEffect(() => {
     // "More" reopens on whichever secondary view was used last.
     if (!PRIMARY.includes(tab)) setLastMore(tab);
@@ -1240,11 +1276,11 @@ export default function ConsolePage() {
   }
 
   return (
-    <div className="shell" data-console-build={CONSOLE_BUILD} data-session={sessionMode ? "true" : "false"}>
+    <div className={`shell${sidebarCollapsed ? " sidebar-collapsed" : ""}`} data-console-build={CONSOLE_BUILD} data-session={sessionMode ? "true" : "false"}>
       <a className="skip-link" href="#main-content">
         {t("Skip to workspace content")}
       </a>
-      <aside className="sidebar">
+      <aside className="sidebar" id="console-sidebar" hidden={sidebarCollapsed}>
         <div className="brand">
           <div className="brand-mark"><BrandMark size={34} /></div>
           <div>
@@ -1379,6 +1415,17 @@ export default function ConsolePage() {
 
       <main className="main" id="main-content" tabIndex={-1}>
         <header className="topbar">
+          <button
+            type="button"
+            className="icon-button sidebar-toggle"
+            onClick={toggleSidebar}
+            aria-controls="console-sidebar"
+            aria-expanded={!sidebarCollapsed}
+            aria-label={sidebarCollapsed ? t("Show sidebar") : t("Hide sidebar")}
+            title={`${sidebarCollapsed ? t("Show sidebar") : t("Hide sidebar")} (Ctrl+B)`}
+          >
+            <IconSidebar />
+          </button>
           <div className="breadcrumbs">
             <span>{t("Console")}</span>
             <span className="crumb-sep">/</span>
