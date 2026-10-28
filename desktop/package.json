@@ -1,0 +1,14 @@
+{
+  "name": "veynod-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Veynod Windows client: dashboard shell, tray, actionable notifications",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}
