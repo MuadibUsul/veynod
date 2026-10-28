@@ -864,7 +864,9 @@ fn main() {
                         style.textContent = `
                             html, body {
                                 overflow-x: hidden !important;
-                                overscroll-behavior: none !important;
+                                /* overscroll-behavior:none also swallows the
+                                   mouse wheel in WebView2. Keep the default. */
+                                overscroll-behavior: auto !important;
                                 scrollbar-width: none !important;
                             }
                             html { overflow-y: auto !important; }
