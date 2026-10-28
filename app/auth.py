@@ -68,6 +68,7 @@ class Principal:
     can_issue: bool = False
     token_depth: int = 0  # stored depth: root 0, branch 1, child 2...
     max_descendants: int = 0
+    is_probe: bool = False
     # AG-ID-12: an owner/admin of an ancestor sees metadata here; content
     # needs an open admin access session.
     inherited_access: bool = False
@@ -325,6 +326,7 @@ async def _agent_principal(
         can_issue=bool(token.can_issue) and (scopes is None or "token:issue" in scopes),
         token_depth=token.depth,
         max_descendants=token.max_descendants,
+        is_probe=bool(token.is_probe),
         perm_add=frozenset(token.scope_add or []) - removed,
         perm_remove=removed,
         ancestor_signatures=frozenset(item.agent_signature for item in ancestors

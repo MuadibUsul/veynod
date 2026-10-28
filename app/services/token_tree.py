@@ -205,12 +205,14 @@ def _role_for(scopes: list[str], parent: Principal) -> AgentRole:
 
 
 async def _active_count(session: AsyncSession, workspace_id: Any, *,
-                        under: str | None = None) -> int:
+                        under: str | None = None, probe: bool = False) -> int:
+    """Active tokens; probes and business tokens are counted apart (R7)."""
     query = select(func.count()).select_from(AgentToken).where(
         AgentToken.workspace_id == workspace_id,
         AgentToken.is_active.is_(True),
         AgentToken.revoked_at.is_(None),
         (AgentToken.expires_at.is_(None)) | (AgentToken.expires_at > func.now()),
+        AgentToken.is_probe.is_(probe),
     )
     if under is not None:
         query = query.where(AgentToken.lineage.any(under))
@@ -367,21 +369,33 @@ async def issue_child_token(
         raise ApiError(409, "agent_id_taken", "this agent_id is already registered",
                        details={"agent_id": agent_id})
 
+    probe = bool(request.get("probe"))
+    if probe:
+        # R7: a probe never takes a business token's place, nor grows a tree.
+        probes = await _active_count(session, workspace.id, probe=True)
+        if probes >= settings.probe_token_quota:
+            raise ApiError(409, "tree_quota_exceeded", "the workspace has too many probe tokens",
+                           details={"scope": "probe", "limit": settings.probe_token_quota,
+                                    "active": probes})
+        can_issue = False
+        longest = now + timedelta(hours=settings.probe_token_max_ttl_hours)
+        if expires_at is None or expires_at > longest:
+            expires_at = longest
     # Tree quotas count whole trees, not children of one parent (AG-ID-02 point 4).
     workspace_active = await _active_count(session, workspace.id)
-    if workspace_active >= workspace.workspace_token_quota:
+    if not probe and workspace_active >= workspace.workspace_token_quota:
         raise ApiError(409, "tree_quota_exceeded", "the workspace has too many active tokens",
                        details={"scope": "workspace", "limit": workspace.workspace_token_quota,
                                 "active": workspace_active})
     branch_id = None if branch else (parent_lineage[1] if len(parent_lineage) > 1 else None)
-    if branch_id and branch_id != workspace.key_token_id:
+    if branch_id and branch_id != workspace.key_token_id and not probe:
         branch_active = await _active_count(session, workspace.id, under=branch_id)
         if branch_active >= workspace.branch_token_quota:
             raise ApiError(409, "tree_quota_exceeded", "this branch has too many active tokens",
                            details={"scope": "branch", "limit": workspace.branch_token_quota,
                                     "active": branch_active})
     max_descendants = int(request.get("max_descendants") or 0)
-    if principal.auth_kind is AuthKind.AGENT:
+    if principal.auth_kind is AuthKind.AGENT and not probe:
         used = await _active_count(session, workspace.id, under=principal.token_cid) - 1
         remaining = principal.max_descendants - used
         if remaining <= 0:
@@ -444,6 +458,7 @@ async def issue_child_token(
         scopes=sorted(set(scopes)),
         can_issue=can_issue,
         max_descendants=max_descendants,
+        is_probe=probe,
         expires_at=expires_at,
         parent_token_id=parent_id,
         root_token_id=workspace.root_token_id,
@@ -493,6 +508,7 @@ async def issue_child_token(
         "expires_at": expires_at,
         "can_issue": can_issue,
         "max_descendants": max_descendants,
+        "probe": probe,
         "agent_id": agent_id,
         "role_scope": role.value,
     }
