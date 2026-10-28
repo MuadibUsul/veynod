@@ -304,6 +304,10 @@ REGISTRY: dict[str, ErrorSpec] = {
     "google_token_invalid": _spec(401, REAUTH, "Obtain a fresh Google credential."),
     # --- abandon
     "blob_purged": _spec(410, ABANDON, "The attachment is gone; remove the reference."),
+    "blob_not_deleted": _spec(409, ABANDON, "The blob is not deleted; nothing to restore."),
+    "blob_not_recoverable": _spec(
+        409, ABANDON, "The bytes are gone; upload the file again."
+    ),
     "upload_expired": _spec(410, ABANDON, "Start a new upload."),
     "depth_limit_exceeded": _spec(403, ABANDON, "Give up this action."),
     "forbidden": _spec(403, ABANDON, "Give up this action."),

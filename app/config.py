@@ -267,6 +267,9 @@ class Settings(BaseSettings):
     # ------------------------------------------------ blobs (v3.40)
     max_blob_bytes: int = Field(default=100 * 1024 * 1024, ge=1)
     blob_unreferenced_ttl_days: int = Field(default=30, ge=0, le=3650)
+    # Under semi or full automation an agent's delete keeps the bytes this long
+    # so a person can restore them (Loop A-06); then the GC purges them.
+    blob_delete_retention_days: int = Field(default=7, ge=1, le=365)
     blob_base64_ratio: float = Field(default=0.80, ge=0.0, le=1.0)
     blob_base64_min_bytes: int = Field(default=64 * 1024, ge=1)
     agent_daily_document_limit: int = Field(default=100, ge=1)
