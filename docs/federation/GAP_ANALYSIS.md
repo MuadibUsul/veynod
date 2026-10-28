@@ -99,6 +99,9 @@
 
 以下任何一项没有定，F-01 的表结构都可能返工。详情见 [ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md)。
 
+> **2026-10-28 更新**：owner 授权执行方自行决定，下列各项都已在 ARCHITECTURE_DECISIONS.md 中登记了采纳的选项。
+> 三件工程前置（N-11、N-12、N-13）连同 N-07 也已经决定先做，放在单独的“F-01 前置”任务里。
+
 另外有三件工程上的前置工作，不需要产品决策，但需要 owner 同意开工：N-12（给 5 张表补 RLS）、N-13（测试套件恢复全绿）、
 N-11（启动时不再重跑 `init.sql`）。
 
