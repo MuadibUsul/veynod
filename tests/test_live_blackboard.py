@@ -342,3 +342,33 @@ async def test_delivery_rates_and_presence_history(client, admin_headers, worksp
         f"/v1/admin/workspaces/{workspace['workspace']['id']}/presence/delivery",
         headers=admin_headers)
     assert console.status_code == 200, console.text
+
+
+async def test_stuck_task_alert_and_wake_coverage(client, admin_headers, workspace):
+    """Blueprint L6: work left by a holder that died is raised within the hour."""
+    owner = workspace["headers"]
+    ws_id = workspace["workspace"]["id"]
+    agent, _, agent_id = await _agent(client, admin_headers, workspace)
+    made = await client.post("/v1/tasks", headers=owner, json={"title": "left behind",
+                                                               "namespace": "default"})
+    key = made.json()["task_key"]
+    # The holder's lease expired 40 minutes ago and nobody picked the task up.
+    await _sql("UPDATE collab_tasks SET orphaned_from = 'gone-agent', orphan_count = 1, "
+               "updated_at = NOW() - INTERVAL '40 minutes' WHERE workspace_id = $1::uuid "
+               "AND task_key = $2", ws_id, key)
+    found = None
+    for _ in range(90):
+        alerts = (await client.get(f"/v1/admin/workspaces/{ws_id}/alerts",
+                                   headers=admin_headers)).json()["items"]
+        found = next((item for item in alerts if item["rule"] == "stuck_task"), None)
+        if found:
+            break
+        await asyncio.sleep(1)
+    assert found is not None and found["severity"] == "high"
+    assert found["subject"]["ref"] == key
+
+    coverage = (await client.get("/v1/presence", headers=owner)).json()["wake_coverage"]
+    assert coverage == {"agents": 1, "with_wake_channel": 0, "rate": 0.0}
+    await client.put("/v1/agents/me/wake", headers=agent, json={"url": "https://example.com/w"})
+    coverage = (await client.get("/v1/presence", headers=owner)).json()["wake_coverage"]
+    assert coverage["rate"] == 1.0, agent_id

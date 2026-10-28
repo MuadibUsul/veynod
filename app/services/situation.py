@@ -36,7 +36,7 @@ NOTIFY_EVERY = timedelta(minutes=30)
 RULES = {
     "retry_storm": "high", "idle_spin": "medium", "unclaimed_task": "medium",
     "repeated_orphan": "high", "conflict_anomaly": "medium", "cost_anomaly": "high",
-    "index_backlog": "high", "taint_spread": "high",
+    "index_backlog": "high", "taint_spread": "high", "stuck_task": "high",
 }
 
 _Key = tuple[str, str, datetime]
@@ -191,6 +191,18 @@ async def _findings(session: AsyncSession) -> list[dict[str, Any]]:
             "INTERVAL '2 hours' LIMIT 500"))).mappings():
         add("unclaimed_task", row["workspace_id"], "task", row["task_key"],
             id=row["canonical_id"], ready_since=row["updated_at"].isoformat())
+    # Blueprint L6: work stuck without anyone on it is raised within the hour.
+    # A holder that died left it orphaned (lease expired, back to READY), or a
+    # handoff waits for a next holder that never came.
+    for row in (await session.execute(text(
+            "SELECT workspace_id, task_key, canonical_id, status, orphaned_from, updated_at "
+            "FROM collab_tasks WHERE kind <> 'escalation' AND ((status = 'READY' AND "
+            "orphaned_from IS NOT NULL AND updated_at < NOW() - INTERVAL '30 minutes') OR "
+            "(status = 'HANDOFF' AND updated_at < NOW() - INTERVAL '45 minutes')) "
+            "LIMIT 500"))).mappings():
+        add("stuck_task", row["workspace_id"], "task", row["task_key"],
+            id=row["canonical_id"], status=row["status"], orphaned_from=row["orphaned_from"],
+            waiting_since=row["updated_at"].isoformat())
     for row in (await session.execute(text(
             "SELECT workspace_id, task_key, canonical_id, orphan_count FROM collab_tasks "
             "WHERE orphan_count >= 2 AND status NOT IN ('DONE', 'FAILED', 'CANCELLED') "

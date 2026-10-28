@@ -53,6 +53,9 @@ RELEASE_NOTES: list[dict[str, Any]] = [
             "--key-file; veynod service install|uninstall|status runs listen as a systemd "
             "user service, a LaunchAgent or a hidden Windows logon task that restarts "
             "itself; veynod service audit lists watchdog tasks that open console windows.",
+            "Situation alert stuck_task (high): a task its holder left (orphaned, back to "
+            "READY) unclaimed for 30 minutes, or a handoff waiting 45 minutes, is raised "
+            "within the hour. GET /v1/presence reports wake_coverage.",
         ],
     },
     {

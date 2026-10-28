@@ -201,7 +201,11 @@ async def list_states(session: AsyncSession, principal: Principal) -> dict[str, 
         items.append({"agent_id": row["agent_id"], "display_name": row["display_name"],
                       **describe(row)})
     counts = {state: sum(1 for item in items if item["state"] == state) for state in STATES}
-    return {"items": sorted(items, key=lambda item: item["agent_id"]), "counts": counts}
+    # Blueprint L6: every agent re-handshakes with a wake channel (target 100 %).
+    with_wake = sum(1 for item in items if item["wake"] is not None)
+    return {"items": sorted(items, key=lambda item: item["agent_id"]), "counts": counts,
+            "wake_coverage": {"agents": len(items), "with_wake_channel": with_wake,
+                              "rate": _rate(with_wake, len(items))}}
 
 
 # ------------------------------------------------------------- observability

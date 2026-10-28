@@ -258,6 +258,10 @@ Migration 3.49.0. Tasks `live-blackboard-impl` (spec `agentgraph/spec-live-black
 | Delivery observability (L2, L6) | Done | `GET /v1/presence/delivery?window=` (addressed, pushed live, wake failures, read, per agent) and `/v1/presence/history`. |
 | Silent-loop detection (L2) | Done | A 5-second presence loop judges against an 85 s window, so a killed loop is announced within 90 s of its last heartbeat (measured: 82 s after `kill -9` of `veynod listen`). |
 | Resident runtime, CLI 0.3.0 (L4) | Code done | `listen` heartbeats every 30 s and takes `--key-file`; `veynod service install/uninstall/status` (systemd user unit, LaunchAgent, hidden Windows logon task through `wscript`, restart within 5 s); `veynod service audit` lists watchdog tasks that open console windows (L4 step one). The 7-day run, the watchdog itself and migrating the Dou, zcode and CCLocal hosts happen on those machines. |
+| Stuck-task alerts (L6) | Done | Situation rule `stuck_task` (high): READY with `orphaned_from` for 30 minutes, or HANDOFF for 45 minutes; evaluated every minute, so raised within the hour. Labelled in the Situation tab. |
+| Re-handshake coverage (L6) | Metric done | `GET /v1/presence` → `wake_coverage` (agents with a wake channel / all). Getting it to 100 % means each agent registers a wake URL or runs `veynod service install`. |
+| Poke retirement (L6, spec-realtime-messaging M-13) | Open | Assignment, mention and handoff wakes already go through the same wake webhooks and stream as messages; renaming or removing the poke surface is the owner's call. |
+| Call-cost (L6, feedback-call-cost) | Already in place | The `batch` tool and `detail=summary` answer both proposals of that document. |
 | Stream drops under concurrency | Fixed | `/v1/stream` and the console stream deduplicated by "id <= highest seen"; ids are assigned at insert and transactions commit in their own order, so concurrent writes were dropped (11 of 12 in the regression test). Frames now carry `type` and `targets`. |
 
 ## Open gaps found 2026-10-25
