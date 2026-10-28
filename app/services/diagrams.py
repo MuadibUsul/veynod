@@ -27,8 +27,10 @@ cannot drift from the task board (M-08): the board is the truth.
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
+import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -41,10 +43,15 @@ from app.errors import ApiError, Forbidden, NotFound
 from app.services.common import append_event
 
 LAYERS = ("interface", "implementation")
-IN_FLIGHT = ("dispatched", "in_progress", "awaiting_gate", "ready_to_merge", "merged")
+IN_FLIGHT = ("dispatched", "in_progress", "awaiting_gate", "awaiting_ci", "awaiting_review",
+             "ready_to_merge", "merged")
 SELF_CHECK = ("big", "stable", "machine_checkable", "long")
 CHUNK_FIELDS = ("title", "scope", "layer", "icd", "done_criteria", "depends_on",
-                "allowed_write_paths", "read_only_interfaces")
+                "allowed_write_paths", "read_only_interfaces", "commands", "semantic_rules")
+# M-20: the semantic review checks these three, and only these (plus a chunk's own rules).
+DEFAULT_RULES = ("no_cheating", "contract_compliance", "no_architecture_rot")
+PANES = ("left", "middle", "right")  # M-21: contract, diff, sandbox evidence
+STAGES = ("compile", "lint", "test")  # M-19
 
 
 def _now() -> datetime:
@@ -101,6 +108,10 @@ def _clean_chunk(raw: dict[str, Any]) -> dict[str, Any]:
         "depends_on": [str(item) for item in raw.get("depends_on") or []],
         "allowed_write_paths": [str(item) for item in raw.get("allowed_write_paths") or []],
         "read_only_interfaces": [str(item) for item in raw.get("read_only_interfaces") or []],
+        "commands": {stage: str(cmd) for stage, cmd in (raw.get("commands") or {}).items()
+                     if stage in STAGES and cmd},
+        "semantic_rules": [str(item) for item in raw.get("semantic_rules") or []
+                           if str(item) not in DEFAULT_RULES],
     }
 
 
@@ -147,6 +158,21 @@ def _validate_graph(chunks: list[dict[str, Any]]) -> None:
 
     for key in graph:
         visit(key, [])
+
+
+def contract_first(chunks: list[dict[str, Any]]) -> list[str]:
+    """M-13: the chunks nothing depends on upstream are contracts, never implementation."""
+    return sorted(chunk["chunk_key"] for chunk in chunks
+                  if chunk.get("state") != "retired" and not chunk["depends_on"]
+                  and chunk["layer"] != "interface")
+
+
+def _require_contract_first(chunks: list[dict[str, Any]]) -> None:
+    roots = contract_first(chunks)
+    if roots:
+        raise ApiError(422, "contract_first", "chunks with no upstream must be interface "
+                       "(contract) chunks: give these a contract to depend on (spec M-13)",
+                       details={"implementation_roots": roots})
 
 
 def self_check_risk(self_check: dict[str, Any]) -> dict[str, Any]:
@@ -199,6 +225,18 @@ def status_of(chunk: dict[str, Any], task: dict[str, Any] | None) -> str:
     if state in ("pending", "blocked", "merged", "retired"):
         return state
     gate = chunk.get("gate") or {}
+    submission = chunk.get("submission") or {}
+    if submission:  # the automation path (M-17, M-19, M-20)
+        if state == "rework" or not submission.get("accepted"):
+            return "rework"
+        ci = chunk.get("ci") or {}
+        if ci.get("commit") != submission.get("commit"):
+            return "awaiting_ci"
+        if not ci.get("green"):
+            return "rework"
+        if gate.get("submission_at") != submission.get("at"):
+            return "awaiting_review"
+        return "ready_to_merge" if gate.get("result") == "pass" else "rework"
     if task is None:
         return "rework" if state == "rework" else "dispatched"
     status = task["status"]
@@ -226,13 +264,28 @@ def _content_hash(chunks: list[dict[str, Any]], layer: str | None = None) -> str
 
 
 async def _event(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
-                 event_type: str, **details: Any) -> None:
-    await append_event(
-        session, workspace_id=principal.workspace.id, agent=_me(principal),
-        event_type=event_type, namespace=diagram["namespace"],
-        payload={"diagram_key": diagram["diagram_key"], "doc_key": diagram["doc_key"],
-                 "task_key": details.get("task_key"),
-                 "details": {"diagram_key": diagram["diagram_key"], **details}})
+                 event_type: str, *, targets: list[str] | None = None, **details: Any) -> None:
+    """A timeline event; targets are poked (inbox, stream, wake webhook)."""
+    payload: dict[str, Any] = {
+        "diagram_key": diagram["diagram_key"], "doc_key": diagram["doc_key"],
+        "task_key": details.get("task_key"),
+        "details": {"diagram_key": diagram["diagram_key"], **details}}
+    if targets:
+        payload["targets"] = sorted(set(targets))
+    await append_event(session, workspace_id=principal.workspace.id, agent=_me(principal),
+                       event_type=event_type, namespace=diagram["namespace"], payload=payload)
+
+
+_WATCHER = re.compile(r"^(agent|human):[A-Za-z0-9_.:@-]{1,150}$")
+
+
+def _watchers(raw: Any) -> list[str]:
+    items = [str(item) for item in raw or []]
+    bad = [item for item in items if not _WATCHER.match(item)]
+    if bad:
+        raise ApiError(422, "validation_error", "watchers are agent:<id> or human:<id>",
+                       details={"invalid": bad})
+    return sorted(set(items))
 
 
 async def _write_document(session: AsyncSession, principal: Principal,
@@ -289,11 +342,12 @@ async def create(session: AsyncSession, principal: Principal,
     self_check = {item: body.get("self_check", {}).get(item) for item in SELF_CHECK}
     row = (await session.execute(text(
         "INSERT INTO diagrams (workspace_id, diagram_key, title, namespace, doc_key, "
-        "description, self_check, created_by) VALUES (:ws, :k, :t, :ns, :doc, :d, "
-        "CAST(:sc AS jsonb), :by) RETURNING *"),
+        "description, self_check, watchers, created_by) VALUES (:ws, :k, :t, :ns, :doc, :d, "
+        "CAST(:sc AS jsonb), CAST(:wa AS text[]), :by) RETURNING *"),
         {"ws": principal.workspace.id, "k": key, "t": str(body.get("title") or key)[:256],
          "ns": namespace, "doc": f"diagrams/{key}", "d": body.get("description"),
-         "sc": json.dumps(self_check), "by": _me(principal)})).mappings().one()
+         "sc": json.dumps(self_check), "wa": _watchers(body.get("watchers")),
+         "by": _me(principal)})).mappings().one()
     diagram = dict(row)
     for chunk in chunks:
         await _insert_chunk(session, principal, diagram, chunk)
@@ -310,15 +364,16 @@ async def _insert_chunk(session: AsyncSession, principal: Principal, diagram: di
                         increment_of: str | None = None) -> None:
     await session.execute(text(
         "INSERT INTO diagram_chunks (workspace_id, diagram_id, chunk_key, title, scope, layer, "
-        "icd, done_criteria, depends_on, allowed_write_paths, read_only_interfaces, origin, "
-        "increment_of, created_in_version) VALUES (:ws, :d, :k, :t, :s, :l, CAST(:icd AS jsonb), "
-        "CAST(:dc AS jsonb), CAST(:deps AS text[]), CAST(:w AS text[]), CAST(:r AS text[]), "
-        ":o, :inc, :v)"),
+        "icd, done_criteria, depends_on, allowed_write_paths, read_only_interfaces, commands, "
+        "semantic_rules, origin, increment_of, created_in_version) VALUES (:ws, :d, :k, :t, :s, "
+        ":l, CAST(:icd AS jsonb), CAST(:dc AS jsonb), CAST(:deps AS text[]), CAST(:w AS text[]), "
+        "CAST(:r AS text[]), CAST(:cmd AS jsonb), CAST(:rules AS text[]), :o, :inc, :v)"),
         {"ws": principal.workspace.id, "d": diagram["id"], "k": chunk["chunk_key"],
          "t": chunk["title"], "s": chunk["scope"], "l": chunk["layer"],
          "icd": json.dumps(chunk["icd"]), "dc": json.dumps(chunk["done_criteria"]),
          "deps": chunk["depends_on"], "w": chunk["allowed_write_paths"],
-         "r": chunk["read_only_interfaces"], "o": origin, "inc": increment_of,
+         "r": chunk["read_only_interfaces"], "cmd": json.dumps(chunk["commands"]),
+         "rules": chunk["semantic_rules"], "o": origin, "inc": increment_of,
          "v": diagram["version"]})
 
 
@@ -362,6 +417,7 @@ async def confirm(session: AsyncSession, principal: Principal, key: str) -> dict
     chunks = await _chunks(session, diagram["id"])
     if not chunks:
         raise ApiError(422, "validation_error", "a diagram needs at least one chunk")
+    _require_contract_first(chunks)
     diagram = dict((await session.execute(text(
         "UPDATE diagrams SET status = 'confirmed', confirmed_by = :by, confirmed_at = NOW(), "
         "updated_at = NOW() WHERE id = :id RETURNING *"),
@@ -433,32 +489,73 @@ async def _dispatch_one(session: AsyncSession, principal: Principal, diagram: di
                         chunks: dict[str, dict[str, Any]]) -> dict[str, Any]:
     waiting = [dep for dep in chunk["depends_on"]
                if chunks.get(dep, {}).get("state") != "merged"]
+    kind, reason, detail = None, None, {}
     if waiting:
+        kind = "dependency"
         reason = "waiting on " + ", ".join(
             f"{dep} ({chunks[dep]['state'] if dep in chunks else 'missing'})" for dep in waiting)
+        detail = {"waiting_on": waiting}
+    else:
+        locks = await _lock_conflicts(session, principal, chunk)
+        if locks:
+            kind = "file_lock"
+            reason = "file lock: " + ", ".join(
+                f"{item['path']} held by {item['diagram_key']}/{item['chunk_key']}"
+                for item in locks)
+            detail = {"locked_by": locks}
+    if kind:
         await session.execute(text(
-            "UPDATE diagram_chunks SET state = 'blocked', block_reason = :r, updated_at = NOW() "
-            "WHERE id = :id"), {"r": reason, "id": chunk["id"]})
+            "UPDATE diagram_chunks SET state = 'blocked', block_reason = :r, block_kind = :k, "
+            "updated_at = NOW() WHERE id = :id"), {"r": reason, "k": kind, "id": chunk["id"]})
         if chunk["state"] != "blocked" or chunk["block_reason"] != reason:
             await _event(session, principal, diagram, "CHUNK_BLOCKED",
-                         chunk_key=chunk["chunk_key"], reason=reason, waiting_on=waiting)
-        return {"chunk_key": chunk["chunk_key"], "state": "blocked", "block_reason": reason,
-                "waiting_on": waiting}
-    task_key = await _create_task(session, principal, diagram, chunk, chunks)
+                         chunk_key=chunk["chunk_key"], reason=reason, block_kind=kind, **detail)
+        return {"chunk_key": chunk["chunk_key"], "state": "blocked", "block_kind": kind,
+                "block_reason": reason, **detail}
+    task_key, context_slice = await _create_task(session, principal, diagram, chunk, chunks)
     await session.execute(text(
-        "UPDATE diagram_chunks SET state = 'dispatched', block_reason = NULL, task_key = :t, "
-        "updated_at = NOW() WHERE id = :id"), {"t": task_key, "id": chunk["id"]})
+        "UPDATE diagram_chunks SET state = 'dispatched', block_reason = NULL, block_kind = NULL, "
+        "task_key = :t, context_slice = CAST(:cs AS jsonb), updated_at = NOW() WHERE id = :id"),
+        {"t": task_key, "cs": json.dumps(context_slice), "id": chunk["id"]})
     await _event(session, principal, diagram, "CHUNK_DISPATCHED", chunk_key=chunk["chunk_key"],
                  task_key=task_key, version=diagram["version"])
     return {"chunk_key": chunk["chunk_key"], "state": "dispatched", "task_key": task_key}
 
 
+def _overlaps(left: str, right: str) -> bool:
+    return left == right or fnmatch.fnmatchcase(left, right) or fnmatch.fnmatchcase(right, left)
+
+
+async def _lock_conflicts(session: AsyncSession, principal: Principal,
+                          chunk: dict[str, Any]) -> list[dict[str, Any]]:
+    """M-18: a dispatched, unmerged chunk locks its write paths, across diagrams."""
+    if not chunk["allowed_write_paths"]:
+        return []
+    rows = (await session.execute(text(
+        "SELECT c.chunk_key, c.allowed_write_paths, d.diagram_key FROM diagram_chunks c "
+        "JOIN diagrams d ON d.id = c.diagram_id WHERE c.workspace_id = :ws AND c.id <> :id "
+        "AND c.state IN ('dispatched', 'rework')"),
+        {"ws": principal.workspace.id, "id": chunk["id"]})).mappings().all()
+    conflicts = []
+    for row in rows:
+        for path in chunk["allowed_write_paths"]:
+            held = next((item for item in row["allowed_write_paths"] if _overlaps(path, item)),
+                        None)
+            if held:
+                conflicts.append({"path": path, "held_path": held,
+                                  "diagram_key": row["diagram_key"],
+                                  "chunk_key": row["chunk_key"]})
+    return conflicts
+
+
 async def _create_task(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
-                       chunk: dict[str, Any], chunks: dict[str, dict[str, Any]]) -> str:
-    """§2 / §14 mapping: title, the diagram document, done criteria as acceptance,
-    and the dispatch slice (contract, upstream interfaces, write scope) in
-    input_context. Upstream implementation is never included (M-16)."""
-    from app.schemas import AcceptanceItem, DocRef, TaskCreateRequest
+                       chunk: dict[str, Any],
+                       chunks: dict[str, dict[str, Any]]) -> tuple[str, dict[str, Any]]:
+    """M-16 context slicing: the executor gets exactly three things, the chunk's
+    description with its acceptance, its direct upstream interfaces, and its
+    write scope. No diagram document, no repository, no upstream implementation,
+    no other chunk; what was injected and from where is kept on the chunk."""
+    from app.schemas import AcceptanceItem, TaskCreateRequest
     from app.services.tasks import _create_task_core
 
     upstream = {dep: {"icd": chunks[dep]["icd"], "layer": chunks[dep]["layer"],
@@ -478,7 +575,6 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
         namespace=diagram["namespace"],
         # Chunks are implementation work, whoever dispatches them.
         assigned_role="EXECUTOR",
-        context_docs=[DocRef(namespace=diagram["namespace"], doc_key=diagram["doc_key"])],
         acceptance=[AcceptanceItem(id=f"DC-{index + 1}", kind="AUTO", text=criterion[:2_000])
                     for index, criterion in enumerate(chunk["done_criteria"][:50])],
         done_definition="All done criteria pass, the gate passes, and someone other than "
@@ -490,11 +586,25 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
             "upstream_interfaces": upstream,
             "allowed_write_paths": chunk["allowed_write_paths"],
             "read_only_interfaces": chunk["read_only_interfaces"],
+            "commands": chunk["commands"],
+            "submit_with": f"POST /v1/diagrams/{diagram['diagram_key']}/chunks/"
+                           f"{chunk['chunk_key']}/submit",
         },
     )
     task = await _create_task_core(session, principal, request, agent=_me(principal),
                                    batch=uuid.uuid4(), commit=False)
-    return task.task_key
+    baseline = (diagram.get("baseline") or {}).get("version")
+    context_slice = {
+        "description_and_acceptance": {"source": f"chunk {chunk['chunk_key']}",
+                                       "acceptance": len(chunk["done_criteria"])},
+        "upstream_interfaces": {dep: {"source": f"chunk {dep} at baseline {baseline}",
+                                      "files": upstream[dep]["read_only_interfaces"]}
+                                for dep in upstream},
+        "write_scope": chunk["allowed_write_paths"],
+        "not_injected": ["repository", "upstream implementation", "other chunks",
+                         "diagram document"],
+    }
+    return task.task_key, context_slice
 
 
 # ------------------------------------------------------------------ gate and merge
@@ -555,6 +665,8 @@ async def gate(session: AsyncSession, principal: Principal, key: str, chunk_key:
     record = {"result": result, "evidence": evidence, "checks": body.get("checks") or [],
               "by": _me(principal), "at": _now().isoformat(),
               "task_version": task["version"] if task else None}
+    if chunk.get("submission"):
+        record.update(_semantic_review(chunk, body, result))
     await session.execute(text(
         "UPDATE diagram_chunks SET gate = CAST(:g AS jsonb), state = :s, updated_at = NOW() "
         "WHERE id = :id"),
@@ -565,6 +677,178 @@ async def gate(session: AsyncSession, principal: Principal, key: str, chunk_key:
     await session.commit()
     return {"chunk_key": chunk_key, "gate": record,
             "status": "ready_to_merge" if result == "pass" else "rework"}
+
+
+def _semantic_review(chunk: dict[str, Any], body: dict[str, Any], result: str) -> dict[str, Any]:
+    """M-20 / M-21. Only a green sandbox wakes the review; the review answers the
+    three default checks plus the chunk's own rules, nothing else (no compile or
+    style re-checks); a rejection names the pane of the triptych that disagrees."""
+    submission = chunk.get("submission") or {}
+    ci = chunk.get("ci") or {}
+    if not submission.get("accepted"):
+        raise ApiError(409, "submission_rejected", "the latest submission broke its write "
+                       "scope and never reached review (spec M-17)")
+    if ci.get("commit") != submission.get("commit") or not ci.get("green"):
+        raise ApiError(409, "ci_not_green", "review starts only on a green sandbox run for "
+                       "the current submission (spec M-19)",
+                       details={"ci": {"commit": ci.get("commit"), "green": ci.get("green")},
+                                "submission": submission.get("commit")})
+    rules = list(DEFAULT_RULES) + list(chunk.get("semantic_rules") or [])
+    checks = body.get("semantic")
+    if not isinstance(checks, dict):
+        raise ApiError(422, "validation_error", "semantic is an object with one entry per "
+                       "review rule", details={"rules": rules})
+    extra = sorted(set(checks) - set(rules))
+    missing = [rule for rule in rules if rule not in checks]
+    if extra or missing:
+        raise ApiError(422, "review_out_of_scope", "the review answers exactly its rules: "
+                       "the sandbox already covered compilation and tests (spec M-20)",
+                       details={"rules": rules, "extra": extra, "missing": missing})
+    answers = {}
+    for rule in rules:
+        item = checks[rule] if isinstance(checks[rule], dict) else {"result": checks[rule]}
+        if item.get("result") not in ("pass", "fail"):
+            raise ApiError(422, "validation_error", f"{rule}: result is pass or fail")
+        answers[rule] = {"result": item["result"], "note": item.get("note")}
+    failing = [rule for rule, item in answers.items() if item["result"] == "fail"]
+    if (result == "pass") == bool(failing):
+        raise ApiError(422, "validation_error", "result is fail exactly when a rule fails",
+                       details={"failing": failing})
+    pane = body.get("inconsistent_pane")
+    if result == "fail" and pane not in PANES:
+        raise ApiError(422, "validation_error", "a rejection names the pane that disagrees: "
+                       "left (contract), middle (diff) or right (sandbox evidence) (spec M-21)")
+    return {"semantic": answers, "inconsistent_pane": pane if result == "fail" else None,
+            "submission_at": submission.get("at"), "commit": submission.get("commit")}
+
+
+def _outside_scope(chunk: dict[str, Any], diagram: dict[str, Any],
+                   files: list[str]) -> list[dict[str, str]]:
+    """M-17 / M-15: files outside the white list, or frozen interface files."""
+    frozen = set((diagram.get("baseline") or {}).get("frozen_files") or [])
+    problems = []
+    for path in files:
+        if not any(fnmatch.fnmatchcase(path, allowed) for allowed in chunk["allowed_write_paths"]):
+            problems.append({"path": path, "why": "outside allowed_write_paths"})
+        elif chunk["layer"] != "interface" and any(fnmatch.fnmatchcase(path, item)
+                                                   for item in frozen):
+            problems.append({"path": path, "why": "frozen interface file"})
+    return problems
+
+
+async def submit(session: AsyncSession, principal: Principal, key: str, chunk_key: str,
+                 body: dict[str, Any]) -> dict[str, Any]:
+    """M-17: the implementer's submission (changed files, commit, diff). A file
+    outside the write scope vetoes it at once: back to the implementer with the
+    list, and no reviewer is ever woken (zero review cost)."""
+    files = [str(item) for item in body.get("files") or []]
+    commit = str(body.get("commit") or "").strip()
+    if not files or not commit:
+        raise ApiError(422, "validation_error", "a submission lists its changed files and commit")
+    diagram, chunk, task = await _chunk_with_task(session, principal, key, chunk_key)
+    if chunk["state"] not in ("dispatched", "rework"):
+        raise ApiError(409, "invalid_transition", f"chunk '{chunk_key}' is {chunk['state']}")
+    implementers = await _implementers(session, principal, task, chunk["task_key"])
+    if not principal.is_human and _me(principal) not in implementers:
+        raise Forbidden("only the chunk's implementer submits it")
+    violations = _outside_scope(chunk, diagram, files)
+    record = {"files": files, "commit": commit, "branch": body.get("branch"),
+              "diff": (body.get("diff") or "")[:200_000], "diff_url": body.get("diff_url"),
+              "by": _me(principal), "at": _now().isoformat(), "accepted": not violations,
+              "violations": violations}
+    await session.execute(text(
+        "UPDATE diagram_chunks SET submission = CAST(:sub AS jsonb), state = :s, gate = NULL, "
+        "updated_at = NOW() WHERE id = :id"),
+        {"sub": json.dumps(record), "s": "rework" if violations else "dispatched",
+         "id": chunk["id"]})
+    if violations:
+        await _event(session, principal, diagram, "CHUNK_SUBMISSION_REJECTED",
+                     chunk_key=chunk_key, task_key=chunk["task_key"], commit=commit,
+                     violations=violations, targets=sorted(implementers - {_me(principal)})
+                     or None)
+    else:
+        await _event(session, principal, diagram, "CHUNK_SUBMITTED", chunk_key=chunk_key,
+                     task_key=chunk["task_key"], commit=commit, files=len(files))
+    await session.commit()
+    return {"chunk_key": chunk_key, "accepted": not violations, "violations": violations,
+            "status": "rework" if violations else "awaiting_ci",
+            "commands": chunk["commands"]}
+
+
+async def record_ci(session: AsyncSession, principal: Principal, key: str, chunk_key: str,
+                    body: dict[str, Any]) -> dict[str, Any]:
+    """M-19: the sandbox runs compile, lint (optional) and test. Any non-zero exit
+    returns the chunk to its implementer with stderr verbatim, without waking a
+    reviewer; the chunk keeps a short summary, the implementer gets the original."""
+    results = body.get("results") or {}
+    unknown = sorted(set(results) - set(STAGES))
+    if unknown or not isinstance(results, dict):
+        raise ApiError(422, "validation_error", "results has compile, lint and test",
+                       details={"unknown": unknown})
+    missing = [stage for stage in ("compile", "test") if stage not in results]
+    if missing:
+        raise ApiError(422, "validation_error", "compile and test results are required",
+                       details={"missing": missing})
+    diagram, chunk, task = await _chunk_with_task(session, principal, key, chunk_key)
+    submission = chunk.get("submission") or {}
+    if not submission.get("accepted"):
+        raise ApiError(409, "no_submission", "the sandbox runs on an accepted submission")
+    commit = str(body.get("commit") or submission["commit"])
+    if commit != submission["commit"]:
+        raise ApiError(409, "stale_ci", "this result is for an older submission",
+                       details={"result_commit": commit, "submission": submission["commit"]})
+    implementers = await _implementers(session, principal, task, chunk["task_key"])
+    if _me(principal) in implementers:
+        raise Forbidden("the implementer does not report its own sandbox run")
+    stages, failed = {}, []
+    for stage, item in results.items():
+        item = item if isinstance(item, dict) else {}
+        code = int(item.get("exit_code", 1))
+        stderr = str(item.get("stderr") or "")
+        stages[stage] = {"exit_code": code, "cmd": item.get("cmd") or chunk["commands"].get(stage),
+                         "stderr_summary": stderr[:500], "coverage": item.get("coverage")}
+        if code != 0:
+            failed.append((stage, stderr))
+    record = {"commit": commit, "green": not failed, "stages": stages,
+              "by": _me(principal), "at": _now().isoformat()}
+    await session.execute(text(
+        "UPDATE diagram_chunks SET ci = CAST(:ci AS jsonb), state = :s, updated_at = NOW() "
+        "WHERE id = :id"),
+        {"ci": json.dumps(record), "s": "rework" if failed else "dispatched", "id": chunk["id"]})
+    if failed:
+        # Straight to the implementer, stderr as the compiler wrote it.
+        await _event(session, principal, diagram, "CHUNK_CI_FAILED", chunk_key=chunk_key,
+                     task_key=chunk["task_key"], commit=commit,
+                     failed=[stage for stage, _ in failed],
+                     stderr={stage: text_[:60_000] for stage, text_ in failed},
+                     targets=sorted(implementers) or None)
+    else:
+        await _event(session, principal, diagram, "CHUNK_CI_PASSED", chunk_key=chunk_key,
+                     task_key=chunk["task_key"], commit=commit)
+    await session.commit()
+    return {"chunk_key": chunk_key, "ci": record,
+            "status": "rework" if failed else "awaiting_review",
+            "review_woken": not failed}
+
+
+async def triptych(session: AsyncSession, principal: Principal, key: str,
+                   chunk_key: str) -> dict[str, Any]:
+    """M-21: the three panes a reviewer compares, and nothing else of the repository."""
+    diagram, chunk, task = await _chunk_with_task(session, principal, key, chunk_key)
+    submission = chunk.get("submission") or {}
+    ci = chunk.get("ci") or {}
+    return {
+        "chunk_key": chunk_key, "status": status_of(chunk, task),
+        "left": {"contract": chunk["icd"], "done_criteria": chunk["done_criteria"],
+                 "layer": chunk["layer"],
+                 "baseline_version": (diagram.get("baseline") or {}).get("version"),
+                 "review_rules": list(DEFAULT_RULES) + list(chunk["semantic_rules"])},
+        "middle": {"commit": submission.get("commit"), "files": submission.get("files"),
+                   "diff": submission.get("diff"), "diff_url": submission.get("diff_url"),
+                   "accepted": submission.get("accepted")},
+        "right": {"commit": ci.get("commit"), "green": ci.get("green"),
+                  "stages": ci.get("stages")},
+    }
 
 
 async def merge(session: AsyncSession, principal: Principal, key: str, chunk_key: str,
@@ -588,7 +872,8 @@ async def merge(session: AsyncSession, principal: Principal, key: str, chunk_key
         "block_reason = NULL, updated_at = NOW() WHERE id = :id"),
         {"m": json.dumps(record), "id": chunk["id"]})
     await _event(session, principal, diagram, "CHUNK_MERGED", chunk_key=chunk_key,
-                 task_key=chunk["task_key"], merged_by=me, artifact=body.get("artifact"))
+                 task_key=chunk["task_key"], merged_by=me, artifact=body.get("artifact"),
+                 targets=diagram.get("watchers") or [])
     unblocked = await _release_waiting(session, principal, diagram)
     await session.commit()
     return {"chunk_key": chunk_key, "state": "merged", "merge": record, "unblocked": unblocked}
@@ -603,9 +888,12 @@ async def _release_waiting(session: AsyncSession, principal: Principal,
             continue
         if all(chunks.get(dep, {}).get("state") == "merged" for dep in chunk["depends_on"]):
             outcome = await _dispatch_one(session, principal, diagram, chunk, chunks)
-            await _event(session, principal, diagram, "CHUNK_UNBLOCKED",
-                         chunk_key=chunk["chunk_key"], task_key=outcome.get("task_key"))
-            released.append(outcome)
+            if outcome["state"] == "dispatched":
+                # M-14 / M-26: unlocked by the graph, no one re-dispatches; watchers hear it.
+                await _event(session, principal, diagram, "CHUNK_UNBLOCKED",
+                             chunk_key=chunk["chunk_key"], task_key=outcome.get("task_key"),
+                             targets=diagram.get("watchers") or [])
+                released.append(outcome)
     return released
 
 
@@ -662,6 +950,7 @@ async def propose(session: AsyncSession, principal: Principal, key: str,
     for item in add:
         after[item["chunk_key"]] = {k: v for k, v in item.items() if k != "_increment_of"}
     _validate_graph(list(after.values()))
+    _require_contract_first(list(after.values()))
     touched = sorted({*(item["chunk_key"] for item in add), *(item["chunk_key"]
                       for item in update), *remove})
     downstream = sorted({k for k, v in after.items()
@@ -809,11 +1098,13 @@ async def _set_fields(session: AsyncSession, chunk_id: int, chunk: dict[str, Any
         "UPDATE diagram_chunks SET title = :t, scope = :s, layer = :l, icd = CAST(:icd AS jsonb), "
         "done_criteria = CAST(:dc AS jsonb), depends_on = CAST(:deps AS text[]), "
         "allowed_write_paths = CAST(:w AS text[]), read_only_interfaces = CAST(:r AS text[]), "
+        "commands = CAST(:cmd AS jsonb), semantic_rules = CAST(:rules AS text[]), "
         "updated_at = NOW() WHERE id = :id"),
         {"t": chunk["title"], "s": chunk["scope"], "l": chunk["layer"],
          "icd": json.dumps(chunk["icd"]), "dc": json.dumps(chunk["done_criteria"]),
          "deps": chunk["depends_on"], "w": chunk["allowed_write_paths"],
-         "r": chunk["read_only_interfaces"], "id": chunk_id})
+         "r": chunk["read_only_interfaces"], "cmd": json.dumps(chunk["commands"]),
+         "rules": chunk["semantic_rules"], "id": chunk_id})
 
 
 async def _bump(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
@@ -908,6 +1199,12 @@ async def _change(session: AsyncSession, diagram: dict[str, Any], change_key: st
     return dict(row)
 
 
+def _public_submission(submission: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not submission:
+        return None
+    return {key: value for key, value in submission.items() if key != "diff"}
+
+
 def _change_out(row: dict[str, Any]) -> dict[str, Any]:
     return {key: (_iso(value) if isinstance(value, datetime) else value)
             for key, value in row.items() if key not in ("id", "workspace_id", "tenant_id",
@@ -942,7 +1239,8 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
         if status != "retired":
             distribution[status] = distribution.get(status, 0) + 1
         if status == "blocked":
-            blocked.append({"chunk_key": chunk["chunk_key"], "reason": chunk["block_reason"]})
+            blocked.append({"chunk_key": chunk["chunk_key"], "kind": chunk["block_kind"],
+                            "reason": chunk["block_reason"]})
         if status == "ready_to_merge":
             queue.append({"chunk_key": chunk["chunk_key"], "task_key": chunk["task_key"],
                           "gated_at": (chunk["gate"] or {}).get("at")})
@@ -955,7 +1253,10 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
             "task_key": chunk["task_key"], "task_status": task["status"] if task else None,
             "gate": chunk["gate"], "merge": chunk["merge"], "origin": chunk["origin"],
             "increment_of": chunk["increment_of"],
-            "created_in_version": chunk["created_in_version"]})
+            "created_in_version": chunk["created_in_version"],
+            "commands": chunk["commands"], "semantic_rules": chunk["semantic_rules"],
+            "block_kind": chunk["block_kind"], "context_slice": chunk["context_slice"],
+            "submission": _public_submission(chunk["submission"]), "ci": chunk["ci"]})
     pending = (await session.execute(text(
         "SELECT change_key, summary, source, created_at FROM diagram_changes WHERE "
         "diagram_id = :d AND status = 'pending' ORDER BY id"), {"d": diagram["id"]})
@@ -964,6 +1265,7 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
         "diagram_key": diagram["diagram_key"], "title": diagram["title"],
         "namespace": diagram["namespace"], "description": diagram["description"],
         "status": diagram["status"], "version": diagram["version"],
+        "watchers": diagram["watchers"],
         "baseline": diagram["baseline"], "document": f"doc://{diagram['doc_key']}",
         "created_by": diagram["created_by"], "confirmed_by": diagram["confirmed_by"],
         "confirmed_at": _iso(diagram["confirmed_at"]),

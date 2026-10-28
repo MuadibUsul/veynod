@@ -65,6 +65,15 @@ RELEASE_NOTES: list[dict[str, Any]] = [
             "person or by a super admin for the owner, revocable by a person; the fast "
             "lane files a person's request as a change, and work in flight is never "
             "rewritten. Every step replays from the event log.",
+            "Diagram automation stage (schema 3.51): chunks with nothing upstream must be "
+            "contracts; the graph dispatches what a merge unlocks and pokes the diagram's "
+            "watchers; executors get a three-part context slice (recorded on the chunk); "
+            "/submit vetoes files outside the write scope or in frozen interfaces before "
+            "any review; dispatched chunks lock their write paths (file_lock blocks); /ci "
+            "records the sandbox run and a red one returns stderr verbatim to the "
+            "implementer without waking review; review answers exactly the three default "
+            "rules plus the chunk's own, and a rejection names the triptych pane "
+            "(/triptych: contract, diff, sandbox evidence).",
         ],
     },
     {

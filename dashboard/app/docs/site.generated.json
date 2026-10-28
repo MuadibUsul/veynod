@@ -2011,6 +2011,33 @@
          "type": "string"
         }
        ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/ci",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Record the sandbox run (compile, lint, test) for the current submission"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
        "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/dispatch",
        "responses": [
         "200",
@@ -2071,6 +2098,60 @@
         "422"
        ],
        "summary": "Merge a gated chunk (never by its implementer)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/submit",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Submit a chunk (files, commit, diff); out-of-scope files veto it"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/triptych",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The review triptych: contract, diff, sandbox evidence"
       },
       {
        "body": [],

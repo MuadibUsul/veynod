@@ -1590,6 +1590,47 @@ async def gate_chunk(
     return await diagrams.gate(session, principal, diagram_key, chunk_key, body)
 
 
+@router.post("/diagrams/{diagram_key}/chunks/{chunk_key}/submit",
+             summary="Submit a chunk (files, commit, diff); out-of-scope files veto it")
+async def submit_chunk(
+    diagram_key: str,
+    chunk_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.submit(session, principal, diagram_key, chunk_key, body)
+
+
+@router.post("/diagrams/{diagram_key}/chunks/{chunk_key}/ci",
+             summary="Record the sandbox run (compile, lint, test) for the current submission")
+async def record_chunk_ci(
+    diagram_key: str,
+    chunk_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.record_ci(session, principal, diagram_key, chunk_key, body)
+
+
+@router.get("/diagrams/{diagram_key}/chunks/{chunk_key}/triptych",
+            summary="The review triptych: contract, diff, sandbox evidence")
+async def chunk_triptych(
+    diagram_key: str,
+    chunk_key: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.triptych(session, principal, diagram_key, chunk_key)
+
+
 @router.post("/diagrams/{diagram_key}/chunks/{chunk_key}/merge",
              summary="Merge a gated chunk (never by its implementer)")
 async def merge_chunk(
