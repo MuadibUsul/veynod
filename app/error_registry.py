@@ -395,6 +395,47 @@ REGISTRY: dict[str, ErrorSpec] = {
     "share_cross_root_not_allowed": _spec(
         422, ABANDON, "Use cross-tree collaboration instead."
     ),
+    # Diagram dispatch (3.14).
+    "diagram_exists": _spec(409, FIX_REQUEST, "Use another diagram key or edit the existing one."),
+    "chunk_incomplete": _spec(
+        422, FIX_REQUEST,
+        "Give every chunk in details.chunks an icd and done_criteria and known dependencies."),
+    "contract_first": _spec(
+        422, FIX_REQUEST,
+        "Make the chunks in details.implementation_roots depend on an interface chunk."),
+    "still_draft": _spec(409, FIX_REQUEST, "Edit the draft directly (details.edit_with)."),
+    "unknown_chunk": _spec(422, FIX_REQUEST, "Use a chunk_key the diagram has."),
+    "chunk_exists": _spec(409, FIX_REQUEST, "Use another chunk_key, or update that chunk."),
+    "chunk_in_flight": _spec(
+        409, FIX_REQUEST, "Add a new chunk that depends on them (details.add_chunk_with)."),
+    "empty_impact": _spec(422, FIX_REQUEST, "File a change that touches at least one chunk."),
+    "review_out_of_scope": _spec(
+        422, FIX_REQUEST, "Answer exactly the rules in details.rules, then resend."),
+    "not_confirmed": _spec(
+        409, ESCALATE_HUMAN, "A person confirms the diagram before it is frozen."),
+    "not_frozen": _spec(
+        409, ESCALATE_HUMAN, "A person confirms and freezes the diagram before dispatch."),
+    "already_dispatched": _spec(409, ABANDON, "The chunk has a task already (details.task_key)."),
+    "submission_rejected": _spec(
+        409, ABANDON, "The latest submission broke its write scope; wait for a new one."),
+    "ci_not_green": _spec(
+        409, ABANDON, "Review after a green sandbox run on the current submission."),
+    "no_submission": _spec(409, ABANDON, "Run the sandbox after a submission is accepted."),
+    "stale_ci": _spec(
+        409, ABANDON, "Drop this result; report a run of details.submission instead."),
+    "circuit_closed": _spec(409, ABANDON, "Upgrade only a chunk whose circuit broke."),
+    "not_queue_head": _spec(
+        409, ABANDON, "Only the queue head is checked; wait for this chunk's turn."),
+    "queue_not_verified": _spec(
+        409, ABANDON, "Queued work merges from the queue after the controller re-tests it."),
+    "gate_not_passed": _spec(
+        409, ABANDON, "Merge after a passing gate on the current submission."),
+    "already_merged": _spec(409, ABANDON, "The chunk is merged already."),
+    "merge_by_implementer": _spec(
+        403, ABANDON, "Another agent or a person merges the chunk; not its implementer."),
+    "already_decided": _spec(409, ABANDON, "The change was decided already."),
+    "stale_change": _spec(
+        409, ABANDON, "The diagram moved on; file the change again on details.current_version."),
     # --- escalate_human
     "agent_document_quota_exceeded": _spec(
         429, ESCALATE_HUMAN, "Daily quota reached; ask the owner for a larger quota."

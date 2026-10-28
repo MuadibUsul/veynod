@@ -30,6 +30,18 @@ async def test_root_primitive_list_is_the_full_mcp_surface():
     assert "get_api_docs" == ROOT_PRIMITIVES[-1]
 
 
+def test_tool_map_names_only_existing_rest_handlers():
+    # A renamed handler would silently drop its endpoints from the tool map.
+    from app import capabilities
+    from app.main import app
+
+    handlers = {route.endpoint.__name__ for route in capabilities._all_routes(app.routes)
+                if hasattr(route, "endpoint")}
+    named = set(capabilities.TOOL_HANDLERS.values()) | {
+        handler for group in capabilities.TOOL_ACTION_HANDLERS.values() for handler in group}
+    assert named <= handlers, sorted(named - handlers)
+
+
 def test_human_root_page_keeps_json_shape_and_marks_console_entry():
     page = render_root_page(descriptor())
     assert "__CODE_LINES__" not in page
