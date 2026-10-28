@@ -137,6 +137,8 @@ EPHEMERAL = frozenset({
     "support_access_grants",
     # OAuth clients and pending authorizations (v3.36) are operator-side.
     "oauth_clients", "oauth_requests",
+    # The VPS deploy gate (v3.50) records the platform's own deploys.
+    "deploy_gate_state", "deploy_gate_runs", "deploy_gate_audit",
     # Conflict counters, per-minute metrics and situation alerts (R2.3).
     "doc_contention", "principal_metrics", "situation_alerts",
     # Blob storage and share links (v3.40) are not part of agentgraph-export/1
