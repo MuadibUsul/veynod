@@ -1,0 +1,7 @@
+# Tests the deploy gate (scripts/deploy_gate.py, G-02) leaves out, one pytest node id per line.
+#
+# Keep this list empty unless a test is known to be broken for a reason that is
+# tracked elsewhere. Every entry is reviewed like code, and the owner report of
+# each deploy says that known problems were left out, so nothing is skipped
+# silently. Example:
+#   tests/test_events.py::test_seq_is_gap_free_under_concurrent_writes  # board task perf-write-path-burst

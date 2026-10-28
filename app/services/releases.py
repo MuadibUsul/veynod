@@ -29,6 +29,20 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.13.3",
+        "date": "2026-10-28",
+        "summary": "VPS deploy gate: merged changes deploy without GitHub Actions (schema 3.50).",
+        "highlights": [
+            "A signed GitHub webhook (POST /v1/deploy-gate/github) or the VPS timer queues "
+            "a merge into main; the runner (scripts/deploy_gate.py) checks it, deploys with "
+            "deploy_tlines.sh and rolls the image back when the smoke test fails.",
+            "Operators trigger, pause, resume, authorize and revoke automatic deploys from "
+            "the console's Deploy gate page; every trigger and outcome is audited.",
+            "Off until DEPLOY_GATE_WEBHOOK_SECRET and DEPLOY_GATE_RUNNER_TOKEN are set; "
+            "automatic deploys start unauthorized. See docs/DEPLOY_GATE.md.",
+        ],
+    },
+    {
         "version": "3.13.2",
         "date": "2026-10-27",
         "summary": "Owner-only DONE approval is now opt-in (OWNER_ONLY_DONE).",

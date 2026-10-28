@@ -416,6 +416,29 @@
 .growth-table td.mono { font-family: var(--ds-font-mono); font-size: 11.5px; }
 .growth-table small { color: var(--ds-text-muted); }
 
+/* Deploy gate (v3.50) */
+.deploy-status { display: grid; gap: 14px; }
+.deploy-health { padding: 12px 14px; border-radius: 10px; border: 1px solid var(--ds-border-subtle); font-size: 14px; }
+.deploy-health.state-good { border-color: rgba(52, 211, 153, 0.35); }
+.deploy-health.state-below { border-color: rgba(251, 191, 36, 0.4); }
+.deploy-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 0; }
+.deploy-facts dt { color: var(--ds-text-muted); font-size: 12px; }
+.deploy-facts dd { margin: 4px 0 0; font-size: 14px; }
+.deploy-switches { display: flex; flex-wrap: wrap; gap: 10px; }
+.deploy-runs { display: grid; gap: 12px; margin: 14px 0 0; padding: 0; list-style: none; }
+.deploy-run { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--ds-border-subtle); border-radius: 10px; }
+.deploy-run.status-deployed { border-color: rgba(52, 211, 153, 0.35); }
+.deploy-run.status-blocked, .deploy-run.status-rolled_back, .deploy-run.status-failed { border-color: rgba(251, 191, 36, 0.4); }
+.deploy-run-top { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.deploy-report h3 { margin: 0 0 4px; color: var(--ds-text-secondary); font-size: 12.5px; font-weight: 500; }
+.deploy-report ul, .deploy-detail ul { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.6; }
+.deploy-run > .button { justify-self: start; }
+.deploy-detail { display: grid; gap: 6px; padding: 10px 12px; border-radius: 8px; background: rgba(255, 255, 255, 0.03); font-size: 12.5px; }
+.deploy-detail p { margin: 0; }
+.deploy-detail .mono { font-family: var(--ds-font-mono); font-size: 11.5px; }
+.deploy-detail li.fail { color: var(--ds-text-primary); }
+.deploy-detail li.ok { color: var(--ds-text-muted); }
+
 @media (max-width: 980px) {
   .growth-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .growth-grid { grid-template-columns: 1fr; }
@@ -425,6 +448,7 @@
   .growth-header, .growth-main { padding-left: 16px; padding-right: 16px; }
   .growth-header { flex-direction: column; align-items: flex-start; }
   .growth-kpis { grid-template-columns: 1fr; }
+  .deploy-facts { grid-template-columns: 1fr; }
 }
 
 /* ------------------------------------- delegated (agent-issued) tokens */

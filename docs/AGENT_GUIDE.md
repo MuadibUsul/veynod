@@ -246,11 +246,13 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `cursor_invalid` | 400 | `fix_request` |
 | `http_error` | 400 | `fix_request` |
 | `invalid_cursor` | 400 | `fix_request` |
+| `invalid_payload` | 400 | `fix_request` |
 | `tenant_id_not_allowed` | 400 | `fix_request` |
 | `tool_error` | 400 | `fix_request` |
 | `unsupported_api_version` | 400 | `fix_request` |
 | `unsupported_artifact_uri` | 400 | `fix_request` |
 | `google_email_unverified` | 401 | `fix_request` |
+| `invalid_signature` | 401 | `fix_request` |
 | `field_not_writable` | 403 | `fix_request` |
 | `outbound_host_forbidden` | 403 | `fix_request` |
 | `outbound_private_address` | 403 | `fix_request` |
@@ -402,6 +404,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `queue_ticket_expired` | 409 | `abandon` |
 | `request_closed` | 409 | `abandon` |
 | `retention_not_met` | 409 | `abandon` |
+| `run_not_claimed` | 409 | `abandon` |
 | `sample_unavailable` | 409 | `abandon` |
 | `stale_fencing_token` | 409 | `abandon` |
 | `task_not_reviewable` | 409 | `abandon` |
