@@ -163,6 +163,9 @@ EPHEMERAL = frozenset({
     # defects). Tiers are re-granted by people after a move, never copied.
     "change_claims", "quality_gate_runs", "audits", "autonomy_tiers", "defect_escapes",
     "audit_samples", "quality_circuit", "poison_marks", "audit_view_marks", "quality_releases",
+    # The owner's automation mode and auto-deploy permission (v3.55) are
+    # grants like autonomy tiers: a person sets them again after a move.
+    "automation_modes",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")
