@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
@@ -227,3 +228,18 @@ async def test_first_handshake_lets_the_platform_name_the_agent(client):
     after = await client.get(f"/v1/agents/{principal}", headers=ws["human"])
     assert after.json()["agent_id"] == "claude-review"
     assert after.json()["permanent_address"] == entry["permanent_address"]
+
+
+async def test_simultaneous_handshakes_get_different_names(client):
+    """Two agents with the same introduction at the same moment never share an id."""
+    ws = await _workspace(client)
+    minted = [await _mint(client, ws) for _ in range(4)]
+    results = await asyncio.gather(*(
+        client.post("/v1/agents/register",
+                    headers={"Authorization": f"Bearer {item['api_key']}"},
+                    json={"introduction": {"name": "Codex", "function": "deploy"}})
+        for item in minted))
+    assert all(r.status_code in (200, 201) for r in results), [r.text for r in results]
+    ids = sorted(r.json()["agent_id"] for r in results)
+    assert ids == ["codex-deploy", "codex-deploy-2", "codex-deploy-3", "codex-deploy-4"]
+    assert len({r.json()["permanent_address"] for r in results}) == 4

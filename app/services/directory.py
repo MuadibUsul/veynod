@@ -298,6 +298,11 @@ async def register_agent(session: AsyncSession, principal: Principal,
     if principal.auth_kind is not AuthKind.AGENT:
         raise Forbidden("register_agent is called by the agent's own token")
     workspace = principal.workspace
+    # One registration per tenant at a time, so two agents that introduce
+    # themselves at once cannot both take the same free name; the second waits
+    # here and then sees the first's row. Released at commit.
+    await session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
+                          {"k": f"agent_directory:{workspace.tenant_id}"})
     existing = await _by_token(session, principal.token_cid)
     if existing is not None and existing.get("source") != "auto":
         raise ApiError(409, "already_registered", "this token is already registered",
