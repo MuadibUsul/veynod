@@ -80,7 +80,7 @@ async def owned_gate(api_base_url) -> AsyncIterator[dict]:
             login = await http.post("/v1/auth/login",
                                     json={"email": email, "password": password})
             assert login.status_code == 200, login.text
-            yield {"http": http, "workspace_id": wid,
+            yield {"http": http, "workspace_id": wid, "email": email,
                    "owner": {"Authorization": f"Bearer {login.json()['token']}"}}
 
 
@@ -364,7 +364,9 @@ async def test_automatic_deploys_need_the_owner_switch_too(owned_gate):
     overview = (await gate.get("/v1/admin/deploy-gate", headers=ADMIN)).json()
     assert overview["state"]["owner"]["mode"] == "full"
     audit = (await gate.get("/v1/admin/deploy-gate/audit?limit=100", headers=ADMIN)).json()
-    switches = [item for item in audit["items"] if item["action"] == "owner_switch"]
+    # The audit is the gate's, shared by every board: count this owner's switches.
+    switches = [item for item in audit["items"] if item["action"] == "owner_switch"
+                and item["actor"] == owned_gate["email"]]
     assert len(switches) == 5
     assert switches[0]["details"]["mode"] == "full"
     claims = [item for item in audit["items"] if item["action"] == "claimed"]

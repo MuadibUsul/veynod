@@ -28,7 +28,8 @@ _pool_kwargs: dict[str, object] = {
     "max_overflow": settings.db_max_overflow,
     "pool_timeout": settings.db_pool_timeout,
 }
-if settings.environment == "test":
+if settings.db_null_pool if settings.db_null_pool is not None else (
+        settings.environment == "test"):
     # Tests use short-lived event loops; pooled asyncpg connections would be
     # bound to a loop that no longer exists.
     from sqlalchemy.pool import NullPool
@@ -243,6 +244,9 @@ _INCREMENTAL_MIGRATIONS: list[tuple[str, Path]] = [
     ("3.54.0", _MIGRATIONS_DIR / "v3_54_deploy_gate.sql"),
     ("3.55.0", _MIGRATIONS_DIR / "v3_55_automation_modes.sql"),
     ("3.56.0", _MIGRATIONS_DIR / "v3_56_owner_acceptance.sql"),
+    ("3.57.0", _MIGRATIONS_DIR / "v3_57_deploy_evidence.sql"),
+    ("3.58.0", _MIGRATIONS_DIR / "v3_58_escalation_batches.sql"),
+    ("3.59.0", _MIGRATIONS_DIR / "v3_59_probe_tokens.sql"),
 ]
 CURRENT_SCHEMA_VERSION = _INCREMENTAL_MIGRATIONS[-1][0]
 

@@ -29,6 +29,46 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.19.0",
+        "date": "2026-10-28",
+        "summary": "Probe tokens: trying things out no longer uses up real tokens' quota "
+        "or budget.",
+        "highlights": [
+            "issue_child_token / POST /v1/tokens take probe=true. A probe token takes no "
+            "place in the workspace, branch or issuer token quota; probes have their own cap "
+            "per workspace (PROBE_TOKEN_QUOTA, 10).",
+            "A probe's usage (writes, queries, embedding tokens) is charged to the probe "
+            "only, never to the tokens above it; it can still get a budget of its own, no "
+            "higher than its ancestors' limits.",
+            "A probe cannot issue tokens and lives at most PROBE_TOKEN_MAX_TTL_HOURS (24). "
+            "Token views carry probe. Schema 3.59 adds agent_tokens.is_probe.",
+        ],
+    },
+    {
+        "version": "3.18.0",
+        "date": "2026-10-28",
+        "summary": "Full automation finishes on a verified deploy; agents' deletes can be "
+        "undone; semi automation asks the owner in batches.",
+        "highlights": [
+            "Under full automation an agent's approval of a code task (one naming a repo) on "
+            "the deploy gate's board leaves it in HANDOFF (awaiting_deploy) until a deploy "
+            "that carried it passed its smoke test; the next approval is DONE with that run "
+            "as deploy_evidence. The approval itself is recorded, so the gate ships it.",
+            "The runner reports the task keys each run carried (only to a server that "
+            "lists task_keys in runner_fields); a verified deploy sends DEPLOY_VERIFIED to "
+            "each task's executor and reviewer. Schema 3.57 adds deploy_gate_runs.task_keys.",
+            "Under semi or full automation an agent's blob delete keeps the bytes for "
+            "BLOB_DELETE_RETENTION_DAYS (7): POST /v1/blobs/{id}/restore brings it back, "
+            "and the blob GC purges the bytes after the window.",
+            "Under semi automation an agent's questions for the owner wait and go out "
+            "together as escalation.batch, once the oldest has waited "
+            "ESCALATION_BATCH_MINUTES (30) or ESCALATION_BATCH_MAX (5) wait; reminders "
+            "start after they are sent. Schema 3.58 adds escalations.notified_at.",
+            "get_orientation automation.rules says both (done_needs_deploy under full, "
+            "owner_questions_sent under semi).",
+        ],
+    },
+    {
         "version": "3.17.0",
         "date": "2026-10-28",
         "summary": "Automatic deploys need the owner's switch as well as the operator's.",

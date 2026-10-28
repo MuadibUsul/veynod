@@ -151,10 +151,15 @@ def agent_rules(mode: str) -> dict[str, Any]:
         "technical_questions": "decide with the safest default, note it on the task",
         "owner_topics": list(OWNER_TOPICS),
         "owner_questions_block": mode != "full",
+        **({"owner_questions_sent": "together: the owner gets them in one batch, at most "
+            f"every {settings.escalation_batch_minutes} minutes"} if mode == "semi" else {}),
         "after_max_rejections": "handoff to the next executor" if mode == "full"
         else "escalate to a person",
         "owner_report": "put owner_report {what_changed, how_to_try, not_yet_done} in plain "
         "words in your handoff brief; technical detail stays in the log",
+        **({"done_needs_deploy": "a code task the deploy gate ships is DONE only after a "
+            "deploy that carried it passed its smoke test; until then an approval leaves it "
+            "in HANDOFF and DEPLOY_VERIFIED says when it shipped"} if mode == "full" else {}),
     }
 
 

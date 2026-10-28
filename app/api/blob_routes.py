@@ -78,6 +78,15 @@ async def delete_blob(
     )
 
 
+@router.post("/blobs/{blob_id}/restore", summary="Restore a recoverable blob delete")
+async def restore_blob(
+    blob_id: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await blobs.restore_blob(session, principal, blob_id)
+
+
 @router.post("/blobs/gc", summary="Run the unreferenced-blob GC (commander)")
 async def gc_blobs(
     principal: Principal = Depends(get_principal),

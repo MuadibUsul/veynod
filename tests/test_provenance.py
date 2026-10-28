@@ -6,6 +6,7 @@ import json
 import os
 import uuid
 from collections.abc import AsyncIterator
+from datetime import datetime, timedelta, timezone
 
 import asyncpg
 import httpx
@@ -293,3 +294,56 @@ async def test_token_budgets_add_up_the_tree(prov):
     await _sql("UPDATE token_usage SET day = day - 1 WHERE workspace_id = $1::uuid", ws["id"])
     again = await _write(client, c1, "c1-next-day", "a new day")
     assert again.status_code in (200, 201), again.text
+
+
+async def test_probe_tokens_use_no_business_quota_or_budget(prov):
+    """Playtest bug 20 (R7): trying things out never blocks real tokens.
+
+    A probe token takes no place in the workspace, branch or issuer quota, its
+    usage is charged to itself only, it cannot issue, it lives at most a day,
+    and probes have their own cap per workspace.
+    """
+    client = prov
+    ws = await _workspace(client)
+    branch = await _issue(client, ws["root"], scopes=["docs:read", "docs:write", "token:issue"],
+                          max_descendants=1, can_issue=True)
+    await _issue(client, branch["headers"])  # the branch's one business child
+    full = await client.post("/v1/tokens", headers=branch["headers"], json={
+        "scopes": ["docs:read"], "purpose": "one more", "agent": {"agent_id": "a-business"}})
+    assert full.status_code == 409 and full.json()["error"]["code"] == "tree_quota_exceeded"
+
+    probe = await _issue(client, branch["headers"], probe=True,
+                         scopes=["docs:read", "docs:write", "token:issue"], can_issue=True,
+                         ttl_seconds=86_400 * 3)
+    assert probe["probe"] is True and probe["can_issue"] is False
+    lifetime = (datetime.fromisoformat(probe["expires_at"].replace("Z", "+00:00"))
+                - datetime.now(timezone.utc))
+    assert lifetime <= timedelta(hours=24, minutes=1)
+    refused = await client.post("/v1/tokens", headers=probe["headers"], json={
+        "scopes": ["docs:read"], "purpose": "nested", "agent": {"agent_id": "a-nested"}})
+    assert refused.status_code == 403
+
+    # The probe's writes are its own: the branch's budget is untouched.
+    assert (await client.put(f"/v1/tokens/{branch['token_id']}/budget", headers=ws["human"],
+                             json={"writes": 1})).status_code == 200
+    for index in range(3):
+        written = await _write(client, probe, f"probe-{index}", f"probe write {index}")
+        assert written.status_code in (200, 201), written.text
+    branch_budget = (await client.get(f"/v1/tokens/{branch['token_id']}/budget",
+                                      headers=ws["human"])).json()
+    assert branch_budget["used"]["writes"] == 0
+    # A probe can still be capped on its own (never above its ancestors' limits).
+    assert (await client.put(f"/v1/tokens/{probe['token_id']}/budget",
+                             headers=branch["headers"], json={"writes": 1})).status_code == 200
+    over = await _write(client, probe, "probe-over", "one too many")
+    assert over.status_code == 429
+    assert over.json()["error"]["details"]["token_id"] == probe["token_id"]
+
+    # Probes have a cap of their own (PROBE_TOKEN_QUOTA, 10 by default).
+    for _ in range(9):
+        await _issue(client, ws["root"], probe=True)
+    capped = await client.post("/v1/tokens", headers=ws["root"], json={
+        "scopes": ["docs:read"], "purpose": "eleventh", "probe": True,
+        "agent": {"agent_id": f"a-{uuid.uuid4().hex[:8]}"}})
+    assert capped.status_code == 409
+    assert capped.json()["error"]["details"]["scope"] == "probe"

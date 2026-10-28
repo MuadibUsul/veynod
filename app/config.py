@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ app
     app_name: str = "Veynod"
     # Bump on every release and add notes in app/services/releases.py.
-    app_version: str = "3.17.0"
+    app_version: str = "3.19.0"
     environment: Literal["development", "staging", "production", "test"] = "development"
     debug: bool = False
     host: str = "0.0.0.0"
@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_pool_timeout: float = 30.0
+    # None: no connection pool only when ENVIRONMENT=test. Set it explicitly
+    # for a test API server, whose one event loop can keep pooled connections.
+    db_null_pool: bool | None = None
     auto_init_db: bool = False
 
     # ----------------------------------------------------------------- auth
@@ -75,6 +78,13 @@ class Settings(BaseSettings):
     default_max_retries: int = Field(default=3, ge=1, le=100)
     # L3 messaging (M-14): unread-message and unclaimed-task timeout escalation.
     message_unread_escalation_seconds: int = Field(default=1800, ge=30, le=86_400)
+    # Semi automation: agents' owner questions go out together, once the oldest
+    # has waited this long or this many are waiting (Loop v1).
+    escalation_batch_minutes: int = Field(default=30, ge=1, le=1440)
+    escalation_batch_max: int = Field(default=5, ge=1, le=100)
+    # Probe tokens (R7): their own cap per workspace and a short lifetime.
+    probe_token_quota: int = Field(default=10, ge=0, le=1000)
+    probe_token_max_ttl_hours: int = Field(default=24, ge=1, le=720)
     task_unclaimed_timeout_seconds: int = Field(default=7200, ge=60, le=86_400)
     max_reject_history: int = Field(default=20, ge=1, le=500)
     human_override_default_lock: bool = True
@@ -267,6 +277,9 @@ class Settings(BaseSettings):
     # ------------------------------------------------ blobs (v3.40)
     max_blob_bytes: int = Field(default=100 * 1024 * 1024, ge=1)
     blob_unreferenced_ttl_days: int = Field(default=30, ge=0, le=3650)
+    # Under semi or full automation an agent's delete keeps the bytes this long
+    # so a person can restore them (Loop A-06); then the GC purges them.
+    blob_delete_retention_days: int = Field(default=7, ge=1, le=365)
     blob_base64_ratio: float = Field(default=0.80, ge=0.0, le=1.0)
     blob_base64_min_bytes: int = Field(default=64 * 1024, ge=1)
     agent_daily_document_limit: int = Field(default=100, ge=1)
@@ -318,6 +331,17 @@ class Settings(BaseSettings):
     # In-flight requests per credential; long-polls (SSE) have their own pool.
     max_in_flight_per_token: int = Field(default=4, ge=1, le=10_000)
     max_streams_per_token: int = Field(default=1, ge=1, le=100)
+    # REST writes one process runs at once, across all credentials. A write
+    # can hold up to four pooled connections (its own session plus metering
+    # sessions), so the default is the pool size over four: a burst waits
+    # outside the pool instead of exhausting it. None derives it.
+    db_max_concurrent_writes: int | None = Field(default=None, ge=1, le=10_000)
+
+    @property
+    def db_admission_limit(self) -> int:
+        if self.db_max_concurrent_writes is not None:
+            return self.db_max_concurrent_writes
+        return max(2, (self.db_pool_size + self.db_max_overflow) // 4)
 
     # ------------------------------------------- failure-semantics protocol
     # PRD AG-ST-18: 24 h idempotency window; an in-progress record older than

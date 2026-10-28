@@ -3076,6 +3076,7 @@ async def issue_child_token(
     max_descendants: int = 0,
     budget: dict[str, int] | None = None,
     role_scope: str | None = None,
+    probe: bool = False,
 ) -> dict[str, Any]:
     """Issue a token for another agent. It can only narrow your own grant.
 
@@ -3084,8 +3085,10 @@ async def issue_child_token(
     webhooks:manage, token:issue). namespaces: {"read": [...], "write": [...]},
     subsets of yours. agent: {agent_id, display_name, role, capabilities,
     description} registers the new agent in the directory. ttl_seconds defaults
-    to 3600 for a child (max 86400) and cannot outlive you. The secret ("token")
-    is returned once: hand it to the new agent, never log it.
+    to 3600 for a child (max 86400) and cannot outlive you. probe=true issues a
+    token for trying things out: it uses its own quota instead of your tree's, its
+    usage is charged to itself only, it cannot issue, and it lives at most 24 h.
+    The secret ("token") is returned once: hand it to the new agent, never log it.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -3094,7 +3097,7 @@ async def issue_child_token(
                 "scopes": scopes, "agent": agent, "purpose": purpose,
                 "namespaces": namespaces, "ttl_seconds": ttl_seconds, "can_issue": can_issue,
                 "max_descendants": max_descendants, "budget": budget,
-                "role_scope": role_scope,
+                "role_scope": role_scope, "probe": probe,
             })
         except ApiError as exc:
             raise _api_error(exc) from exc

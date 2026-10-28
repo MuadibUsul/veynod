@@ -251,6 +251,10 @@ class AgentToken(Base):
     max_descendants: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")
     )
+    # A probe token (R7) counts toward no business quota and charges only itself.
+    is_probe: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("FALSE")
+    )
     lineage: Mapped[list[str] | None] = mapped_column(ARRAY(String(40)), nullable=True)
     # Token delegation 1.0: permission deltas on top of the role package.
     scope_add: Mapped[list[str]] = mapped_column(

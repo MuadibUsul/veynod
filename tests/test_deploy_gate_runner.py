@@ -118,7 +118,8 @@ class FakeShell:
 class FakeApi:
     def __init__(self, *, paused: bool = False, authorized: bool = True,
                  tasks: list[dict[str, Any]] | None = None, run: dict[str, Any] | None = None,
-                 deploy_allowed: bool = True, owner_allows: bool | None = None):
+                 deploy_allowed: bool = True, owner_allows: bool | None = None,
+                 runner_fields: list[str] | None = None):
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.paused = paused
         self.authorized = authorized
@@ -128,6 +129,7 @@ class FakeApi:
              "verdict": "APPROVE", "failing_gates": []}]
         self.run = run
         self.deploy_allowed = deploy_allowed
+        self.runner_fields = runner_fields  # None: a server from before 3.18
 
     def call(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((path, body))
@@ -138,6 +140,8 @@ class FakeApi:
                 effective = self.authorized and self.owner_allows
                 state.update(auto_deploy_effective=effective, auto_deploy_blocked_by=None
                              if effective else ("operator" if not self.authorized else "owner"))
+            if self.runner_fields is not None:
+                state["runner_fields"] = self.runner_fields
             return state
         if path == "/claim":
             return {"run": self.run, "deploy_allowed": self.deploy_allowed,
@@ -376,6 +380,27 @@ def test_the_cycle_queues_a_new_branch_head_and_claims(tmp_path):
     path, body = claimed.calls[-1]
     assert path == "/runs/dgr_X" and body["status"] == "deployed"
     assert set(body["report"]) == {"changed", "how_to_try", "rolled_back", "unfinished"}
+
+
+def test_the_run_names_its_tasks_only_to_a_server_that_accepts_them(tmp_path):
+    """Loop A-03: the server learns which tasks a deploy carried; an older
+    server, which rejects unknown fields, is not sent them."""
+    run = {"id": "dgr_K", "trigger_kind": "poll", "commit_sha": CANDIDATE}
+    current = FakeApi(run=run, runner_fields=["task_keys"])
+    gate, _, _ = make(tmp_path, api=current)
+    assert gate.cycle()["status"] == "deployed"
+    assert current.calls[-1][1]["task_keys"] == ["gate-task"]
+
+    older = FakeApi(run=run)
+    gate, _, _ = make(tmp_path / "old", api=older)
+    assert gate.cycle()["status"] == "deployed"
+    assert "task_keys" not in older.calls[-1][1]
+
+
+def test_pull_task_keys_reads_each_named_task_once():
+    pulls = [{"title": "Board task: alpha-1", "body": "看板任务 `beta.2`\nBoard task alpha-1"},
+             {"title": "no task here", "body": ""}]
+    assert gate_module.pull_task_keys(pulls) == ["alpha-1", "beta.2"]
 
 
 def test_secrets_never_reach_the_log(tmp_path):

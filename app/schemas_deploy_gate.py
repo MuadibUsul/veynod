@@ -54,6 +54,7 @@ class DeployGateRunUpdate(BaseModel):
     rolled_back: bool = False
     report: dict[str, Any] = Field(default_factory=dict)
     log_ref: str | None = Field(default=None, max_length=200)
+    task_keys: list[str] = Field(default_factory=list, max_length=20)
 
 
 class DeployGateTaskEvidence(BaseModel):

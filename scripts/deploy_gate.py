@@ -290,6 +290,7 @@ class Outcome:
     deploy: dict[str, str] = field(default_factory=dict)
     rolled_back: bool = False
     report: dict[str, Any] = field(default_factory=dict)
+    task_keys: list[str] = field(default_factory=list)
 
 
 class Gate:
@@ -384,12 +385,16 @@ class Gate:
                 path = self.config.workdir / "runs" / f"{run['id']}-{suffix}"
                 if path.exists():
                     self.git("worktree", "remove", "--force", str(path))
-        self.api.call(f"/runs/{run['id']}", {
+        report = {
             "host": self.config.host, "status": outcome.status,
             "status_reason": outcome.reason, "commit_sha": outcome.commit,
             "checks": [check.out() for check in outcome.checks], "deploy": outcome.deploy,
             "rolled_back": outcome.rolled_back, "report": outcome.report,
-            "log_ref": str(self.log.path) if self.log.path else None})
+            "log_ref": str(self.log.path) if self.log.path else None}
+        # An older server rejects fields it does not know; send only what it accepts.
+        if "task_keys" in (state.get("runner_fields") or []):
+            report["task_keys"] = outcome.task_keys
+        self.api.call(f"/runs/{run['id']}", report)
         return {"run": run["id"], "status": outcome.status}
 
     def process(self, run: dict[str, Any], claim: dict[str, Any], *, head: str | None,
@@ -460,7 +465,8 @@ class Gate:
                               "还需要修好。")
         return Outcome(status, reason, commit, checks, deploy or {}, rolled_back,
                        owner_report(pulls, deployed=status == "deployed",
-                                    rolled_back=rolled_back, unfinished=unfinished))
+                                    rolled_back=rolled_back, unfinished=unfinished),
+                       pull_task_keys(pulls))
 
     # -------------------------------------------------------------- G-01
 
@@ -635,10 +641,7 @@ class Gate:
         return None
 
     def check_tasks(self, pulls: list[dict[str, Any]]) -> str | None:
-        keys: list[str] = []
-        for pull in pulls:
-            text = f"{pull.get('title') or ''}\n{pull.get('body') or ''}"
-            keys += [key for key in TASK_KEY.findall(text) if key not in keys]
+        keys = pull_task_keys(pulls)
         if not keys:
             return "no merged pull request names a board task" if self.config.require_task \
                 else None
@@ -747,6 +750,15 @@ def _section(body: str, heading: re.Pattern[str]) -> list[str]:
         if line:
             lines.append(line)
     return lines
+
+
+def pull_task_keys(pulls: list[dict[str, Any]]) -> list[str]:
+    """The board tasks the merged pull requests name, in order, once each."""
+    keys: list[str] = []
+    for pull in pulls:
+        text = f"{pull.get('title') or ''}\n{pull.get('body') or ''}"
+        keys += TASK_KEY.findall(text)
+    return list(dict.fromkeys(keys))[:20]
 
 
 def owner_report(pulls: list[dict[str, Any]], *, deployed: bool, rolled_back: bool,

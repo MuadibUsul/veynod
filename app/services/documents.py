@@ -30,6 +30,7 @@ from sqlalchemy.dialects import postgresql
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import batch_memo
 from app.addresses import doc_key_violation, is_canonical, is_legacy_alias
 from app.auth import (
     Principal,
@@ -296,12 +297,15 @@ def ensure_content_size(content: str) -> int:
 async def _mutation_response(
     session: AsyncSession, document: SharedDocument, batch: uuid.UUID
 ) -> DocumentMutationResponse:
-    chunks = int(
-        await session.scalar(
-            select(func.count(DocumentChunk.id)).where(DocumentChunk.document_id == document.id)
+    chunks = getattr(document, "_chunk_count", None)
+    if chunks is None:
+        chunks = int(
+            await session.scalar(
+                select(func.count(DocumentChunk.id)).where(
+                    DocumentChunk.document_id == document.id)
+            )
+            or 0
         )
-        or 0
-    )
     return DocumentMutationResponse(
         document=document_out(document),
         session_batch_id=batch,
@@ -1109,42 +1113,44 @@ async def batch_upsert_documents(
     atomic = request.atomic if request.atomic is not None else not at_least(LATEST_VERSION)
     items: list[DocumentBatchUpsertResult] = []
     results: list[dict[str, Any]] = []
-    for index, item in enumerate(request.items):
-        if atomic:
-            try:
-                result = await upsert_document(
-                    session, principal, item.doc_key, item, commit=False
-                )
-            except ApiError as exc:
-                await session.rollback()
-                details = {"index": index, "doc_key": item.doc_key, "failed_indexes": [index]}
-                if isinstance(exc.details, dict):
-                    details.update(exc.details)
-                raise ApiError(
-                    exc.status_code,
-                    exc.code,
-                    f"batch item {index} ({item.doc_key}): {exc.message}",
-                    details=details,
-                    headers=exc.headers,
-                ) from exc
-        else:
-            try:
-                async with session.begin_nested():
+    with batch_memo.batch_scope():
+        for index, item in enumerate(request.items):
+            if atomic:
+                try:
                     result = await upsert_document(
                         session, principal, item.doc_key, item, commit=False
                     )
-            except ApiError as exc:
-                results.append({"index": index, "ok": False, "namespace": item.namespace,
-                                "doc_key": item.doc_key, "error": exc.body()["error"]})
-                continue
-        items.append(
-            DocumentBatchUpsertResult(
-                ok=True,
-                document=result.document,
-                session_batch_id=result.session_batch_id,
+                except ApiError as exc:
+                    await session.rollback()
+                    details = {"index": index, "doc_key": item.doc_key, "failed_indexes": [index]}
+                    if isinstance(exc.details, dict):
+                        details.update(exc.details)
+                    raise ApiError(
+                        exc.status_code,
+                        exc.code,
+                        f"batch item {index} ({item.doc_key}): {exc.message}",
+                        details=details,
+                        headers=exc.headers,
+                    ) from exc
+            else:
+                try:
+                    async with session.begin_nested():
+                        result = await upsert_document(
+                            session, principal, item.doc_key, item, commit=False
+                        )
+                except ApiError as exc:
+                    batch_memo.forget_all()  # its savepoint undid what it recorded
+                    results.append({"index": index, "ok": False, "namespace": item.namespace,
+                                    "doc_key": item.doc_key, "error": exc.body()["error"]})
+                    continue
+            items.append(
+                DocumentBatchUpsertResult(
+                    ok=True,
+                    document=result.document,
+                    session_batch_id=result.session_batch_id,
+                )
             )
-        )
-        results.append(_batch_result(index, item, result))
+            results.append(_batch_result(index, item, result))
     await session.commit()
     failed = sum(1 for item in results if not item["ok"])
     return DocumentBatchUpsertResponse(
@@ -1263,8 +1269,10 @@ async def upsert_document(
     batch = batch_id or request.session_batch_id or uuid.uuid4()
     content, normalized_html = normalize_notion_content(request.content)
     ensure_content_size(content)
+    absent: set[str] = set()
     try:
-        existing = await address_service.find_document(session, principal.workspace.id, doc_key)
+        existing = await address_service.find_document(
+            session, principal.workspace.id, doc_key, absent=absent)
     except ApiError as exc:
         if exc.code != "gone" or request.expected_version != 0:
             raise
@@ -1313,7 +1321,7 @@ async def upsert_document(
             namespace, doc_key, allow_system=principal.is_human
         )
         await address_service.ensure_alias_available(
-            session, principal.workspace.id, "document", doc_key
+            session, principal.workspace.id, "document", doc_key, absent=absent
         )
         await address_service.ensure_namespace_registered(session, principal, namespace)
         await onboarding.check_conventions(
@@ -1388,7 +1396,7 @@ async def upsert_document(
         document.provenance_taint = origins.sources
         document.content_origin = origin
         await refresh_document_taint(session, document)
-        await indexer.after_write(session, document)
+        await indexer.after_write(session, document, created=True)
         await record_audit(
             session,
             workspace_id=principal.workspace.id,

@@ -100,6 +100,8 @@ EVENT_TYPES: dict[str, str] = {
                        "and the owner of an offline agent).",
     "escalation.resolved": "A human decided an escalation (targets: the agent that asked).",
     "escalation.reminder": "An escalation is still open (targets: the routed human).",
+    "escalation.batch": "Semi automation: agents' questions for a person, sent together "
+                        "(targets: the routed human).",
     "task.children_done": "Every subtask of a task is done (targets: the lead).",
     "task.continuation_written": "A continuation pack was written for a task.",
     "webhook.dead": "A webhook delivery failed every retry and will not be sent again "
