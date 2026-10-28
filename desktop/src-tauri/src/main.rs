@@ -313,6 +313,45 @@ fn test_wake(app: AppHandle, runtime: String, cwd: String, prompt: Option<String
 }
 
 #[tauri::command]
+fn wake_enqueue(app: AppHandle, runtime: String, cwd: String, task_key: Option<String>,
+                urgent: bool, prompt: Option<String>) -> Result<Value, String> {
+    let script = sidecar_script(&app)?;
+    let output = Command::new(node_binary(&app))
+        .arg(script)
+        .arg("--enqueue")
+        .arg(runtime)
+        .arg(cwd)
+        .arg(task_key.unwrap_or_default())
+        .arg(if urgent { "urgent" } else { "normal" })
+        .arg(prompt.unwrap_or_else(|| "Reply with the single word OK.".to_string()))
+        .output()
+        .map_err(|error| format!("cannot queue the wake: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn wake_queue() -> Result<Value, String> {
+    let queue = veynod_dir().join("wake-queue.json");
+    let receipts = veynod_dir().join("wake-receipts.jsonl");
+    let items: Value = fs::read_to_string(queue)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_else(|| json!([]));
+    let mut recent = Vec::new();
+    if let Ok(raw) = fs::read_to_string(receipts) {
+        for line in raw.lines().rev().take(20).collect::<Vec<_>>().into_iter().rev() {
+            if let Ok(value) = serde_json::from_str::<Value>(line) {
+                recent.push(value);
+            }
+        }
+    }
+    Ok(json!({ "items": items, "receipts": recent }))
+}
+
+#[tauri::command]
 fn local_status() -> Result<Value, String> {
     let config = load_config();
     let key = config.agents.iter().find_map(|agent| read_key(agent));
@@ -412,7 +451,7 @@ fn main() {
         ))
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
-            setup_state, local_runtimes, describe_runtime, local_status, test_wake, test_agent, save_agent, open_dashboard
+            setup_state, local_runtimes, describe_runtime, local_status, wake_enqueue, wake_queue, test_wake, test_agent, save_agent, open_dashboard
         ])
         .setup(|app| {
             match app.autolaunch().enable() {
@@ -484,6 +523,15 @@ fn main() {
                     .title("Veynod · Local status")
                     .inner_size(1024.0, 760.0)
                     .build();
+            }
+            if let Ok(daemon) = sidecar_script(app.handle()).map(|path| path.with_file_name("daemon.mjs")) {
+                if daemon.is_file() {
+                    let _ = Command::new(node_binary(app.handle()))
+                        .arg(daemon)
+                        .spawn()
+                        .map_err(|error| log_line(&format!("wake daemon failed: {error}")));
+                    log_line("wake daemon started");
+                }
             }
             start_watchers(app.handle().clone());
             Ok(())

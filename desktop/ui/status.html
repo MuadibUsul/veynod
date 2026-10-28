@@ -47,6 +47,21 @@
       <div id="agents" class="grid"></div>
     </section>
     <section>
+      <h2>Wake queue</h2>
+      <div class="row" style="margin-bottom: 10px">
+        <select id="q-runtime" style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:#0e0d16;color:#fff">
+          <option value="codex">codex</option>
+          <option value="claude">claude</option>
+        </select>
+        <input id="q-cwd" placeholder="Project folder" style="flex:1;min-width:180px;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:#0e0d16;color:#fff" />
+        <input id="q-task" placeholder="task_key (optional)" style="width:160px;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:#0e0d16;color:#fff" />
+        <input id="q-prompt" placeholder="Prompt" style="flex:1;min-width:160px;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:#0e0d16;color:#fff" />
+        <label class="sub"><input id="q-urgent" type="checkbox" /> urgent</label>
+        <button id="q-add">Queue wake</button>
+      </div>
+      <div id="queue" class="sub"></div>
+    </section>
+    <section>
       <h2>Open tasks</h2>
       <div id="tasks"></div>
     </section>
@@ -87,8 +102,38 @@
           $("error").textContent = String(error);
         }
       }
-      $("refresh").addEventListener("click", load);
+      async function loadQueue() {
+        try {
+          const data = await invoke("wake_queue");
+          const rows = (data.items || []).slice(-20).map((item) =>
+            `<div class="task"><strong>${esc(item.runtime)}</strong> · ${esc(item.state)}${item.landed ? " · " + esc(item.landed) : ""}${item.task_key ? " · " + esc(item.task_key) : ""}${item.error ? " · " + esc(item.error) : ""}</div>`).join("");
+          const receipts = (data.receipts || []).slice(-5).map((item) =>
+            `<div class="task sub">${esc(item.at || "")} · ${esc(item.input_id || "")} · ${esc(item.landed || (item.failed ? "failed" : ""))}</div>`).join("");
+          $("queue").innerHTML = rows || '<div class="empty">Queue is empty.</div>';
+          $("queue").innerHTML += receipts;
+        } catch (error) {
+          $("queue").textContent = String(error);
+        }
+      }
+      $("q-add").addEventListener("click", async () => {
+        const cwd = $("q-cwd").value.trim();
+        if (!cwd) { $("q-cwd").focus(); return; }
+        try {
+          await invoke("wake_enqueue", {
+            runtime: $("q-runtime").value,
+            cwd,
+            taskKey: $("q-task").value.trim() || null,
+            urgent: $("q-urgent").checked,
+            prompt: $("q-prompt").value.trim() || null,
+          });
+          loadQueue();
+        } catch (error) {
+          $("queue").textContent = String(error);
+        }
+      });
+      $("refresh").addEventListener("click", () => { load(); loadQueue(); });
       load();
+      loadQueue();
     </script>
   </body>
 </html>
