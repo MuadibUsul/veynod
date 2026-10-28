@@ -51,6 +51,7 @@ An already-configured machine skips the wizard. Node 24 is expected on PATH for 
 ```bat
 cd desktop
 npm install
+cd sidecar && npm install && cd ..
 npx tauri build --debug --no-bundle   :: fast local binary
 npx tauri build                       :: NSIS installer
 ```

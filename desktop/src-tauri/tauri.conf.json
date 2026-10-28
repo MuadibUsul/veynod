@@ -40,7 +40,8 @@
     "resources": [
       "../sidecar/bridge.mjs",
       "../sidecar/inventory.mjs",
-      "../sidecar/package.json"
+      "../sidecar/package.json",
+      "../sidecar/node_modules/**/*"
     ]
   }
 }
