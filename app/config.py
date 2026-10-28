@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ app
     app_name: str = "Veynod"
     # Bump on every release and add notes in app/services/releases.py.
-    app_version: str = "3.18.0"
+    app_version: str = "3.19.0"
     environment: Literal["development", "staging", "production", "test"] = "development"
     debug: bool = False
     host: str = "0.0.0.0"
@@ -82,6 +82,9 @@ class Settings(BaseSettings):
     # has waited this long or this many are waiting (Loop v1).
     escalation_batch_minutes: int = Field(default=30, ge=1, le=1440)
     escalation_batch_max: int = Field(default=5, ge=1, le=100)
+    # Probe tokens (R7): their own cap per workspace and a short lifetime.
+    probe_token_quota: int = Field(default=10, ge=0, le=1000)
+    probe_token_max_ttl_hours: int = Field(default=24, ge=1, le=720)
     task_unclaimed_timeout_seconds: int = Field(default=7200, ge=60, le=86_400)
     max_reject_history: int = Field(default=20, ge=1, le=500)
     human_override_default_lock: bool = True

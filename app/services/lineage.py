@@ -318,6 +318,7 @@ async def stamp_for(principal: Principal) -> dict[str, Any]:
         "principal": principal.agent_signature,
         "token_id": token_cid,
         "chain": chain,
+        **({"probe": True} if token is not None and token.is_probe else {}),
         "grant_snapshot_id": snapshot_id,
     }
 
@@ -347,6 +348,7 @@ def _token_view(token: AgentToken, *, active_descendants: int = 0) -> dict[str, 
         "lineage": list(token.lineage or []),
         "can_issue": bool(token.can_issue),
         "max_descendants": int(token.max_descendants or 0),
+        "probe": bool(token.is_probe),
         "active_descendants": active_descendants,
         "budget_state": _token_budget(token),
         "purpose": token.purpose,

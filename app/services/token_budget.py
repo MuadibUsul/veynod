@@ -46,6 +46,9 @@ def chain_of(principal: Principal) -> list[str]:
     """The caller's token and its ancestors up to the branch (the root excluded)."""
     if principal.is_human:
         return []
+    if principal.is_probe:
+        # R7: a probe's usage is its own; it never spends its ancestors' budgets.
+        return [principal.token_cid] if principal.token_cid else []
     root = principal.workspace.root_token_id
     return [token for token in (principal.lineage or []) if token and token != root]
 
@@ -54,6 +57,8 @@ def stamp_chain(stamp: dict[str, Any] | None) -> list[str]:
     if not stamp or stamp.get("kind") in ("human", "admin", "system", "root"):
         return []
     chain = list(stamp.get("chain") or [])
+    if stamp.get("probe"):
+        return chain[-1:]
     return chain[1:] if len(chain) > 1 else []
 
 

@@ -29,6 +29,22 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.19.0",
+        "date": "2026-10-28",
+        "summary": "Probe tokens: trying things out no longer uses up real tokens' quota "
+        "or budget.",
+        "highlights": [
+            "issue_child_token / POST /v1/tokens take probe=true. A probe token takes no "
+            "place in the workspace, branch or issuer token quota; probes have their own cap "
+            "per workspace (PROBE_TOKEN_QUOTA, 10).",
+            "A probe's usage (writes, queries, embedding tokens) is charged to the probe "
+            "only, never to the tokens above it; it can still get a budget of its own, no "
+            "higher than its ancestors' limits.",
+            "A probe cannot issue tokens and lives at most PROBE_TOKEN_MAX_TTL_HOURS (24). "
+            "Token views carry probe. Schema 3.59 adds agent_tokens.is_probe.",
+        ],
+    },
+    {
         "version": "3.18.0",
         "date": "2026-10-28",
         "summary": "Full automation finishes on a verified deploy; agents' deletes can be "
