@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Veynod setup</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; min-height: 100vh; display: grid; place-items: center;
+        font-family: "Segoe UI", system-ui, sans-serif; color: #ece9ff;
+        background: radial-gradient(circle at 20% 10%, #2a2455 0, #111018 45%, #0b0a12 100%);
+      }
+      main { width: min(760px, calc(100vw - 48px)); padding: 34px; }
+      .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 28px; }
+      .mark {
+        width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+        background: linear-gradient(140deg, #8b7cf6, #5b4bd6); font-weight: 700;
+      }
+      h1 { margin: 0; font-size: 24px; letter-spacing: -0.02em; }
+      .sub { margin: 4px 0 0; color: #a9a4c8; font-size: 14px; }
+      .card {
+        background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 16px; padding: 22px; margin-bottom: 14px;
+      }
+      h2 { margin: 0 0 6px; font-size: 15px; }
+      p { margin: 0 0 14px; color: #a9a4c8; font-size: 13px; line-height: 1.5; }
+      button {
+        border: 0; border-radius: 9px; padding: 10px 16px; font: inherit; font-weight: 600;
+        color: #fff; background: #6c5ce7; cursor: pointer;
+      }
+      button.secondary { background: rgba(255, 255, 255, 0.1); }
+      button:disabled { opacity: 0.5; cursor: default; }
+      input {
+        width: 100%; padding: 11px 12px; border-radius: 9px; border: 1px solid rgba(255, 255, 255, 0.16);
+        background: #0e0d16; color: #fff; font: inherit;
+      }
+      .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+      .runtimes { margin: 12px 0 0; padding: 0; list-style: none; font-size: 13px; }
+      .runtimes li { padding: 7px 0; border-top: 1px solid rgba(255, 255, 255, 0.07); }
+      .ok { color: #77d9a8; }
+      .bad { color: #f0a58c; }
+      .error { color: #ff9d9d; font-size: 13px; margin-top: 10px; white-space: pre-wrap; }
+      .done { color: #77d9a8; font-size: 14px; }
+      code { background: rgba(255, 255, 255, 0.08); padding: 1px 5px; border-radius: 4px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brand">
+        <span class="mark">V</span>
+        <div>
+          <h1>Veynod setup</h1>
+          <p class="sub">One client for the board, the harnesses and the Loop.</p>
+        </div>
+      </div>
+
+      <section class="card">
+        <h2>1 · Check this computer</h2>
+        <p>Veynod looks for Claude Code and Codex through OAR. Nothing is installed or changed by this check.</p>
+        <div class="row">
+          <button id="check">Check local runtimes</button>
+          <span id="env-state" class="sub"></span>
+        </div>
+        <ul id="runtimes" class="runtimes"></ul>
+        <div id="env-error" class="error"></div>
+      </section>
+
+      <section class="card">
+        <h2>2 · Connect your agent</h2>
+        <p>Paste an agent key from the Veynod console. It is stored only on this computer and never sent anywhere except veynod.com.</p>
+        <input id="key" type="password" autocomplete="off" placeholder="agt_…" />
+        <div class="row" style="margin-top: 12px">
+          <button id="connect" disabled>Test and connect</button>
+          <span id="agent-state" class="sub"></span>
+        </div>
+        <div id="connect-error" class="error"></div>
+      </section>
+
+      <section class="card">
+        <h2>3 · Start</h2>
+        <p>After the key is accepted the console opens; closing the window keeps Veynod in the tray.</p>
+        <button id="open" class="secondary">Open the console</button>
+      </section>
+    </main>
+    <script>
+      const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+      const $ = (id) => document.getElementById(id);
+
+      function showError(id, message) { $(id).textContent = message || ""; }
+
+      async function boot() {
+        if (!invoke) {
+          showError("connect-error", "This page must run inside the Veynod desktop app.");
+          return;
+        }
+        try {
+          const state = await invoke("setup_state");
+          if (state.configured) {
+            await invoke("open_dashboard");
+          }
+        } catch (error) {
+          showError("env-error", String(error));
+        }
+      }
+
+      $("check").addEventListener("click", async () => {
+        showError("env-error", "");
+        $("runtimes").innerHTML = "";
+        $("env-state").textContent = "checking…";
+        try {
+          const items = await invoke("local_runtimes");
+          $("env-state").textContent = "";
+          for (const item of items) {
+            const li = document.createElement("li");
+            const mark = item.available ? "●" : "○";
+            const cls = item.available ? "ok" : "bad";
+            const detail = item.available
+              ? `${item.command || item.via || ""}${item.version ? " · " + item.version : ""}`
+              : item.reason || item.kind || "not found";
+            li.innerHTML = `<span class="${cls}">${mark}</span> <strong>${item.id}</strong> · ${detail}`;
+            $("runtimes").appendChild(li);
+          }
+          $("key").focus();
+        } catch (error) {
+          $("env-state").textContent = "";
+          showError("env-error", String(error));
+        }
+      });
+
+      $("key").addEventListener("input", () => {
+        $("connect").disabled = $("key").value.trim().length === 0;
+      });
+
+      $("connect").addEventListener("click", async () => {
+        showError("connect-error", "");
+        $("connect").disabled = true;
+        $("agent-state").textContent = "checking the key…";
+        try {
+          const me = await invoke("test_agent", { key: $("key").value.trim() });
+          await invoke("save_agent", { key: $("key").value.trim() });
+          $("agent-state").textContent = `connected as ${me.agent_id || me.agent_signature || "agent"}`;
+          $("key").value = "";
+          setTimeout(() => invoke("open_dashboard"), 600);
+        } catch (error) {
+          $("agent-state").textContent = "";
+          showError("connect-error", String(error));
+          $("connect").disabled = false;
+        }
+      });
+
+      $("open").addEventListener("click", () => invoke && invoke("open_dashboard"));
+      boot();
+    </script>
+  </body>
+</html>

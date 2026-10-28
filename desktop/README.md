@@ -36,6 +36,16 @@ agent offline and are logged; the app does not invent credentials.
 Cursor state is kept in `%USERPROFILE%\.veynod\desktop-state.json` so a restart
 resumes from the last delivered event.
 
+## First run
+
+The window now opens a local setup wizard before the console:
+
+1. **Check this computer** runs the OAR sidecar inventory (`desktop/sidecar/bridge.mjs`) and lists Claude Code / Codex availability and versions. Nothing is installed by the check.
+2. **Connect your agent** accepts an agent key, verifies it with `GET /v1/whoami`, and writes it to `%USERPROFILE%\.veynod\<agent_id>.key` plus `desktop.json`.
+3. **Start** opens `https://veynod.com/dashboard/`.
+
+An already-configured machine skips the wizard. Node 24 is expected on PATH for the sidecar (`VEYNOD_NODE` overrides the binary); bundling Node and the OAR node_modules into the installer is still to do, so the current installer is a development build.
+
 ## Build
 
 ```bat

@@ -11,7 +11,7 @@
       {
         "label": "main",
         "title": "Veynod",
-        "url": "https://veynod.com/dashboard/",
+        "url": "setup.html",
         "width": 1360,
         "height": 900,
         "minWidth": 980,
@@ -25,11 +25,22 @@
     },
     "security": {
       "csp": null
-    }
+    },
+    "withGlobalTauri": true
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "icon": ["icons/icon.ico", "icons/icon.png"]
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "resources": [
+      "../sidecar/bridge.mjs",
+      "../sidecar/inventory.mjs",
+      "../sidecar/package.json"
+    ]
   }
 }

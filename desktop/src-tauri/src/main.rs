@@ -5,6 +5,7 @@ use std::{
     fs,
     io::{BufRead, BufReader},
     path::PathBuf,
+    process::Command,
     thread,
     time::{Duration, Instant},
 };
@@ -19,7 +20,7 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_notification::NotificationExt;
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 struct DesktopConfig {
     #[serde(default)]
     agents: Vec<String>,
@@ -237,6 +238,100 @@ fn start_watchers(app: AppHandle) {
     }
 }
 
+fn sidecar_script(app: &AppHandle) -> Result<PathBuf, String> {
+    if let Ok(resources) = app.path().resource_dir() {
+        let bundled = resources.join("sidecar").join("bridge.mjs");
+        if bundled.is_file() {
+            return Ok(bundled);
+        }
+    }
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("sidecar")
+        .join("bridge.mjs");
+    if dev.is_file() {
+        Ok(dev)
+    } else {
+        Err("the OAR sidecar (desktop/sidecar/bridge.mjs) is missing".into())
+    }
+}
+
+#[derive(Serialize)]
+struct SetupState {
+    configured: bool,
+    agents: Vec<String>,
+}
+
+#[tauri::command]
+fn setup_state() -> SetupState {
+    let config = load_config();
+    let configured = config.agents.iter().any(|agent| read_key(agent).is_some());
+    SetupState { configured, agents: config.agents }
+}
+
+#[tauri::command]
+fn local_runtimes(app: AppHandle) -> Result<Value, String> {
+    let script = sidecar_script(&app)?;
+    let node = std::env::var("VEYNOD_NODE").unwrap_or_else(|_| "node".to_string());
+    let output = Command::new(node)
+        .arg(script)
+        .arg("--inventory")
+        .output()
+        .map_err(|error| format!("cannot start Node for the runtime inventory: {error}"))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("the runtime inventory was not JSON: {error}"))
+}
+
+#[tauri::command]
+fn test_agent(key: String, host: Option<String>) -> Result<Value, String> {
+    let host = host.unwrap_or_else(default_host).trim_end_matches('/').to_string();
+    let response = ureq::get(&format!("{host}/v1/whoami"))
+        .set("Authorization", &format!("Bearer {}", key.trim()))
+        .timeout(Duration::from_secs(15))
+        .call()
+        .map_err(|error| format!("cannot reach Veynod: {error}"))?;
+    response
+        .into_json::<Value>()
+        .map_err(|error| format!("unexpected whoami response: {error}"))
+}
+
+#[tauri::command]
+fn save_agent(app: AppHandle, key: String) -> Result<Value, String> {
+    let key = key.trim().to_string();
+    let me = test_agent(key.clone(), None)?;
+    let agent_id = me
+        .get("agent_id")
+        .and_then(Value::as_str)
+        .or_else(|| me.get("agent_signature").and_then(Value::as_str))
+        .ok_or_else(|| "whoami did not return an agent identity".to_string())?
+        .to_string();
+    fs::create_dir_all(veynod_dir()).map_err(|error| error.to_string())?;
+    fs::write(veynod_dir().join(format!("{agent_id}.key")), &key)
+        .map_err(|error| error.to_string())?;
+    let mut config = load_config();
+    if !config.agents.contains(&agent_id) {
+        config.agents.push(agent_id.clone());
+    }
+    let raw = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
+    fs::write(veynod_dir().join("desktop.json"), raw).map_err(|error| error.to_string())?;
+    log_line(&format!("setup: saved agent {agent_id}"));
+    let _ = app;
+    Ok(me)
+}
+
+#[tauri::command]
+fn open_dashboard(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("main") {
+        window
+            .eval("window.location.href = 'https://veynod.com/dashboard/';")
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -250,6 +345,9 @@ fn main() {
             Some(vec!["--hidden"]),
         ))
         .plugin(tauri_plugin_notification::init())
+        .invoke_handler(tauri::generate_handler![
+            setup_state, local_runtimes, test_agent, save_agent, open_dashboard
+        ])
         .setup(|app| {
             match app.autolaunch().enable() {
                 Ok(_) => log_line("autostart enabled"),
