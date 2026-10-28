@@ -126,9 +126,9 @@
 
 ## ADR-014 测试门禁
 
-- **背景**：N-07。CI 只能手动触发。
-- **推荐**：在 `.github/workflows/test.yml` 中增加 `pull_request` 触发。联邦每个任务的 PR 都要附上 HEAD SHA、schema 版本、pytest 汇总和前端构建结果（愿景 §21“证据要求”）。
-- **状态**：**已决定（2026-10-28）：采用。** 放在“F-01 前置”PR 里：`test.yml` 增加 `pull_request` 和推送到 `main` 两种触发。
+- **背景**：N-07。CI 只能手动触发。补充：这是 owner 在 2026-10-26 **有意** 做的改动，提交 `0f60bfa`（“Prepare prebuilt 3.6.3 deployment and manual test workflow”）把原来的 `push: main` 和 `pull_request` 触发改成了只保留 `workflow_dispatch`。
+- **推荐**：联邦每个任务的 PR 都要附上 HEAD SHA、schema 版本、pytest 汇总和前端构建结果（愿景 §21“证据要求”）。
+- **状态**：**已决定（2026-10-28，修订）：不恢复自动触发。** 尊重 owner 10-26 的选择。执行方在每个联邦 PR 的分支上手动 dispatch 一次 `Test` workflow，并把运行链接和本地全量 pytest 汇总一起附在 PR 里。如果 owner 以后想恢复自动触发，只需要把 `test.yml` 的 `on:` 改回 `push: [main]` + `pull_request`。
 
 ---
 
@@ -149,4 +149,4 @@
 | ADR-011 | 全局表 / 租户表划分 | F-01 | — |
 | ADR-012 | A：单独建联邦消息表，到达后写入本地会话 | F-04 | — |
 | ADR-013 | A：信封加密，预留 KMS 接口 | F-02 | 生成并下发 `FEDERATION_KEK` |
-| ADR-014 | 采用：PR 自动跑测试 | F-01 前置 | — |
+| ADR-014 | 修订：保持手动触发，每个联邦 PR 由执行方手动 dispatch 并附链接 | 每个联邦 PR | 想恢复自动触发时改 `test.yml` |

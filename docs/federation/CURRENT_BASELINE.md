@@ -225,6 +225,48 @@ F-05 动控制台之前要补跑。
 结论：**main 上有 13 个测试因为代码已经有意变更而过时（A + B + C 中的测试期望部分）**。又因为 CI 只能手动触发（§3），
 这些红灯没有被发现。联邦任务开工前应该先让测试套件恢复全绿（GAP N-13），否则后面任务“测试通过”的证据没有意义。
 
+## 7.1 基线之后的变化：main `6ae7ba7`（PR #33，3.13.2）
+
+审查完成后，main 合入了 [MuadibUsul/veynod#33](https://github.com/MuadibUsul/veynod/pull/33)（`6ae7ba7`，应用 3.13.2，
+新增迁移 `v3_49_blob_tenants.sql`）。它修掉了本文和 GAP 里的几项：
+
+| GAP 项 | #33 的处理 | 复核 |
+|---|---|---|
+| N-11 启动重跑 DDL | `apply_schema()` 记录 schema 文件的指纹（`_schema_fingerprint()`），指纹没变就跳过 DDL | 代码已确认 |
+| N-12 5 张表没有 RLS | `v3_49_blob_tenants.sql` 补了派生的 `tenant_id`、派生触发器和 `tenant_isolation` 策略 | `test_tenants::test_every_owned_row_carries_a_derived_tenant` 通过 |
+| N-13 过时测试 | 新开关 `OWNER_ONLY_DONE`（默认 **关**）控制 3.12.0 的“只有 OWNER 能批准 DONE”；RBAC 测试在开关打开时运行；`ROOT_PRIMITIVES` 补了 9 个工具；COMMANDER 委派测试改为期望 201；定时导出测试的等待时间放宽 | 见下方测试结果 |
+
+注意：`OWNER_ONLY_DONE` 默认关闭，意思是任何有 review 权限的主体（包括 AUDITOR）都能再次批准 DONE。
+这与宪法里“人审核交到 REVIEWING 的工作”的意图有张力。生产环境是否打开这个开关，由 owner 决定。
+
+在干净库上对 `6ae7ba7` 重新跑了全量测试（PostgreSQL 16.15 + pgvector 0.6.0）：
+
+```text
+ruff check app tests   → All checks passed!
+pytest -q              → 2 failed, 416 passed in 2010.64s (0:33:30)
+```
+
+剩下的 2 个失败：
+
+- `test_feedback::test_browser_root_serves_human_page_and_json_stays_available`：首页只有在 `dashboard/out` 存在时才显示控制台链接
+  （`app/main.py` 中的 `dashboard_dir`），后端单独运行（包括 CI 的 backend job）时不会构建控制台，所以这个用例依赖环境。
+  已在分支 `claude/fedv2-f01-prereq` 修正：断言改为跟着构建状态走，两种情况都已在本地验证。
+- `test_events::test_seq_is_gap_free_under_concurrent_writes`：`httpx.ReadTimeout`。在 CI 上也一样失败（见下），所以 **不是** 本机环境问题，
+  而是真实的写入吞吐问题（GAP N-14）。
+
+在分支 `claude/fedv2-f01-prereq`（`e8b4fc4` = `6ae7ba7` + `test_feedback` 修正）上手动 dispatch 了一次 CI，
+[run 40647046488](https://github.com/MuadibUsul/veynod/actions/runs/40647046488)：
+
+```text
+cli        → success
+protocol   → success
+dashboard  → success（npm run build）
+backend    → ruff 通过；pytest 1 failed, 417 passed in 1483.21s (0:24:43)
+             FAILED tests/test_events.py::test_seq_is_gap_free_under_concurrent_writes - httpx.ReadTimeout
+```
+
+注意：backend job 的超时是 30 分钟，这次用了 24 分 43 秒，余量不多。
+
 ## 8. 假设清单（后续任务需要验证）
 
 | ID | 假设 | 由谁验证 |
