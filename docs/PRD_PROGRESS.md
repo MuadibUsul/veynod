@@ -296,9 +296,10 @@ Task `console-focus-diagram-loop`. The owner asked for one focus: how the projec
 
 | Item | Status | Notes |
 |---|---|---|
-| A-01 diagram first | Done | The console opens on Diagram: chunks in dependency columns with edges and states, confirm, freeze, decide changes with their impact, revoke recent decisions, send a new request to the planner (a task for an ANALYST, filed as a change by the planner). |
+| A-01 diagram first | Done | The console opens on Diagram, an infinite canvas (pan, zoom, fit, floating controls, drawer for details, no workspace title): chunks in dependency columns with edges and states, confirm, freeze, decide changes with their impact, revoke recent decisions, send a new request to the planner (a task for an ANALYST, filed as a change by the planner). |
 | A-02 loop second | Done | Loop: automation mode, what needs a person (reviews, high alerts), try and accept, live board. |
 | A-03 three entries | Done | Diagram, Loop, More; tasks, agents, documents, situation, governance, state slots and audit are one click away under More. |
+| A-05 sidebar folds | Done | Toggle in the top bar or Ctrl/Cmd + B, remembered per browser. |
 | A-04 visual system | Done | Geist, flat surfaces, spacing and radius scales, one motion curve, reduced motion; console, docs and home page. Full CSS audit of every legacy pixel value is not done: tokens, transitions and gradients are. |
 
 ## Loop: automation mode (3.15.0-3.18.0)
