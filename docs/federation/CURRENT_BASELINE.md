@@ -176,7 +176,13 @@ F-03 不能复用 `mcp_connections`，也不能把 CLI 重连当成 peer 续连�
 
 ### 6.6 Schema 初始化期间的竞态
 
-- **【已有】** DDL 由 advisory lock 串行化，见 §2。
+- **【已有】** DDL 由 advisory lock 串行化，见 §2。但这个锁只串行化“DDL 与 DDL”，**不挡**“DDL 与正常读写”。
+- **【已有，本次实测复现】** 每次启动都会重跑 `sql/init.sql`，其中 `DROP TRIGGER IF EXISTS trg_tasks_notify ON collab_tasks; CREATE TRIGGER …`
+  （`sql/init.sql:384-385`）会申请 `collab_tasks` 的 AccessExclusiveLock。本地完整测试时，测试夹具在第一个实例还在服务时
+  启动了第二个实例。PostgreSQL 日志 `2026-10-28 00:21:37 UTC` 记录了一次死锁：一方是第一个实例的 `INSERT INTO timeline_streams …`
+  （等待 `timeline_streams` 的 RowExclusiveLock），另一方是第二个实例正在执行的 `init.sql`（等待 `collab_tasks` 的 AccessExclusiveLock），
+  二者循环等待。PostgreSQL 回滚了 INSERT 那一侧的事务。也就是说，**多副本启动或滚动发布时，存活副本上的正常写入可能因为另一副本重跑 schema 而失败**。
+  联邦会增加跨实例的写流量，F-01 应该让 `init.sql` 和 `sql/functions/*.sql` 在 schema 已是最新版本时跳过，或者改成只在迁移中执行。
 - **【假设】** 滚动发布时，旧版副本可能在新 schema 上继续服务。迁移需要保持向后兼容（只增不删），目前这只是惯例，没有检查。
 - **【假设】** 锁之外的回填操作没有并发测试，见 §2。
 
@@ -201,7 +207,7 @@ F-03 不能复用 `mcp_connections`，也不能把 CLI 重连当成 peer 续连�
 | ID | 假设 | 由谁验证 |
 |---|---|---|
 | H-01 | 每份迁移都能安全地重复执行（§2） | F-01：迁移前后各跑一遍 `apply_schema()` |
-| H-02 | 锁外回填在多副本下是幂等的（§2、§6.6） | F-06：故障注入 |
+| H-02 | 锁外回填在多副本下是幂等的（§2、§6.6）。注意：“重跑 init.sql 与存活写入死锁”已经实测复现，不再是假设（GAP N-11） | F-06：故障注入 |
 | H-03 | 撤销后最多 30 秒仍按旧授权推送 SSE（§6.3） | F-03/F-06：测量撤销到断流的延迟 |
 | H-04 | 旧版副本能在新 schema 上安全服务（§6.6） | F-01：迁移只增不删 |
 | H-05 | 改成非超级用户连接后，测试仍能通过（§6.1） | ADR-010 批准后在 F-01 中验证 |

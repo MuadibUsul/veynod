@@ -18,6 +18,7 @@
 | N-07 | P1 | CI 只能手动触发（`workflow_dispatch`），PR 不会自动跑测试；联邦 24 个任务的“测试通过”缺少客观门禁 | `.github/workflows/test.yml` | 增加 `pull_request` 触发，至少跑 backend 和 protocol 两个 job（需要 owner 同意，因为会消耗 Actions 额度） | F-01 前 |
 | N-08 | P2 | `outbound_allow_private_networks` 的代码默认值是 True，只靠部署配置关掉 | `app/config.py` | 改成默认 False，开发环境通过 `.env` 打开（会改变开发默认行为，需要确认） | F-06 |
 | N-09 | P2 | README 标题仍写 v3.6.7，实际版本 3.13.1；愿景 v0.3 引用的基线也已经过时（schema 3.40 → 3.48） | `README.md:1` | 联邦文档一律以 `app_version` 和 `CURRENT_SCHEMA_VERSION` 为准 | — |
+| N-11 | P1 | 每次启动都重跑 `sql/init.sql`（含 `DROP/CREATE TRIGGER … ON collab_tasks`，需要 AccessExclusiveLock）；advisory lock 只挡 DDL 之间的并发。本地测试时第二个实例启动，与存活实例的写入形成 **死锁**（PG 日志 00:21:37 UTC），存活实例的写事务被回滚 | `app/database.py` `apply_schema()`；`sql/init.sql:384-385` | schema 已是最新版本时跳过 `init.sql` 和 `sql/functions/*.sql`，或者只在迁移中执行触发器 DDL；增加“滚动重启时写入不失败”的测试 | F-01 |
 | N-10 | P2 | SSE 撤销最多晚 30 秒才断流 | `app/api/stream_routes.py` `_stream_events()` | 联邦流在 grant 撤销时主动推送关闭（通过事件），不等下一次轮询 | F-03 / F-04 |
 
 ## 2. 愿景 G01–G18 与源码对照
