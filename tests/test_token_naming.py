@@ -172,3 +172,58 @@ async def test_an_unnamed_token_names_itself_on_first_connect(client):
     assert rotated.status_code == 200, rotated.text
     assert rotated.json()["agent_id"] == "self-named"
     assert rotated.json()["token"]["agent_signature"] == "self-named-v2"
+
+
+async def test_first_handshake_lets_the_platform_name_the_agent(client):
+    """An unnamed agent introduces itself; the platform derives name and address."""
+    ws = await _workspace(client)
+    first = await _mint(client, ws)
+    agent = {"Authorization": f"Bearer {first['api_key']}"}
+
+    missing = await client.post("/v1/agents/register", headers=agent, json={
+        "introduction": {"name": "Claude Code"}})
+    assert missing.status_code == 422, missing.text
+
+    hello = await client.post("/v1/agents/register", headers=agent, json={
+        "introduction": {"name": "Claude Code", "function": "code review",
+                         "maker": "Anthropic", "runs_on": "a cloud session"}})
+    assert hello.status_code in (200, 201), hello.text
+    entry = hello.json()
+    assert entry["agent_id"] == "claude-code"
+    assert entry["named_by"] == "platform"
+    assert entry["display_name"] == "Claude Code · code review"
+    assert entry["description"].startswith("Claude Code (Anthropic) · code review")
+    assert entry["capabilities"] == ["code"]
+    assert entry["permanent_address"].startswith("agent:prn_")
+
+    me = (await client.get("/v1/whoami", headers=agent)).json()
+    assert me["agent_id"] == "claude-code"
+    assert me["agent_signature"] == "claude-code-v1"
+
+    # A second Claude doing the same job gets its own id; the address is unique.
+    second = await _mint(client, ws)
+    other = {"Authorization": f"Bearer {second['api_key']}"}
+    again = await client.post("/v1/agents/register", headers=other, json={
+        "introduction": {"name": "Claude Code", "function": "代码"}})
+    assert again.status_code in (200, 201), again.text
+    assert again.json()["agent_id"] == "claude-code-2"
+    assert again.json()["permanent_address"] != entry["permanent_address"]
+
+    third = await _mint(client, ws)
+    chinese = await client.post("/v1/agents/register", headers={
+        "Authorization": f"Bearer {third['api_key']}"}, json={
+        "introduction": {"name": "豆包", "function": "审计"}})
+    assert chinese.status_code in (200, 201), chinese.text
+    assert chinese.json()["agent_id"] == "agent-audit"
+    assert chinese.json()["display_name"] == "豆包 · 审计"
+
+    # The permanent address finds the agent, and survives a rename.
+    principal = entry["permanent_address"].split(":", 1)[1]
+    found = await client.get(f"/v1/agents/{principal}", headers=ws["human"])
+    assert found.status_code == 200 and found.json()["agent_id"] == "claude-code"
+    renamed = await client.patch("/v1/agents/claude-code", headers=ws["human"], json={
+        "expected_version": found.json()["version"], "fields": {"agent_id": "claude-review"}})
+    assert renamed.status_code == 200, renamed.text
+    after = await client.get(f"/v1/agents/{principal}", headers=ws["human"])
+    assert after.json()["agent_id"] == "claude-review"
+    assert after.json()["permanent_address"] == entry["permanent_address"]
