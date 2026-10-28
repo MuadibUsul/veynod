@@ -251,8 +251,21 @@ pytest -q              → 2 failed, 416 passed in 2010.64s (0:33:30)
 - `test_feedback::test_browser_root_serves_human_page_and_json_stays_available`：首页只有在 `dashboard/out` 存在时才显示控制台链接
   （`app/main.py` 中的 `dashboard_dir`），后端单独运行（包括 CI 的 backend job）时不会构建控制台，所以这个用例依赖环境。
   已在分支 `claude/fedv2-f01-prereq` 修正：断言改为跟着构建状态走，两种情况都已在本地验证。
-- `test_events::test_seq_is_gap_free_under_concurrent_writes`：`httpx.ReadTimeout`，40 批并发写入在本机超过 60 秒的客户端超时，属于负载敏感用例，
-  要以 CI 的结果为准。
+- `test_events::test_seq_is_gap_free_under_concurrent_writes`：`httpx.ReadTimeout`。在 CI 上也一样失败（见下），所以 **不是** 本机环境问题，
+  而是真实的写入吞吐问题（GAP N-14）。
+
+在分支 `claude/fedv2-f01-prereq`（`e8b4fc4` = `6ae7ba7` + `test_feedback` 修正）上手动 dispatch 了一次 CI，
+[run 40647046488](https://github.com/MuadibUsul/veynod/actions/runs/40647046488)：
+
+```text
+cli        → success
+protocol   → success
+dashboard  → success（npm run build）
+backend    → ruff 通过；pytest 1 failed, 417 passed in 1483.21s (0:24:43)
+             FAILED tests/test_events.py::test_seq_is_gap_free_under_concurrent_writes - httpx.ReadTimeout
+```
+
+注意：backend job 的超时是 30 分钟，这次用了 24 分 43 秒，余量不多。
 
 ## 8. 假设清单（后续任务需要验证）
 
