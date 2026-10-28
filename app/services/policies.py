@@ -10,6 +10,7 @@ import jsonschema
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import batch_memo
 from app.auth import Principal
 from app.errors import ApiError, Forbidden, NotFound, ProposalRequired
 from app.models import PathPolicy
@@ -53,15 +54,18 @@ async def resolve_policy(
     resource_type: str,
     key: str,
 ) -> PathPolicy | None:
-    rows = (
-        await session.execute(
-            select(PathPolicy).where(
-                PathPolicy.workspace_id == workspace_id,
-                PathPolicy.resource_type == resource_type,
-                PathPolicy.active.is_(True),
+    async def active() -> list[PathPolicy]:
+        return list((
+            await session.execute(
+                select(PathPolicy).where(
+                    PathPolicy.workspace_id == workspace_id,
+                    PathPolicy.resource_type == resource_type,
+                    PathPolicy.active.is_(True),
+                )
             )
-        )
-    ).scalars().all()
+        ).scalars().all())
+
+    rows = await batch_memo.shared(("path_policies", workspace_id, resource_type), active)
     matches = [row for row in rows if fnmatch.fnmatchcase(key, row.pattern)]
     if not matches:
         return None

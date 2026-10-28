@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     db_pool_size: int = 10
     db_max_overflow: int = 20
     db_pool_timeout: float = 30.0
+    # None: no connection pool only when ENVIRONMENT=test. Set it explicitly
+    # for a test API server, whose one event loop can keep pooled connections.
+    db_null_pool: bool | None = None
     auto_init_db: bool = False
 
     # ----------------------------------------------------------------- auth
@@ -325,6 +328,17 @@ class Settings(BaseSettings):
     # In-flight requests per credential; long-polls (SSE) have their own pool.
     max_in_flight_per_token: int = Field(default=4, ge=1, le=10_000)
     max_streams_per_token: int = Field(default=1, ge=1, le=100)
+    # REST writes one process runs at once, across all credentials. A write
+    # can hold up to four pooled connections (its own session plus metering
+    # sessions), so the default is the pool size over four: a burst waits
+    # outside the pool instead of exhausting it. None derives it.
+    db_max_concurrent_writes: int | None = Field(default=None, ge=1, le=10_000)
+
+    @property
+    def db_admission_limit(self) -> int:
+        if self.db_max_concurrent_writes is not None:
+            return self.db_max_concurrent_writes
+        return max(2, (self.db_pool_size + self.db_max_overflow) // 4)
 
     # ------------------------------------------- failure-semantics protocol
     # PRD AG-ST-18: 24 h idempotency window; an in-progress record older than

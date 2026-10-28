@@ -20,6 +20,7 @@ from typing import Any
 from sqlalchemy import func, literal_column, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import batch_memo
 from app.auth import Principal
 from app.config import get_settings
 from app.database import async_session_factory
@@ -114,6 +115,12 @@ def _default_limits() -> dict[str, Any]:
 
 async def limits_for(session: AsyncSession, workspace_id: uuid.UUID) -> dict[str, Any]:
     """Effective limits: settings, then the workspace override; tenant caps on top."""
+    # A batch write cannot change limits, so its items share one lookup.
+    return await batch_memo.shared(
+        ("budget_limits", workspace_id), lambda: _load_limits(session, workspace_id))
+
+
+async def _load_limits(session: AsyncSession, workspace_id: uuid.UUID) -> dict[str, Any]:
     limits = _default_limits()
     rows = (
         await session.execute(
@@ -328,6 +335,25 @@ async def _trip_circuit(
     session: AsyncSession, workspace_id: uuid.UUID, key: str, *, reason: str,
     minutes: int, doc_key: str | None = None, details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    # Writes decide to trip before they take the bucket row, so two may trip
+    # together: serialize the trip itself and reuse a circuit just opened.
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:lock))"),
+        {"lock": f"budget_circuit:{workspace_id}:{key}"},
+    )
+    existing = (
+        await session.execute(
+            text(
+                "SELECT reason, doc_key, reopen_at FROM budget_circuits "
+                "WHERE workspace_id = CAST(:workspace_id AS uuid) AND principal_key = :key "
+                "AND reason = :reason AND cleared_at IS NULL AND reopen_at > NOW() "
+                "ORDER BY reopen_at DESC LIMIT 1"
+            ),
+            {"workspace_id": str(workspace_id), "key": key, "reason": reason},
+        )
+    ).mappings().one_or_none()
+    if existing is not None:
+        return dict(existing)
     reopen = datetime.now(timezone.utc) + timedelta(minutes=minutes)
     await session.execute(
         text(
@@ -424,6 +450,49 @@ async def _start_backoff(
     )
 
 
+# The 7-day p99 per (workspace, principal, hour of day). It leaves out the
+# last hour, so it changes slowly; a burst would otherwise rescan a week of
+# ledger rows on every write.
+_SPIKE_BASELINE_TTL_SECONDS = 60
+_spike_baselines: dict[tuple[str, str, int], tuple[float, dict[str, Any]]] = {}
+
+
+async def _spike_baseline(
+    session: AsyncSession, params: dict[str, Any]
+) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    cache_key = (params["workspace_id"], params["key"], now.hour)
+    cached = _spike_baselines.get(cache_key)
+    if cached is not None and cached[0] > now.timestamp():
+        return cached[1]
+    row = dict(
+        (
+            await session.execute(
+                text(
+                    """
+WITH minutes AS (
+    SELECT date_trunc('minute', created_at) AS minute, count(*) AS writes
+    FROM usage_ledger
+    WHERE workspace_id = CAST(:workspace_id AS uuid) AND category = 'writes'
+      AND metadata->>'principal_key' = :key
+      AND created_at > NOW() - INTERVAL '7 days' AND created_at < NOW() - INTERVAL '1 hour'
+      AND extract(hour FROM created_at) = extract(hour FROM NOW())
+    GROUP BY 1
+)
+SELECT percentile_cont(0.99) WITHIN GROUP (ORDER BY writes) AS p99, count(*) AS minutes
+FROM minutes
+"""
+                ),
+                params,
+            )
+        ).mappings().one()
+    )
+    if len(_spike_baselines) >= 10_000:
+        _spike_baselines.clear()
+    _spike_baselines[cache_key] = (now.timestamp() + _SPIKE_BASELINE_TTL_SECONDS, row)
+    return row
+
+
 async def _write_spike(
     session: AsyncSession, workspace_id: uuid.UUID, key: str, limits: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -443,26 +512,7 @@ async def _write_spike(
     )
     if current < limits["write_burst"]:
         return None  # cheap exit: a spike needs at least a burst's worth
-    row = (
-        await session.execute(
-            text(
-                """
-WITH minutes AS (
-    SELECT date_trunc('minute', created_at) AS minute, count(*) AS writes
-    FROM usage_ledger
-    WHERE workspace_id = CAST(:workspace_id AS uuid) AND category = 'writes'
-      AND metadata->>'principal_key' = :key
-      AND created_at > NOW() - INTERVAL '7 days' AND created_at < NOW() - INTERVAL '1 hour'
-      AND extract(hour FROM created_at) = extract(hour FROM NOW())
-    GROUP BY 1
-)
-SELECT percentile_cont(0.99) WITHIN GROUP (ORDER BY writes) AS p99, count(*) AS minutes
-FROM minutes
-"""
-            ),
-            params,
-        )
-    ).mappings().one()
+    row = await _spike_baseline(session, params)
     if int(row["minutes"] or 0) < settings.write_spike_min_history_minutes or not row["p99"]:
         return None
     p99 = float(row["p99"])
@@ -499,10 +549,6 @@ async def check_write(
             if refusal is not None:
                 await session.commit()
                 raise refusal
-        left = await _take_token(
-            session, workspace_id, f"writes:{key}",
-            rate=limits["write_rate_per_minute"], burst=limits["write_burst"],
-        )
         await _ledger(session, workspace_id, WRITE_CATEGORY, 1, {"doc_key": doc_key})
         loop_writes = 0
         if document_id is not None:
@@ -526,6 +572,13 @@ async def check_write(
             spike = await _write_spike(session, workspace_id, key, limits)
             if spike is not None:
                 trip = {"reason": "write_spike", "doc_key": None, **spike}
+        # Take the token last: its bucket row stays locked until the commit,
+        # so the reads above must not run under it, or every concurrent write
+        # of this key would queue behind them.
+        left = await _take_token(
+            session, workspace_id, f"writes:{key}",
+            rate=limits["write_rate_per_minute"], burst=limits["write_burst"],
+        )
         if left < 0:
             await _ledger(session, workspace_id, "would_rate_limit", 1,
                           {"dimension": "writes", "doc_key": doc_key})

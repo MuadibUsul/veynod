@@ -9,13 +9,14 @@ aliases are never assigned again.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Collection
 from typing import Any
 
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app import addresses
+from app import addresses, batch_memo
 from app.auth import AuthKind, Principal, can, ensure_namespace, require_permission
 from app.errors import ApiError, NotFound
 from app.models import (
@@ -100,10 +101,13 @@ async def find_document(
     ref: str,
     *,
     for_update: bool = False,
+    absent: set[str] | None = None,
 ) -> SharedDocument | None:
     """Resolve a document by canonical id, alias or redirect; None if absent.
 
-    Raises 410 ``gone`` for tombstoned references.
+    Raises 410 ``gone`` for tombstoned references. ``absent`` collects what
+    the lookup proved missing for the alias ("redirect", "tombstone"), so
+    ensure_alias_available need not query it again.
     """
 
     def query(*conditions: Any):
@@ -140,9 +144,13 @@ async def find_document(
         )
         if tombstone is not None:
             raise gone(tombstone)
+    elif absent is not None:
+        absent.add("redirect")
     tombstone = await _tombstone(session, workspace_id, alias=ref)
     if tombstone is not None:
         raise gone(tombstone)
+    if absent is not None:
+        absent.add("tombstone")
     return None
 
 
@@ -209,10 +217,19 @@ async def find_task(
 
 
 async def ensure_alias_available(
-    session: AsyncSession, workspace_id: uuid.UUID, object_type: str, alias: str
+    session: AsyncSession, workspace_id: uuid.UUID, object_type: str, alias: str,
+    *, absent: Collection[str] = (),
 ) -> None:
-    """New aliases may not reuse a tombstoned or redirected address."""
-    tombstone = await _tombstone(session, workspace_id, alias=alias, object_type=object_type)
+    """New aliases may not reuse a tombstoned or redirected address.
+
+    ``absent``: checks a lookup of this alias in the same transaction already
+    found empty (see find_document).
+    """
+    tombstone = None
+    if "tombstone" not in absent:
+        tombstone = await _tombstone(
+            session, workspace_id, alias=alias, object_type=object_type
+        )
     if tombstone is not None:
         raise ApiError(
             409,
@@ -220,7 +237,9 @@ async def ensure_alias_available(
             f"'{alias}' belonged to a purged {object_type}; tombstoned addresses are never reused",
             details={"alias": alias, "id": tombstone.canonical_id},
         )
-    redirect = await _redirect(session, workspace_id, object_type, alias)
+    redirect = None
+    if "redirect" not in absent:
+        redirect = await _redirect(session, workspace_id, object_type, alias)
     if redirect is not None:
         raise ApiError(
             409,
@@ -286,7 +305,10 @@ async def _namespace(
 async def ensure_namespace_registered(
     session: AsyncSession, principal: Principal, namespace: str
 ) -> None:
-    if await _namespace(session, principal.workspace.id, namespace) is not None:
+    memo_key = ("namespace_registered", principal.workspace.id, namespace)
+    if await batch_memo.shared(
+        memo_key, lambda: _namespace(session, principal.workspace.id, namespace)
+    ) is not None:
         return
     implicit = namespace == "default"  # every workspace has it
     if at_least(LATEST_VERSION) and not implicit:
@@ -316,7 +338,9 @@ async def ensure_namespace_registered(
             )
             await session.flush()
     except IntegrityError:
+        batch_memo.remember(memo_key, True)
         return  # registered by the request that won the race
+    batch_memo.remember(memo_key, True)
     if implicit:
         return
     from app.services.onboarding import ensure_namespace_readme

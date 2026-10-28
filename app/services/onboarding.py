@@ -18,6 +18,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import batch_memo
 from app.auth import Principal
 from app.errors import ApiError
 from app.models import NamespaceRecord, SharedDocument, Workspace
@@ -392,12 +393,16 @@ async def check_conventions(
     """Soft namespace conventions (PRD AG-OB-02 point 5); strict mode rejects."""
     if namespace == SYSTEM_NAMESPACE:
         return
-    readme, created = await ensure_namespace_readme(
+    memo_key = ("namespace_readme", principal.workspace.id, namespace)
+    readme, created = await batch_memo.shared(memo_key, lambda: ensure_namespace_readme(
         session,
         principal.workspace.id,
         namespace,
         registered_by=principal.agent_signature,
-    )
+    ))
+    # Later items of a batch see the same row (the session's identity map
+    # keeps it current); only the first one created it.
+    batch_memo.remember(memo_key, (readme, False))
     meta = readme.frontmatter or {}
     if created or meta.get("stub"):
         add_warning(
