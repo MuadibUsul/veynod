@@ -302,6 +302,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `content_too_large` | 413 | `fix_request` |
 | `payload_too_large` | 413 | `fix_request` |
 | `acceptance_items_incomplete` | 422 | `fix_request` |
+| `acceptance_note_required` | 422 | `fix_request` |
 | `ambiguous_artifact` | 422 | `fix_request` |
 | `assignee_cannot_reach_namespace` | 422 | `fix_request` |
 | `audit_view_required` | 422 | `fix_request` |
@@ -402,6 +403,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `circuit_not_open` | 409 | `abandon` |
 | `claim_already_refuted` | 409 | `abandon` |
 | `cli_session_decided` | 409 | `abandon` |
+| `decide_with_safe_default` | 409 | `abandon` |
 | `document_archived` | 409 | `abandon` |
 | `escape_closed` | 409 | `abandon` |
 | `external_action_error` | 409 | `abandon` |

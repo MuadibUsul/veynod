@@ -52,7 +52,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-VERSION = "1"
+VERSION = "2"
 CHECK_NAMES = {
     "G-01": "main and merge evidence",
     "G-02": "tests and lint",
@@ -416,7 +416,16 @@ class Gate:
         if state.get("paused"):
             return self.finish("skipped", "the gate was paused during the checks", commit,
                                checks, pulls, unfinished=["部署门已暂停，这次没有上线。"])
-        if not (manual or (claim.get("deploy_allowed") and state.get("auto_deploy_authorized"))):
+        # The server combines the operator's authorization with the board owner's
+        # switch (3.17); an older server only reports the operator's.
+        effective = state.get("auto_deploy_effective", state.get("auto_deploy_authorized"))
+        if not (manual or (claim.get("deploy_allowed") and effective)):
+            if state.get("auto_deploy_blocked_by") == "owner":
+                return self.finish("blocked", "the owner does not allow automatic deploys",
+                                   commit, checks, pulls, unfinished=[
+                                       "检查都通过了，但 owner 还没有允许自动上线，所以没有上线。"
+                                       "在控制台“治理”页打开“允许自动上线”（且不是“每一步都问我”），"
+                                       "或在部署门页面点“立即部署”。"])
             return self.finish("blocked", "automatic deploys are not authorized", commit,
                                checks, pulls, unfinished=[
                                    "检查都通过了，但自动部署还没有授权，所以没有上线。"

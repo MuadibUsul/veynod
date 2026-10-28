@@ -10,6 +10,14 @@ Actions. Three things feed it:
 * the operator, who can trigger, pause, resume, authorize or revoke from the
   console.
 
+An automatic run (webhook or timer) reaches production only while the
+operator has authorized automatic deploys *and* the owner of the board
+workspace (DEPLOY_GATE_BOARD_WORKSPACE_ID) allows them: the Allow automatic
+deploys switch is on and the automation mode is not manual (Loop v1, R-02).
+Either one switching off stops the next deploy, even mid-run. Without a board
+workspace only the operator decides. The operator's manual trigger always
+counts as an explicit authorization for that run.
+
 The runner claims queued runs, checks them (G-01..G-04), deploys with
 ``scripts/deploy_tlines.sh`` and reports back. This module only stores and
 hands out that state: it never runs commands, and it never changes a task,
@@ -35,6 +43,7 @@ from app.database import async_session_factory
 from app.errors import ApiError, NotFound
 from app.ids import new_id
 from app.models import CollabTask
+from app.services import automation
 from app.services.quality import gate_status
 
 settings = get_settings()
@@ -101,7 +110,34 @@ async def _state_row(session: AsyncSession, *, lock: bool = False) -> dict[str, 
     return dict(row)
 
 
-def state_out(row: dict[str, Any]) -> dict[str, Any]:
+async def _owner_switch(session: AsyncSession) -> dict[str, Any]:
+    """The board owner's automation choice, which automatic deploys also need."""
+    try:
+        workspace_id = uuid.UUID(str(settings.deploy_gate_board_workspace_id))
+    except ValueError:
+        return {"linked": False, "allows": True}
+    mode = await automation.get_mode(session, workspace_id)
+    return {
+        "linked": True,
+        "workspace_id": str(workspace_id),
+        "mode": mode["mode"],
+        "auto_deploy_allowed": mode["auto_deploy_allowed"],
+        "allows": mode["auto_deploy_allowed"] and mode["mode"] != "manual",
+    }
+
+
+async def record_owner_switch(actor: str, before: dict[str, Any], after: dict[str, Any],
+                              reason: str) -> None:
+    """The gate's audit shows the owner's switch next to the operator's (A-07)."""
+    async with async_session_factory() as session:
+        await _audit(session, actor, "owner_switch", reason=_clip(reason),
+                     mode=after["mode"], auto_deploy_allowed=after["auto_deploy_allowed"],
+                     previous_mode=before["mode"],
+                     previous_auto_deploy_allowed=before["auto_deploy_allowed"])
+        await session.commit()
+
+
+def state_out(row: dict[str, Any], owner: dict[str, Any]) -> dict[str, Any]:
     seen = row.get("runner_last_seen_at")
     online = bool(seen and _now() - seen
                   <= timedelta(seconds=settings.deploy_gate_runner_offline_seconds))
@@ -113,6 +149,11 @@ def state_out(row: dict[str, Any]) -> dict[str, Any]:
         "paused": row["paused"],
         "paused_reason": row.get("paused_reason"),
         "auto_deploy_authorized": row["auto_deploy_authorized"],
+        "owner": owner,
+        # What an automatic run may do right now, and which switch stops it.
+        "auto_deploy_effective": bool(row["auto_deploy_authorized"] and owner["allows"]),
+        "auto_deploy_blocked_by": None if row["auto_deploy_authorized"] and owner["allows"]
+        else ("operator" if not row["auto_deploy_authorized"] else "owner"),
         "authorized_by": row.get("authorized_by"),
         "authorized_at": _iso(row.get("authorized_at")),
         "deployed_commit": row.get("deployed_commit"),
@@ -161,8 +202,9 @@ async def overview(limit: int = 20) -> dict[str, Any]:
             {"n": limit})).mappings().all()
         queued = await session.scalar(text(
             "SELECT count(*) FROM deploy_gate_runs WHERE status = 'queued'"))
+        owner = await _owner_switch(session)
         await session.commit()
-    return {"state": state_out(state), "queued": int(queued or 0),
+    return {"state": state_out(state, owner), "queued": int(queued or 0),
             "runs": [run_out(dict(row)) for row in runs]}
 
 
@@ -341,8 +383,9 @@ async def set_paused(paused: bool, reason: str | None = None,
             {"p": paused, "r": (_clip(reason) or None) if paused else None, "by": actor})
         await _audit(session, actor, "pause" if paused else "resume", reason=_clip(reason))
         state = await _state_row(session)
+        owner = await _owner_switch(session)
         await session.commit()
-    return state_out(state)
+    return state_out(state, owner)
 
 
 async def set_authorized(authorized: bool, reason: str | None = None,
@@ -358,8 +401,9 @@ async def set_authorized(authorized: bool, reason: str | None = None,
         await _audit(session, actor, "authorize" if authorized else "revoke",
                      reason=_clip(reason))
         state = await _state_row(session)
+        owner = await _owner_switch(session)
         await session.commit()
-    return state_out(state)
+    return state_out(state, owner)
 
 
 async def trigger_manual(commit: str | None = None, reason: str | None = None,
@@ -396,8 +440,9 @@ async def heartbeat(host: str, version: str | None,
             {"host": _clip(host, 128), "version": _clip(version, 32) or None,
              "deployed": _sha(deployed_commit)})
         state = await _state_row(session)
+        owner = await _owner_switch(session)
         await session.commit()
-    return state_out(state)
+    return state_out(state, owner)
 
 
 async def runner_enqueue(commit: str, host: str) -> dict[str, Any]:
@@ -419,12 +464,13 @@ async def claim(host: str) -> dict[str, Any]:
     A paused gate claims nothing: queued runs are recorded as skipped, so a
     pause never deploys later by surprise. ``deploy_allowed`` says whether
     this run may reach production: the operator's manual trigger may, an
-    automatic one only while auto-deploy is authorized.
+    automatic one only while the operator authorizes and the owner allows.
     """
     runner = f"runner:{_clip(host, 100)}"
     async with async_session_factory() as session:
         await session.execute(text("SELECT pg_advisory_xact_lock(hashtext('deploy_gate_queue'))"))
         state = await _state_row(session, lock=True)
+        owner = await _owner_switch(session)
         stale = (await session.execute(text(
             "UPDATE deploy_gate_runs SET status = 'failed', finished_at = NOW(), "
             "status_reason = 'the runner stopped before finishing this run' "
@@ -437,7 +483,7 @@ async def claim(host: str) -> dict[str, Any]:
             "ORDER BY created_at DESC FOR UPDATE"))).mappings().all()]
         if not queued:
             await session.commit()
-            return {"run": None, "state": state_out(state)}
+            return {"run": None, "state": state_out(state, owner)}
         if state["paused"]:
             for row in queued:
                 await session.execute(text(
@@ -445,7 +491,7 @@ async def claim(host: str) -> dict[str, Any]:
                     "status_reason = 'the gate is paused' WHERE id = :id"), {"id": row["id"]})
                 await _audit(session, runner, "skipped_paused", row["id"])
             await session.commit()
-            return {"run": None, "state": state_out(state)}
+            return {"run": None, "state": state_out(state, owner)}
         newest, older = queued[0], queued[1:]
         for row in older:
             await session.execute(text(
@@ -454,16 +500,18 @@ async def claim(host: str) -> dict[str, Any]:
                 {"id": row["id"]})
             await _audit(session, runner, "superseded", row["id"], by=newest["id"])
         manual = any(row["trigger_kind"] == "manual" for row in queued)
-        deploy_allowed = manual or state["auto_deploy_authorized"]
+        deploy_allowed = manual or bool(state["auto_deploy_authorized"] and owner["allows"])
         await session.execute(text(
             "UPDATE deploy_gate_runs SET status = 'running', claimed_by = :by, "
             "claimed_at = NOW() WHERE id = :id"), {"by": runner, "id": newest["id"]})
         await _audit(session, runner, "claimed", newest["id"], deploy_allowed=deploy_allowed,
-                     manual=manual, folded=[row["id"] for row in older])
+                     manual=manual, folded=[row["id"] for row in older],
+                     operator_authorized=state["auto_deploy_authorized"],
+                     owner_allows=owner["allows"], owner_mode=owner.get("mode"))
         await session.commit()
         newest.update(status="running", claimed_by=runner)
     return {"run": run_out(newest, detail=True), "deploy_allowed": deploy_allowed,
-            "deployed_commit": state.get("deployed_commit"), "state": state_out(state)}
+            "deployed_commit": state.get("deployed_commit"), "state": state_out(state, owner)}
 
 
 def _clean_checks(value: Any) -> list[dict[str, Any]]:

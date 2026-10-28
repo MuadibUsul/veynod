@@ -108,6 +108,8 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "agent_directory": ("objects.jsonl", ()),
     "agent_aliases": ("objects.jsonl", ()),
     "escalations": ("objects.jsonl", ()),
+    # The owner's acceptance verdicts on delivered tasks (v3.56).
+    "owner_acceptance": ("objects.jsonl", ()),
     "doc_derivations": ("doc_edges.jsonl", ()),
     "recalls": ("objects.jsonl", ()),
     "recall_nodes": ("objects.jsonl", ()),

@@ -1267,6 +1267,7 @@ async def agent_escalate_to_human(
     due_at: datetime | None = None,
     default_on_timeout: str | None = None,
     route_to: str | None = None,
+    topic: str = "technical",
     agent: str | None = None,
     session_batch_id: uuid.UUID | None = None,
 ) -> dict[str, Any]:
@@ -1276,6 +1277,12 @@ async def agent_escalate_to_human(
     the task: it waits in WAITING_HUMAN with its lease paused, and you get an
     escalation.resolved event with the decision, which is also appended to the
     continuation pack. default_on_timeout applies at due_at.
+
+    topic: technical (default) | money | identity | legal | data_deletion |
+    external_commitment. Under semi or full automation (get_orientation
+    automation.mode) a technical question is refused with
+    decide_with_safe_default: choose the safest default, note it on the task
+    and continue. Under full automation the other topics never block you.
     """
     async with async_session_factory() as session:
         principal = await _principal_for_call(session)
@@ -1292,6 +1299,7 @@ async def agent_escalate_to_human(
                 due_at=due_at,
                 default_on_timeout=default_on_timeout,
                 route_to=route_to,
+                topic=topic,
                 agent=_actor(principal, agent) if principal.is_commander else agent,
                 session_batch_id=_batch(session_batch_id),
             )
