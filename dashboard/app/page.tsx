@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { AcceptanceCard } from "./components/acceptance";
 import { AgentsView } from "./components/agents";
 import { AutomationModeCard } from "./components/automation";
 import { AuditView } from "./components/audit";
@@ -1678,6 +1679,9 @@ export default function ConsolePage() {
                   )}
                   {tab === "governance" && (
                     <AutomationModeCard request={api} notify={setNotice} />
+                  )}
+                  {tab === "governance" && (
+                    <AcceptanceCard request={api} notify={setNotice} />
                   )}
                   {tab === "governance" && (
                     <GovernanceView

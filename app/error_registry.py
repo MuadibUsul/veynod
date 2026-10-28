@@ -395,6 +395,56 @@ REGISTRY: dict[str, ErrorSpec] = {
     "share_cross_root_not_allowed": _spec(
         422, ABANDON, "Use cross-tree collaboration instead."
     ),
+    # Diagram dispatch (3.14).
+    "diagram_exists": _spec(409, FIX_REQUEST, "Use another diagram key or edit the existing one."),
+    "chunk_incomplete": _spec(
+        422, FIX_REQUEST,
+        "Give every chunk in details.chunks an icd and done_criteria and known dependencies."),
+    "contract_first": _spec(
+        422, FIX_REQUEST,
+        "Make the chunks in details.implementation_roots depend on an interface chunk."),
+    "still_draft": _spec(409, FIX_REQUEST, "Edit the draft directly (details.edit_with)."),
+    "unknown_chunk": _spec(422, FIX_REQUEST, "Use a chunk_key the diagram has."),
+    "chunk_exists": _spec(409, FIX_REQUEST, "Use another chunk_key, or update that chunk."),
+    "chunk_in_flight": _spec(
+        409, FIX_REQUEST, "Add a new chunk that depends on them (details.add_chunk_with)."),
+    "empty_impact": _spec(422, FIX_REQUEST, "File a change that touches at least one chunk."),
+    "review_out_of_scope": _spec(
+        422, FIX_REQUEST, "Answer exactly the rules in details.rules, then resend."),
+    "not_confirmed": _spec(
+        409, ESCALATE_HUMAN, "A person confirms the diagram before it is frozen."),
+    "not_frozen": _spec(
+        409, ESCALATE_HUMAN, "A person confirms and freezes the diagram before dispatch."),
+    "already_dispatched": _spec(409, ABANDON, "The chunk has a task already (details.task_key)."),
+    "submission_rejected": _spec(
+        409, ABANDON, "The latest submission broke its write scope; wait for a new one."),
+    "ci_not_green": _spec(
+        409, ABANDON, "Review after a green sandbox run on the current submission."),
+    "no_submission": _spec(409, ABANDON, "Run the sandbox after a submission is accepted."),
+    "stale_ci": _spec(
+        409, ABANDON, "Drop this result; report a run of details.submission instead."),
+    "circuit_closed": _spec(409, ABANDON, "Upgrade only a chunk whose circuit broke."),
+    "not_queue_head": _spec(
+        409, ABANDON, "Only the queue head is checked; wait for this chunk's turn."),
+    "queue_not_verified": _spec(
+        409, ABANDON, "Queued work merges from the queue after the controller re-tests it."),
+    "gate_not_passed": _spec(
+        409, ABANDON, "Merge after a passing gate on the current submission."),
+    "already_merged": _spec(409, ABANDON, "The chunk is merged already."),
+    "merge_by_implementer": _spec(
+        403, ABANDON, "Another agent or a person merges the chunk; not its implementer."),
+    "already_decided": _spec(409, ABANDON, "The change was decided already."),
+    "stale_change": _spec(
+        409, ABANDON, "The diagram moved on; file the change again on details.current_version."),
+    # Automation (Loop v1).
+    "acceptance_note_required": _spec(
+        422, FIX_REQUEST, "Say in plain words what does not work or what to change."),
+    "decide_with_safe_default": _spec(
+        409, ABANDON,
+        "Automation is on: choose the safest default, note it on the task and continue; "
+        "ask the owner only about details.owner_topics.",
+        action="decide_with_safe_default_and_continue",
+    ),
     # --- escalate_human
     "agent_document_quota_exceeded": _spec(
         429, ESCALATE_HUMAN, "Daily quota reached; ask the owner for a larger quota."
@@ -437,53 +487,14 @@ REGISTRY: dict[str, ErrorSpec] = {
     "google_login_not_configured": _spec(
         503, ESCALATE_HUMAN, "An operator must configure Google sign-in."
     ),
-    # --- diagrams and chunked dispatch (spec-diagram-dispatch v3)
-    "diagram_exists": _spec(409, FIX_REQUEST, "Pick another diagram_key or edit that one."),
-    "chunk_exists": _spec(409, FIX_REQUEST, "Pick another chunk_key or edit that chunk."),
-    "unknown_chunk": _spec(422, FIX_REQUEST, "Name a chunk of this diagram."),
-    "chunk_incomplete": _spec(422, FIX_REQUEST, "Fill the chunk fields named in details."),
-    "contract_first": _spec(
-        422, FIX_REQUEST, "Chunks with nothing upstream must be interface contracts."
-    ),
-    "empty_impact": _spec(422, FIX_REQUEST, "State the change's impact before proposing it."),
-    "review_out_of_scope": _spec(
-        422, FIX_REQUEST, "Answer only the three default rules and the chunk's own."
-    ),
-    "submission_rejected": _spec(
-        409, FIX_REQUEST, "Touch only allowed write paths, never frozen interfaces."
-    ),
-    "no_submission": _spec(409, FIX_REQUEST, "Submit the chunk before recording CI or a gate."),
-    "ci_not_green": _spec(409, FIX_REQUEST, "Fix the sandbox failure and record a green run."),
-    "gate_not_passed": _spec(409, FIX_REQUEST, "Pass the gate before queueing or merging."),
-    "still_draft": _spec(409, FIX_REQUEST, "Confirm the diagram first."),
-    "stale_ci": _spec(
-        409, REFRESH_AND_RETRY, "Re-read the chunk; record CI for its latest submission."
-    ),
-    "stale_change": _spec(
-        409, REFRESH_AND_RETRY, "Re-read the diagram and propose against its version."
-    ),
-    "not_queue_head": _spec(409, RETRY_BACKOFF, "Wait until the chunk heads the merge queue."),
-    "queue_not_verified": _spec(
-        409, RETRY_BACKOFF, "Wait for the queue controller to verify the head."
-    ),
-    "already_dispatched": _spec(409, ABANDON, "The chunk is already dispatched."),
-    "already_merged": _spec(409, ABANDON, "The chunk is already merged."),
-    "already_decided": _spec(409, ABANDON, "The change was already decided."),
-    "not_confirmed": _spec(409, ESCALATE_HUMAN, "A person must confirm the diagram."),
-    "not_frozen": _spec(409, ESCALATE_HUMAN, "A person must freeze the diagram."),
-    "chunk_in_flight": _spec(
-        409, ESCALATE_HUMAN, "Work in flight is never rewritten; a person decides."
-    ),
-    "merge_by_implementer": _spec(
-        403, ESCALATE_HUMAN, "Someone other than the implementer merges."
-    ),
-    "circuit_closed": _spec(409, FIX_REQUEST, "Upgrade only a chunk whose circuit broke."),
 }
 
 
 # Soft-constraint warnings (PRD §6 warnings[]): never errors, never rejections.
 WARNING_CODES: dict[str, str] = {
     "duplicate_content": "Another document in the namespace already holds exactly this text.",
+    "owner_report_missing": "Full automation: the handoff brief should carry owner_report "
+                            "{what_changed, how_to_try, not_yet_done} in plain words.",
     "listing_hides_documents": "The legacy listing hides drafts and tainted documents; the "
                                "warning says how many and which flags show them.",
     "uri_namespace_prefix": "The address carried a namespace prefix; use doc://<doc_key>.",

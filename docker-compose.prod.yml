@@ -41,7 +41,7 @@ services:
           memory: 768m
 
   api:
-    image: agentgraph:3.15.0-veynod-41dec6b
+    image: agentgraph:3.17.0-veynod-aa80b77
     build: .
     container_name: agentgraph-api
     env_file:

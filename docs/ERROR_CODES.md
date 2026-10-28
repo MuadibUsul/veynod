@@ -33,8 +33,6 @@ do not edit by hand. Every error body is
 | `rate_limited` | 429 | `retry_after` | `wait_retry_after_then_retry_same_request` | Wait for Retry-After. |
 | `sse_capacity` | 429 | `retry_after` | `wait_retry_after_then_retry_same_request` | Too many event streams; reconnect later. |
 | `overloaded` | 503 | `retry_after` | `wait_retry_after_then_retry_same_request` | Wait for Retry-After; never resend earlier. |
-| `not_queue_head` | 409 | `retry_backoff` | `backoff_then_retry_same_request` | Wait until the chunk heads the merge queue. |
-| `queue_not_verified` | 409 | `retry_backoff` | `backoff_then_retry_same_request` | Wait for the queue controller to verify the head. |
 | `internal_error` | 500 | `retry_backoff` | `backoff_then_retry_same_request` | Back off and retry at most 5 times, then escalate_human. |
 | `embedding_failed` | 502 | `retry_backoff` | `backoff_then_retry_same_request` | Embedding provider failed; back off. |
 | `cli_code_unavailable` | 503 | `retry_backoff` | `backoff_then_retry_same_request` | Back off and retry. |
@@ -44,8 +42,6 @@ do not edit by hand. Every error body is
 | `proposal_conflict` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Re-read the document and rebase the proposal. |
 | `rebase_conflict` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Re-read from base_version and redo non-overlapping edits. |
 | `section_conflict` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Re-read the section, then rewrite. |
-| `stale_change` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Re-read the diagram and propose against its version. |
-| `stale_ci` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Re-read the chunk; record CI for its latest submission. |
 | `undo_conflict` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Review details.conflicts; retry with force=true if intended. |
 | `version_conflict` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Merge against details.current_version, then rewrite. |
 | `cursor_expired` | 410 | `refresh_and_retry` | `refresh_state_then_retry_once` | Drop the cursor and resync with workspace_sync. |
@@ -75,13 +71,11 @@ do not edit by hand. Every error body is
 | `artifact_archived` | 409 | `fix_request` | `fix_request_then_resend` | Restore the document or use another. |
 | `auto_release_cap_reached` | 409 | `fix_request` | `fix_request_then_resend` | Hand off to REVIEWING; an audit releases it today. |
 | `blob_referenced` | 409 | `fix_request` | `fix_request_then_resend` | Detach the blob first, or force-delete as its owner. |
-| `chunk_exists` | 409 | `fix_request` | `fix_request_then_resend` | Pick another chunk_key or edit that chunk. |
-| `ci_not_green` | 409 | `fix_request` | `fix_request_then_resend` | Fix the sandbox failure and record a green run. |
-| `circuit_closed` | 409 | `fix_request` | `fix_request_then_resend` | Upgrade only a chunk whose circuit broke. |
+| `chunk_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another chunk_key, or update that chunk. |
+| `chunk_in_flight` | 409 | `fix_request` | `fix_request_then_resend` | Add a new chunk that depends on them (details.add_chunk_with). |
 | `claim_required` | 409 | `fix_request` | `fix_request_then_resend` | Claim the task before this transition. |
 | `dependency_cycle` | 409 | `fix_request` | `fix_request_then_resend` | Remove the cyclic depends_on link. |
-| `diagram_exists` | 409 | `fix_request` | `fix_request_then_resend` | Pick another diagram_key or edit that one. |
-| `gate_not_passed` | 409 | `fix_request` | `fix_request_then_resend` | Pass the gate before queueing or merging. |
+| `diagram_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another diagram key or edit the existing one. |
 | `google_email_mismatch` | 409 | `fix_request` | `fix_request_then_resend` | Use the Google account for this email. |
 | `google_identity_conflict` | 409 | `fix_request` | `fix_request_then_resend` | Unlink the other identity first. |
 | `human_user_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another email. |
@@ -93,15 +87,13 @@ do not edit by hand. Every error body is
 | `locate_required` | 409 | `fix_request` | `fix_request_then_resend` | Run locate_personal_data first. |
 | `log_document_append_only` | 409 | `fix_request` | `append_entries` | Use append_entries instead. |
 | `no_active_generation` | 409 | `fix_request` | `fix_request_then_resend` | Pick an identity that has a token. |
-| `no_submission` | 409 | `fix_request` | `fix_request_then_resend` | Submit the chunk before recording CI or a gate. |
 | `not_a_log_document` | 409 | `fix_request` | `fix_request_then_resend` | Write with upsert_shared_doc instead. |
 | `parts_incomplete` | 409 | `fix_request` | `fix_request_then_resend` | Upload the missing parts first. |
 | `policy_exists` | 409 | `fix_request` | `fix_request_then_resend` | Update the existing policy instead. |
 | `proposal_required` | 409 | `fix_request` | `propose_document_change` | Submit propose_document_change instead. |
 | `quality_circuit_open` | 409 | `fix_request` | `fix_request_then_resend` | The domain's circuit is open: hand off to REVIEWING. |
 | `quality_gates_unmet` | 409 | `fix_request` | `fix_request_then_resend` | Report the gates in details.missing as PASS, then retry. |
-| `still_draft` | 409 | `fix_request` | `fix_request_then_resend` | Confirm the diagram first. |
-| `submission_rejected` | 409 | `fix_request` | `fix_request_then_resend` | Touch only allowed write paths, never frozen interfaces. |
+| `still_draft` | 409 | `fix_request` | `fix_request_then_resend` | Edit the draft directly (details.edit_with). |
 | `task_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another task_key. |
 | `tenant_has_children` | 409 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
 | `terminal_state_immutable` | 409 | `fix_request` | `fix_request_then_resend` | The task is DONE or FAILED; create a new task instead. |
@@ -112,17 +104,18 @@ do not edit by hand. Every error body is
 | `content_too_large` | 413 | `fix_request` | `split_into_parts` | Split into parts (details.action). |
 | `payload_too_large` | 413 | `fix_request` | `fix_request_then_resend` | Send a smaller archive (details.limit_bytes). |
 | `acceptance_items_incomplete` | 422 | `fix_request` | `fix_request_then_resend` | Give a PASS result for every acceptance item. |
+| `acceptance_note_required` | 422 | `fix_request` | `fix_request_then_resend` | Say in plain words what does not work or what to change. |
 | `ambiguous_artifact` | 422 | `fix_request` | `fix_request_then_resend` | Provide artifact_text or artifact_uri, not both. |
 | `assignee_cannot_reach_namespace` | 422 | `fix_request` | `fix_request_then_resend` | Use a namespace the assignee reads, or widen its token. |
 | `audit_view_required` | 422 | `fix_request` | `fix_request_then_resend` | Call get_audit_view, then resend. |
 | `budget_exceeds_parent` | 422 | `fix_request` | `fix_request_then_resend` | Lower the budget per details. |
 | `checksum_mismatch` | 422 | `fix_request` | `fix_request_then_resend` | Download the export again, then import. |
-| `chunk_incomplete` | 422 | `fix_request` | `fix_request_then_resend` | Fill the chunk fields named in details. |
+| `chunk_incomplete` | 422 | `fix_request` | `fix_request_then_resend` | Give every chunk in details.chunks an icd and done_criteria and known dependencies. |
 | `context_doc_not_found` | 422 | `fix_request` | `fix_request_then_resend` | Fix the context pointers per details. |
 | `continuation_required` | 422 | `fix_request` | `fix_request_then_resend` | Attach a continuation pack. |
-| `contract_first` | 422 | `fix_request` | `fix_request_then_resend` | Chunks with nothing upstream must be interface contracts. |
+| `contract_first` | 422 | `fix_request` | `fix_request_then_resend` | Make the chunks in details.implementation_roots depend on an interface chunk. |
 | `duplicate_key_in_batch` | 422 | `fix_request` | `fix_request_then_resend` | Deduplicate keys per details. |
-| `empty_impact` | 422 | `fix_request` | `fix_request_then_resend` | State the change's impact before proposing it. |
+| `empty_impact` | 422 | `fix_request` | `fix_request_then_resend` | File a change that touches at least one chunk. |
 | `expected_version_required` | 422 | `fix_request` | `fix_request_then_resend` | Read get_agent and pass expected_version before renaming. |
 | `export_format_unsupported` | 422 | `fix_request` | `fix_request_then_resend` | Use a supported export format. |
 | `insecure_target_url` | 422 | `fix_request` | `fix_request_then_resend` | Use an https URL. |
@@ -154,7 +147,7 @@ do not edit by hand. Every error body is
 | `reason_required` | 422 | `fix_request` | `fix_request_then_resend` | Pass a non-empty reason; it goes into the audit trail. |
 | `review_feedback_required` | 422 | `fix_request` | `fix_request_then_resend` | Say why in feedback, then resend. |
 | `review_note_required` | 422 | `fix_request` | `fix_request_then_resend` | Say why in note, then resend. |
-| `review_out_of_scope` | 422 | `fix_request` | `fix_request_then_resend` | Answer only the three default rules and the chunk's own. |
+| `review_out_of_scope` | 422 | `fix_request` | `fix_request_then_resend` | Answer exactly the rules in details.rules, then resend. |
 | `rollup_summary_required` | 422 | `fix_request` | `fix_request_then_resend` | Attach a rollup summary. |
 | `scope_unknown` | 422 | `fix_request` | `fix_request_then_resend` | Use permissions listed in details.allowed. |
 | `subject_identifier_required` | 422 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
@@ -164,7 +157,7 @@ do not edit by hand. Every error body is
 | `tenant_type_invalid_parent` | 422 | `fix_request` | `fix_request_then_resend` | Choose a parent from details.allowed. |
 | `too_many_headers` | 422 | `fix_request` | `fix_request_then_resend` | Send at most 64 headers. |
 | `ttl_exceeds_parent` | 422 | `fix_request` | `fix_request_then_resend` | Lower the TTL per details. |
-| `unknown_chunk` | 422 | `fix_request` | `fix_request_then_resend` | Name a chunk of this diagram. |
+| `unknown_chunk` | 422 | `fix_request` | `fix_request_then_resend` | Use a chunk_key the diagram has. |
 | `unknown_principal` | 422 | `fix_request` | `fix_request_then_resend` | Fix the principal reference per details. |
 | `unsupported_part_encoding` | 422 | `fix_request` | `fix_request_then_resend` | Use plain base64 part bodies. |
 | `url_not_allowed` | 422 | `fix_request` | `fix_request_then_resend` | Use an allowed URL per details. |
@@ -189,6 +182,7 @@ do not edit by hand. Every error body is
 | `forbidden` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `human_endpoint` | 403 | `abandon` | `abandon_and_release_local_state` | Use the agent endpoint named in details. |
 | `issue_not_permitted` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
+| `merge_by_implementer` | 403 | `abandon` | `abandon_and_release_local_state` | Another agent or a person merges the chunk; not its implementer. |
 | `namespace_register_not_permitted` | 403 | `abandon` | `abandon_and_release_local_state` | Ask the token's issuer to register the namespace. |
 | `not_assignee` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `not_lease_holder` | 403 | `abandon` | `abandon_and_release_local_state` | Give up; do not preempt. |
@@ -202,16 +196,20 @@ do not edit by hand. Every error body is
 | `invalid_device_code` | 404 | `abandon` | `abandon_and_release_local_state` | Start a new setup with `npx veynod init`. |
 | `lease_not_found` | 404 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `not_found` | 404 | `abandon` | `abandon_and_release_local_state` | Give up; cross-tenant access also returns 404. |
-| `already_decided` | 409 | `abandon` | `abandon_and_release_local_state` | The change was already decided. |
-| `already_dispatched` | 409 | `abandon` | `abandon_and_release_local_state` | The chunk is already dispatched. |
-| `already_merged` | 409 | `abandon` | `abandon_and_release_local_state` | The chunk is already merged. |
+| `already_decided` | 409 | `abandon` | `abandon_and_release_local_state` | The change was decided already. |
+| `already_dispatched` | 409 | `abandon` | `abandon_and_release_local_state` | The chunk has a task already (details.task_key). |
+| `already_merged` | 409 | `abandon` | `abandon_and_release_local_state` | The chunk is merged already. |
 | `already_registered` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
+| `ci_not_green` | 409 | `abandon` | `abandon_and_release_local_state` | Review after a green sandbox run on the current submission. |
+| `circuit_closed` | 409 | `abandon` | `abandon_and_release_local_state` | Upgrade only a chunk whose circuit broke. |
 | `circuit_not_open` | 409 | `abandon` | `abandon_and_release_local_state` | The domain's circuit is already closed. |
 | `claim_already_refuted` | 409 | `abandon` | `abandon_and_release_local_state` | The claim was refuted; report a new commit. |
 | `cli_session_decided` | 409 | `abandon` | `abandon_and_release_local_state` | Run `npx veynod init` again for a new code. |
+| `decide_with_safe_default` | 409 | `abandon` | `decide_with_safe_default_and_continue` | Automation is on: choose the safest default, note it on the task and continue; ask the owner only about details.owner_topics. |
 | `document_archived` | 409 | `abandon` | `abandon_and_release_local_state` | Give up, or ask for restore_document. |
 | `escape_closed` | 409 | `abandon` | `abandon_and_release_local_state` | The escape is already FIXED or WAIVED. |
 | `external_action_error` | 409 | `abandon` | `abandon_and_release_local_state` | Re-read the action state. |
+| `gate_not_passed` | 409 | `abandon` | `abandon_and_release_local_state` | Merge after a passing gate on the current submission. |
 | `id_collision` | 409 | `abandon` | `abandon_and_release_local_state` | Abort the import or import into a new tenant. |
 | `invalid_state_transition` | 409 | `abandon` | `abandon_and_release_local_state` | Re-read the task; give up this action. |
 | `invalid_transition` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
@@ -220,15 +218,21 @@ do not edit by hand. Every error body is
 | `lease_lost` | 409 | `abandon` | `abandon_and_release_local_state` | Drop local state and claim again. |
 | `lineage_unavailable` | 409 | `abandon` | `abandon_and_release_local_state` | This subject has no signed lineage; give up. |
 | `link_exists` | 409 | `abandon` | `abandon_and_release_local_state` | The link already exists. |
+| `no_submission` | 409 | `abandon` | `abandon_and_release_local_state` | Run the sandbox after a submission is accepted. |
+| `not_queue_head` | 409 | `abandon` | `abandon_and_release_local_state` | Only the queue head is checked; wait for this chunk's turn. |
 | `nothing_to_probe` | 409 | `abandon` | `abandon_and_release_local_state` | Write and index documents first. |
 | `oauth_request_decided` | 409 | `abandon` | `abandon_and_release_local_state` | Start the connection again from your client. |
 | `proposal_not_pending` | 409 | `abandon` | `abandon_and_release_local_state` | The proposal was already decided. |
+| `queue_not_verified` | 409 | `abandon` | `abandon_and_release_local_state` | Queued work merges from the queue after the controller re-tests it. |
 | `queue_ticket_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Call acquire_resource again to re-queue. |
 | `request_closed` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `retention_not_met` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `run_not_claimed` | 409 | `abandon` | `abandon_and_release_local_state` | Only the runner holding a running deploy-gate run reports it; claim again. |
 | `sample_unavailable` | 409 | `abandon` | `abandon_and_release_local_state` | Someone else took the sample or it was already judged. |
+| `stale_change` | 409 | `abandon` | `abandon_and_release_local_state` | The diagram moved on; file the change again on details.current_version. |
+| `stale_ci` | 409 | `abandon` | `abandon_and_release_local_state` | Drop this result; report a run of details.submission instead. |
 | `stale_fencing_token` | 409 | `abandon` | `abandon_and_release_local_state` | Drop local state and claim again. |
+| `submission_rejected` | 409 | `abandon` | `abandon_and_release_local_state` | The latest submission broke its write scope; wait for a new one. |
 | `task_not_reviewable` | 409 | `abandon` | `abandon_and_release_local_state` | The task is not awaiting review. |
 | `token_already_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Ask the issuer to issue again. |
 | `blob_purged` | 410 | `abandon` | `abandon_and_release_local_state` | The attachment is gone; remove the reference. |
@@ -245,7 +249,6 @@ do not edit by hand. Every error body is
 | `commander_grant_expired` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the owner to issue a fresh grant. |
 | `commander_grant_required` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the owner for a grant, then send X-Commander-Grant-Id. |
 | `feature_disabled` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Switched off here; ask an operator (details.setting). |
-| `merge_by_implementer` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Someone other than the implementer merges. |
 | `operator_content_denied` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the workspace owner to open support access in the console. |
 | `operator_write_denied` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the owner to reopen support access with changes allowed. |
 | `role_permission_denied` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the human OWNER; this capability is not delegated. |
@@ -253,13 +256,12 @@ do not edit by hand. Every error body is
 | `tenant_suspended` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Stop writing and notify a human; reads and export still work. |
 | `backup_chain_broken` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Restore from an older full backup or take a new one. |
 | `backups_not_configured` | 409 | `escalate_human` | `stop_and_escalate_to_human` | An operator must configure backup storage. |
-| `chunk_in_flight` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Work in flight is never rewritten; a person decides. |
 | `confirmation_required` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Wait for details.pending_confirmations. |
 | `escalated_to_human` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Wait for the human decision. |
 | `incident_not_confirmed` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Confirm the incident first. |
 | `namespace_not_empty` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Archive its documents and close its tasks. |
-| `not_confirmed` | 409 | `escalate_human` | `stop_and_escalate_to_human` | A person must confirm the diagram. |
-| `not_frozen` | 409 | `escalate_human` | `stop_and_escalate_to_human` | A person must freeze the diagram. |
+| `not_confirmed` | 409 | `escalate_human` | `stop_and_escalate_to_human` | A person confirms the diagram before it is frozen. |
+| `not_frozen` | 409 | `escalate_human` | `stop_and_escalate_to_human` | A person confirms and freezes the diagram before dispatch. |
 | `staging_not_configured` | 409 | `escalate_human` | `stop_and_escalate_to_human` | An operator must configure a separate staging database. |
 | `taint_blocked` | 409 | `escalate_human` | `stop_and_escalate_to_human` | A human must verify tainted content. |
 | `task_claimed` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Ask the holder or a person to cancel it. |
@@ -278,6 +280,7 @@ Soft constraints reported in `warnings[]`; the request still succeeds.
 | code | meaning |
 |---|---|
 | `duplicate_content` | Another document in the namespace already holds exactly this text. |
+| `owner_report_missing` | Full automation: the handoff brief should carry owner_report {what_changed, how_to_try, not_yet_done} in plain words. |
 | `listing_hides_documents` | The legacy listing hides drafts and tainted documents; the warning says how many and which flags show them. |
 | `uri_namespace_prefix` | The address carried a namespace prefix; use doc://<doc_key>. |
 | `document_namespace_inferred` | The new document's namespace came from its key prefix or the token's only writable namespace. |

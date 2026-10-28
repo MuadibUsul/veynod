@@ -37,6 +37,7 @@ from app.schemas import (
     TransferResponsibilitiesRequest,
     TransferResponsibilitiesResponse,
 )
+from app.services import automation
 from app.services.common import (
     append_event,
     db_now,
@@ -559,6 +560,9 @@ async def orphan_task(
     task.orphaned_from = holder
     task.orphan_count = (task.orphan_count or 0) + 1
     escalate = task.orphan_count >= settings.orphan_escalation_threshold
+    if escalate:
+        # Full automation (Loop A-04): another executor picks it up instead.
+        escalate = await automation.current_mode(session, task.workspace_id) != "full"
     task.status = TaskStatus.ESCALATED_TO_HUMAN if escalate else TaskStatus.READY
     clear_task_lease(task)
     task.version += 1

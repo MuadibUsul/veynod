@@ -694,8 +694,9 @@ async def build(
                                if moment is not None and stored_current else seed)
     from app.services import automation as automation_service
 
-    pack["automation"] = await automation_service.get_mode(
-        session, principal.workspace.id)
+    automation = await automation_service.get_mode(session, principal.workspace.id)
+    pack["automation"] = {**automation, "rules": automation_service.agent_rules(
+        automation["mode"])}
     if onboarding_block is not None:
         pack["onboarding"] = onboarding_block
         if onboarding_block["first_time"] and max_bytes == DEFAULT_MAX_BYTES:

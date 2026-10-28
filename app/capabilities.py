@@ -75,7 +75,6 @@ TOOL_HANDLERS = {
     "create_child_tenant": "create_child_node",
     "dereference_many": "batch_dereference",
     "detach_tenant": "detach_node",
-    "diagram": "list_diagrams",
     "draft_external_action": "propose_external_action",
     "export_workspace": "create_export",
     "get_api_docs": "agent_docs",
@@ -107,6 +106,17 @@ TOOL_HANDLERS = {
     "vote_on_proposal": "vote_document_proposal",
     "workspace_sync": "workspace_map",
 }
+# MCP tools with an ``action`` argument: the REST handler of each action.
+# Confirming, freezing, revoking and budgets stay REST-only (people decide).
+TOOL_ACTION_HANDLERS = {
+    "diagram": (
+        "list_diagrams", "get_diagram", "create_diagram", "edit_diagram", "dispatch_chunk",
+        "submit_chunk", "record_chunk_ci", "gate_chunk", "chunk_triptych", "diagram_queue",
+        "queue_check_chunk", "merge_chunk", "propose_diagram_change",
+        "request_diagram_increment", "decide_diagram_change", "signal_chunk",
+        "escalate_chunk", "chunk_usage", "replay_diagram",
+    ),
+}
 # MCP tools with no REST counterpart, and why.
 MCP_ONLY = {
     "batch": "runs several tool calls in one MCP request; over REST send them separately",
@@ -135,8 +145,10 @@ def tool_map(app: FastAPI) -> list[dict[str, Any]]:
             endpoints.setdefault(route.endpoint.__name__, []).append(f"{method} {route.path}")
     items = []
     for tool in sorted(ROOT_PRIMITIVES):
+        handlers = TOOL_ACTION_HANDLERS.get(tool) or (TOOL_HANDLERS.get(tool, tool),)
         item: dict[str, Any] = {
-            "tool": tool, "rest": endpoints.get(TOOL_HANDLERS.get(tool, tool), [])}
+            "tool": tool,
+            "rest": [endpoint for handler in handlers for endpoint in endpoints.get(handler, [])]}
         if tool in MCP_ONLY:
             item["note"] = MCP_ONLY[tool]
         items.append(item)

@@ -16,6 +16,7 @@ from app.auth import Principal, get_human_account, get_human_principal, get_huma
 from app.database import get_db
 from app.errors import ApiError, Forbidden
 from app.schemas import (
+    AcceptanceRequest,
     AdminDocumentCreateRequest,
     AgentTokenCreatedResponse,
     AgentTokenCreateRequest,
@@ -77,6 +78,7 @@ from app.schemas import (
     WebhookRuleUpdateRequest,
     WorkspaceStatsResponse,
 )
+from app.services import acceptance as acceptance_service
 from app.services import addresses as address_service
 from app.services import agent_onboarding as agent_onboarding_service
 from app.services import automation as automation_service
@@ -217,6 +219,32 @@ async def get_automation(
     session: AsyncSession = Depends(get_db),
 ) -> dict:
     return await automation_service.get_mode(session, principal.workspace.id)
+
+
+@router.get(
+    "/acceptance",
+    summary="Work delivered in the last 30 days, with the owner's latest verdict",
+)
+async def list_acceptance(
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await acceptance_service.list_delivered(session, principal, limit=limit)
+
+
+@router.post(
+    "/acceptance/{task_key:path}",
+    summary="The owner's verdict on delivered work; broken or change opens a follow-up task",
+)
+async def record_acceptance(
+    task_key: str,
+    body: AcceptanceRequest,
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await acceptance_service.record(
+        session, principal, task_key, verdict=body.verdict, note=body.note)
 
 
 @router.put(
