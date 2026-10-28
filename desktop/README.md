@@ -45,6 +45,11 @@ npx tauri build --debug --no-bundle   :: fast local binary
 npx tauri build                       :: NSIS installer
 ```
 
+The installer lands at
+`src-tauri/target/release/bundle/nsis/Veynod_0.1.0_x64-setup.exe` (about 2.8 MiB,
+unsigned: SmartScreen will ask once). The app is single-instance: a second
+launch focuses the existing window instead of opening another stream.
+
 Requires the Rust toolchain and WebView2 (present on Windows 10/11).
 
 ## v1 boundaries
