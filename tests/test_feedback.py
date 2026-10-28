@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
 
 from app.root_page import ROOT_PRIMITIVES
+
+# The root page links the console only when its static export is built
+# (app/main.py mounts dashboard/out); backend-only runs do not build it.
+DASHBOARD_BUILT = (Path(__file__).resolve().parent.parent / "dashboard" / "out").is_dir()
 
 pytestmark = pytest.mark.integration
 
@@ -65,8 +70,11 @@ async def test_browser_root_serves_human_page_and_json_stays_available(client):
     assert response.headers["content-type"].startswith("text/html")
     assert "accept" in response.headers["vary"].lower()
     assert 'id="flow"' in response.text
-    assert 'href="/dashboard/"' in response.text
-    assert 'class="entry"' in response.text
+    if DASHBOARD_BUILT:
+        assert 'href="/dashboard/"' in response.text
+        assert 'class="entry"' in response.text
+    else:
+        assert 'href="/dashboard/"' not in response.text
     assert 'primitives' in response.text
     assert f'<span class="number">{len(ROOT_PRIMITIVES)}</span>' in response.text
     assert "COPY RESPONSE" in response.text
