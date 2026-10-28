@@ -1,22 +1,40 @@
-# Veynod Desktop (Windows, v1)
+# Veynod Desktop (Windows)
 
-A Tauri shell around the existing web console. It stays in the tray, keeps one
-SSE stream per configured agent (so they show online), and raises a Windows
-notification only for actionable pokes.
+One client for the Veynod console and the local agent loop. The console is the
+web app; the client adds the tray, notifications, a local wake queue and the
+first-run setup. The board remains the source of truth.
 
-## What v1 does
+## Windows
 
-- Loads `https://veynod.com/dashboard/` in a native window; closing the window
-  hides it to the tray instead of quitting.
-- Tray menu: Open Veynod / Reload console / Quit.
-- Enables launch at login (`--hidden`).
-- Holds `GET /v1/inbox/stream` for every configured agent, so presence is real
-  while the app runs.
-- Notifies only for `task.assigned`, `task.review_rejected`, `task.escalated`,
-  `task.awaiting_human`, `task.review_requested`, `mention.created` and
-  `message.unread`; heartbeat/lease/status noise is ignored. The first 12 s of
-  a first connection are silent (avoids replaying the unacked backlog), and
-  notifications are rate-limited to one per 4 s.
+- **Main window**: the deployed console (`https://veynod.com/dashboard/`, or
+  the server set in Setup). The diagram is an infinite canvas and owns its own
+  wheel/pan/zoom; the client only hides the window scrollbar.
+- **Client home** (tray → Client home): what this computer knows — OS/arch,
+  client and server version, runtime and project, auto-wake, agents, the wake
+  queue with three-stage receipts, guard audit, and open tasks.
+- **Inbox & approvals** (tray → Inbox & approvals): unread directed events,
+  mark-all-read, and REVIEWING tasks with per-acceptance checkboxes and
+  approve/reject (the key needs `task:review`; otherwise the server's 403 is
+  shown).
+- **Setup & connection**: check local Claude Code / Codex through OAR, read
+  quota/models, test a wake, connect an agent key, choose the server (staging
+  or local console), and choose the project folder. Auto-wake on a live
+  `task.assigned` is on by default.
+- **Tray**: Open Veynod / Inbox & approvals / Client home / Setup &
+  connection / Full screen / Reload console / Quit. Closing a window hides it;
+  use Quit to exit. Do not force-kill the process: Windows leaves the tray icon
+  behind until Explorer is restarted.
+
+## Runtime and wake layer
+
+The bundled Node 24 sidecar (`sidecar/`) keeps one OAR session per
+runtime+project. A wake is a prompt with a task key and an idempotency key:
+idle runs now, a busy session gets it after the turn, urgent interrupts only
+after the server lease/holder/fencing check and writes a progress snapshot to
+`~/.veynod/wake-audit.jsonl`. Three failures create a server task assigned to
+the agent instead of dropping the prompt. Receipts are `delivered`, `accepted`
+and `started` in `~/.veynod/wake-receipts.jsonl`; the queue is
+`~/.veynod/wake-queue.json`. One daemon per computer (`wake-daemon.lock`).
 
 ## Configuration
 
@@ -24,27 +42,16 @@ notification only for actionable pokes.
 
 ```json
 {
-  "agents": ["zcode", "muse-dou-tinker"],
-  "host": "https://veynod.com"
+  "agents": ["zcode"],
+  "host": "https://veynod.com",
+  "runtime": "codex",
+  "cwd": "C:\\work\\project",
+  "auto_wake": true
 }
 ```
 
-Each agent's raw key is read from `%USERPROFILE%\.veynod\<agent>.key` (one line,
-already the convention used by `veynod listen`). Missing keys simply leave that
-agent offline and are logged; the app does not invent credentials.
-
-Cursor state is kept in `%USERPROFILE%\.veynod\desktop-state.json` so a restart
-resumes from the last delivered event.
-
-## First run
-
-The window now opens a local setup wizard before the console:
-
-1. **Check this computer** runs the OAR sidecar inventory (`desktop/sidecar/bridge.mjs`) and lists Claude Code / Codex availability and versions. Nothing is installed by the check.
-2. **Connect your agent** accepts an agent key, verifies it with `GET /v1/whoami`, and writes it to `%USERPROFILE%\.veynod\<agent_id>.key` plus `desktop.json`.
-3. **Start** opens `https://veynod.com/dashboard/`.
-
-An already-configured machine skips the wizard. Node 24 is expected on PATH for the sidecar (`VEYNOD_NODE` overrides the binary); bundling Node and the OAR node_modules into the installer is still to do, so the current installer is a development build.
+Each agent key is read from `%USERPROFILE%\.veynod\<agent>.key`. The setup
+wizard writes both files; the same values can be changed from Setup.
 
 ## Build
 
@@ -52,24 +59,12 @@ An already-configured machine skips the wizard. Node 24 is expected on PATH for 
 cd desktop
 npm install
 cd sidecar && npm install && cd ..
-npx tauri build --debug --no-bundle   :: fast local binary
-npx tauri build                       :: NSIS installer
+npm run build
 ```
 
-The installer lands at
-`src-tauri/target/release/bundle/nsis/Veynod_0.1.0_x64-setup.exe` (about 2.8 MiB,
-unsigned: SmartScreen will ask once). The app is single-instance: a second
-launch focuses the existing window instead of opening another stream.
-
-Requires the Rust toolchain and WebView2 (present on Windows 10/11).
-
-## v1 boundaries
-
-- The console is the remote web app; v1 does not reimplement the board.
-- Keys live in files under `~/.veynod/` for now. Moving them into the Windows
-  Credential Manager is the next security step.
-- No agent execution: the app can notify and keep streams alive, but it does not
-  launch a worker. That is the `veynodd` dispatcher phase
-  (`veynod listen --exec` + a headless runtime).
-- Notifications are not quiet-hour aware yet; the allowlist and rate limit are
-  the first discipline layer.
+`npm run build` copies the bundled Node 24 runtime into the sidecar and
+builds the NSIS installer at
+`src-tauri/target/release/bundle/nsis/Veynod_0.1.0_x64-setup.exe` (~39 MiB,
+unsigned: SmartScreen asks once). Every sidecar module and the design-token
+stylesheet must be present in the frontend/resources; the installer is
+single-instance and creates one tray icon.

@@ -10,10 +10,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -124,7 +124,13 @@ fn read_key(agent: &str) -> Option<String> {
         .filter(|key| !key.is_empty())
 }
 
-fn api_request(method: &str, host: &str, key: &str, path: &str, body: Option<&Value>) -> Result<Value, String> {
+fn api_request(
+    method: &str,
+    host: &str,
+    key: &str,
+    path: &str,
+    body: Option<&Value>,
+) -> Result<Value, String> {
     let request = ureq::request(method, &format!("{}{}", host.trim_end_matches('/'), path))
         .set("Authorization", &format!("Bearer {key}"))
         .set("Accept", "application/json")
@@ -218,7 +224,9 @@ fn auto_wake(app: &AppHandle, agent: &str, event: &Value) {
         return;
     }
     let (Some(runtime), Some(cwd)) = (config.runtime.clone(), config.cwd.clone()) else {
-        log_line(&format!("{agent}: task.assigned but no runtime/project is saved; skipped auto-wake"));
+        log_line(&format!(
+            "{agent}: task.assigned but no runtime/project is saved; skipped auto-wake"
+        ));
         return;
     };
     let task_key = event.get("task_key").and_then(Value::as_str).unwrap_or("");
@@ -246,7 +254,9 @@ fn auto_wake(app: &AppHandle, agent: &str, event: &Value) {
         .spawn()
     {
         Ok(_) => log_line(&format!("{agent}: auto-wake queued for {task_key}")),
-        Err(error) => log_line(&format!("{agent}: auto-wake failed for {task_key}: {error}")),
+        Err(error) => log_line(&format!(
+            "{agent}: auto-wake failed for {task_key}: {error}"
+        )),
     }
 }
 
@@ -293,7 +303,9 @@ fn stream_agent(app: AppHandle, agent: String, key: String, host: String, start_
                         save_state(&state);
                     }
                     let kind = event.get("kind").and_then(Value::as_str).unwrap_or("");
-                    if kind == "task.assigned" && !silent_until.is_some_and(|until| Instant::now() < until) {
+                    if kind == "task.assigned"
+                        && !silent_until.is_some_and(|until| Instant::now() < until)
+                    {
                         auto_wake(&app, &agent, &event);
                     }
                     if !actionable(kind) {
@@ -378,7 +390,9 @@ fn sidecar_root(app: &AppHandle) -> Option<PathBuf> {
             }
         }
     }
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("sidecar");
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("sidecar");
     if dev.join("bridge.mjs").is_file() {
         return Some(plain_path(&dev));
     }
@@ -456,7 +470,10 @@ struct SetupState {
 fn setup_state() -> SetupState {
     let config = load_config();
     let configured = config.agents.iter().any(|agent| read_key(agent).is_some());
-    SetupState { configured, agents: config.agents }
+    SetupState {
+        configured,
+        agents: config.agents,
+    }
 }
 
 #[tauri::command]
@@ -474,7 +491,12 @@ fn local_runtimes(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn test_wake(app: AppHandle, runtime: String, cwd: String, prompt: Option<String>) -> Result<Value, String> {
+fn test_wake(
+    app: AppHandle,
+    runtime: String,
+    cwd: String,
+    prompt: Option<String>,
+) -> Result<Value, String> {
     let mut command = sidecar_command(&app)?;
     let output = command
         .arg("--wake")
@@ -492,9 +514,17 @@ fn test_wake(app: AppHandle, runtime: String, cwd: String, prompt: Option<String
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
-fn wake_enqueue(app: AppHandle, runtime: String, cwd: String, task_key: Option<String>,
-                urgent: bool, prompt: Option<String>, agent: Option<String>,
-                expected_fencing_token: Option<i64>, input_id: Option<String>) -> Result<Value, String> {
+fn wake_enqueue(
+    app: AppHandle,
+    runtime: String,
+    cwd: String,
+    task_key: Option<String>,
+    urgent: bool,
+    prompt: Option<String>,
+    agent: Option<String>,
+    expected_fencing_token: Option<i64>,
+    input_id: Option<String>,
+) -> Result<Value, String> {
     let mut command = sidecar_command(&app)?;
     command
         .arg("--enqueue")
@@ -527,31 +557,82 @@ struct LocalSettings {
     runtime: Option<String>,
     cwd: Option<String>,
     auto_wake: bool,
+    host: String,
+    version: String,
+    os: String,
+    arch: String,
+    node_bundled: bool,
+}
+
+#[derive(Serialize)]
+struct ClientInfo {
+    version: String,
+    os: String,
+    arch: String,
+    node_bundled: bool,
 }
 
 #[tauri::command]
-fn local_settings() -> LocalSettings {
+fn client_info(app: AppHandle) -> ClientInfo {
+    ClientInfo {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        os: std::env::consts::OS.to_string(),
+        arch: std::env::consts::ARCH.to_string(),
+        node_bundled: sidecar_root(&app)
+            .map(|root| root.join("runtime").join("node.exe").is_file())
+            .unwrap_or(false),
+    }
+}
+
+#[tauri::command]
+fn local_settings(app: AppHandle) -> LocalSettings {
     let config = load_config();
+    let info = client_info(app);
     LocalSettings {
         agents: config.agents,
         runtime: config.runtime,
         cwd: config.cwd,
         auto_wake: config.auto_wake,
+        host: config.host,
+        version: info.version,
+        os: info.os,
+        arch: info.arch,
+        node_bundled: info.node_bundled,
     }
 }
 
 #[tauri::command]
-fn save_local_settings(runtime: Option<String>, cwd: Option<String>, auto_wake: bool) -> Result<(), String> {
+fn save_local_settings(
+    runtime: Option<String>,
+    cwd: Option<String>,
+    auto_wake: bool,
+    host: Option<String>,
+) -> Result<(), String> {
     let mut config = load_config();
     config.runtime = runtime.filter(|value| !value.trim().is_empty());
     config.cwd = cwd.filter(|value| !value.trim().is_empty());
     config.auto_wake = auto_wake;
+    if let Some(host) = host.filter(|value| !value.trim().is_empty()) {
+        config.host = host.trim().trim_end_matches('/').to_string();
+    }
     save_config(&config)?;
     log_line(&format!(
-        "settings: runtime {:?}, project {:?}, auto-wake {auto_wake}",
-        config.runtime, config.cwd
+        "settings: runtime {:?}, project {:?}, auto-wake {auto_wake}, server {}",
+        config.runtime, config.cwd, config.host
     ));
     Ok(())
+}
+
+#[tauri::command]
+fn server_health() -> Result<Value, String> {
+    let host = load_config().host.trim_end_matches('/').to_string();
+    let response = ureq::get(&format!("{host}/healthz"))
+        .timeout(Duration::from_secs(10))
+        .call()
+        .map_err(|error| format!("cannot reach {host}: {error}"))?;
+    response
+        .into_json::<Value>()
+        .map_err(|error| format!("unexpected health response: {error}"))
 }
 
 #[tauri::command]
@@ -565,7 +646,14 @@ fn wake_queue() -> Result<Value, String> {
     let tail = |path: PathBuf, count: usize| -> Vec<Value> {
         let mut values = Vec::new();
         if let Ok(raw) = fs::read_to_string(path) {
-            for line in raw.lines().rev().take(count).collect::<Vec<_>>().into_iter().rev() {
+            for line in raw
+                .lines()
+                .rev()
+                .take(count)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+            {
                 if let Ok(value) = serde_json::from_str::<Value>(line) {
                     values.push(value);
                 }
@@ -581,7 +669,13 @@ fn wake_queue() -> Result<Value, String> {
 #[tauri::command]
 fn local_inbox() -> Result<Value, String> {
     let (host, key) = first_key()?;
-    api_request("GET", &host, &key, "/v1/inbox?status=unacked&limit=100", None)
+    api_request(
+        "GET",
+        &host,
+        &key,
+        "/v1/inbox?status=unacked&limit=100",
+        None,
+    )
 }
 
 #[tauri::command]
@@ -594,24 +688,29 @@ fn ack_inbox(up_to_event_seq: i64) -> Result<Value, String> {
 #[tauri::command]
 fn local_reviews() -> Result<Value, String> {
     let (host, key) = first_key()?;
-    api_request("GET", &host, &key, "/v1/tasks?status=REVIEWING&limit=200", None)
-}
-
-#[tauri::command]
-fn task_detail(task_key: String) -> Result<Value, String> {
-    let (host, key) = first_key()?;
     api_request(
         "GET",
         &host,
         &key,
-        &format!("/v1/tasks/{}", task_key),
+        "/v1/tasks?status=REVIEWING&limit=200",
         None,
     )
 }
 
 #[tauri::command]
-fn review_task(task_key: String, decision: String, feedback: Option<String>,
-               items: Option<Value>, expected_version: Option<i64>) -> Result<Value, String> {
+fn task_detail(task_key: String) -> Result<Value, String> {
+    let (host, key) = first_key()?;
+    api_request("GET", &host, &key, &format!("/v1/tasks/{}", task_key), None)
+}
+
+#[tauri::command]
+fn review_task(
+    task_key: String,
+    decision: String,
+    feedback: Option<String>,
+    items: Option<Value>,
+    expected_version: Option<i64>,
+) -> Result<Value, String> {
     let (host, key) = first_key()?;
     let body = json!({
         "decision": decision,
@@ -642,7 +741,9 @@ fn local_status() -> Result<Value, String> {
             .timeout(Duration::from_secs(15))
             .call()
             .map_err(|error| format!("cannot reach Veynod: {error}"))?;
-        response.into_json::<Value>().map_err(|error| error.to_string())
+        response
+            .into_json::<Value>()
+            .map_err(|error| error.to_string())
     };
     Ok(json!({
         "configured": true,
@@ -668,7 +769,10 @@ fn describe_runtime(app: AppHandle, runtime: String) -> Result<Value, String> {
 
 #[tauri::command]
 fn test_agent(key: String, host: Option<String>) -> Result<Value, String> {
-    let host = host.unwrap_or_else(default_host).trim_end_matches('/').to_string();
+    let host = host
+        .unwrap_or_else(default_host)
+        .trim_end_matches('/')
+        .to_string();
     let response = ureq::get(&format!("{host}/v1/whoami"))
         .set("Authorization", &format!("Bearer {}", key.trim()))
         .timeout(Duration::from_secs(15))
@@ -680,9 +784,13 @@ fn test_agent(key: String, host: Option<String>) -> Result<Value, String> {
 }
 
 #[tauri::command]
-fn save_agent(app: AppHandle, key: String) -> Result<Value, String> {
+fn save_agent(app: AppHandle, key: String, host: Option<String>) -> Result<Value, String> {
     let key = key.trim().to_string();
-    let me = test_agent(key.clone(), None)?;
+    let host = host
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(default_host);
+    let me = test_agent(key.clone(), Some(host.clone()))?;
     let agent_id = me
         .get("agent_id")
         .and_then(Value::as_str)
@@ -693,12 +801,15 @@ fn save_agent(app: AppHandle, key: String) -> Result<Value, String> {
     fs::write(veynod_dir().join(format!("{agent_id}.key")), &key)
         .map_err(|error| error.to_string())?;
     let mut config = load_config();
+    config.host = host;
     if !config.agents.contains(&agent_id) {
         config.agents.push(agent_id.clone());
     }
-    let raw = serde_json::to_string_pretty(&config).map_err(|error| error.to_string())?;
-    fs::write(veynod_dir().join("desktop.json"), raw).map_err(|error| error.to_string())?;
-    log_line(&format!("setup: saved agent {agent_id}"));
+    save_config(&config)?;
+    log_line(&format!(
+        "setup: saved agent {agent_id} for {}",
+        config.host
+    ));
     let _ = app;
     Ok(me)
 }
@@ -715,17 +826,47 @@ fn open_dashboard(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn open_inbox(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("inbox") {
-        let _ = window.show();
-        let _ = window.set_focus();
-        return Ok(());
-    }
-    WebviewWindowBuilder::new(&app, "inbox", WebviewUrl::App("inbox.html".into()))
-        .title("Veynod · Inbox & approvals")
-        .inner_size(980.0, 760.0)
-        .build()
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        if let Some(window) = handle.get_webview_window("inbox") {
+            let _ = window.show();
+            let _ = window.set_focus();
+            return;
+        }
+        let _ = WebviewWindowBuilder::new(&handle, "inbox", WebviewUrl::App("inbox.html".into()))
+            .title("Veynod · Inbox & approvals")
+            .inner_size(1040.0, 800.0)
+            .skip_taskbar(true)
+            .build();
+    })
+    .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn quit_client(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
+fn open_setup(app: AppHandle) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        if let Some(window) = handle.get_webview_window("setup") {
+            let _ = window.show();
+            let _ = window.set_focus();
+            return;
+        }
+        let _ = WebviewWindowBuilder::new(
+            &handle,
+            "setup",
+            WebviewUrl::App("setup.html?settings=1".into()),
+        )
+        .title("Veynod · Setup")
+        .inner_size(960.0, 860.0)
+        .skip_taskbar(true)
+        .build();
+    })
+    .map_err(|error| error.to_string())
 }
 
 fn main() {
@@ -742,10 +883,28 @@ fn main() {
         ))
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
-            setup_state, local_settings, save_local_settings, local_runtimes, describe_runtime,
-            local_status, wake_enqueue, wake_queue, local_inbox, ack_inbox, local_reviews,
-            task_detail, review_task, test_wake, test_agent, save_agent, open_dashboard,
-            open_inbox
+            setup_state,
+            client_info,
+            local_settings,
+            save_local_settings,
+            server_health,
+            local_runtimes,
+            describe_runtime,
+            local_status,
+            wake_enqueue,
+            wake_queue,
+            local_inbox,
+            ack_inbox,
+            local_reviews,
+            task_detail,
+            review_task,
+            test_wake,
+            test_agent,
+            save_agent,
+            open_dashboard,
+            open_inbox,
+            open_setup,
+            quit_client
         ])
         .setup(|app| {
             match app.autolaunch().enable() {
@@ -755,10 +914,16 @@ fn main() {
 
             let open = MenuItem::with_id(app, "open", "Open Veynod", true, None::<&str>)?;
             let inbox = MenuItem::with_id(app, "inbox", "Inbox & approvals", true, None::<&str>)?;
-            let status = MenuItem::with_id(app, "status", "Local status", true, None::<&str>)?;
+            let status = MenuItem::with_id(app, "status", "Client home", true, None::<&str>)?;
+            let setup = MenuItem::with_id(app, "setup", "Setup & connection", true, None::<&str>)?;
+            let fullscreen =
+                MenuItem::with_id(app, "fullscreen", "Full screen", true, None::<&str>)?;
             let reload = MenuItem::with_id(app, "reload", "Reload console", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &inbox, &status, &reload, &quit])?;
+            let menu = Menu::with_items(
+                app,
+                &[&open, &inbox, &status, &setup, &fullscreen, &reload, &quit],
+            )?;
 
             let icon = app
                 .default_window_icon()
@@ -782,10 +947,14 @@ fn main() {
                             let _ = window.set_focus();
                         } else {
                             let _ = WebviewWindowBuilder::new(
-                                app, "inbox", WebviewUrl::App("inbox.html".into()))
-                                .title("Veynod · Inbox & approvals")
-                                .inner_size(980.0, 760.0)
-                                .build();
+                                app,
+                                "inbox",
+                                WebviewUrl::App("inbox.html".into()),
+                            )
+                            .title("Veynod · Inbox & approvals")
+                            .inner_size(1040.0, 800.0)
+                            .skip_taskbar(true)
+                            .build();
                         }
                     }
                     "status" => {
@@ -794,10 +963,26 @@ fn main() {
                             let _ = window.set_focus();
                         } else {
                             let _ = WebviewWindowBuilder::new(
-                                app, "status", WebviewUrl::App("status.html".into()))
-                                .title("Veynod · Local status")
-                                .inner_size(1024.0, 760.0)
-                                .build();
+                                app,
+                                "status",
+                                WebviewUrl::App("status.html".into()),
+                            )
+                            .title("Veynod · Client home")
+                            .inner_size(1120.0, 820.0)
+                            .skip_taskbar(true)
+                            .build();
+                        }
+                    }
+                    "setup" => {
+                        if let Some(window) = app.get_webview_window("setup") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                    "fullscreen" => {
+                        if let Some(window) = app.get_webview_window("main") {
+                            let full = window.is_fullscreen().unwrap_or(false);
+                            let _ = window.set_fullscreen(!full);
                         }
                     }
                     "reload" => {
@@ -824,19 +1009,53 @@ fn main() {
                 })
                 .build(app)?;
 
+            // Load the two local windows once, hidden. Creating a webview from
+            // a command thread after startup leaves it on about:blank on
+            // Windows; these pages must be built on the main thread.
+            for (label, file, title, width, height) in [
+                (
+                    "status",
+                    "status.html",
+                    "Veynod · Client home",
+                    1120.0,
+                    820.0,
+                ),
+                (
+                    "inbox",
+                    "inbox.html",
+                    "Veynod · Inbox & approvals",
+                    1040.0,
+                    800.0,
+                ),
+                (
+                    "setup",
+                    "setup.html?settings=1",
+                    "Veynod · Setup",
+                    960.0,
+                    860.0,
+                ),
+            ] {
+                if app.get_webview_window(label).is_none() {
+                    let _ = WebviewWindowBuilder::new(app, label, WebviewUrl::App(file.into()))
+                        .title(title)
+                        .inner_size(width, height)
+                        .visible(false)
+                        .skip_taskbar(true)
+                        .build();
+                }
+            }
+
             if std::env::args().any(|arg| arg == "--status") {
-                let _ = WebviewWindowBuilder::new(
-                    app, "status", WebviewUrl::App("status.html".into()))
-                    .title("Veynod · Local status")
-                    .inner_size(1024.0, 760.0)
-                    .build();
+                if let Some(window) = app.get_webview_window("status") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
             }
             if std::env::args().any(|arg| arg == "--inbox") {
-                let _ = WebviewWindowBuilder::new(
-                    app, "inbox", WebviewUrl::App("inbox.html".into()))
-                    .title("Veynod · Inbox & approvals")
-                    .inner_size(980.0, 760.0)
-                    .build();
+                if let Some(window) = app.get_webview_window("inbox") {
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
             }
             match daemon_command(app.handle()) {
                 Ok(mut command) => {
@@ -852,26 +1071,17 @@ fn main() {
         })
         .on_page_load(|webview, payload| {
             if let tauri::webview::PageLoadEvent::Finished = payload.event() {
-                // A desktop window should not show page-level scrollbars, but
-                // the dashboard is taller than the window: clipping it hides
-                // whole panels. Keep vertical scrolling, hide the bar itself;
-                // panels inside the dashboard keep their own scroll containers.
+                // The web console owns its layout now (the diagram is an
+                // infinite canvas with its own wheel handling). Only hide the
+                // visual scrollbar; never rewrite overflow or overscroll.
                 let _ = webview.eval(
                     r#"(() => {
                         if (document.getElementById('veynod-native-shell')) return;
                         const style = document.createElement('style');
                         style.id = 'veynod-native-shell';
                         style.textContent = `
-                            html, body {
-                                overflow-x: hidden !important;
-                                /* overscroll-behavior:none also swallows the
-                                   mouse wheel in WebView2. Keep the default. */
-                                overscroll-behavior: auto !important;
-                                scrollbar-width: none !important;
-                            }
-                            html { overflow-y: auto !important; }
-                            body { overflow-y: visible !important; }
-                            ::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }
+                            html { scrollbar-width: none; }
+                            ::-webkit-scrollbar { width: 0; height: 0; display: none !important; }
                         `;
                         document.head && document.head.appendChild(style);
                     })();"#,

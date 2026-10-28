@@ -12,10 +12,10 @@
         "label": "main",
         "title": "Veynod",
         "url": "setup.html",
-        "width": 1360,
-        "height": 900,
-        "minWidth": 980,
-        "minHeight": 640,
+        "width": 1440,
+        "height": 940,
+        "minWidth": 1100,
+        "minHeight": 720,
         "center": true
       }
     ],
