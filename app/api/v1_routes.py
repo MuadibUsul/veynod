@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, Query, Request
+from fastapi import APIRouter, Depends, Header, Path, Query, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,6 +57,7 @@ from app.schemas import (
     ExternalActionCreateRequest,
     ExternalActionListResponse,
     ExternalActionOut,
+    HostRevokeRequest,
     InboxAckRequest,
     LeaseHeartbeatRequest,
     LeaseHeartbeatResponse,
@@ -82,6 +83,8 @@ from app.schemas import (
     RegisterPartsRequest,
     ResourceAcquireRequest,
     ResourceDefineRequest,
+    RunnerHeartbeatRequest,
+    RunnerHelloRequest,
     SlotListResponse,
     SlotMutationResponse,
     SlotOut,
@@ -1462,6 +1465,64 @@ async def presence_heartbeat(
     from app.services import digest, presence
 
     return await presence.heartbeat(principal, await digest.owner_ref(session, principal))
+
+
+@router.post("/runner/hello", summary="A runner connects and says what its computer can do")
+async def runner_hello(
+    body: RunnerHelloRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import runners
+
+    return await runners.hello(session, principal, body.model_dump())
+
+
+@router.post("/runner/heartbeat",
+             summary="Runner heartbeat every 30 s: still here, what runs, current quota")
+async def runner_heartbeat(
+    body: RunnerHeartbeatRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import runners
+
+    return await runners.heartbeat(session, principal, body.model_dump(exclude_none=True))
+
+
+@router.get("/runner/hosts", summary="The computers that run this workspace's agents")
+async def list_hosts(
+    include_revoked: bool = Query(default=False),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import runners
+
+    return await runners.list_hosts(session, principal, include_revoked=include_revoked)
+
+
+@router.get("/runner/hosts/{ref}", summary="One host by hst_ id, host: address or agent_id")
+async def get_host(
+    ref: str = Path(max_length=64),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import runners
+
+    return await runners.get_host(session, principal, ref)
+
+
+@router.post("/runner/hosts/{ref}/revoke",
+             summary="Owner: take a computer off the Loop (token revoked, tasks freed)")
+async def revoke_host(
+    body: HostRevokeRequest,
+    ref: str = Path(max_length=64),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import runners
+
+    return await runners.revoke_host(session, principal, ref, body.reason)
 
 
 @router.get("/presence",

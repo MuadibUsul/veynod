@@ -1992,6 +1992,27 @@ async def presence_heartbeat() -> dict[str, Any]:
     return _compact(result)
 
 
+@mcp.tool(name="list_hosts")
+async def list_hosts(host: str | None = None, include_revoked: bool = False) -> dict[str, Any]:
+    """The computers that run this workspace's agents (runners): system, runtimes
+    with models and quota, free slots, what is running, online or offline. Pass
+    host (hst_ id, host: address or agent_id) for one. Runners connect with
+    POST /v1/runner/hello and send POST /v1/runner/heartbeat every 30 s."""
+    from app.services import runners
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            if host:
+                result = await runners.get_host(session, principal, host)
+            else:
+                result = await runners.list_hosts(session, principal,
+                                                  include_revoked=include_revoked)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
 _DIAGRAM_ACTIONS = {
     # action: (service function, needs diagram_key, needs chunk_key, takes body)
     "list": ("list_diagrams", False, False, False),
