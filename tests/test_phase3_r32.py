@@ -186,7 +186,9 @@ async def test_scheduled_exports(r32):
                           "tenant_id = $1 AND purpose = 'scheduled' ORDER BY created_at",
                           ws["tenant_id"])
 
-    for _ in range(60):
+    # One run exports every tenant in turn; in a full-suite database this
+    # one is created last, so allow for the whole queue ahead of it.
+    for _ in range(360):
         rows = await scheduled()
         if rows and rows[0]["status"] == "done":
             break
