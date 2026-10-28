@@ -29,6 +29,26 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.17.0",
+        "date": "2026-10-28",
+        "summary": "Automatic deploys need the owner's switch as well as the operator's.",
+        "highlights": [
+            "An automatic deploy (merge webhook or timer) goes live only while the operator "
+            "authorizes automatic deploys and the owner of the board workspace "
+            "(DEPLOY_GATE_BOARD_WORKSPACE_ID) allows them: Allow automatic deploys on and a "
+            "mode other than manual. Either switching off stops the next deploy, even during "
+            "its checks. The operator's Deploy now still counts as an explicit "
+            "authorization. Without a board workspace only the operator decides.",
+            "The gate state carries owner {linked, mode, auto_deploy_allowed, allows}, "
+            "auto_deploy_effective and auto_deploy_blocked_by; every claim records both "
+            "sides, and owner switch changes appear in the gate audit as owner_switch.",
+            "GET/PUT /v1/human/automation returns controls_deploy_gate; the Governance card "
+            "says when its switch decides whether the server updates itself, and the deploy "
+            "page shows the owner's choice. Runner 2 explains in plain words which switch "
+            "stopped a deploy.",
+        ],
+    },
+    {
         "version": "3.16.0",
         "date": "2026-10-28",
         "summary": "Automation mode now changes behaviour; the owner accepts work in plain words.",

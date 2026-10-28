@@ -41,6 +41,10 @@ type GateState = {
   paused: boolean;
   paused_reason: string | null;
   auto_deploy_authorized: boolean;
+  // The board owner's switch (3.17); absent on older servers.
+  owner?: { linked: boolean; mode?: "manual" | "semi" | "full"; allows: boolean };
+  auto_deploy_effective?: boolean;
+  auto_deploy_blocked_by?: "operator" | "owner" | null;
   deployed_commit: string | null;
   deployed_at: string | null;
   runner: { status: "online" | "offline"; host: string | null; last_seen_at: string | null };
@@ -191,8 +195,26 @@ export default function DeployGatePage() {
             <dl className="deploy-facts">
               <div>
                 <dt>{t("Automatic deploys")}</dt>
-                <dd>{state.auto_deploy_authorized ? t("Allowed") : t("Not allowed: only “Deploy now” goes live")}</dd>
+                <dd>
+                  {!state.auto_deploy_authorized
+                    ? t("Not allowed: only “Deploy now” goes live")
+                    : state.auto_deploy_blocked_by === "owner"
+                      ? t("Allowed here, but the owner has not allowed them")
+                      : t("Allowed")}
+                </dd>
               </div>
+              {state.owner?.linked && (
+                <div>
+                  <dt>{t("Owner's choice")}</dt>
+                  <dd>
+                    {state.owner.allows
+                      ? t("Automatic deploys allowed")
+                      : state.owner.mode === "manual"
+                        ? t("Ask me every step: nothing goes live on its own")
+                        : t("Automatic deploys not allowed")}
+                  </dd>
+                </div>
+              )}
               <div>
                 <dt>{t("Last deploy")}</dt>
                 <dd>{when(state.deployed_at, locale)}</dd>

@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ app
     app_name: str = "Veynod"
     # Bump on every release and add notes in app/services/releases.py.
-    app_version: str = "3.16.0"
+    app_version: str = "3.17.0"
     environment: Literal["development", "staging", "production", "test"] = "development"
     debug: bool = False
     host: str = "0.0.0.0"
@@ -241,7 +241,8 @@ class Settings(BaseSettings):
     deploy_gate_branch: str = "main"
     # A runner silent for longer than this is shown offline (its timer runs every 2 min).
     deploy_gate_runner_offline_seconds: int = Field(default=600, ge=60, le=86_400)
-    # The workspace whose board holds the tasks a merged PR names (G-03).
+    # The workspace whose board holds the tasks a merged PR names (G-03); its
+    # owner's automatic-deploy switch also gates automatic deploys (Loop R-02).
     deploy_gate_board_workspace_id: str | None = None
 
     # ---------------------------------------------------------------- quota

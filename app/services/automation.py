@@ -24,9 +24,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Principal, require_capability
+from app.config import get_settings
 from app.database import async_session_factory
 from app.errors import ApiError
 from app.services.common import append_event, record_audit
+
+settings = get_settings()
 
 MODES = ("manual", "semi", "full")
 DEFAULT_MODE = "manual"
@@ -47,6 +50,8 @@ async def get_mode(session: AsyncSession, workspace_id: uuid.UUID) -> dict[str, 
         ),
         {"ws": workspace_id},
     )).mappings().one_or_none()
+    # This workspace's switch also governs the server's deploy gate (Loop R-02).
+    controls = str(settings.deploy_gate_board_workspace_id or "") == str(workspace_id)
     if row is None:
         return {
             "mode": DEFAULT_MODE,
@@ -54,6 +59,7 @@ async def get_mode(session: AsyncSession, workspace_id: uuid.UUID) -> dict[str, 
             "updated_by": None,
             "updated_at": None,
             "version": 0,
+            "controls_deploy_gate": controls,
         }
     return {
         "mode": row["mode"],
@@ -61,6 +67,7 @@ async def get_mode(session: AsyncSession, workspace_id: uuid.UUID) -> dict[str, 
         "updated_by": row["updated_by"],
         "updated_at": row["updated_at"],
         "version": int(row["version"]),
+        "controls_deploy_gate": controls,
     }
 
 
@@ -77,6 +84,7 @@ async def set_mode(
         raise ApiError(422, "validation_error", "mode must be manual, semi or full",
                        details={"field": "mode", "allowed": list(MODES)})
     before = await get_mode(session, principal.workspace.id)
+    controls = before.pop("controls_deploy_gate")
     note = (reason or "").strip() or "set from the console"
     row = (await session.execute(
         text(
@@ -126,7 +134,11 @@ async def set_mode(
         },
     )
     await session.commit()
-    return after
+    if controls:
+        from app.services import deploy_gate
+
+        await deploy_gate.record_owner_switch(principal.agent_signature, before, after, note)
+    return {**after, "controls_deploy_gate": controls}
 
 
 def agent_rules(mode: str) -> dict[str, Any]:

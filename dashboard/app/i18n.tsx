@@ -761,6 +761,13 @@ const ZH: Record<string, string> = {
     "开启后，通过全部检查的改动可以不再点一次就上线；随时可以关掉。",
   "Save mode": "保存模式",
   "Only the owner can change this.": "只有 owner 能改这一项。",
+  "Allowed here, but the owner has not allowed them": "这里已授权，但 owner 还没有允许",
+  "Owner's choice": "owner 的选择",
+  "Automatic deploys allowed": "允许自动上线",
+  "Ask me every step: nothing goes live on its own": "每一步都问我：不会自己上线",
+  "Automatic deploys not allowed": "不允许自动上线",
+  "This switch decides whether this server updates itself. “Ask me every step” also stops automatic updates.":
+    "这个开关决定这台服务器是否自动更新；选“每一步都问我”也会停止自动更新。",
   "Try and accept": "试用并验收",
   "Try what was delivered, then say in your own words whether it works. No technical details needed.":
     "试一下交付的东西，用自己的话说能不能用，不需要任何技术细节。",

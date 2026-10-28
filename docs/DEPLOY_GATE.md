@@ -23,7 +23,7 @@ main 一有新合并，生产 VPS 上的部署门就先在本机把关：检查�
 
    - `DEPLOY_GATE_WEBHOOK_SECRET=`：GitHub webhook 的密钥
    - `DEPLOY_GATE_RUNNER_TOKEN=`：runner 调服务端用的令牌（和 ADMIN_TOKEN 分开）
-   - `DEPLOY_GATE_BOARD_WORKSPACE_ID=`：板子所在工作区的 ID（G-03 核对任务验收用）
+   - `DEPLOY_GATE_BOARD_WORKSPACE_ID=`：板子所在工作区的 ID（G-03 核对任务验收用；这个工作区 owner 的“允许自动上线”开关也管自动上线，见下表）
    - 可选 `DEPLOY_GATE_GITHUB_TOKEN=`：只读令牌，避免 GitHub API 未登录时每小时 60 次的限额
 
 2. 用现有流程部署一次包含本版本的代码，让服务端读到这些配置：
@@ -52,9 +52,10 @@ main 一有新合并，生产 VPS 上的部署门就先在本机把关：检查�
 |---|---|
 | 暂停 / 恢复 | 暂停期间什么都不上线，排队的触发记为“已跳过”；恢复后从下一次合并开始 |
 | 允许 / 停止自动上线 | 不允许时，webhook 和定时器触发的运行照常检查，但不上线；“立即部署”不受影响 |
+| owner 的“允许自动上线”（控制台“治理”页） | 板子工作区的 owner 也要允许：开关打开、而且模式不是“每一步都问我”。两边都允许，自动触发的运行才上线；任何一边关掉，下一次就不上线（检查中途关掉也算）。没配 `DEPLOY_GATE_BOARD_WORKSPACE_ID` 时只看上一行 |
 | 立即部署 | 检查并上线 main 最新的提交；这是你对这一次的明确授权 |
 
-每次触发、开关变化和结果都写进只追加的审计（`GET /v1/admin/deploy-gate/audit`），记录里有触发人、提交、每项检查的结果、是否上线、是否退回。
+每次触发、开关变化（包括 owner 的开关，记为 `owner_switch`）和结果都写进只追加的审计（`GET /v1/admin/deploy-gate/audit`），记录里有触发人、提交、每项检查的结果、是否上线、是否退回；每次领取运行时还记下当时运营授权和 owner 是否允许。
 
 ## 检查项
 
