@@ -9,6 +9,8 @@
 #   scripts/deploy_tlines.sh verify            # checks only
 #   scripts/deploy_tlines.sh rollback <stamp>  # previous image + DB restore
 #   scripts/deploy_tlines.sh rollback-image <stamp>   # previous image only
+#   scripts/deploy_tlines.sh prepare           # backup + rollback tag only; prints the stamp
+#   DEPLOY_STAMP=<stamp> scripts/deploy_tlines.sh deploy   # deploy on a prepared stamp
 #
 # A failed verification rolls the image back only. The database backup is kept
 # for an explicit, destructive `rollback`, never restored automatically.
@@ -23,7 +25,7 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
 API_CONTAINER="${API_CONTAINER:-agentgraph-api}"
 PUBLIC_URL="${PUBLIC_URL:-https://veynod.com}"
 BACKUP_DIR="${BACKUP_DIR:-backups}"
-EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-3.49.0}"
+EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-3.54.0}"
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 log() { printf '\033[1m[deploy]\033[0m %s\n' "$*"; }
@@ -64,6 +66,8 @@ tag_current_image() {
   image="$(api_image)"
   current="$(docker inspect --format '{{.Image}}' "$API_CONTAINER" 2>/dev/null || true)"
   if [ -z "$current" ]; then
+    # The deploy gate needs a rollback image before it touches production.
+    [ "${REQUIRE_ROLLBACK_TAG:-0}" = 1 ] && fail "no running $API_CONTAINER to tag for rollback"
     log "no running $API_CONTAINER; nothing to tag for rollback"
     return
   fi
@@ -225,9 +229,18 @@ deploy() {
     docker image inspect "$image" >/dev/null 2>&1 \
       || fail "prebuilt image $image is not loaded; transfer and docker load it first"
   fi
-  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  backup_db "$stamp"
-  tag_current_image "$stamp"
+  if [ -n "${DEPLOY_STAMP:-}" ]; then
+    # Prepared by `prepare` (the deploy gate's G-04): reuse its checked backup and tag.
+    stamp="$DEPLOY_STAMP"
+    [ -s "$BACKUP_DIR/agentgraph-$stamp.sql.gz" ] || fail "prepared backup for $stamp not found"
+    docker image inspect "agentgraph:rollback-$stamp" >/dev/null 2>&1 \
+      || fail "prepared rollback image agentgraph:rollback-$stamp not found"
+    log "using prepared backup and rollback image $stamp"
+  else
+    stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+    backup_db "$stamp"
+    tag_current_image "$stamp"
+  fi
   if [ "$source" = build ]; then
     log "building image"
     compose build api
@@ -274,11 +287,21 @@ rollback_image() {
   log "image rolled back to $stamp; database kept as is"
 }
 
+prepare() {
+  preflight
+  local stamp
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  backup_db "$stamp"
+  REQUIRE_ROLLBACK_TAG=1 tag_current_image "$stamp"
+  log "prepared. stamp: $stamp"
+}
+
 case "${1:-}" in
+  prepare) prepare ;;
   deploy) deploy build ;;
   deploy-loaded) deploy loaded ;;
   verify) preflight; verify ;;
   rollback) rollback "${2:-}" ;;
   rollback-image) rollback_image "${2:-}" ;;
-  *) sed -n '2,15p' "$0"; exit 2 ;;
+  *) sed -n '2,17p' "$0"; exit 2 ;;
 esac

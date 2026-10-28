@@ -27,6 +27,7 @@ is the repository source of truth.
 
 | Document | What it covers |
 | --- | --- |
+| [DEPLOY_GATE](DEPLOY_GATE.md) | VPS deploy gate: install, checks G-01..G-05, owner switches, rollback |
 | [SECURITY_AUDIT_2026-10-20](SECURITY_AUDIT_2026-10-20.md) | Attacker-style audit and remediation record |
 | [design-system](design-system/FOUNDATION.md) | Tokens, typography, components and accessibility rules |
 | [benchmarks](benchmarks/) | Retrieval and performance measurements |

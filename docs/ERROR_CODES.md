@@ -48,11 +48,13 @@ do not edit by hand. Every error body is
 | `cursor_invalid` | 400 | `fix_request` | `fix_request_then_resend` | Fix the cursor per details. |
 | `http_error` | 400 | `fix_request` | `fix_request_then_resend` | Fix the request method, path or body. |
 | `invalid_cursor` | 400 | `fix_request` | `fix_request_then_resend` | Pass back next_cursor unchanged. |
+| `invalid_payload` | 400 | `fix_request` | `fix_request_then_resend` | Send a JSON object body. |
 | `tenant_id_not_allowed` | 400 | `fix_request` | `remove_tenant_id` | Remove tenant_id from the request. |
 | `tool_error` | 400 | `fix_request` | `fix_request_then_resend` | Fix the tool arguments. |
 | `unsupported_api_version` | 400 | `fix_request` | `use_supported_api_version` | Use a version from details.supported. |
 | `unsupported_artifact_uri` | 400 | `fix_request` | `fix_request_then_resend` | Use doc://<doc_key>. |
 | `google_email_unverified` | 401 | `fix_request` | `fix_request_then_resend` | Verify the Google email first. |
+| `invalid_signature` | 401 | `fix_request` | `fix_request_then_resend` | Sign the webhook body with the shared secret (X-Hub-Signature-256). |
 | `field_not_writable` | 403 | `fix_request` | `fix_request_then_resend` | Remove the field from the request. |
 | `outbound_host_forbidden` | 403 | `fix_request` | `fix_request_then_resend` | Use an allowed outbound host. |
 | `outbound_private_address` | 403 | `fix_request` | `fix_request_then_resend` | Use a public target address. |
@@ -204,6 +206,7 @@ do not edit by hand. Every error body is
 | `queue_ticket_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Call acquire_resource again to re-queue. |
 | `request_closed` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `retention_not_met` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
+| `run_not_claimed` | 409 | `abandon` | `abandon_and_release_local_state` | Only the runner holding a running deploy-gate run reports it; claim again. |
 | `sample_unavailable` | 409 | `abandon` | `abandon_and_release_local_state` | Someone else took the sample or it was already judged. |
 | `stale_fencing_token` | 409 | `abandon` | `abandon_and_release_local_state` | Drop local state and claim again. |
 | `task_not_reviewable` | 409 | `abandon` | `abandon_and_release_local_state` | The task is not awaiting review. |

@@ -240,6 +240,7 @@ _INCREMENTAL_MIGRATIONS: list[tuple[str, Path]] = [
     ("3.51.0", _MIGRATIONS_DIR / "v3_51_diagrams.sql"),
     ("3.52.0", _MIGRATIONS_DIR / "v3_52_diagram_automation.sql"),
     ("3.53.0", _MIGRATIONS_DIR / "v3_53_diagram_autonomy.sql"),
+    ("3.54.0", _MIGRATIONS_DIR / "v3_54_deploy_gate.sql"),
 ]
 CURRENT_SCHEMA_VERSION = _INCREMENTAL_MIGRATIONS[-1][0]
 

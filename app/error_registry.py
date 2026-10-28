@@ -269,6 +269,7 @@ REGISTRY: dict[str, ErrorSpec] = {
     "invalid_sort": _spec(422, FIX_REQUEST, "Use a supported sort."),
     "invalid_stream_filter": _spec(422, FIX_REQUEST, "Use a supported table filter."),
     "invalid_target_url": _spec(422, FIX_REQUEST, "Fix the target URL."),
+    "invalid_payload": _spec(400, FIX_REQUEST, "Send a JSON object body."),
     "invalid_task_status": _spec(422, FIX_REQUEST, "Use a valid task status."),
     "invalid_verification_status": _spec(422, FIX_REQUEST, "Use a valid status."),
     "limit_too_large": _spec(422, FIX_REQUEST, "Lower limit to the documented maximum."),
@@ -292,6 +293,9 @@ REGISTRY: dict[str, ErrorSpec] = {
     "token_revoked": _spec(401, REAUTH, "Stop all actions; do not retry."),
     "renewal_requires_parent": _spec(403, REAUTH, "Ask the parent token holder to renew."),
     "unauthorized": _spec(401, REAUTH, "Send a valid bearer key."),
+    "invalid_signature": _spec(
+        401, FIX_REQUEST, "Sign the webhook body with the shared secret (X-Hub-Signature-256)."
+    ),
     "invalid_api_key": _spec(401, REAUTH, "Configure a valid API key."),
     "invalid_credentials": _spec(401, REAUTH, "Check the email and password."),
     "human_session_required": _spec(401, REAUTH, "Sign in with a human account."),
@@ -341,6 +345,9 @@ REGISTRY: dict[str, ErrorSpec] = {
     "invalid_transition": _spec(409, ABANDON, "Give up this action."),
     "invalid_state_transition": _spec(409, ABANDON, "Re-read the task; give up this action."),
     "lease_lost": _spec(409, ABANDON, "Drop local state and claim again."),
+    "run_not_claimed": _spec(
+        409, ABANDON, "Only the runner holding a running deploy-gate run reports it; claim again."
+    ),
     "lease_expired": _spec(
         409, ABANDON, "Your lease ended before NOW(); claim the task again."),
     "lease_renew_too_early": _spec(

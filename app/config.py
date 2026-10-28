@@ -233,6 +233,17 @@ class Settings(BaseSettings):
     webhook_retry_delays_seconds: list[int] = Field(default_factory=lambda: [30, 120, 600])
     webhook_batch_size: int = Field(default=100, ge=1, le=1000)
 
+    # ------------------------------------------- VPS deploy gate (v3.50)
+    # Without both secrets the gate's webhook and runner endpoints answer 404.
+    deploy_gate_webhook_secret: str | None = None
+    deploy_gate_runner_token: str | None = None
+    deploy_gate_repo: str = "MuadibUsul/veynod"
+    deploy_gate_branch: str = "main"
+    # A runner silent for longer than this is shown offline (its timer runs every 2 min).
+    deploy_gate_runner_offline_seconds: int = Field(default=600, ge=60, le=86_400)
+    # The workspace whose board holds the tasks a merged PR names (G-03).
+    deploy_gate_board_workspace_id: str | None = None
+
     # ---------------------------------------------------------------- quota
     free_max_documents: int = 5_000
     free_max_slots: int = 20

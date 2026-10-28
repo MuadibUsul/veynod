@@ -19,7 +19,8 @@ from app.config import get_settings
 settings = get_settings()
 
 # Paths agents never use with their own token (people, operators, login).
-_NOT_AGENT_FACING = ("/v1/admin", "/v1/human", "/v1/auth")
+# The deploy gate serves GitHub and the VPS runner (v3.50).
+_NOT_AGENT_FACING = ("/v1/admin", "/v1/human", "/v1/auth", "/v1/deploy-gate")
 
 _cache: dict[str, Any] = {}
 

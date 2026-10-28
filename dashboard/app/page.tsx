@@ -1336,6 +1336,9 @@ export default function ConsolePage() {
             <a className="button subtle full" href="/dashboard/growth/">
               {t("Growth metrics")}
             </a>
+            <a className="button subtle full" href="/dashboard/deploy/">
+              {t("Deploy gate")}
+            </a>
             <a className="button subtle full" href="/dashboard/connect/">
               {t("Connection settings")}
             </a>

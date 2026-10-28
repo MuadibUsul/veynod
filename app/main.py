@@ -32,6 +32,9 @@ from app import capabilities
 from app.api.admin_routes import router as admin_router
 from app.api.auth_routes import router as auth_router
 from app.api.blob_routes import router as blob_router
+from app.api.deploy_gate_routes import admin_router as deploy_gate_admin_router
+from app.api.deploy_gate_routes import public_router as deploy_gate_public_router
+from app.api.deploy_gate_routes import runner_router as deploy_gate_runner_router
 from app.api.human_routes import router as human_router
 from app.api.inbox_stream import router as inbox_stream_router
 from app.api.oauth_routes import router as oauth_router
@@ -317,6 +320,9 @@ app.include_router(stream_router)
 app.include_router(inbox_stream_router)
 app.include_router(admin_router)
 app.include_router(admin_stream_router)
+app.include_router(deploy_gate_public_router)
+app.include_router(deploy_gate_runner_router)
+app.include_router(deploy_gate_admin_router)
 app.include_router(wellknown_router)
 app.include_router(oauth_router)
 if mcp_http_app is not None:

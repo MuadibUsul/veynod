@@ -1,0 +1,21 @@
+# Veynod VPS deploy gate: one cycle (heartbeat, poll main, check and deploy one run).
+# Rendered by scripts/install_deploy_gate.sh; @DEPLOY_DIR@ and @RUN_USER@ are filled in.
+[Unit]
+Description=Veynod deploy gate cycle
+Documentation=file://@DEPLOY_DIR@/docs/DEPLOY_GATE.md
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=@RUN_USER@
+SupplementaryGroups=docker
+WorkingDirectory=@DEPLOY_DIR@
+Environment=DEPLOY_DIR=@DEPLOY_DIR@
+ExecStart=/usr/bin/python3 @DEPLOY_DIR@/scripts/deploy_gate.py run --deploy-dir @DEPLOY_DIR@
+# Tests (up to 1 h) plus a deploy (up to 1 h) plus margin.
+TimeoutStartSec=3h
+Nice=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
