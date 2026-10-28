@@ -113,10 +113,11 @@ class FakeShell:
 class FakeApi:
     def __init__(self, *, paused: bool = False, authorized: bool = True,
                  tasks: list[dict[str, Any]] | None = None, run: dict[str, Any] | None = None,
-                 deploy_allowed: bool = True):
+                 deploy_allowed: bool = True, owner_allows: bool | None = None):
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.paused = paused
         self.authorized = authorized
+        self.owner_allows = owner_allows  # None: a server from before 3.17
         self.tasks = tasks if tasks is not None else [
             {"task_key": "gate-task", "found": True, "status": "REVIEWING",
              "verdict": "APPROVE", "failing_gates": []}]
@@ -126,8 +127,13 @@ class FakeApi:
     def call(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
         self.calls.append((path, body))
         if path == "/heartbeat":
-            return {"paused": self.paused, "auto_deploy_authorized": self.authorized,
-                    "deployed_commit": DEPLOYED}
+            state = {"paused": self.paused, "auto_deploy_authorized": self.authorized,
+                     "deployed_commit": DEPLOYED}
+            if self.owner_allows is not None:
+                effective = self.authorized and self.owner_allows
+                state.update(auto_deploy_effective=effective, auto_deploy_blocked_by=None
+                             if effective else ("operator" if not self.authorized else "owner"))
+            return state
         if path == "/claim":
             return {"run": self.run, "deploy_allowed": self.deploy_allowed,
                     "deployed_commit": DEPLOYED}
@@ -324,6 +330,20 @@ def test_switches_win_over_passing_checks(tmp_path):
     paused, shell, _ = make(tmp_path / "paused", api=FakeApi(paused=True))
     outcome = run_once(paused, kind="manual")
     assert outcome.status == "skipped" and not shell.commands("deploy_tlines.sh")
+
+
+def test_the_owner_switch_stops_automatic_deploys(tmp_path):
+    gate, shell, _ = make(tmp_path, api=FakeApi(owner_allows=False))
+    outcome = run_once(gate, kind="webhook")
+    assert outcome.status == "blocked"
+    assert outcome.reason == "the owner does not allow automatic deploys"
+    assert "允许自动上线" in outcome.report["unfinished"][0]
+    assert not shell.commands("deploy_tlines.sh")
+    allowed, shell, _ = make(tmp_path / "allowed", api=FakeApi(owner_allows=True))
+    assert run_once(allowed, kind="webhook").status == "deployed"
+    # The operator's own "Deploy now" still goes live.
+    manual, shell, _ = make(tmp_path / "manual", api=FakeApi(owner_allows=False))
+    assert run_once(manual, kind="manual").status == "deployed"
 
 
 def test_the_owner_report_is_plain_language(tmp_path):

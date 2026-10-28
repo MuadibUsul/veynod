@@ -420,8 +420,18 @@ class EscalationOption(StrictModel):
     consequence: str | None = Field(default=None, max_length=500)
 
 
+# What an agent's question to a person is about. Under semi and full
+# automation only the non-technical topics reach the owner (Loop v1).
+EscalationTopic = Literal[
+    "technical", "money", "identity", "legal", "data_deletion", "external_commitment"]
+_TOPIC_HELP = ("technical (the default) | money | identity | legal | data_deletion | "
+               "external_commitment. Under semi or full automation a technical question "
+               "is refused: decide it with the safest default instead.")
+
+
 class TaskEscalateRequest(StrictModel):
     reason: str = Field(min_length=1, max_length=8_000)
+    topic: EscalationTopic = Field(default="technical", description=_TOPIC_HELP)
     # AG-CO-05: a question with options; blocking pauses the task and its lease.
     question: str | None = Field(default=None, max_length=2_000)
     options: list[EscalationOption] = Field(default_factory=list, max_length=5)
@@ -777,6 +787,11 @@ class TimelineEventRequest(StrictModel):
 AutomationMode = Literal["manual", "semi", "full"]
 
 
+class AcceptanceRequest(StrictModel):
+    verdict: Literal["works", "broken", "change"]
+    note: str | None = Field(default=None, max_length=4_000)
+
+
 class AutomationModeRequest(StrictModel):
     mode: AutomationMode
     auto_deploy_allowed: bool = False
@@ -789,6 +804,8 @@ class AutomationModeOut(BaseModel):
     updated_by: str | None = None
     updated_at: datetime | None = None
     version: int = 0
+    # This workspace's switch also governs the server's deploy gate.
+    controls_deploy_gate: bool = False
 
 
 class SuperAdminTokenIssueRequest(StrictModel):
@@ -1537,6 +1554,7 @@ class SubtasksRequest(StrictModel):
 
 class EscalationCreateRequest(StrictModel):
     question: str = Field(min_length=1, max_length=2_000)
+    topic: EscalationTopic = Field(default="technical", description=_TOPIC_HELP)
     options: list[EscalationOption] = Field(default_factory=list, max_length=5)
     recommended_option: str | None = Field(default=None, max_length=64)
     context_docs: list[DocRef] = Field(default_factory=list, max_length=20)

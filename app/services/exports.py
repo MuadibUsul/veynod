@@ -108,6 +108,8 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "agent_directory": ("objects.jsonl", ()),
     "agent_aliases": ("objects.jsonl", ()),
     "escalations": ("objects.jsonl", ()),
+    # The owner's acceptance verdicts on delivered tasks (v3.56).
+    "owner_acceptance": ("objects.jsonl", ()),
     "doc_derivations": ("doc_edges.jsonl", ()),
     "recalls": ("objects.jsonl", ()),
     "recall_nodes": ("objects.jsonl", ()),
@@ -163,6 +165,9 @@ EPHEMERAL = frozenset({
     # defects). Tiers are re-granted by people after a move, never copied.
     "change_claims", "quality_gate_runs", "audits", "autonomy_tiers", "defect_escapes",
     "audit_samples", "quality_circuit", "poison_marks", "audit_view_marks", "quality_releases",
+    # Automation modes (v3.55) are the owner's choice in this deployment: like
+    # tiers, an imported workspace starts manual until a person chooses again.
+    "automation_modes",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")

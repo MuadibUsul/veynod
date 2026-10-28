@@ -64,7 +64,7 @@ from app.schemas import (
     TaskReviewRequest,
     TaskUpdateRequest,
 )
-from app.services import access_log, agent_onboarding, collab, quality
+from app.services import access_log, agent_onboarding, automation, collab, quality
 from app.services import addresses as address_service
 from app.services import grants as grant_service
 from app.services import leases as lease_service
@@ -1012,6 +1012,13 @@ async def handoff_task(
         if request.brief is not None
         else None
     )
+    if (brief is not None and "owner_report" not in brief and not principal.is_human
+            and request.next_status in ("REVIEWING", "HANDOFF")
+            and await automation.current_mode(session, principal.workspace.id) == "full"):
+        add_warning("owner_report_missing",
+                    "full automation: add owner_report {what_changed, how_to_try, "
+                    "not_yet_done} in plain words; the owner reads it at acceptance",
+                    field="brief.owner_report")
     await collab.handoff_checks(session, principal, task, agent, request.next_status, brief)
 
     artifact_uri = request.artifact_uri
@@ -1295,10 +1302,18 @@ async def review_task(
         history.append(entry)
         task.reject_history = history[-settings.max_reject_history :]
         rework = request.next_status == "IN_PROGRESS"
+        relayed = False
         if human_decision:
             task.human_feedback = request.feedback
             task.status = TaskStatus.READY
             event_type = "HUMAN_REJECTED"
+        elif task.ping_pong_count >= task.max_retries and await automation.current_mode(
+                session, principal.workspace.id) == "full":
+            # Full automation (Loop A-04): the next executor takes over; nobody
+            # is asked a technical question.
+            task.status = TaskStatus.HANDOFF
+            relayed = True
+            event_type = "TASK_RELAYED"
         elif task.ping_pong_count >= task.max_retries:
             task.status = TaskStatus.ESCALATED_TO_HUMAN
             escalated = True
@@ -1307,7 +1322,7 @@ async def review_task(
             task.status = TaskStatus.READY
             event_type = "TASK_REJECTED"
         _clear_lease(task)
-        if rework and not escalated:
+        if rework and not escalated and not relayed:
             now = await db_now(session)
             expiry = task.handoff_lease_expires_at
             if task.handed_off_by and expiry is not None and expiry > now:
@@ -1381,7 +1396,13 @@ async def escalate_task(
     lease_service.check_fencing(task, request.fencing_token)
     if task.status in (TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED):
         raise InvalidStateTransition(task.status.value, "ESCALATED_TO_HUMAN")
+    non_blocking = await automation.screen_escalation(
+        session, principal, topic=request.topic, task_key=task.task_key,
+        question=request.question or request.reason)
     if request.question:
+        if non_blocking:
+            # Full automation: the agent keeps its safe default and goes on.
+            request = request.model_copy(update={"blocking": False})
         # AG-CO-05: a question with options; the holder keeps the task.
         if request.blocking and not principal.is_human:
             await lease_service.require_holder(session, task, agent, await db_now(session))
@@ -1892,6 +1913,8 @@ async def create_escalation(
     """A question to a human that blocks no task (AG-CO-05)."""
     require_permission(principal, "task:create")
     agent = effective_agent(principal, None)
+    await automation.screen_escalation(session, principal, topic=request.topic,
+                                       task_key=None, question=request.question)
     result = await collab.escalate(session, principal, None, agent, request)
     await session.commit()
     return result
