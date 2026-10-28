@@ -29,7 +29,7 @@ import {
 } from "node:crypto";
 import { existsSync, chmodSync, copyFileSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, hostname, platform } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -694,11 +694,11 @@ export function servicePlan(action, {
 } = {}) {
   // --exec runs from the directory install ran in, so relative hooks resolve.
   const args = listenArguments({ script, host, keyFile, exec });
-  const stateDir = join(home, ".veynod");
-  const log = join(stateDir, "listen.log");
+  const stateDir = os === "win32" ? join(home, ".veynod") : posix.join(home, ".veynod");
+  const log = os === "win32" ? join(stateDir, "listen.log") : posix.join(stateDir, "listen.log");
   const plan = { os, files: [], remove: [], commands: [], notes: [] };
   if (os === "linux") {
-    const unit = join(home, ".config", "systemd", "user", `${SERVICE_NAME}.service`);
+    const unit = posix.join(home, ".config", "systemd", "user", `${SERVICE_NAME}.service`);
     if (action === "install") {
       plan.files.push({ path: unit, mode: 0o644, content: [
         "[Unit]",
@@ -729,7 +729,7 @@ export function servicePlan(action, {
       plan.commands.push(["systemctl", "--user", "status", "--no-pager", `${SERVICE_NAME}.service`]);
     }
   } else if (os === "darwin") {
-    const plist = join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
+    const plist = posix.join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
     if (action === "install") {
       plan.files.push({ path: plist, mode: 0o644, content: [
         '<?xml version="1.0" encoding="UTF-8"?>',
