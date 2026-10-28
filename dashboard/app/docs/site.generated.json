@@ -4576,6 +4576,48 @@
       {
        "body": [],
        "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/human/automation",
+       "responses": [
+        "200"
+       ],
+       "summary": "The workspace automation mode (manual / semi / full)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "mode",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "auto_deploy_allowed",
+         "required": false,
+         "type": "boolean"
+        },
+        {
+         "description": "",
+         "name": "reason",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "PUT",
+       "parameters": [],
+       "path": "/v1/human/automation",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Change the automation mode (human owner only)"
+      },
+      {
+       "body": [],
+       "description": "",
        "method": "POST",
        "parameters": [
         {

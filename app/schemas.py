@@ -774,6 +774,23 @@ class TimelineEventRequest(StrictModel):
 # ------------------------------------------------------------- agent tokens
 
 
+AutomationMode = Literal["manual", "semi", "full"]
+
+
+class AutomationModeRequest(StrictModel):
+    mode: AutomationMode
+    auto_deploy_allowed: bool = False
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class AutomationModeOut(BaseModel):
+    mode: str
+    auto_deploy_allowed: bool
+    updated_by: str | None = None
+    updated_at: datetime | None = None
+    version: int = 0
+
+
 class SuperAdminTokenIssueRequest(StrictModel):
     role_scope: RoleName = "EXECUTOR"
     agent_signature: str | None = Field(default=None, min_length=1, max_length=128)

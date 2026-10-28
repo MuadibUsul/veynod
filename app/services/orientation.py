@@ -692,6 +692,10 @@ async def build(
         stored_current = seed["stored_version"] == seed["seed_version"]
         pack["memory_seed"] = ({"unchanged": True, "seed_version": seed["seed_version"]}
                                if moment is not None and stored_current else seed)
+    from app.services import automation as automation_service
+
+    pack["automation"] = await automation_service.get_mode(
+        session, principal.workspace.id)
     if onboarding_block is not None:
         pack["onboarding"] = onboarding_block
         if onboarding_block["first_time"] and max_bytes == DEFAULT_MAX_BYTES:
