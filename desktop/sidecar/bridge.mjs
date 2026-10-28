@@ -39,9 +39,14 @@ if (process.argv.includes("--inventory")) {
 } else if (process.argv.includes("--enqueue")) {
   const index = process.argv.indexOf("--enqueue");
   const [runtime, cwd, taskKey, urgent, ...prompt] = process.argv.slice(index + 1);
+  const fencing = process.env.VEYNOD_FENCING;
   console.log(JSON.stringify(add({
     runtime, cwd, task_key: taskKey || null, urgent: urgent === "urgent",
-    prompt: prompt.join(" "), input_id: cryptoRandomUUID(),
+    prompt: prompt.join(" "),
+    agent: process.env.VEYNOD_AGENT || null,
+    expected_fencing_token: fencing ? Number(fencing) : null,
+    dedupe_key: process.env.VEYNOD_INPUT_ID || null,
+    input_id: cryptoRandomUUID(),
   }), null, 2));
 } else if (process.argv.includes("--wake")) {
   const index = process.argv.indexOf("--wake");

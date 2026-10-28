@@ -49,16 +49,20 @@
     <section>
       <h2>Wake queue</h2>
       <div class="row" style="margin-bottom: 10px">
+        <select id="q-agent" style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:#0e0d16;color:#fff"></select>
         <select id="q-runtime" style="padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:#0e0d16;color:#fff">
           <option value="codex">codex</option>
           <option value="claude">claude</option>
         </select>
         <input id="q-cwd" placeholder="Project folder" style="flex:1;min-width:180px;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:#0e0d16;color:#fff" />
-        <input id="q-task" placeholder="task_key (optional)" style="width:160px;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:#0e0d16;color:#fff" />
+        <input id="q-task" placeholder="task_key (optional)" style="width:150px;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:#0e0d16;color:#fff" />
+        <input id="q-fencing" placeholder="fencing" style="width:90px;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:#0e0d16;color:#fff" />
         <input id="q-prompt" placeholder="Prompt" style="flex:1;min-width:160px;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,.16);background:#0e0d16;color:#fff" />
         <label class="sub"><input id="q-urgent" type="checkbox" /> urgent</label>
         <button id="q-add">Queue wake</button>
+        <button id="inbox" class="secondary" style="background:#2a2740">Inbox &amp; approvals</button>
       </div>
+      <div id="settings" class="sub" style="margin-bottom:8px"></div>
       <div id="queue" class="sub"></div>
     </section>
     <section>
@@ -102,15 +106,29 @@
           $("error").textContent = String(error);
         }
       }
+      async function loadSettings() {
+        try {
+          const settings = await invoke("local_settings");
+          $("q-agent").innerHTML = (settings.agents || []).map((agent) =>
+            `<option value="${esc(agent)}">${esc(agent)}</option>`).join("");
+          if (settings.runtime) $("q-runtime").value = settings.runtime;
+          if (settings.cwd) $("q-cwd").value = settings.cwd;
+          $("settings").textContent = `Auto-wake on assignment: ${settings.auto_wake ? "on" : "off"} · runtime ${settings.runtime || "not set"} · project ${settings.cwd || "not set"}`;
+        } catch (error) {
+          $("settings").textContent = String(error);
+        }
+      }
       async function loadQueue() {
         try {
           const data = await invoke("wake_queue");
           const rows = (data.items || []).slice(-20).map((item) =>
-            `<div class="task"><strong>${esc(item.runtime)}</strong> · ${esc(item.state)}${item.landed ? " · " + esc(item.landed) : ""}${item.task_key ? " · " + esc(item.task_key) : ""}${item.error ? " · " + esc(item.error) : ""}</div>`).join("");
-          const receipts = (data.receipts || []).slice(-5).map((item) =>
-            `<div class="task sub">${esc(item.at || "")} · ${esc(item.input_id || "")} · ${esc(item.landed || (item.failed ? "failed" : ""))}</div>`).join("");
+            `<div class="task"><strong>${esc(item.runtime)}</strong> · ${esc(item.state)}${item.landed ? " · " + esc(item.landed) : ""}${item.task_key ? " · " + esc(item.task_key) : ""}${item.fallback_task ? " · fallback " + esc(item.fallback_task) : ""}${item.error ? " · " + esc(item.error) : ""}</div>`).join("");
+          const receipts = (data.receipts || []).slice(-10).map((item) =>
+            `<div class="task sub">${esc(item.at || "")} · ${esc(item.stage || "event")}${item.input_id ? " · " + esc(item.input_id) : ""}${item.task_key ? " · " + esc(item.task_key) : ""}${item.landed ? " · " + esc(item.landed) : ""}${item.failed ? " · failed" : ""}${item.error ? " · " + esc(item.error) : ""}</div>`).join("");
+          const audit = (data.audit || []).slice(-5).map((item) =>
+            `<div class="task sub">${esc(item.at || "")} · ${esc(item.kind || "audit")} · ${esc(item.decision || "")}${item.task_key ? " · " + esc(item.task_key) : ""}${item.snapshot?.fencing_token != null ? " · fence " + esc(item.snapshot.fencing_token) : ""}</div>`).join("");
           $("queue").innerHTML = rows || '<div class="empty">Queue is empty.</div>';
-          $("queue").innerHTML += receipts;
+          $("queue").innerHTML += receipts + audit;
         } catch (error) {
           $("queue").textContent = String(error);
         }
@@ -119,11 +137,14 @@
         const cwd = $("q-cwd").value.trim();
         if (!cwd) { $("q-cwd").focus(); return; }
         try {
+          const fencing = $("q-fencing").value.trim();
           await invoke("wake_enqueue", {
             runtime: $("q-runtime").value,
             cwd,
             taskKey: $("q-task").value.trim() || null,
             urgent: $("q-urgent").checked,
+            agent: $("q-agent").value || null,
+            expectedFencingToken: fencing ? Number(fencing) : null,
             prompt: $("q-prompt").value.trim() || null,
           });
           loadQueue();
@@ -131,8 +152,10 @@
           $("queue").textContent = String(error);
         }
       });
-      $("refresh").addEventListener("click", () => { load(); loadQueue(); });
+      $("inbox").addEventListener("click", () => invoke("open_inbox"));
+      $("refresh").addEventListener("click", () => { load(); loadSettings(); loadQueue(); });
       load();
+      loadSettings();
       loadQueue();
     </script>
   </body>

@@ -14,8 +14,9 @@ function save(items) { ensure(); writeFileSync(queueFile, JSON.stringify(items, 
 
 export function add(item) {
   const items = load();
-  if (item.input_id && items.some((entry) => entry.input_id === item.input_id)) {
-    return items.find((entry) => entry.input_id === item.input_id);
+  const dedupe = item.dedupe_key || item.input_id;
+  if (dedupe && items.some((entry) => (entry.dedupe_key || entry.input_id) === dedupe)) {
+    return items.find((entry) => (entry.dedupe_key || entry.input_id) === dedupe);
   }
   const entry = { state: "pending", attempts: 0, created_at: new Date().toISOString(), ...item };
   items.push(entry);

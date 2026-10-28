@@ -20,16 +20,38 @@ use tauri::{
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_notification::NotificationExt;
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 struct DesktopConfig {
     #[serde(default)]
     agents: Vec<String>,
     #[serde(default = "default_host")]
     host: String,
+    #[serde(default)]
+    runtime: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+    #[serde(default = "default_auto_wake")]
+    auto_wake: bool,
+}
+
+impl Default for DesktopConfig {
+    fn default() -> Self {
+        Self {
+            agents: Vec::new(),
+            host: default_host(),
+            runtime: None,
+            cwd: None,
+            auto_wake: default_auto_wake(),
+        }
+    }
 }
 
 fn default_host() -> String {
     "https://veynod.com".to_string()
+}
+
+fn default_auto_wake() -> bool {
+    true
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -67,6 +89,12 @@ fn load_config() -> DesktopConfig {
     config
 }
 
+fn save_config(config: &DesktopConfig) -> Result<(), String> {
+    fs::create_dir_all(veynod_dir()).map_err(|error| error.to_string())?;
+    let raw = serde_json::to_string_pretty(config).map_err(|error| error.to_string())?;
+    fs::write(veynod_dir().join("desktop.json"), raw).map_err(|error| error.to_string())
+}
+
 fn load_state() -> CursorState {
     let path = veynod_dir().join("desktop-state.json");
     fs::read_to_string(path)
@@ -89,6 +117,39 @@ fn read_key(agent: &str) -> Option<String> {
         .ok()
         .map(|raw| raw.trim().to_string())
         .filter(|key| !key.is_empty())
+}
+
+fn api_request(method: &str, host: &str, key: &str, path: &str, body: Option<&Value>) -> Result<Value, String> {
+    let request = ureq::request(method, &format!("{}{}", host.trim_end_matches('/'), path))
+        .set("Authorization", &format!("Bearer {key}"))
+        .set("Accept", "application/json")
+        .timeout(Duration::from_secs(20));
+    let response = match body {
+        Some(value) => request
+            .set("Content-Type", "application/json")
+            .send_string(&value.to_string()),
+        None => request.call(),
+    };
+    match response {
+        Ok(resp) => resp
+            .into_json::<Value>()
+            .map_err(|error| format!("unexpected response: {error}")),
+        Err(ureq::Error::Status(code, resp)) => {
+            let detail = resp.into_string().unwrap_or_default();
+            Err(format!("HTTP {code}: {detail}"))
+        }
+        Err(error) => Err(format!("cannot reach Veynod: {error}")),
+    }
+}
+
+fn first_key() -> Result<(String, String), String> {
+    let config = load_config();
+    let key = config
+        .agents
+        .iter()
+        .find_map(|agent| read_key(agent))
+        .ok_or_else(|| "no agent key on this computer yet".to_string())?;
+    Ok((config.host, key))
 }
 
 fn log_line(message: &str) {
@@ -143,6 +204,48 @@ fn notification_body(event: &Value) -> String {
     parts.join(" · ")
 }
 
+/// A live `task.assigned` poke is the Loop's cue: enqueue a wake for the local
+/// harness so nobody has to send "start work" by hand. The queue dedupes by
+/// input_id, so a reconnect or a repeated poke cannot start the same task twice.
+fn auto_wake(app: &AppHandle, agent: &str, event: &Value) {
+    let config = load_config();
+    if !config.auto_wake {
+        return;
+    }
+    let (Some(runtime), Some(cwd)) = (config.runtime.clone(), config.cwd.clone()) else {
+        log_line(&format!("{agent}: task.assigned but no runtime/project is saved; skipped auto-wake"));
+        return;
+    };
+    let task_key = event.get("task_key").and_then(Value::as_str).unwrap_or("");
+    if task_key.is_empty() {
+        return;
+    }
+    let title = event.get("title").and_then(Value::as_str).unwrap_or("");
+    let prompt = format!(
+        "Veynod 任务指派：{task_key}{title_part}。\n请先读取任务（get_task）、确认验收项与上下文，具备条件就认领并开始做；不要停在“等待开工”。这条唤起由本地 Loop 在任务指派时自动发出，幂等键 task:{task_key}。",
+        title_part = if title.is_empty() { String::new() } else { format!("（{title}）") }
+    );
+    let Ok(script) = sidecar_script(app) else {
+        log_line(&format!("{agent}: auto-wake skipped, sidecar missing"));
+        return;
+    };
+    match Command::new(node_binary(app))
+        .arg(script)
+        .arg("--enqueue")
+        .arg(&runtime)
+        .arg(&cwd)
+        .arg(task_key)
+        .arg("normal")
+        .arg(&prompt)
+        .env("VEYNOD_AGENT", agent)
+        .env("VEYNOD_INPUT_ID", format!("task:{agent}:{task_key}"))
+        .spawn()
+    {
+        Ok(_) => log_line(&format!("{agent}: auto-wake queued for {task_key}")),
+        Err(error) => log_line(&format!("{agent}: auto-wake failed for {task_key}: {error}")),
+    }
+}
+
 fn stream_agent(app: AppHandle, agent: String, key: String, host: String, start_seq: i64) {
     let mut last = start_seq;
     let mut backoff = 1u64;
@@ -186,6 +289,9 @@ fn stream_agent(app: AppHandle, agent: String, key: String, host: String, start_
                         save_state(&state);
                     }
                     let kind = event.get("kind").and_then(Value::as_str).unwrap_or("");
+                    if kind == "task.assigned" && !silent_until.is_some_and(|until| Instant::now() < until) {
+                        auto_wake(&app, &agent, &event);
+                    }
                     if !actionable(kind) {
                         continue;
                     }
@@ -313,23 +419,69 @@ fn test_wake(app: AppHandle, runtime: String, cwd: String, prompt: Option<String
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 fn wake_enqueue(app: AppHandle, runtime: String, cwd: String, task_key: Option<String>,
-                urgent: bool, prompt: Option<String>) -> Result<Value, String> {
+                urgent: bool, prompt: Option<String>, agent: Option<String>,
+                expected_fencing_token: Option<i64>, input_id: Option<String>) -> Result<Value, String> {
     let script = sidecar_script(&app)?;
-    let output = Command::new(node_binary(&app))
+    let mut command = Command::new(node_binary(&app));
+    command
         .arg(script)
         .arg("--enqueue")
         .arg(runtime)
         .arg(cwd)
         .arg(task_key.unwrap_or_default())
         .arg(if urgent { "urgent" } else { "normal" })
-        .arg(prompt.unwrap_or_else(|| "Reply with the single word OK.".to_string()))
+        .arg(prompt.unwrap_or_else(|| "Reply with the single word OK.".to_string()));
+    if let Some(agent) = agent {
+        command.env("VEYNOD_AGENT", agent);
+    }
+    if let Some(token) = expected_fencing_token {
+        command.env("VEYNOD_FENCING", token.to_string());
+    }
+    if let Some(input_id) = input_id {
+        command.env("VEYNOD_INPUT_ID", input_id);
+    }
+    let output = command
         .output()
         .map_err(|error| format!("cannot queue the wake: {error}"))?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
     serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
+}
+
+#[derive(Serialize)]
+struct LocalSettings {
+    agents: Vec<String>,
+    runtime: Option<String>,
+    cwd: Option<String>,
+    auto_wake: bool,
+}
+
+#[tauri::command]
+fn local_settings() -> LocalSettings {
+    let config = load_config();
+    LocalSettings {
+        agents: config.agents,
+        runtime: config.runtime,
+        cwd: config.cwd,
+        auto_wake: config.auto_wake,
+    }
+}
+
+#[tauri::command]
+fn save_local_settings(runtime: Option<String>, cwd: Option<String>, auto_wake: bool) -> Result<(), String> {
+    let mut config = load_config();
+    config.runtime = runtime.filter(|value| !value.trim().is_empty());
+    config.cwd = cwd.filter(|value| !value.trim().is_empty());
+    config.auto_wake = auto_wake;
+    save_config(&config)?;
+    log_line(&format!(
+        "settings: runtime {:?}, project {:?}, auto-wake {auto_wake}",
+        config.runtime, config.cwd
+    ));
+    Ok(())
 }
 
 #[tauri::command]
@@ -340,15 +492,70 @@ fn wake_queue() -> Result<Value, String> {
         .ok()
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .unwrap_or_else(|| json!([]));
-    let mut recent = Vec::new();
-    if let Ok(raw) = fs::read_to_string(receipts) {
-        for line in raw.lines().rev().take(20).collect::<Vec<_>>().into_iter().rev() {
-            if let Ok(value) = serde_json::from_str::<Value>(line) {
-                recent.push(value);
+    let tail = |path: PathBuf, count: usize| -> Vec<Value> {
+        let mut values = Vec::new();
+        if let Ok(raw) = fs::read_to_string(path) {
+            for line in raw.lines().rev().take(count).collect::<Vec<_>>().into_iter().rev() {
+                if let Ok(value) = serde_json::from_str::<Value>(line) {
+                    values.push(value);
+                }
             }
         }
-    }
-    Ok(json!({ "items": items, "receipts": recent }))
+        values
+    };
+    let recent = tail(receipts, 20);
+    let audit = tail(veynod_dir().join("wake-audit.jsonl"), 20);
+    Ok(json!({ "items": items, "receipts": recent, "audit": audit }))
+}
+
+#[tauri::command]
+fn local_inbox() -> Result<Value, String> {
+    let (host, key) = first_key()?;
+    api_request("GET", &host, &key, "/v1/inbox?status=unacked&limit=100", None)
+}
+
+#[tauri::command]
+fn ack_inbox(up_to_event_seq: i64) -> Result<Value, String> {
+    let (host, key) = first_key()?;
+    let body = json!({ "up_to_event_seq": up_to_event_seq });
+    api_request("POST", &host, &key, "/v1/inbox/ack", Some(&body))
+}
+
+#[tauri::command]
+fn local_reviews() -> Result<Value, String> {
+    let (host, key) = first_key()?;
+    api_request("GET", &host, &key, "/v1/tasks?status=REVIEWING&limit=200", None)
+}
+
+#[tauri::command]
+fn task_detail(task_key: String) -> Result<Value, String> {
+    let (host, key) = first_key()?;
+    api_request(
+        "GET",
+        &host,
+        &key,
+        &format!("/v1/tasks/{}", task_key),
+        None,
+    )
+}
+
+#[tauri::command]
+fn review_task(task_key: String, decision: String, feedback: Option<String>,
+               items: Option<Value>, expected_version: Option<i64>) -> Result<Value, String> {
+    let (host, key) = first_key()?;
+    let body = json!({
+        "decision": decision,
+        "feedback": feedback,
+        "items": items.unwrap_or_else(|| json!([])),
+        "expected_version": expected_version,
+    });
+    api_request(
+        "POST",
+        &host,
+        &key,
+        &format!("/v1/tasks/{task_key}/review"),
+        Some(&body),
+    )
 }
 
 #[tauri::command]
@@ -437,6 +644,21 @@ fn open_dashboard(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn open_inbox(app: AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("inbox") {
+        let _ = window.show();
+        let _ = window.set_focus();
+        return Ok(());
+    }
+    WebviewWindowBuilder::new(&app, "inbox", WebviewUrl::App("inbox.html".into()))
+        .title("Veynod · Inbox & approvals")
+        .inner_size(980.0, 760.0)
+        .build()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -451,7 +673,10 @@ fn main() {
         ))
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
-            setup_state, local_runtimes, describe_runtime, local_status, wake_enqueue, wake_queue, test_wake, test_agent, save_agent, open_dashboard
+            setup_state, local_settings, save_local_settings, local_runtimes, describe_runtime,
+            local_status, wake_enqueue, wake_queue, local_inbox, ack_inbox, local_reviews,
+            task_detail, review_task, test_wake, test_agent, save_agent, open_dashboard,
+            open_inbox
         ])
         .setup(|app| {
             match app.autolaunch().enable() {
@@ -460,10 +685,11 @@ fn main() {
             }
 
             let open = MenuItem::with_id(app, "open", "Open Veynod", true, None::<&str>)?;
+            let inbox = MenuItem::with_id(app, "inbox", "Inbox & approvals", true, None::<&str>)?;
             let status = MenuItem::with_id(app, "status", "Local status", true, None::<&str>)?;
             let reload = MenuItem::with_id(app, "reload", "Reload console", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &status, &reload, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &inbox, &status, &reload, &quit])?;
 
             let icon = app
                 .default_window_icon()
@@ -479,6 +705,18 @@ fn main() {
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
                             let _ = window.set_focus();
+                        }
+                    }
+                    "inbox" => {
+                        if let Some(window) = app.get_webview_window("inbox") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        } else {
+                            let _ = WebviewWindowBuilder::new(
+                                app, "inbox", WebviewUrl::App("inbox.html".into()))
+                                .title("Veynod · Inbox & approvals")
+                                .inner_size(980.0, 760.0)
+                                .build();
                         }
                     }
                     "status" => {
@@ -522,6 +760,13 @@ fn main() {
                     app, "status", WebviewUrl::App("status.html".into()))
                     .title("Veynod · Local status")
                     .inner_size(1024.0, 760.0)
+                    .build();
+            }
+            if std::env::args().any(|arg| arg == "--inbox") {
+                let _ = WebviewWindowBuilder::new(
+                    app, "inbox", WebviewUrl::App("inbox.html".into()))
+                    .title("Veynod · Inbox & approvals")
+                    .inner_size(980.0, 760.0)
                     .build();
             }
             if let Ok(daemon) = sidecar_script(app.handle()).map(|path| path.with_file_name("daemon.mjs")) {

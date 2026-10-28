@@ -4,7 +4,8 @@
   "description": "Core permissions for the local window",
   "windows": [
     "main",
-    "status"
+    "status",
+    "inbox"
   ],
   "permissions": [
     "core:default"
