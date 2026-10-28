@@ -865,7 +865,7 @@ python:3.12-slim
 | 服务器目录 | `/home/deploy/agentgraph` |
 | Compose | `docker-compose.prod.yml`（项目名 `agentgraph`） |
 | API 容器 | `agentgraph-api` |
-| 镜像 | `agentgraph:3.13.2-veynod-0a354b3`（当前生产镜像） |
+| 镜像 | `agentgraph:3.14.0-veynod-ccf9216`（当前生产镜像） |
 | 数据库 | 独立 `agentgraph_pgdata` 卷，不与其他项目共用 |
 | 网络 | 内部 `agentgraph_internal` + 共享 `web`；不发布宿主端口 |
 | 反向代理 | Caddy：`veynod.com` → `agentgraph-api:8000` |
