@@ -37,6 +37,11 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "windows/installer-hooks.nsh"
+      }
+    },
     "resources": [
       "../sidecar/bridge.mjs",
       "../sidecar/daemon.mjs",

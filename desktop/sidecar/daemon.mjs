@@ -44,6 +44,24 @@ function releaseLock() {
 }
 if (!acquireLock()) process.exit(0);
 
+// The client starts this daemon as a child. When the window is quit (or the
+// tray is closed) the parent is gone; stop instead of lingering with an open
+// OAR session and a stale wake-daemon.lock.
+const parentPid = Number(process.env.VEYNOD_PARENT_PID || 0);
+if (parentPid > 0) {
+  const parentTimer = setInterval(() => {
+    try {
+      process.kill(parentPid, 0);
+    } catch (error) {
+      if (error?.code === "EPERM") return;
+      for (const timer of watching.values()) clearInterval(timer);
+      releaseLock();
+      process.exit(0);
+    }
+  }, 5000);
+  parentTimer.unref();
+}
+
 function desktopConfig() {
   try { return JSON.parse(readFileSync(join(dir, "desktop.json"), "utf8")); }
   catch { return { agents: [], host: "https://veynod.com" }; }
