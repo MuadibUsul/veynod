@@ -231,6 +231,7 @@ BEGIN
             WHEN 'PLATFORM_RELEASED' THEN 'platform.released'
             WHEN 'ESCALATION_RESOLVED' THEN 'escalation.resolved'
             WHEN 'ESCALATION_REMINDER' THEN 'escalation.reminder'
+            WHEN 'ESCALATION_BATCH' THEN 'escalation.batch'
             WHEN 'TASK_CHILDREN_DONE' THEN 'task.children_done'
             WHEN 'TASK_CONTINUATION' THEN 'task.continuation_written'
             WHEN 'WEBHOOK_DEAD' THEN 'webhook.dead'
