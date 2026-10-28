@@ -200,6 +200,8 @@ do not edit by hand. Every error body is
 | `already_dispatched` | 409 | `abandon` | `abandon_and_release_local_state` | The chunk has a task already (details.task_key). |
 | `already_merged` | 409 | `abandon` | `abandon_and_release_local_state` | The chunk is merged already. |
 | `already_registered` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
+| `blob_not_deleted` | 409 | `abandon` | `abandon_and_release_local_state` | The blob is not deleted; nothing to restore. |
+| `blob_not_recoverable` | 409 | `abandon` | `abandon_and_release_local_state` | The bytes are gone; upload the file again. |
 | `ci_not_green` | 409 | `abandon` | `abandon_and_release_local_state` | Review after a green sandbox run on the current submission. |
 | `circuit_closed` | 409 | `abandon` | `abandon_and_release_local_state` | Upgrade only a chunk whose circuit broke. |
 | `circuit_not_open` | 409 | `abandon` | `abandon_and_release_local_state` | The domain's circuit is already closed. |

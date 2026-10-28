@@ -44,6 +44,7 @@ from app.errors import ApiError, NotFound
 from app.ids import new_id
 from app.models import CollabTask
 from app.services import automation
+from app.services.common import append_event
 from app.services.quality import gate_status
 
 settings = get_settings()
@@ -51,6 +52,7 @@ settings = get_settings()
 TERMINAL = ("skipped", "blocked", "deployed", "rolled_back", "failed")
 RUNNER_STATUSES = ("running", *TERMINAL)
 CHECK_IDS = ("G-01", "G-02", "G-03", "G-04", "G-05")
+RUNNER_FIELDS = ("task_keys",)
 # A run the runner claimed and never finished (it died mid-run) is failed
 # after this long so the queue moves on.
 STALE_RUN_AFTER = timedelta(hours=3)
@@ -181,6 +183,7 @@ def run_out(row: dict[str, Any], *, detail: bool = False) -> dict[str, Any]:
         "status_reason": row.get("status_reason"),
         "rolled_back": row["rolled_back"],
         "report": row.get("report") or {},
+        "task_keys": list(row.get("task_keys") or []),
         "failed_checks": [check.get("id") for check in (row.get("checks") or [])
                           if isinstance(check, dict) and check.get("ok") is False],
         "finished_at": _iso(row.get("finished_at")),
@@ -442,7 +445,8 @@ async def heartbeat(host: str, version: str | None,
         state = await _state_row(session)
         owner = await _owner_switch(session)
         await session.commit()
-    return state_out(state, owner)
+    # Report fields this server accepts beyond the first runner's (3.18).
+    return {**state_out(state, owner), "runner_fields": list(RUNNER_FIELDS)}
 
 
 async def runner_enqueue(commit: str, host: str) -> dict[str, Any]:
@@ -557,6 +561,7 @@ async def update_run(run_id: str, host: str, body: dict[str, Any]) -> dict[str, 
         deploy = {key: _clip(value, 120) for key, value in deploy.items()
                   if key in ("stamp", "result", "app_version", "schema")}
         rolled_back = bool(body.get("rolled_back"))
+        task_keys = clean_task_keys(body.get("task_keys"))
         report = clean_report(body.get("report"))
         report["rolled_back"] = rolled_back
         await session.execute(text(
@@ -564,11 +569,13 @@ async def update_run(run_id: str, host: str, body: dict[str, Any]) -> dict[str, 
             "commit_sha = :sha, checks = CAST(:checks AS jsonb), "
             "deploy = CAST(:deploy AS jsonb), rolled_back = :rb, "
             "report = CAST(:report AS jsonb), log_ref = :log, "
+            "task_keys = CAST(:keys AS text[]), "
             "finished_at = CASE WHEN :terminal THEN NOW() ELSE NULL END WHERE id = :id"),
             {"status": status, "reason": _clip(body.get("status_reason")) or None,
              "sha": commit, "checks": _json(_clean_checks(body.get("checks"))),
              "deploy": _json(deploy), "rb": rolled_back, "report": _json(report),
-             "log": _clip(body.get("log_ref"), 200) or None, "terminal": status in TERMINAL,
+             "log": _clip(body.get("log_ref"), 200) or None, "keys": task_keys,
+             "terminal": status in TERMINAL,
              "id": run_id})
         if status == "deployed":
             await session.execute(text(
@@ -581,6 +588,8 @@ async def update_run(run_id: str, host: str, body: dict[str, Any]) -> dict[str, 
                          rolled_back=rolled_back, commit=commit)
         updated = (await session.execute(text(
             "SELECT * FROM deploy_gate_runs WHERE id = :id"), {"id": run_id})).mappings().one()
+        if _smoke_passed(dict(updated)):
+            await _announce_verified(session, dict(updated))
         await session.commit()
     return run_out(dict(updated), detail=True)
 
@@ -588,6 +597,71 @@ async def update_run(run_id: str, host: str, body: dict[str, Any]) -> dict[str, 
 # ----------------------------------------------------------- task evidence
 
 _TASK_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_TASK_KEYS_MAX = 20
+
+
+def clean_task_keys(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    keys = [str(key) for key in value if _TASK_KEY.fullmatch(str(key))]
+    return list(dict.fromkeys(keys))[:_TASK_KEYS_MAX]
+
+
+def _smoke_passed(row: dict[str, Any]) -> bool:
+    """A run is deploy evidence once it went live and its smoke test (G-05) passed."""
+    return row.get("status") == "deployed" and any(
+        isinstance(check, dict) and check.get("id") == "G-05" and check.get("ok") is True
+        for check in row.get("checks") or [])
+
+
+def _board_workspace() -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(settings.deploy_gate_board_workspace_id))
+    except ValueError:
+        return None
+
+
+async def _announce_verified(session: AsyncSession, row: dict[str, Any]) -> None:
+    """Tell each carried task's executor and reviewer that its deploy is verified.
+
+    Only an event: the gate never changes a task (R-05). Under full automation
+    the reviewer can now approve the task to DONE with this run as evidence.
+    """
+    workspace_id = _board_workspace()
+    if workspace_id is None:
+        return
+    for key in row.get("task_keys") or []:
+        task = (await session.execute(select(CollabTask).where(
+            CollabTask.workspace_id == workspace_id, CollabTask.task_key == key)
+        )).scalar_one_or_none()
+        if task is None:
+            continue
+        targets = [who for who in dict.fromkeys([task.handed_off_by, task.reviewed_by]) if who]
+        await append_event(
+            session, workspace_id=workspace_id, agent="deploy_gate",
+            event_type="DEPLOY_VERIFIED", namespace=task.namespace,
+            payload={"task_key": key, "run_id": row["id"], "commit": row.get("commit_sha"),
+                     "status": task.status.value, "targets": targets})
+
+
+async def deploy_evidence(task_key: str) -> dict[str, Any] | None:
+    """The newest deploy that carried this task and passed its smoke test, if any."""
+    async with async_session_factory() as session:
+        rows = (await session.execute(text(
+            "SELECT * FROM deploy_gate_runs WHERE status = 'deployed' "
+            "AND :key = ANY(task_keys) ORDER BY finished_at DESC NULLS LAST LIMIT 5"),
+            {"key": task_key})).mappings().all()
+    for row in rows:
+        if _smoke_passed(dict(row)):
+            return {"run_id": row["id"], "commit": row["commit_sha"],
+                    "app_version": (row["deploy"] or {}).get("app_version"),
+                    "finished_at": _iso(row["finished_at"])}
+    return None
+
+
+def governs(workspace_id: uuid.UUID) -> bool:
+    """Is this the board workspace whose code tasks the deploy gate ships?"""
+    return _board_workspace() == workspace_id
 
 
 async def task_evidence(task_keys: list[str]) -> dict[str, Any]:

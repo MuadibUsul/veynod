@@ -290,6 +290,23 @@ Migrations 3.51.0-3.53.0. Task `diagram-dispatch-impl-v3`, spec `agentgraph/spec
 | A-15 trust and tokens (M-22) | Done (3.52) | Trust 100, -10 per sandbox or queue test failure, -20 per rejection, per chunk, with a ledger (`trust_log`). Past `token_budget` (reported through `/usage`) the chunk is BLOCKED (`budget`) and people are told; only a person raises it (`/budget`). |
 | MCP | Done (3.52) | Tool `diagram` (action + args) covers every agent-side step; confirming, freezing, revoking and budgets stay with people. |
 
+## Loop: automation mode (3.15.0-3.18.0)
+
+Task `auto-loop-mode-impl-v2`, spec `agentgraph/spec-auto-loop-mode` v2 (pinned with `agentgraph/spec-local-harness-client` v1). Tests: `tests/test_automation_mode.py`, `tests/test_deploy_evidence.py`, `tests/test_recoverable_deletes.py`, `tests/test_deploy_gate.py`, `tests/test_deploy_gate_runner.py`.
+
+| Item | Status | Notes |
+|---|---|---|
+| A-01 three modes in the console | Done (3.15) | Governance tab: three plain-language buttons and an Allow automatic deploys switch; owner-only, immediate, audited. |
+| A-02 no technical questions | Done (3.16) | Under semi and full an agent's technical question is refused with `decide_with_safe_default`; only money, identity, legal, data deletion and external commitments reach the owner. |
+| A-03 deploy before DONE | Done (3.18) | Under full automation a code task on the deploy gate's board is DONE only with `deploy_evidence` (a run that carried it and passed G-05); before that an approval leaves it in HANDOFF and `DEPLOY_VERIFIED` announces the deploy. PR, merge and deploy themselves run through the deploy gate (3.13.3, 3.17). |
+| A-04 relay instead of escalation | Done (3.16) | Under full automation a task rejected `max_retries` times goes to the next executor (`TASK_RELAYED`). |
+| A-05 owner acceptance | Done (3.16) | Try and accept panel; broken or change open a follow-up task with the owner's words. |
+| A-06 safe defaults | Done (3.13.3, 3.18) | Deploys back up before going live (G-04) and roll the image back on a failed smoke test (G-05); under automation an agent's blob delete is recoverable for 7 days. Document purge was already people-only. |
+| A-07 audit and one-click off | Done (3.15, 3.17) | Mode changes are audited and announced; turning the mode to manual or the deploy switch off stops the next automatic deploy. |
+| A-08 plain report | Done (3.13.3, 3.16) | The gate's owner report and the handoff `owner_report` hold only what changed, how to try it and what is not done. |
+| Semi: big questions in batches | Done (3.18) | Agents' owner questions go out together as `escalation.batch` (30 minutes or 5 questions). |
+| Local harness wake-up | Not here | The Loop's local wake-up layer belongs to the unified client (`unified-client-impl-v2`). |
+
 ## Open gaps found 2026-10-25
 
 | Item | Notes |

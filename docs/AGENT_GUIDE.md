@@ -398,6 +398,8 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `already_dispatched` | 409 | `abandon` |
 | `already_merged` | 409 | `abandon` |
 | `already_registered` | 409 | `abandon` |
+| `blob_not_deleted` | 409 | `abandon` |
+| `blob_not_recoverable` | 409 | `abandon` |
 | `ci_not_green` | 409 | `abandon` |
 | `circuit_closed` | 409 | `abandon` |
 | `circuit_not_open` | 409 | `abandon` |

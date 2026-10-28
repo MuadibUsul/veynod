@@ -1185,6 +1185,25 @@ def _require_approve_done(principal: Principal) -> None:
     )
 
 
+async def _deploy_evidence_for_done(
+    session: AsyncSession, principal: Principal, task: CollabTask
+) -> dict[str, Any] | bool | None:
+    """Does an agent's DONE need a verified deploy, and is there one?
+
+    Under full automation a code task (one naming a repo) on the board
+    workspace the deploy gate ships is DONE only once a deploy that carried it
+    passed its smoke test (Loop A-03). Returns None when no deploy is needed,
+    the evidence when it exists, and False when it is still missing.
+    """
+    from app.services import deploy_gate
+
+    if not task.repo or not deploy_gate.governs(principal.workspace.id):
+        return None
+    if await automation.current_mode(session, principal.workspace.id) != "full":
+        return None
+    return await deploy_gate.deploy_evidence(task.task_key) or False
+
+
 @agent_onboarding.records("review")
 @_task_failure_event("REVIEW")
 async def review_task(
@@ -1239,6 +1258,8 @@ async def review_task(
 
     task.reviewed_by = principal.agent_signature
     artifact_verified = False
+    awaiting_deploy = False
+    deploy_evidence: dict[str, Any] | bool | None = None
     effective_status: TaskStatus | None = None
     reassigned: bool | None = None
     if request.decision == "approve":
@@ -1248,6 +1269,14 @@ async def review_task(
         next_status = audit["next_status"] or request.next_status or "DONE"
         if next_status == "DONE":
             _require_approve_done(principal)
+            if not principal.is_human:
+                deploy_evidence = await _deploy_evidence_for_done(session, principal, task)
+                if deploy_evidence is False:
+                    # Loop A-03 / R-04: no verified deploy yet, so not DONE. The
+                    # approval stands (the gate's G-03 sees it) and the task waits
+                    # in HANDOFF; DEPLOY_VERIFIED tells its people when it shipped.
+                    next_status = "HANDOFF"
+                    awaiting_deploy = True
         task.status = TaskStatus(next_status)
         if human_decision:
             task.human_feedback = request.feedback
@@ -1362,6 +1391,9 @@ async def review_task(
             "ping_pong_count": task.ping_pong_count,
             "max_retries": task.max_retries,
             "artifact_verified": artifact_verified,
+            **({"awaiting_deploy": True} if awaiting_deploy else {}),
+            **({"deploy_evidence": deploy_evidence} if isinstance(deploy_evidence, dict)
+               else {}),
         },
         namespace=task.namespace,
     )
@@ -1372,6 +1404,8 @@ async def review_task(
         escalated=escalated,
         effective_status=effective_status,
         reassigned=reassigned,
+        awaiting_deploy=awaiting_deploy or None,
+        deploy_evidence=deploy_evidence if isinstance(deploy_evidence, dict) else None,
         session_batch_id=batch,
         status=task.status,
         version=task.version,

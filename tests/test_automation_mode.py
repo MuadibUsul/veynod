@@ -268,3 +268,56 @@ async def test_owner_accepts_in_plain_words_and_feedback_becomes_a_task(loop):
     latest = await loop.get("/v1/human/acceptance", headers=ws["owner"])
     item = next(entry for entry in latest.json()["items"] if entry["task_key"] == key)
     assert item["acceptance"]["verdict"] == "works"
+
+
+async def test_semi_automation_sends_the_owner_questions_together(loop):
+    from app.database import async_session_factory
+    from app.services.collab import send_batches
+
+    ws = await _workspace(loop)
+    await _mode(loop, ws, "semi")
+    asked = []
+    for question in ("This needs a paid plan. Buy it?", "Renew the domain for a year?"):
+        made = await loop.post("/v1/escalations", headers=ws["agent"], json={
+            "question": question, "topic": "money"})
+        assert made.status_code == 201, made.text
+        assert made.json()["batched"] is True
+        asked.append(made.json()["escalation_id"])
+    rules = (await loop.get("/v1/orientation", headers=ws["agent"])).json()[
+        "automation"]["rules"]
+    assert "batch" in rules["owner_questions_sent"]
+
+    async def sent() -> list:
+        conn = await asyncpg.connect(_dsn())
+        try:
+            return await conn.fetch(
+                "SELECT type, targets, payload FROM workspace_events "
+                "WHERE workspace_id = $1::uuid AND type IN "
+                "('escalation.created', 'escalation.batch')", ws["id"])
+        finally:
+            await conn.close()
+
+    assert await sent() == []  # nothing reaches the owner one by one
+    conn = await asyncpg.connect(_dsn())
+    try:  # the oldest question has waited past the batch window
+        await conn.execute("UPDATE escalations SET created_at = NOW() - INTERVAL '31 minutes' "
+                           "WHERE id = ANY($1::text[])", asked)
+    finally:
+        await conn.close()
+    async with async_session_factory() as session:
+        await send_batches(session)
+    events = await sent()
+    assert [row["type"] for row in events] == ["escalation.batch"]
+    payload = (json.loads(events[0]["payload"]) if isinstance(events[0]["payload"], str)
+               else events[0]["payload"])
+    assert payload["details"]["count"] == 2
+    assert sorted(item["escalation_id"] for item in payload["details"]["questions"]) == sorted(
+        asked)
+    targets = (json.loads(events[0]["targets"]) if isinstance(events[0]["targets"], str)
+               else events[0]["targets"])
+    assert targets and all(target.startswith("human:") for target in targets)
+
+    # A person's question, and any question under full automation, goes out at once.
+    person = await loop.post("/v1/escalations", headers=ws["owner"], json={
+        "question": "Should we keep the old plan?", "topic": "money"})
+    assert "batched" not in person.json()

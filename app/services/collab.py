@@ -27,10 +27,13 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import AuthKind, Principal, ensure_namespace
+from app.config import get_settings
 from app.errors import ApiError, Forbidden, NotFound
 from app.models import CollabTask, SharedDocument, TaskStatus
 from app.services.common import append_event, task_out
 from app.warnings_context import add_warning
+
+settings = get_settings()
 
 MAX_TREE_DEPTH = 4
 TREE_NODE_LIMIT = 500
@@ -746,7 +749,11 @@ async def escalate(session: AsyncSession, principal: Principal, task: CollabTask
         )
         tainted = tainted or bool(flag)
     from app.models import CollabTask as TaskModel
+    from app.services import automation
 
+    # Semi automation: an agent's owner question waits to go out in a batch.
+    batched = not principal.is_human and await automation.current_mode(
+        session, principal.workspace.id) == "semi"
     key = f"ESC-{uuid.uuid4().hex[:8].upper()}"
     escalation_task = TaskModel(
         workspace_id=principal.workspace.id, task_key=key,
@@ -765,9 +772,10 @@ async def escalate(session: AsyncSession, principal: Principal, task: CollabTask
     escalation_id = await session.scalar(
         text("INSERT INTO escalations (workspace_id, task_id, escalation_task_id, raised_by, "
              "raised_by_token, question, options, recommended_option, context_docs, "
-             "tainted_context, blocking, due_at, default_on_timeout, route_to) VALUES "
-             "(:ws, :task, :esc, :by, :token, :q, CAST(:opts AS jsonb), :rec, "
-             "CAST(:ctx AS jsonb), :tainted, :blocking, :due, :default, :route) RETURNING id"),
+             "tainted_context, blocking, due_at, default_on_timeout, route_to, notified_at) "
+             "VALUES (:ws, :task, :esc, :by, :token, :q, CAST(:opts AS jsonb), :rec, "
+             "CAST(:ctx AS jsonb), :tainted, :blocking, :due, :default, :route, "
+             "CASE WHEN :batched THEN NULL ELSE NOW() END) RETURNING id"),
         {"ws": principal.workspace.id, "task": task.id if task else None,
          "esc": escalation_task.id, "by": agent, "token": principal.token_cid,
          "q": request.question,
@@ -775,7 +783,7 @@ async def escalate(session: AsyncSession, principal: Principal, task: CollabTask
          "rec": request.recommended_option,
          "ctx": json.dumps([ref.model_dump() for ref in request.context_docs]),
          "tainted": tainted, "blocking": blocking, "due": request.due_at,
-         "default": request.default_on_timeout, "route": route_to},
+         "default": request.default_on_timeout, "route": route_to, "batched": batched},
     )
     if blocking:
         task.status = TaskStatus.WAITING_HUMAN
@@ -789,15 +797,20 @@ async def escalate(session: AsyncSession, principal: Principal, task: CollabTask
                                        "AND is_active"), {"ws": principal.workspace.id})
         ).scalars().all()]
     await append_event(session, workspace_id=principal.workspace.id, agent=agent,
-                       event_type="TASK_ESCALATED",
+                       event_type="ESCALATION_QUEUED" if batched else "TASK_ESCALATED",
                        payload={"task_key": task.task_key if task else None,
                                 "escalation_id": escalation_id, "question": request.question,
                                 "escalation_task": key, "blocking": blocking,
-                                "tainted_context": tainted, "targets": targets},
+                                "tainted_context": tainted,
+                                "targets": [] if batched else targets},
                        namespace=task.namespace if task else "default")
-    return {"escalation_id": escalation_id, "escalation_task_key": key, "blocking": blocking,
-            "route_to": route_to, "tainted_context": tainted,
-            "task": task_out(task).model_dump(mode="json") if task else None}
+    out = {"escalation_id": escalation_id, "escalation_task_key": key, "blocking": blocking,
+           "route_to": route_to, "tainted_context": tainted,
+           "task": task_out(task).model_dump(mode="json") if task else None}
+    if batched:
+        out["batched"] = True
+        out["sent_within_minutes"] = settings.escalation_batch_minutes
+    return out
 
 
 async def _holder_alive(session: AsyncSession, escalation: dict[str, Any]) -> bool:
@@ -902,8 +915,9 @@ async def escalation_upkeep(session: AsyncSession) -> int:
                           answer=None, note="no decision before due_at",
                           resolved_by="timeout_default")
             done += 1
-        elif row["last_reminded_at"] is None or row["last_reminded_at"] < _now() - timedelta(
-                hours=24):
+        elif row["notified_at"] is not None and (
+                row["last_reminded_at"] is None
+                or row["last_reminded_at"] < _now() - timedelta(hours=24)):
             await session.execute(
                 text("UPDATE escalations SET last_reminded_at = NOW() WHERE id = :id"),
                 {"id": row["id"]})
@@ -912,7 +926,45 @@ async def escalation_upkeep(session: AsyncSession) -> int:
                                payload={"escalation_id": row["id"],
                                         "targets": [row["route_to"]] if row["route_to"] else []})
             await session.commit()
+    await send_batches(session)
     return done
+
+
+async def send_batches(session: AsyncSession) -> int:
+    """Semi automation: send each owner the questions waiting for them as one batch,
+    once the oldest has waited ESCALATION_BATCH_MINUTES or ESCALATION_BATCH_MAX wait."""
+    groups = (await session.execute(text(
+        "SELECT workspace_id, route_to FROM escalations WHERE status = 'open' "
+        "AND notified_at IS NULL GROUP BY workspace_id, route_to "
+        "HAVING MIN(created_at) <= NOW() - make_interval(mins => :mins) "
+        "OR COUNT(*) >= :max LIMIT 50"),
+        {"mins": settings.escalation_batch_minutes, "max": settings.escalation_batch_max},
+    )).mappings().all()
+    for group in groups:
+        rows = (await session.execute(text(
+            "UPDATE escalations e SET notified_at = NOW() FROM collab_tasks q "
+            "WHERE e.workspace_id = :ws AND e.route_to IS NOT DISTINCT FROM :route "
+            "AND e.status = 'open' AND e.notified_at IS NULL AND q.id = e.escalation_task_id "
+            "RETURNING e.id, e.question, e.blocking, e.task_id, q.task_key AS escalation_task"),
+            {"ws": group["workspace_id"], "route": group["route_to"]})).mappings().all()
+        if not rows:
+            continue
+        task_keys = dict((await session.execute(text(
+            "SELECT id, task_key FROM collab_tasks WHERE id = ANY(:ids)"),
+            {"ids": [row["task_id"] for row in rows if row["task_id"]]})).all())
+        targets = [group["route_to"]] if group["route_to"] else [
+            f"human:{human}" for human in (await session.execute(text(
+                "SELECT id FROM human_users WHERE workspace_id = :ws AND is_active"),
+                {"ws": group["workspace_id"]})).scalars().all()]
+        await append_event(
+            session, workspace_id=group["workspace_id"], agent="escalation",
+            event_type="ESCALATION_BATCH",
+            payload={"targets": targets, "details": {"count": len(rows), "questions": [
+                {"escalation_id": row["id"], "question": row["question"][:500],
+                 "escalation_task": row["escalation_task"], "blocking": row["blocking"],
+                 "task_key": task_keys.get(row["task_id"])} for row in rows]}})
+        await session.commit()
+    return len(groups)
 
 
 async def context_grants(session: AsyncSession, principal: Principal) -> frozenset[str]:

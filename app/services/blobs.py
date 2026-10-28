@@ -218,7 +218,9 @@ async def delete_blob(
                        details={"field": "reason"})
     if not principal.is_commander and blob.uploader != principal.agent_signature:
         raise Forbidden("only the uploader or a workspace commander can delete this blob")
-    blob.content = None
+    recoverable_until = await _recoverable_until(session, principal)
+    if recoverable_until is None:
+        blob.content = None
     blob.deleted_at = _utcnow()
     blob.deleted_by = principal.agent_signature
     blob.delete_reason = reason
@@ -229,10 +231,58 @@ async def delete_blob(
         event_type="BLOB_PURGED" if force else "BLOB_DELETED",
         payload={"blob_id": str(blob.id), "sha256": blob.sha256,
                  "file_name": blob.file_name, "force": force,
-                 "references": list(refs), "reason": reason},
+                 "references": list(refs), "reason": reason,
+                 **({"recoverable_until": recoverable_until.isoformat()}
+                    if recoverable_until else {})},
     )
     await session.commit()
-    return {"blob": blob_out(blob), "references": list(refs), "force": force}
+    out: dict[str, Any] = {"blob": blob_out(blob), "references": list(refs), "force": force}
+    if recoverable_until is not None:
+        out["recoverable_until"] = recoverable_until.isoformat()
+    return out
+
+
+async def _recoverable_until(session: AsyncSession, principal: Principal) -> datetime | None:
+    """Loop A-06: under semi or full automation nobody approves an agent's delete,
+    so its bytes stay restorable for the retention window instead of going now."""
+    if principal.is_human:
+        return None
+    from app.services import automation
+
+    if await automation.current_mode(session, principal.workspace.id) == "manual":
+        return None
+    return _utcnow() + timedelta(days=settings.blob_delete_retention_days)
+
+
+async def restore_blob(session: AsyncSession, principal: Principal, blob_id: str
+                       ) -> dict[str, Any]:
+    """Undo a recoverable delete while its bytes are still kept."""
+    require_permission(principal, "doc:write")
+    blob = await _get_blob(session, principal, blob_id)
+    if blob.deleted_at is None:
+        raise ApiError(409, "blob_not_deleted", "this blob is not deleted",
+                       details={"blob_id": str(blob.id)})
+    if blob.content is None:
+        raise ApiError(409, "blob_not_recoverable",
+                       "this blob's bytes are gone; upload the file again",
+                       details={"blob_id": str(blob.id)})
+    if not (principal.is_human or principal.is_commander
+            or blob.deleted_by == principal.agent_signature):
+        raise Forbidden("only a person, a commander or whoever deleted it can restore a blob")
+    deleted_by = blob.deleted_by
+    blob.deleted_at = None
+    blob.deleted_by = None
+    blob.delete_reason = None
+    await append_event(
+        session,
+        workspace_id=principal.workspace.id,
+        agent=principal.agent_signature,
+        event_type="BLOB_RESTORED",
+        payload={"blob_id": str(blob.id), "sha256": blob.sha256,
+                 "file_name": blob.file_name, "deleted_by": deleted_by},
+    )
+    await session.commit()
+    return {"blob": blob_out(blob), "restored": True}
 
 
 async def _document(
@@ -472,6 +522,17 @@ async def gc_blobs(session: AsyncSession, *, now: datetime | None = None) -> dic
         blob.deleted_by = "blob_gc"
         blob.delete_reason = "unreferenced TTL"
         reclaimed += blob.byte_size
+    # Recoverable deletes (Loop A-06) whose retention window has passed.
+    kept_until = (now or _utcnow()) - timedelta(days=settings.blob_delete_retention_days)
+    expired = (await session.execute(
+        select(Blob).where(Blob.deleted_at.is_not(None), Blob.deleted_at <= kept_until,
+                           Blob.content.is_not(None))
+    )).scalars().all()
+    for blob in expired:
+        blob.content = None
+        reclaimed += blob.byte_size
+    if expired and not rows:
+        await session.commit()
     if rows:
         await append_event(
             session,
@@ -481,7 +542,8 @@ async def gc_blobs(session: AsyncSession, *, now: datetime | None = None) -> dic
             payload={"count": len(rows), "reclaimed_bytes": reclaimed},
         )
         await session.commit()
-    return {"purged": len(rows), "reclaimed_bytes": reclaimed}
+    return {"purged": len(rows), "expired_deletes": len(expired),
+            "reclaimed_bytes": reclaimed}
 
 
 async def create_cleanup_grant(
