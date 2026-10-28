@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import agent_guide, services
 from app import schemas as q_schemas
-from app.auth import Principal, ensure_namespace, get_principal, require_permission
+from app.auth import AuthKind, Principal, ensure_namespace, get_principal, require_permission
 from app.database import get_db
 from app.error_registry import protocol_docs
 from app.errors import ApiError
@@ -621,6 +621,14 @@ async def handoff_task(
     return await services.handoff_task(session, principal, task_key, body)
 
 
+async def _reviewer(principal: Principal = Depends(get_principal)) -> Principal:
+    """Who may review is answered before the body is validated (2026-10-24 #22):
+    dependencies resolve first, so a non-reviewer agent gets 403, not a 422."""
+    if principal.auth_kind is AuthKind.AGENT:
+        require_permission(principal, "task:review")
+    return principal
+
+
 @router.post(
     "/tasks/{task_key}/review",
     response_model=TaskActionResponse,
@@ -630,7 +638,7 @@ async def review_task(
     task_key: str,
     body: TaskReviewRequest,
     x_commander_grant_id: str | None = Header(default=None, alias="X-Commander-Grant-Id"),
-    principal: Principal = Depends(get_principal),
+    principal: Principal = Depends(_reviewer),
     session: AsyncSession = Depends(get_db),
 ) -> TaskActionResponse:
     return await services.review_task(
@@ -786,7 +794,8 @@ async def list_documents(
         default=None, description="Default true for the census order, false for sort"
     ),
     include_tainted: bool | None = Query(default=None),
-    include_cold: bool = Query(default=True, description="Accepted; no cold tier yet"),
+    include_cold: bool = Query(
+        default=True, description="false leaves out cold documents (unread for 90 days)"),
     verification_status: str | None = Query(default=None),
     tainted: bool | None = Query(default=None),
     updated_after: datetime | None = Query(default=None),
@@ -827,6 +836,7 @@ async def list_documents(
         include_archived=include_archived,
         include_unverified=include_unverified,
         include_tainted=include_tainted,
+        include_cold=include_cold,
         verification_status=verification_status,
         tainted=tainted,
         updated_after=updated_after,

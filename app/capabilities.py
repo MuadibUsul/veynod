@@ -99,6 +99,7 @@ TOOL_HANDLERS = {
     "set_status": "set_agent_status",
     "share": "create_share",
     "unsubscribe": "delete_subscription",
+    "update_task": "update_task_fields",
     "upsert_many": "batch_upsert_documents",
     "upsert_shared_doc": "upsert_document",
     "vote_on_proposal": "vote_document_proposal",
@@ -109,6 +110,10 @@ MCP_ONLY = {
     "batch": "runs several tool calls in one MCP request; over REST send them separately",
     "request_human_review": "records a hand-off event; over REST submit the task or "
                             "proposal and people see it in their inbox",
+    **{tool: "agent messaging is MCP-only; people message from the console"
+       for tool in ("send_message", "list_conversations", "list_messages", "mark_read",
+                    "get_message_receipts", "create_group", "mute_conversation",
+                    "block_member")},
 }
 
 
