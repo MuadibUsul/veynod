@@ -437,6 +437,47 @@ REGISTRY: dict[str, ErrorSpec] = {
     "google_login_not_configured": _spec(
         503, ESCALATE_HUMAN, "An operator must configure Google sign-in."
     ),
+    # --- diagrams and chunked dispatch (spec-diagram-dispatch v3)
+    "diagram_exists": _spec(409, FIX_REQUEST, "Pick another diagram_key or edit that one."),
+    "chunk_exists": _spec(409, FIX_REQUEST, "Pick another chunk_key or edit that chunk."),
+    "unknown_chunk": _spec(422, FIX_REQUEST, "Name a chunk of this diagram."),
+    "chunk_incomplete": _spec(422, FIX_REQUEST, "Fill the chunk fields named in details."),
+    "contract_first": _spec(
+        422, FIX_REQUEST, "Chunks with nothing upstream must be interface contracts."
+    ),
+    "empty_impact": _spec(422, FIX_REQUEST, "State the change's impact before proposing it."),
+    "review_out_of_scope": _spec(
+        422, FIX_REQUEST, "Answer only the three default rules and the chunk's own."
+    ),
+    "submission_rejected": _spec(
+        409, FIX_REQUEST, "Touch only allowed write paths, never frozen interfaces."
+    ),
+    "no_submission": _spec(409, FIX_REQUEST, "Submit the chunk before recording CI or a gate."),
+    "ci_not_green": _spec(409, FIX_REQUEST, "Fix the sandbox failure and record a green run."),
+    "gate_not_passed": _spec(409, FIX_REQUEST, "Pass the gate before queueing or merging."),
+    "still_draft": _spec(409, FIX_REQUEST, "Confirm the diagram first."),
+    "stale_ci": _spec(
+        409, REFRESH_AND_RETRY, "Re-read the chunk; record CI for its latest submission."
+    ),
+    "stale_change": _spec(
+        409, REFRESH_AND_RETRY, "Re-read the diagram and propose against its version."
+    ),
+    "not_queue_head": _spec(409, RETRY_BACKOFF, "Wait until the chunk heads the merge queue."),
+    "queue_not_verified": _spec(
+        409, RETRY_BACKOFF, "Wait for the queue controller to verify the head."
+    ),
+    "already_dispatched": _spec(409, ABANDON, "The chunk is already dispatched."),
+    "already_merged": _spec(409, ABANDON, "The chunk is already merged."),
+    "already_decided": _spec(409, ABANDON, "The change was already decided."),
+    "not_confirmed": _spec(409, ESCALATE_HUMAN, "A person must confirm the diagram."),
+    "not_frozen": _spec(409, ESCALATE_HUMAN, "A person must freeze the diagram."),
+    "chunk_in_flight": _spec(
+        409, ESCALATE_HUMAN, "Work in flight is never rewritten; a person decides."
+    ),
+    "merge_by_implementer": _spec(
+        403, ESCALATE_HUMAN, "Someone other than the implementer merges."
+    ),
+    "circuit_closed": _spec(409, FIX_REQUEST, "Upgrade only a chunk whose circuit broke."),
 }
 
 

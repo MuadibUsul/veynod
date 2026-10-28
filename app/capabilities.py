@@ -75,6 +75,7 @@ TOOL_HANDLERS = {
     "create_child_tenant": "create_child_node",
     "dereference_many": "batch_dereference",
     "detach_tenant": "detach_node",
+    "diagram": "list_diagrams",
     "draft_external_action": "propose_external_action",
     "export_workspace": "create_export",
     "get_api_docs": "agent_docs",
