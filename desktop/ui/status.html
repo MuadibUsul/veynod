@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Veynod · Local status</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; padding: 28px 32px; font-family: "Segoe UI", system-ui, sans-serif;
+        color: #ece9ff; background: #0e0d16;
+      }
+      header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 22px; }
+      h1 { margin: 0; font-size: 20px; letter-spacing: -0.02em; }
+      .sub { color: #a9a4c8; font-size: 13px; }
+      button {
+        border: 0; border-radius: 8px; padding: 9px 14px; font: inherit; font-weight: 600;
+        color: #fff; background: #6c5ce7; cursor: pointer;
+      }
+      section { margin-bottom: 22px; }
+      h2 { font-size: 14px; margin: 0 0 10px; color: #c9c4e8; }
+      .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+      .card {
+        background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.09);
+        border-radius: 12px; padding: 13px;
+      }
+      .card strong { display: block; margin-bottom: 4px; }
+      .tag { display: inline-block; font-size: 11px; padding: 2px 7px; border-radius: 999px; background: rgba(108,92,231,.25); margin-top: 6px; }
+      .task { padding: 8px 0; border-top: 1px solid rgba(255,255,255,.07); font-size: 13px; }
+      .task:first-child { border-top: 0; }
+      .task span { color: #a9a4c8; }
+      .error { color: #ff9d9d; font-size: 13px; white-space: pre-wrap; }
+      .empty { color: #a9a4c8; font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div>
+        <h1>Local status</h1>
+        <div class="sub">What this computer knows, read-only. The board remains the source of truth.</div>
+      </div>
+      <button id="refresh">Refresh</button>
+    </header>
+    <div id="error" class="error"></div>
+    <section>
+      <h2>Agents</h2>
+      <div id="agents" class="grid"></div>
+    </section>
+    <section>
+      <h2>Open tasks</h2>
+      <div id="tasks"></div>
+    </section>
+    <script>
+      const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+      const $ = (id) => document.getElementById(id);
+      const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+
+      async function load() {
+        $("error").textContent = "";
+        $("agents").innerHTML = "";
+        $("tasks").innerHTML = "";
+        try {
+          const data = await invoke("local_status");
+          if (!data.configured) {
+            $("agents").innerHTML = '<div class="empty">No agent key on this computer yet. Run setup from the tray.</div>';
+            return;
+          }
+          const agents = data.agents.items || [];
+          $("agents").innerHTML = agents.length
+            ? agents.map((agent) => `
+              <div class="card">
+                <strong>${esc(agent.display_name || agent.agent_id)}</strong>
+                <div class="sub">agent:${esc(agent.agent_id)} · ${esc(agent.role || "agent")}</div>
+                <div class="tag">${esc(agent.status || "active")}${agent.presence?.online ? " · online" : ""}</div>
+              </div>`).join("")
+            : '<div class="empty">No agents in this workspace.</div>';
+          const tasks = (data.tasks.items || []).filter((task) => !["DONE", "FAILED", "CANCELLED"].includes(task.status));
+          $("tasks").innerHTML = tasks.length
+            ? tasks.slice(0, 40).map((task) => `
+              <div class="task">
+                <strong>${esc(task.task_key)}</strong> · ${esc(task.status)}
+                <span>${task.assignee ? " · " + esc(task.assignee) : ""}${task.claimed_by ? " · " + esc(task.claimed_by) : ""}</span>
+                <div>${esc((task.title || "").slice(0, 140))}</div>
+              </div>`).join("")
+            : '<div class="empty">No open tasks.</div>';
+        } catch (error) {
+          $("error").textContent = String(error);
+        }
+      }
+      $("refresh").addEventListener("click", load);
+      load();
+    </script>
+  </body>
+</html>

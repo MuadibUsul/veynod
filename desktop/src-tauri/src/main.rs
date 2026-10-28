@@ -11,11 +11,11 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager,
+    AppHandle, Manager, WebviewUrl, WebviewWindowBuilder,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_notification::NotificationExt;
@@ -295,6 +295,29 @@ fn local_runtimes(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
+fn local_status() -> Result<Value, String> {
+    let config = load_config();
+    let key = config.agents.iter().find_map(|agent| read_key(agent));
+    let Some(key) = key else {
+        return Ok(json!({ "configured": false, "agents": [], "tasks": [] }));
+    };
+    let host = config.host.trim_end_matches('/').to_string();
+    let fetch = |path: &str| -> Result<Value, String> {
+        let response = ureq::get(&format!("{host}{path}"))
+            .set("Authorization", &format!("Bearer {key}"))
+            .timeout(Duration::from_secs(15))
+            .call()
+            .map_err(|error| format!("cannot reach Veynod: {error}"))?;
+        response.into_json::<Value>().map_err(|error| error.to_string())
+    };
+    Ok(json!({
+        "configured": true,
+        "agents": fetch("/v1/agents?limit=200")?,
+        "tasks": fetch("/v1/tasks?limit=200")?,
+    }))
+}
+
+#[tauri::command]
 fn describe_runtime(app: AppHandle, runtime: String) -> Result<Value, String> {
     let script = sidecar_script(&app)?;
     let output = Command::new(node_binary(&app))
@@ -371,7 +394,7 @@ fn main() {
         ))
         .plugin(tauri_plugin_notification::init())
         .invoke_handler(tauri::generate_handler![
-            setup_state, local_runtimes, describe_runtime, test_agent, save_agent, open_dashboard
+            setup_state, local_runtimes, describe_runtime, local_status, test_agent, save_agent, open_dashboard
         ])
         .setup(|app| {
             match app.autolaunch().enable() {
@@ -380,9 +403,10 @@ fn main() {
             }
 
             let open = MenuItem::with_id(app, "open", "Open Veynod", true, None::<&str>)?;
+            let status = MenuItem::with_id(app, "status", "Local status", true, None::<&str>)?;
             let reload = MenuItem::with_id(app, "reload", "Reload console", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &reload, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &status, &reload, &quit])?;
 
             let icon = app
                 .default_window_icon()
@@ -398,6 +422,18 @@ fn main() {
                         if let Some(window) = app.get_webview_window("main") {
                             let _ = window.show();
                             let _ = window.set_focus();
+                        }
+                    }
+                    "status" => {
+                        if let Some(window) = app.get_webview_window("status") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        } else {
+                            let _ = WebviewWindowBuilder::new(
+                                app, "status", WebviewUrl::App("status.html".into()))
+                                .title("Veynod · Local status")
+                                .inner_size(1024.0, 760.0)
+                                .build();
                         }
                     }
                     "reload" => {
@@ -424,6 +460,13 @@ fn main() {
                 })
                 .build(app)?;
 
+            if std::env::args().any(|arg| arg == "--status") {
+                let _ = WebviewWindowBuilder::new(
+                    app, "status", WebviewUrl::App("status.html".into()))
+                    .title("Veynod · Local status")
+                    .inner_size(1024.0, 760.0)
+                    .build();
+            }
             start_watchers(app.handle().clone());
             Ok(())
         })
