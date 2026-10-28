@@ -62,6 +62,9 @@ async def run_server(extra_env: dict[str, str] | None = None, log_name: str = ".
             "INDEX_WORKER_ENABLED": "false",
             "FREE_MAX_DOCUMENTS": "1",
             "FREE_MAX_SLOTS": "1",
+            # The server has one event loop, so it pools connections like
+            # production. Only the test process itself needs NullPool.
+            "DB_NULL_POOL": "false",
             **(extra_env or {}),
         }
     )
