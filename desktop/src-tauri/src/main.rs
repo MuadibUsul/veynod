@@ -814,12 +814,28 @@ fn save_agent(app: AppHandle, key: String, host: Option<String>) -> Result<Value
     Ok(me)
 }
 
+/// A fresh query per navigation keeps WebView2 from serving a console build
+/// cached before the last deploy. The app shell is a long-lived window.
+fn dashboard_url() -> String {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or(0);
+    let host = load_config().host.trim_end_matches('/').to_string();
+    format!("{host}/dashboard/?v={stamp}")
+}
+
+fn navigate_dashboard(window: &tauri::WebviewWindow) -> Result<(), String> {
+    let url = serde_json::to_string(&dashboard_url()).map_err(|error| error.to_string())?;
+    window
+        .eval(&format!("window.location.href = {url};"))
+        .map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn open_dashboard(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
-        window
-            .eval("window.location.href = 'https://veynod.com/dashboard/';")
-            .map_err(|error| error.to_string())?;
+        navigate_dashboard(&window)?;
     }
     Ok(())
 }
@@ -987,7 +1003,7 @@ fn main() {
                     }
                     "reload" => {
                         if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.eval("window.location.reload()");
+                            let _ = navigate_dashboard(&window);
                         }
                     }
                     "quit" => app.exit(0),
