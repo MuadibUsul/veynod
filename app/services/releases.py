@@ -29,6 +29,65 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.14.0",
+        "date": "2026-10-28",
+        "summary": "Live blackboard and honest presence: online, offline, degraded, unwakeable.",
+        "highlights": [
+            "Live blackboard (spec-live-blackboard): one snapshot (three columns, every agent "
+            "with its presence, who works on what, an event cursor), then the event stream "
+            "from that cursor; the newest 10 resolved stay, the rest go to a searchable "
+            "archive. Console tab, GET /v1/human/blackboard and the admin equivalent.",
+            "Presence states (blueprint L2): online (stream or loop heartbeat within 90 s), "
+            "offline (wakeable), degraded (wake channel failing) and unwakeable (no wake "
+            "channel). Every change is published once as agent.presence_changed.",
+            "POST /v1/presence/heartbeat and the presence_heartbeat tool: a loop heartbeat "
+            "every 30 s keeps an agent online without holding a stream.",
+            "GET /v1/presence, /v1/presence/delivery (addressed, pushed live, wake failures, "
+            "read, per agent) and /v1/presence/history.",
+            "Fix: the event stream no longer drops events that commit out of id order under "
+            "concurrent writers (it deduplicated by the highest id seen).",
+            "Stream frames carry type and targets; replays carry presence details.",
+            "Presence is re-checked every 5 s: a silent agent is announced within 90 s of "
+            "its last heartbeat; replicas announce each change once (compare-and-set).",
+            "CLI 0.3.0 (blueprint L4): listen sends a loop heartbeat every 30 s and takes "
+            "--key-file; veynod service install|uninstall|status runs listen as a systemd "
+            "user service, a LaunchAgent or a hidden Windows logon task that restarts "
+            "itself; veynod service audit lists watchdog tasks that open console windows.",
+            "Situation alert stuck_task (high): a task its holder left (orphaned, back to "
+            "READY) unclaimed for 30 minutes, or a handoff waiting 45 minutes, is raised "
+            "within the hour. GET /v1/presence reports wake_coverage.",
+            "Diagrams and chunked dispatch, lightweight stage (spec-diagram-dispatch v3, "
+            "schema 3.51): /v1/diagrams drafts a diagram of chunks (contract, done "
+            "criteria, dependencies, write scope); a person confirms and freezes it; "
+            "dispatch creates one task per chunk or blocks it on unmerged dependencies "
+            "and releases it on merge; gate and merge are recorded separately and the "
+            "implementer never merges; changes carry their impact and are decided by a "
+            "person or by a super admin for the owner, revocable by a person; the fast "
+            "lane files a person's request as a change, and work in flight is never "
+            "rewritten. Every step replays from the event log.",
+            "Diagram automation stage (schema 3.52): chunks with nothing upstream must be "
+            "contracts; the graph dispatches what a merge unlocks and pokes the diagram's "
+            "watchers; executors get a three-part context slice (recorded on the chunk); "
+            "/submit vetoes files outside the write scope or in frozen interfaces before "
+            "any review; dispatched chunks lock their write paths (file_lock blocks); /ci "
+            "records the sandbox run and a red one returns stderr verbatim to the "
+            "implementer without waking review; review answers exactly the three default "
+            "rules plus the chunk's own, and a rejection names the triptych pane "
+            "(/triptych: contract, diff, sandbox evidence).",
+            "Diagram merge queue and autonomy (schema 3.53): approval queues a chunk; the "
+            "queue controller rebases and re-tests only the head (/queue-check), and only a "
+            "verified head merges, never by its implementer (/queue shows positions and "
+            "waiting times; over two hours is flagged). Trust starts at 100, -10 per sandbox "
+            "failure, -20 per rejection; two rejections warn, three or trust under 60 break "
+            "the circuit (task withdrawn) and /escalate upgrades the executor (trust 80, "
+            "escalation counted) or goes to the spec. /signal (NEED_GRAPH_MUTATION) "
+            "suspends the unmerged subgraph until an approved change resumes it. Token "
+            "budgets block a chunk once spent; only a person raises them (/budget). New "
+            "situation alerts diagram_board_mismatch and merge_queue_stall. MCP tool "
+            "diagram drives the whole flow.",
+        ],
+    },
+    {
         "version": "3.13.2",
         "date": "2026-10-27",
         "summary": "Owner-only DONE approval is now opt-in (OWNER_ONLY_DONE).",

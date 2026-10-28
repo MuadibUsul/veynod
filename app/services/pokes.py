@@ -58,6 +58,7 @@ async def presence_open(principal: Principal, agent_ref: str, transport: str = "
              "i": INSTANCE, "tr": transport})
 
     await _unscoped(run)
+    await _announce(principal.workspace.id)
 
 
 async def presence_touch(principal: Principal) -> None:
@@ -80,6 +81,13 @@ async def presence_close(principal: Principal) -> None:
         await _unscoped(run)
     except Exception:  # noqa: BLE001 - the reaper sweeps what a crash leaves
         logger.warning("presence close failed", exc_info=True)
+    await _announce(principal.workspace.id)
+
+
+async def _announce(workspace_id: Any) -> None:
+    from app.services import presence
+
+    await presence.reconcile(workspace_id)
 
 
 async def sweep_presence() -> int:
@@ -269,6 +277,7 @@ async def set_wake_url(session: AsyncSession, principal: Principal,
         if rule is not None:
             await session.delete(rule)
             await session.commit()
+            await _announce(principal.workspace.id)
         return {"wake_url": None, "removed": rule is not None}
     await validate_target(url)
     refs = [f"agent:{entry['agent_id']}", f"agent:{entry['principal_id']}",
@@ -287,6 +296,7 @@ async def set_wake_url(session: AsyncSession, principal: Principal,
     rule.targets, rule.wake_only = list(dict.fromkeys(refs)), True
     rule.consecutive_failures, rule.failing_since, rule.disabled_at = 0, None, None
     await session.commit()
+    await _announce(principal.workspace.id)
     return {"wake_url": url, "webhook_id": str(rule.id), "secret": secret,
             "signature": "X-AgentGraph-Signature = hex HMAC-SHA256(secret, "
                          "f\"{X-AgentGraph-Timestamp}.\" + body)",

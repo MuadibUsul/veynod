@@ -78,6 +78,10 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "messages": ("objects.jsonl", ()),
     "message_deliveries": ("objects.jsonl", ()),
     "message_escalations": ("objects.jsonl", ()),
+    # Diagrams and chunked dispatch (v3.50).
+    "diagrams": ("objects.jsonl", ()),
+    "diagram_chunks": ("objects.jsonl", ()),
+    "diagram_changes": ("objects.jsonl", ()),
     "collab_tasks": ("objects.jsonl", ()),
     "context_slots": ("objects.jsonl", ()),
     "leases": ("objects.jsonl", ()),

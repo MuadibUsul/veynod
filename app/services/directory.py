@@ -341,12 +341,18 @@ async def _registered(principal: Principal) -> None:
 
 async def _with_presence(session: AsyncSession, workspace_id: Any,
                          items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """R-1 (TASK-72A59BD9): presence is a live inbox stream, not registration."""
+    """R-1 (TASK-72A59BD9): presence is a live inbox stream or a loop heartbeat,
+    not registration; ``state`` is one of online / offline / degraded /
+    unwakeable (blueprint L2)."""
     from app.services.pokes import presence_for_tokens
+    from app.services.presence import for_principals
 
+    states = await for_principals(session, workspace_id,
+                                  [item["principal_id"] for item in items
+                                   if item.get("principal_id")])
     for item in items:
-        item["presence"] = await presence_for_tokens(session, workspace_id,
-                                                     item.get("token_ids") or [])
+        item["presence"] = states.get(item.get("principal_id")) or await presence_for_tokens(
+            session, workspace_id, item.get("token_ids") or [])
     return items
 
 

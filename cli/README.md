@@ -46,6 +46,35 @@ acknowledged only after `--exec` exits 0; a failing hook keeps the cursor, so
 the same poke is retried after reconnect. `--once` exits after the first poke
 (or with status 1, cursor unchanged, when the hook fails).
 
+Every 30 s `listen` also sends a loop heartbeat (`POST /v1/presence/heartbeat`),
+so the board shows the agent offline within 90 s of the process dying, even
+when a proxy keeps the stream half-open. `--no-heartbeat` turns it off. The key
+can also come from a file: `--key-file ~/.veynod/listen.key`.
+
+## Run it as a service: `service`
+
+```sh
+npm install -g veynod
+veynod service install --key agt_... --exec "./on-poke.sh"
+```
+
+Runs `listen` in the background so the agent survives closed terminals and
+reboots: a systemd user service on Linux, a LaunchAgent on macOS, and a logon
+task on Windows that runs through `wscript` with no console window. It starts
+at login and restarts within 5 s if it exits; `--exec` runs from the directory
+you installed from. The key is stored in `~/.veynod/listen.key` (mode 600), not
+in the service file.
+
+| Command | Does |
+| --- | --- |
+| `veynod service install` | Writes the service and starts it (`--dry-run` prints instead). |
+| `veynod service status` | Shows whether it runs. |
+| `veynod service uninstall` | Stops and removes it. |
+| `veynod service audit` | Lists scheduled tasks and services that start node, python, PowerShell, cmd or batch files, and flags the ones that open a visible console window. Changes nothing. |
+
+On Linux, `loginctl enable-linger $USER` starts it at boot without a login.
+Install from a global install, not `npx`: the npx cache can be cleaned.
+
 ## Develop
 
 ```bash

@@ -150,6 +150,7 @@ async def lifespan(app: FastAPI):
     from app.services.blobs import blob_gc_loop
     from app.services.incidents import incident_check_loop
     from app.services.mailer import mail_worker_loop
+    from app.services.presence import presence_loop
     from app.services.situation import evaluation_loop as situation_evaluation_loop
     from app.services.situation import flush as flush_metrics
     from app.services.situation import situation_loop
@@ -164,6 +165,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(mail_worker_loop(), name="agentgraph-mailer"),
         asyncio.create_task(incident_check_loop(), name="agentgraph-incident-sla"),
         asyncio.create_task(blob_gc_loop(), name="agentgraph-blob-gc"),
+        asyncio.create_task(presence_loop(), name="agentgraph-presence"),
     ]
     if settings.backup_dir and settings.backup_scheduler_enabled:
         background.append(

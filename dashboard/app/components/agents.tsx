@@ -594,15 +594,28 @@ export function AgentsView({
                         {(() => {
                           const live = presence.get(token.canonical_id ?? "");
                           if (!live) return null;
+                          const state = live.state ?? (live.online ? "online" : "offline");
                           return (
-                            <span
-                              className={`presence-dot${live.online ? " online" : ""}`}
-                              title={live.online
-                                ? t("Online: holding the inbox stream")
-                                : live.last_seen_at
-                                  ? t("Offline · last connected {when}", { when: relativeTime(live.last_seen_at) })
-                                  : t("Offline")}
-                            />
+                            <>
+                              <span
+                                className={`presence-dot${live.online ? " online" : ""}`}
+                                title={live.online
+                                  ? t("Online: holding the inbox stream")
+                                  : live.last_seen_at
+                                    ? t("Offline · last connected {when}", { when: relativeTime(live.last_seen_at) })
+                                    : t("Offline")}
+                              />
+                              {(state === "unwakeable" || state === "degraded") && (
+                                <small
+                                  className={`presence-flag ${state}`}
+                                  title={state === "unwakeable"
+                                    ? t("No wake channel: nothing reaches it until it reconnects")
+                                    : t("Its wake channel is failing")}
+                                >
+                                  {state === "unwakeable" ? t("Unwakeable") : t("Degraded")}
+                                </small>
+                              )}
+                            </>
                           );
                         })()}
                         {(token.delegated_total ?? 0) > 0 && (

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -1266,3 +1267,50 @@ async def approve_group_conversation(
     from app.services import messaging
 
     return await messaging.approve_group(session, principal, conv_key)
+
+
+@router.get("/blackboard",
+            summary="Live blackboard snapshot: three columns, agents, presence, event cursor")
+async def blackboard_snapshot(
+    resolved_limit: int = Query(default=10, ge=1, le=100),
+    task_keys: str | None = Query(default=None, max_length=8000),
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import blackboard
+
+    keys = [key for key in (task_keys or "").split(",") if key] if task_keys else None
+    return await blackboard.snapshot(session, principal, resolved_limit=resolved_limit,
+                                     task_keys=keys)
+
+
+@router.get("/blackboard/archive",
+            summary="Archived blackboard tasks, searchable by time, agent and keyword")
+async def blackboard_archive(
+    q: str | None = Query(default=None, max_length=200),
+    agent: str | None = Query(default=None, max_length=256),
+    since: datetime | None = Query(default=None),
+    until: datetime | None = Query(default=None),
+    resolved_limit: int = Query(default=10, ge=1, le=100),
+    cursor: str | None = Query(default=None, max_length=200),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import blackboard
+
+    return await blackboard.archive(session, principal, q=q, agent=agent, since=since,
+                                    until=until, resolved_limit=resolved_limit, cursor=cursor,
+                                    limit=limit)
+
+
+@router.get("/blackboard/tasks/{task_key}/events",
+            summary="The events behind a blackboard card")
+async def blackboard_card_events(
+    task_key: str,
+    principal: Principal = Depends(get_human_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import blackboard
+
+    return await blackboard.card_events(session, principal, task_key)

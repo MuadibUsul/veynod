@@ -1831,6 +1831,579 @@
        "body": [],
        "description": "",
        "method": "GET",
+       "parameters": [],
+       "path": "/v1/diagrams",
+       "responses": [
+        "200"
+       ],
+       "summary": "Diagrams in this workspace"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/diagrams",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Draft a diagram: chunks with contract, done criteria, dependencies"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A diagram with its command view: progress, blocked, merge queue"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "PUT",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Edit a draft diagram (drafts only)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/changes",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Propose a diagram change with its impact"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "change_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/changes/{change_key}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "One diagram change"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "change_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/changes/{change_key}/decide",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Approve or reject a change (a person, or a super admin for the owner)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "change_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/changes/{change_key}/revoke",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A person revokes an approved change"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/budget",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A person sets or raises a chunk's token budget"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/ci",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Record the sandbox run (compile, lint, test) for the current submission"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/dispatch",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Dispatch a chunk as a task, or block it on unmerged dependencies"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/escalate",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "After a broken circuit: upgrade the executor or go to the spec"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/gate",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Record a chunk's gate result (pass, or fail with evidence)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/merge",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Merge a gated chunk (never by its implementer)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/queue-check",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Queue controller: the head rebased and re-tested, or returned"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/signal",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The contract cannot work: ask for a graph change, suspend the subgraph"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/submit",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Submit a chunk (files, commit, diff); out-of-scope files veto it"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/triptych",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The review triptych: contract, diff, sandbox evidence"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "chunk_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/chunks/{chunk_key}/usage",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Report tokens spent on a chunk; over budget blocks it"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/confirm",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A person confirms the diagram"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/freeze",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A person freezes the baseline"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/increments",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Fast lane: file a person's request as a diagram change"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/queue",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The serial merge queue: positions and waiting times"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "diagram_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "chunk",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "path": "/v1/diagrams/{diagram_key}/replay",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Replay a diagram's chain, or one chunk's with its task events"
+      }
+     ],
+     "group": "diagrams"
+    },
+    {
+     "endpoints": [
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
        "parameters": [
         {
          "description": "An event cursor or watermark:<name>",
@@ -4026,6 +4599,115 @@
         "422"
        ],
        "summary": "Undo an agent session batch"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "resolved_limit",
+         "required": false,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "task_keys",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "path": "/v1/human/blackboard",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Live blackboard snapshot: three columns, agents, presence, event cursor"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "q",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "agent",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "since",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "until",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "resolved_limit",
+         "required": false,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "cursor",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "limit",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/human/blackboard/archive",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Archived blackboard tasks, searchable by time, agent and keyword"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "task_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/human/blackboard/tasks/{task_key}/events",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The events behind a blackboard card"
       },
       {
        "body": [],
@@ -6850,6 +7532,87 @@
       }
      ],
      "group": "policies"
+    },
+    {
+     "endpoints": [
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/presence",
+       "responses": [
+        "200"
+       ],
+       "summary": "Presence of every agent: online, offline, degraded or unwakeable"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "window",
+         "required": false,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/presence/delivery",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Delivery rates per agent: addressed, pushed live, wake failures, read"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/presence/heartbeat",
+       "responses": [
+        "200"
+       ],
+       "summary": "Loop heartbeat: online for 90 s; send one every 30 s"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "agent",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "window",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "limit",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/presence/history",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Presence changes over a window, newest first"
+      }
+     ],
+     "group": "presence"
     },
     {
      "endpoints": [

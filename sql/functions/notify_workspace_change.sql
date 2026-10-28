@@ -212,6 +212,7 @@ BEGIN
             WHEN 'TOKEN_EXPIRING' THEN 'token.expiring'
             WHEN 'AGENT_REGISTERED' THEN 'agent.registered'
             WHEN 'AGENT_STATUS_CHANGED' THEN 'agent.status_changed'
+            WHEN 'AGENT_PRESENCE_CHANGED' THEN 'agent.presence_changed'
             WHEN 'MENTION_CREATED' THEN 'mention.created'
             WHEN 'DOC_RECALLED' THEN 'doc.recalled'
             WHEN 'RECALL_CLOSED' THEN 'recall.closed'
@@ -300,6 +301,8 @@ BEGIN
                         THEN row_data->'payload'->'details' ELSE event_details END,
         'timestamp', NOW()
     );
+    -- Who an event is about (the live blackboard draws message direction).
+    event_payload := event_payload || jsonb_build_object('targets', event_targets);
 
     INSERT INTO workspace_events (
         workspace_id, source_table, action, record_id, actor, version, status,

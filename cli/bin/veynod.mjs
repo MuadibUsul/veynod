@@ -6,6 +6,9 @@
 //   npx veynod init --client cursor --host https://veynod.example
 //   npx veynod listen --exec "./on-poke.sh"
 //                                   stay online: receive pokes as they happen
+//   veynod service install --key-file ~/.veynod/listen.key
+//                                   run listen as a background service that
+//                                   starts at login and restarts itself
 //
 // Flow (device sign-in): this script makes an X25519 key pair, asks the server
 // for a short code, and opens the console so a workspace owner can approve it.
@@ -28,8 +31,9 @@ import { existsSync, chmodSync, copyFileSync, mkdirSync, readFileSync, renameSyn
 import { homedir, hostname, platform } from "node:os";
 import { dirname, join } from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 
-export const VERSION = "0.2.2";
+export const VERSION = "0.3.0";
 const SEAL_INFO = Buffer.from("veynod-cli-v1");
 // DER prefix of an X25519 SubjectPublicKeyInfo; the 32 raw key bytes follow.
 const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
@@ -43,6 +47,7 @@ const dim = paint("2");
 const bold = paint("1");
 const green = paint("32");
 const red = paint("31");
+const print = (line = "") => process.stdout.write(`${line}\n`);
 
 // ------------------------------------------------------------------ crypto
 
@@ -300,6 +305,10 @@ export function parseArgs(argv) {
     key: process.env.VEYNOD_KEY || process.env.VEYNOD_TOKEN || "",
     exec: "",
     once: false,
+    keyFile: "",
+    heartbeat: true,
+    dryRun: false,
+    subcommand: null,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -319,7 +328,13 @@ export function parseArgs(argv) {
     else if (arg === "--key") options.key = value();
     else if (arg === "--exec") options.exec = value();
     else if (arg === "--once") options.once = true;
+    else if (arg === "--key-file") options.keyFile = value();
+    else if (arg === "--no-heartbeat") options.heartbeat = false;
+    else if (arg === "--dry-run") options.dryRun = true;
     else if (!arg.startsWith("-") && !options.command) options.command = arg;
+    else if (!arg.startsWith("-") && options.command === "service" && !options.subcommand) {
+      options.subcommand = arg;
+    }
     else throw new Error(`unknown option ${arg}`);
   }
   options.clients = [...new Set(options.clients.map((item) => item.trim()).filter(Boolean))];
@@ -335,15 +350,32 @@ const HELP = `${bold("veynod")} ${VERSION}: put your coding agents on a Veynod b
 ${bold("Usage")}
   npx veynod init [--client claude-code,cursor,claude-desktop,print] [--host URL] [--no-open]
 
-  npx veynod listen [--exec CMD] [--key KEY] [--host URL] [--once]
+  npx veynod listen [--exec CMD] [--key KEY | --key-file PATH] [--host URL] [--once]
+                    [--no-heartbeat]
+
+  veynod service install|uninstall|status|audit [--key KEY | --key-file PATH]
+                    [--exec CMD] [--host URL] [--dry-run]
 
 ${bold("What listen does")}
   Holds the inbox stream open, so the board shows this agent online and pokes
   (assignments, mentions, reviews) arrive within seconds. Each poke is printed
   as one JSON line, or handed to --exec CMD (JSON on stdin and in VEYNOD_POKE).
   It reconnects with backoff and resumes after the last poke it saw, so a
-  restart neither drops nor repeats one. The key comes from --key or
-  VEYNOD_KEY. --once exits after the first poke (for scripts).
+  restart neither drops nor repeats one. The key comes from --key, --key-file
+  or VEYNOD_KEY. --once exits after the first poke (for scripts). Every 30 s it
+  also sends a loop heartbeat, so the board shows the agent offline within
+  90 s of this process dying, even when a proxy keeps the stream half-open.
+
+${bold("What service does")}
+  install    Runs listen in the background: a systemd user service (Linux), a
+             LaunchAgent (macOS) or a hidden logon task (Windows; no console
+             window). It starts at login and restarts within 5 s if it exits.
+             The key is kept in ~/.veynod/listen.key (mode 600).
+  uninstall  Stops and removes it.  status  Shows whether it runs.
+  audit      Lists scheduled tasks and services that start node, python,
+             PowerShell, cmd or batch files, and flags those that open a
+             visible console window. It changes nothing.
+  --dry-run  Prints the files and commands instead of applying them.
 
 ${bold("What init does")}
   1. Shows a code and opens the console; you approve it while signed in.
@@ -523,12 +555,59 @@ function runHook(command, poke) {
   });
 }
 
+// Presence follows the loop, not the connection (blueprint L2, P-A): a beat
+// every 30 s; three missed and the board shows the agent offline.
+export const HEARTBEAT_MS = 30_000;
+
+export function startHeartbeat(host, key, { every = HEARTBEAT_MS, say = () => {}, fetchImpl = fetch } = {}) {
+  let stopped = false;
+  let failing = false;
+  let timer = null;
+  const stop = () => {
+    stopped = true;
+    if (timer) clearInterval(timer);
+  };
+  const beat = async () => {
+    if (stopped) return;
+    try {
+      const response = await fetchImpl(`${host}/v1/presence/heartbeat`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (response.status === 404) {
+        stop(); // an older server: the open stream alone keeps the agent online
+        return;
+      }
+      if (!response.ok) throw new Error(`heartbeat answered ${response.status}`);
+      if (failing) say(`${green("heartbeat")} restored`);
+      failing = false;
+    } catch (error) {
+      if (!failing) say(`${red("heartbeat")} ${error.message}`);
+      failing = true;
+    }
+  };
+  timer = setInterval(() => void beat(), every);
+  timer.unref?.();
+  void beat();
+  return stop;
+}
+
 async function listen(options) {
-  if (!options.key) throw new Error("listen needs an agent key: --key or VEYNOD_KEY");
+  if (!options.key) throw new Error("listen needs an agent key: --key, --key-file or VEYNOD_KEY");
+  const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
+  const stopHeartbeat = options.heartbeat ? startHeartbeat(options.host, options.key, { say }) : () => {};
+  try {
+    return await follow(options, say);
+  } finally {
+    stopHeartbeat();
+  }
+}
+
+async function follow(options, say) {
   const statePath = cursorFile(options.host, options.key);
   let lastSeq = loadCursor(statePath);
   let delay = 1000;
-  const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
   for (;;) {
     const controller = new AbortController();
     try {
@@ -586,6 +665,313 @@ async function listen(options) {
   }
 }
 
+// ----------------------------------------------------------------- service
+
+// Blueprint L4: the host runs as a service, not a terminal window. One plan per
+// platform: the files to write and the commands to run, so --dry-run and the
+// tests see exactly what install would do.
+export const SERVICE_NAME = "veynod-listen";
+const LAUNCHD_LABEL = "com.veynod.listen";
+const WINDOWS_TASK = "VeynodListen";
+
+const systemdQuote = (value) => `"${String(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+const xmlEscape = (value) => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+const winQuote = (value) => `"${String(value).replace(/"/g, '\\"')}"`;
+
+export function listenArguments({ script, host, keyFile, exec }) {
+  return [script, "listen", "--host", host, "--key-file", keyFile, ...(exec ? ["--exec", exec] : [])];
+}
+
+export function servicePlan(action, {
+  os = platform(),
+  home = homedir(),
+  node = process.execPath,
+  script = fileURLToPath(import.meta.url),
+  host,
+  keyFile,
+  exec = "",
+  cwd = process.cwd(),
+} = {}) {
+  // --exec runs from the directory install ran in, so relative hooks resolve.
+  const args = listenArguments({ script, host, keyFile, exec });
+  const stateDir = join(home, ".veynod");
+  const log = join(stateDir, "listen.log");
+  const plan = { os, files: [], remove: [], commands: [], notes: [] };
+  if (os === "linux") {
+    const unit = join(home, ".config", "systemd", "user", `${SERVICE_NAME}.service`);
+    if (action === "install") {
+      plan.files.push({ path: unit, mode: 0o644, content: [
+        "[Unit]",
+        "Description=Veynod listen: keep this agent online and receive pokes",
+        "After=network-online.target",
+        "Wants=network-online.target",
+        "",
+        "[Service]",
+        `WorkingDirectory=${systemdQuote(cwd)}`,
+        `ExecStart=${[node, ...args].map(systemdQuote).join(" ")}`,
+        "Restart=always",
+        "RestartSec=5",
+        "Environment=NO_COLOR=1",
+        "",
+        "[Install]",
+        "WantedBy=default.target",
+        "",
+      ].join("\n") });
+      plan.commands.push(["systemctl", "--user", "daemon-reload"],
+        ["systemctl", "--user", "enable", "--now", `${SERVICE_NAME}.service`]);
+      plan.notes.push("To start it at boot without a login session: loginctl enable-linger $USER",
+        `Logs: journalctl --user -u ${SERVICE_NAME} -f`);
+    } else if (action === "uninstall") {
+      plan.commands.push(["systemctl", "--user", "disable", "--now", `${SERVICE_NAME}.service`],
+        ["systemctl", "--user", "daemon-reload"]);
+      plan.remove.push(unit);
+    } else {
+      plan.commands.push(["systemctl", "--user", "status", "--no-pager", `${SERVICE_NAME}.service`]);
+    }
+  } else if (os === "darwin") {
+    const plist = join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
+    if (action === "install") {
+      plan.files.push({ path: plist, mode: 0o644, content: [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+        '<plist version="1.0">',
+        "<dict>",
+        `  <key>Label</key><string>${LAUNCHD_LABEL}</string>`,
+        "  <key>ProgramArguments</key>",
+        "  <array>",
+        ...[node, ...args].map((item) => `    <string>${xmlEscape(item)}</string>`),
+        "  </array>",
+        `  <key>WorkingDirectory</key><string>${xmlEscape(cwd)}</string>`,
+        "  <key>RunAtLoad</key><true/>",
+        "  <key>KeepAlive</key><true/>",
+        "  <key>ThrottleInterval</key><integer>5</integer>",
+        "  <key>EnvironmentVariables</key><dict><key>NO_COLOR</key><string>1</string></dict>",
+        `  <key>StandardOutPath</key><string>${xmlEscape(log)}</string>`,
+        `  <key>StandardErrorPath</key><string>${xmlEscape(log)}</string>`,
+        "</dict>",
+        "</plist>",
+        "",
+      ].join("\n") });
+      plan.commands.push(["launchctl", "unload", plist], ["launchctl", "load", "-w", plist]);
+      plan.notes.push(`Logs: ${log}`);
+    } else if (action === "uninstall") {
+      plan.commands.push(["launchctl", "unload", "-w", plist]);
+      plan.remove.push(plist);
+    } else {
+      plan.commands.push(["launchctl", "list", LAUNCHD_LABEL]);
+    }
+  } else if (os === "win32") {
+    // wscript runs the loop with window style 0: no console window ever opens,
+    // and the loop restarts listen 5 s after it exits.
+    const launcher = join(stateDir, `${SERVICE_NAME}.vbs`);
+    if (action === "install") {
+      const inner = [node, ...args].map(winQuote).join(" ");
+      const line = `cmd /s /c "cd /d ${winQuote(cwd)} && ${inner} >> ${winQuote(log)} 2>&1"`;
+      plan.files.push({ path: launcher, mode: 0o600, content: [
+        "' Veynod listen, hidden: no console window; restarted 5 s after it exits.",
+        'Set shell = CreateObject("WScript.Shell")',
+        "Do",
+        `  shell.Run "${line.replace(/"/g, '""')}", 0, True`,
+        "  WScript.Sleep 5000",
+        "Loop",
+        "",
+      ].join("\r\n") });
+      plan.commands.push(["schtasks", "/Create", "/TN", WINDOWS_TASK, "/SC", "ONLOGON", "/RL", "LIMITED",
+        "/TR", `wscript.exe //B //Nologo "${launcher}"`, "/F"],
+      ["schtasks", "/Run", "/TN", WINDOWS_TASK]);
+      plan.notes.push(`Logs: ${log}`, "No console window opens; check with: veynod service status");
+    } else if (action === "uninstall") {
+      plan.commands.push(["schtasks", "/End", "/TN", WINDOWS_TASK],
+        ["schtasks", "/Delete", "/TN", WINDOWS_TASK, "/F"]);
+      plan.remove.push(launcher);
+      plan.notes.push("If listen is still running, end the wscript.exe and node.exe processes it started.");
+    } else {
+      plan.commands.push(["schtasks", "/Query", "/TN", WINDOWS_TASK, "/V", "/FO", "LIST"]);
+    }
+  } else {
+    throw new Error(`service is not supported on ${os}`);
+  }
+  return plan;
+}
+
+// ------------------------------------------------------------------ audit
+
+// L4 step one: find the watchdogs before touching them. Nothing is changed.
+const WATCHED = /\b(node|python[0-9.]*|pythonw|powershell|pwsh|cmd|bash|sh)(\.exe)?\b|\.(bat|cmd|ps1|py|js|mjs|sh)\b|veynod|claude|codex|cursor|listen/i;
+
+export function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let quoted = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    if (quoted) {
+      if (char === '"' && text[i + 1] === '"') {
+        cell += '"';
+        i += 1;
+      } else if (char === '"') quoted = false;
+      else cell += char;
+    } else if (char === '"') quoted = true;
+    else if (char === ",") {
+      row.push(cell);
+      cell = "";
+    } else if (char === "\n" || char === "\r") {
+      if (char === "\r" && text[i + 1] === "\n") i += 1;
+      row.push(cell);
+      if (row.some((item) => item !== "")) rows.push(row);
+      row = [];
+      cell = "";
+    } else cell += char;
+  }
+  if (cell !== "" || row.length) {
+    row.push(cell);
+    rows.push(row);
+  }
+  return rows;
+}
+
+export function visibleWindow(action) {
+  const command = action.toLowerCase();
+  if (/wscript|cscript|pythonw|-windowstyle\s+hidden|-w\s+hidden|conhost(\.exe)?\s+--headless/.test(command)) return false;
+  return /\b(cmd|powershell|pwsh|python|node|bash)(\.exe)?\b|\.(bat|cmd|ps1|py|js|mjs)\b/.test(command);
+}
+
+export function auditWindowsTasks(csv) {
+  const rows = parseCsv(csv);
+  const header = rows.find((row) => row.includes("TaskName"));
+  if (!header) return [];
+  const at = (name) => header.indexOf(name);
+  const findings = [];
+  const seen = new Set();
+  for (const row of rows) {
+    if (row === header || row[at("TaskName")] === "TaskName") continue;
+    const name = row[at("TaskName")] ?? "";
+    const action = row[at("Task To Run")] ?? "";
+    if (name.startsWith("\\Microsoft\\") || !WATCHED.test(action)) continue;
+    const key = `${name}|${action}`;
+    if (seen.has(key)) continue; // one row per trigger: report the task once
+    seen.add(key);
+    findings.push({
+      name,
+      action,
+      schedule: [row[at("Schedule Type")], row[at("Repeat: Every")]].filter(Boolean).join(", "),
+      next_run: row[at("Next Run Time")] ?? "",
+      status: row[at("Status")] ?? "",
+      run_as: row[at("Run As User")] ?? "",
+      visible_window: visibleWindow(action),
+    });
+  }
+  return findings;
+}
+
+function capture(command, args) {
+  try {
+    return execFileSync(command, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  } catch {
+    return "";
+  }
+}
+
+function audit() {
+  const os = platform();
+  if (os === "win32") {
+    const findings = auditWindowsTasks(capture("schtasks", ["/Query", "/FO", "CSV", "/V"]));
+    print(bold(`Scheduled tasks that start a script or runtime (${findings.length})`));
+    for (const item of findings) {
+      print(`\n  ${bold(item.name)}  ${item.visible_window ? red("opens a console window") : green("hidden")}`);
+      print(`    runs:     ${item.action}`);
+      print(`    schedule: ${item.schedule || "?"}   next: ${item.next_run || "?"}   status: ${item.status || "?"}`);
+      if (item.visible_window) {
+        print(dim("    keep it, hide it: run the same command through wscript (see `veynod service install`),"));
+        print(dim('    or add -WindowStyle Hidden for PowerShell; do not delete it before knowing what it guards.'));
+      }
+    }
+    return findings.some((item) => item.visible_window) ? 3 : 0;
+  }
+  const lines = [];
+  if (os === "linux") {
+    lines.push(...capture("systemctl", ["--user", "list-units", "--type=service", "--all", "--no-pager", "--plain"])
+      .split("\n").filter((line) => WATCHED.test(line)));
+  } else if (os === "darwin") {
+    lines.push(...capture("launchctl", ["list"]).split("\n").filter((line) => WATCHED.test(line)));
+  }
+  lines.push(...capture("crontab", ["-l"]).split("\n").filter((line) => line && !line.startsWith("#") && WATCHED.test(line)));
+  print(bold(`Services and cron jobs that start a script or runtime (${lines.length})`));
+  for (const line of lines) print(`  ${line.trim()}`);
+  return 0;
+}
+
+function serviceKeyFile(options) {
+  if (options.keyFile) return options.keyFile;
+  const path = join(homedir(), ".veynod", "listen.key");
+  if (options.key) {
+    if (!options.dryRun) {
+      mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+      writeFileSync(path, `${options.key}\n`, { mode: 0o600 });
+      chmodSync(path, 0o600);
+    }
+    return path;
+  }
+  if (existsSync(path)) return path;
+  throw new Error("service install needs the agent key: --key, --key-file or VEYNOD_KEY");
+}
+
+async function service(options) {
+  const action = options.subcommand;
+  if (action === "audit") return audit();
+  if (!["install", "uninstall", "status"].includes(action ?? "")) {
+    throw new Error("service needs install, uninstall, status or audit");
+  }
+  const script = fileURLToPath(import.meta.url);
+  const plan = servicePlan(action, {
+    host: options.host,
+    script,
+    exec: options.exec,
+    keyFile: action === "install" ? serviceKeyFile(options) : "",
+  });
+  if (action === "install" && /[\\/]_npx[\\/]/.test(script)) {
+    plan.notes.unshift("This copy runs from the npx cache, which can be cleaned: install it first with "
+      + "`npm install -g veynod`, then run `veynod service install` again.");
+  }
+  if (options.dryRun) {
+    for (const file of plan.files) print(`${bold("write")} ${file.path}\n${file.content}`);
+    for (const path of plan.remove) print(`${bold("remove")} ${path}`);
+    for (const command of plan.commands) print(`${bold("run")} ${command.join(" ")}`);
+    for (const note of plan.notes) print(dim(note));
+    return 0;
+  }
+  for (const file of plan.files) {
+    mkdirSync(dirname(file.path), { recursive: true });
+    writeFileSync(file.path, file.content, { mode: file.mode });
+  }
+  let failed = 0;
+  for (const [command, ...args] of plan.commands) {
+    try {
+      execFileSync(command, args, { stdio: action === "status" ? "inherit" : "ignore" });
+    } catch (error) {
+      // Unloading what is not loaded yet is expected on a first install.
+      const benign = action === "install" && args[0] === "unload";
+      if (!benign) {
+        failed += 1;
+        process.stderr.write(`  ${red("✗")} ${command} ${args.join(" ")}: ${error.message.split("\n")[0]}\n`);
+      }
+    }
+  }
+  for (const path of plan.remove) {
+    try {
+      unlinkSync(path);
+    } catch {
+      // already gone
+    }
+  }
+  if (action !== "status") {
+    print(`${failed ? red("✗") : green("✓")} ${action} ${failed ? "finished with errors" : "done"}`);
+    for (const note of plan.notes) print(dim(`  ${note}`));
+  }
+  return failed ? 1 : 0;
+}
+
 export async function main(argv = process.argv.slice(2)) {
   let options;
   try {
@@ -597,6 +983,24 @@ export async function main(argv = process.argv.slice(2)) {
   if (options.command === "version") {
     process.stdout.write(`${VERSION}\n`);
     return 0;
+  }
+  if (options.keyFile && !options.help) {
+    try {
+      options.key = readFileSync(options.keyFile, "utf8").trim();
+    } catch (error) {
+      if (options.command !== "service") {
+        process.stderr.write(`${red("error")} cannot read --key-file: ${error.message}\n`);
+        return 2;
+      }
+    }
+  }
+  if (options.command === "service" && !options.help) {
+    try {
+      return await service(options);
+    } catch (error) {
+      process.stderr.write(`\n  ${red("✗")} ${error.message}\n\n`);
+      return 1;
+    }
   }
   if (options.command === "listen" && !options.help) {
     try {

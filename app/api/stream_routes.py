@@ -7,6 +7,7 @@ import json
 import logging
 import time
 import uuid
+from collections import OrderedDict
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
@@ -146,6 +147,7 @@ def _event_allowed(event: dict[str, Any], principal: Principal, filters: StreamF
 
 
 def _orm_event(row: WorkspaceEvent) -> dict[str, Any]:
+    event_type = domain_event_type(row.source_table, row.action, row.payload)
     return {
         "id": row.id,
         "table": row.source_table,
@@ -162,9 +164,13 @@ def _orm_event(row: WorkspaceEvent) -> dict[str, Any]:
         "assigned_role": row.assigned_role,
         "locked_by_human": row.locked_by_human,
         "actor_stamp": (row.payload or {}).get("actor_stamp"),
-        "event_type": domain_event_type(
-            row.source_table, row.action, row.payload
-        ),
+        "event_type": event_type,
+        "type": row.type,
+        "targets": list(row.targets or []),
+        # Replay carries the details live frames carry, for presence changes
+        # only: other details (message bodies) stay out of replays.
+        **({"details": (row.payload or {}).get("details")}
+           if event_type == "AGENT_PRESENCE_CHANGED" else {}),
         "timestamp": row.created_at.isoformat(),
     }
 
@@ -218,6 +224,7 @@ def _frame(event: dict[str, Any]) -> str:
     )
 
 
+_SENT_MEMORY = 5_000
 _sse_lock = asyncio.Lock()
 _sse_total = 0
 _sse_by_principal: dict[str, int] = {}
@@ -310,9 +317,20 @@ async def _stream_events(
             f"data: {json.dumps({'workspace_id': str(principal.workspace.id)})}\n\n"
         )
 
+        # Ids are assigned at insert, but transactions commit in their own
+        # order: a later commit can carry a lower id. Dedupe by what was sent,
+        # never by "id <= highest seen", or concurrent writes are dropped.
+        sent: OrderedDict[int, None] = OrderedDict()
+
+        def remember(event_id: int) -> None:
+            sent[event_id] = None
+            while len(sent) > _SENT_MEMORY:
+                sent.popitem(last=False)
+
         if last_event_id is not None:
             for event in await _replay(principal, filters, last_event_id):
                 cursor = max(cursor, int(event["id"]))
+                remember(int(event["id"]))
                 yield _frame(event)
 
         while True:
@@ -343,13 +361,12 @@ async def _stream_events(
             except (TypeError, ValueError):
                 continue
             event_id = int(event.get("id") or 0)
-            if event_id <= cursor:
+            if event_id in sent:
                 continue
-            if not _event_allowed(event, principal, filters):
-                # Still advance the cursor; the client is not entitled to it.
-                cursor = max(cursor, event_id)
-                continue
+            remember(event_id)
             cursor = max(cursor, event_id)
+            if not _event_allowed(event, principal, filters):
+                continue  # the client is not entitled to it
             yield _frame(event)
 
 
