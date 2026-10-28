@@ -39,7 +39,12 @@
     ],
     "resources": [
       "../sidecar/bridge.mjs",
+      "../sidecar/daemon.mjs",
+      "../sidecar/describe.mjs",
+      "../sidecar/hide-console.mjs",
       "../sidecar/inventory.mjs",
+      "../sidecar/queue.mjs",
+      "../sidecar/wake.mjs",
       "../sidecar/package.json",
       "../sidecar/node_modules/**/*",
       "../sidecar/runtime/node.exe"

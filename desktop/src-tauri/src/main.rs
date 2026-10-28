@@ -10,8 +10,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -225,12 +230,11 @@ fn auto_wake(app: &AppHandle, agent: &str, event: &Value) {
         "Veynod 任务指派：{task_key}{title_part}。\n请先读取任务（get_task）、确认验收项与上下文，具备条件就认领并开始做；不要停在“等待开工”。这条唤起由本地 Loop 在任务指派时自动发出，幂等键 task:{task_key}。",
         title_part = if title.is_empty() { String::new() } else { format!("（{title}）") }
     );
-    let Ok(script) = sidecar_script(app) else {
+    let Ok(mut command) = sidecar_command(app) else {
         log_line(&format!("{agent}: auto-wake skipped, sidecar missing"));
         return;
     };
-    match Command::new(node_binary(app))
-        .arg(script)
+    match command
         .arg("--enqueue")
         .arg(&runtime)
         .arg(&cwd)
@@ -344,9 +348,46 @@ fn start_watchers(app: AppHandle) {
     }
 }
 
-fn node_binary(app: &AppHandle) -> String {
+/// Tauri returns Windows extended-length paths (`\\?\E:\...`). Node cannot
+/// use that form as a script argument, so strip the prefix before spawning.
+fn plain_path(path: &std::path::Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let raw = path.to_string_lossy();
+        if let Some(rest) = raw.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{rest}"));
+        }
+        if let Some(rest) = raw.strip_prefix(r"\\?\") {
+            return PathBuf::from(rest);
+        }
+    }
+    path.to_path_buf()
+}
+
+/// Tauri keeps the `..` segment of a resource path, so an installed Windows
+/// build stores the sidecar under `_up_/sidecar` while a plain resource dir
+/// uses `sidecar`. Check both before falling back to the dev checkout.
+fn sidecar_root(app: &AppHandle) -> Option<PathBuf> {
     if let Ok(resources) = app.path().resource_dir() {
-        let bundled = resources.join("sidecar").join("runtime").join("node.exe");
+        for candidate in [
+            resources.join("sidecar"),
+            resources.join("_up_").join("sidecar"),
+        ] {
+            if candidate.join("bridge.mjs").is_file() {
+                return Some(plain_path(&candidate));
+            }
+        }
+    }
+    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("sidecar");
+    if dev.join("bridge.mjs").is_file() {
+        return Some(plain_path(&dev));
+    }
+    None
+}
+
+fn node_binary(app: &AppHandle) -> String {
+    if let Some(root) = sidecar_root(app) {
+        let bundled = root.join("runtime").join("node.exe");
         if bundled.is_file() {
             return bundled.to_string_lossy().into_owned();
         }
@@ -355,21 +396,54 @@ fn node_binary(app: &AppHandle) -> String {
 }
 
 fn sidecar_script(app: &AppHandle) -> Result<PathBuf, String> {
-    if let Ok(resources) = app.path().resource_dir() {
-        let bundled = resources.join("sidecar").join("bridge.mjs");
-        if bundled.is_file() {
-            return Ok(bundled);
+    sidecar_root(app)
+        .map(|root| root.join("bridge.mjs"))
+        .ok_or_else(|| "the OAR sidecar (desktop/sidecar/bridge.mjs) is missing".into())
+}
+
+fn sidecar_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    sidecar_script(app)?
+        .parent()
+        .map(PathBuf::from)
+        .ok_or_else(|| "the OAR sidecar has no directory".to_string())
+}
+
+/// A console-subsystem binary started without a console gets one. The client
+/// is a windowed app, so every Node process it starts must ask Windows for no
+/// console; the preload repeats that for the runtime CLI children.
+fn hidden_node(app: &AppHandle, dir: &std::path::Path) -> Command {
+    let mut command = Command::new(node_binary(app));
+    #[cfg(windows)]
+    {
+        if dir.join("hide-console.mjs").is_file() {
+            command.arg("--import").arg("./hide-console.mjs");
         }
+        command.creation_flags(CREATE_NO_WINDOW);
     }
-    let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("sidecar")
-        .join("bridge.mjs");
-    if dev.is_file() {
-        Ok(dev)
-    } else {
-        Err("the OAR sidecar (desktop/sidecar/bridge.mjs) is missing".into())
+    command.current_dir(dir);
+    command
+}
+
+fn sidecar_command(app: &AppHandle) -> Result<Command, String> {
+    let script = sidecar_script(app)?;
+    let dir = script
+        .parent()
+        .map(PathBuf::from)
+        .ok_or_else(|| "the OAR sidecar has no directory".to_string())?;
+    let mut command = hidden_node(app, &dir);
+    command.arg(script);
+    Ok(command)
+}
+
+fn daemon_command(app: &AppHandle) -> Result<Command, String> {
+    let dir = sidecar_dir(app)?;
+    let daemon = dir.join("daemon.mjs");
+    if !daemon.is_file() {
+        return Err("the wake daemon (desktop/sidecar/daemon.mjs) is missing".into());
     }
+    let mut command = hidden_node(app, &dir);
+    command.arg(daemon);
+    Ok(command)
 }
 
 #[derive(Serialize)]
@@ -387,9 +461,8 @@ fn setup_state() -> SetupState {
 
 #[tauri::command]
 fn local_runtimes(app: AppHandle) -> Result<Value, String> {
-    let script = sidecar_script(&app)?;
-    let output = Command::new(node_binary(&app))
-        .arg(script)
+    let mut command = sidecar_command(&app)?;
+    let output = command
         .arg("--inventory")
         .output()
         .map_err(|error| format!("cannot start Node for the runtime inventory: {error}"))?;
@@ -402,9 +475,8 @@ fn local_runtimes(app: AppHandle) -> Result<Value, String> {
 
 #[tauri::command]
 fn test_wake(app: AppHandle, runtime: String, cwd: String, prompt: Option<String>) -> Result<Value, String> {
-    let script = sidecar_script(&app)?;
-    let output = Command::new(node_binary(&app))
-        .arg(script)
+    let mut command = sidecar_command(&app)?;
+    let output = command
         .arg("--wake")
         .arg(runtime)
         .arg(cwd)
@@ -423,10 +495,8 @@ fn test_wake(app: AppHandle, runtime: String, cwd: String, prompt: Option<String
 fn wake_enqueue(app: AppHandle, runtime: String, cwd: String, task_key: Option<String>,
                 urgent: bool, prompt: Option<String>, agent: Option<String>,
                 expected_fencing_token: Option<i64>, input_id: Option<String>) -> Result<Value, String> {
-    let script = sidecar_script(&app)?;
-    let mut command = Command::new(node_binary(&app));
+    let mut command = sidecar_command(&app)?;
     command
-        .arg(script)
         .arg("--enqueue")
         .arg(runtime)
         .arg(cwd)
@@ -583,9 +653,8 @@ fn local_status() -> Result<Value, String> {
 
 #[tauri::command]
 fn describe_runtime(app: AppHandle, runtime: String) -> Result<Value, String> {
-    let script = sidecar_script(&app)?;
-    let output = Command::new(node_binary(&app))
-        .arg(script)
+    let mut command = sidecar_command(&app)?;
+    let output = command
         .arg("--describe")
         .arg(runtime)
         .output()
@@ -769,23 +838,24 @@ fn main() {
                     .inner_size(980.0, 760.0)
                     .build();
             }
-            if let Ok(daemon) = sidecar_script(app.handle()).map(|path| path.with_file_name("daemon.mjs")) {
-                if daemon.is_file() {
-                    let _ = Command::new(node_binary(app.handle()))
-                        .arg(daemon)
+            match daemon_command(app.handle()) {
+                Ok(mut command) => {
+                    let _ = command
                         .spawn()
                         .map_err(|error| log_line(&format!("wake daemon failed: {error}")));
                     log_line("wake daemon started");
                 }
+                Err(error) => log_line(&format!("wake daemon skipped: {error}")),
             }
             start_watchers(app.handle().clone());
             Ok(())
         })
         .on_page_load(|webview, payload| {
             if let tauri::webview::PageLoadEvent::Finished = payload.event() {
-                // A desktop window should not present the web page's page-level
-                // scrollbars. Lock the document to the viewport; panels inside
-                // the dashboard keep their own scroll containers.
+                // A desktop window should not show page-level scrollbars, but
+                // the dashboard is taller than the window: clipping it hides
+                // whole panels. Keep vertical scrolling, hide the bar itself;
+                // panels inside the dashboard keep their own scroll containers.
                 let _ = webview.eval(
                     r#"(() => {
                         if (document.getElementById('veynod-native-shell')) return;
@@ -793,12 +863,13 @@ fn main() {
                         style.id = 'veynod-native-shell';
                         style.textContent = `
                             html, body {
-                                overflow: hidden !important;
+                                overflow-x: hidden !important;
                                 overscroll-behavior: none !important;
                                 scrollbar-width: none !important;
                             }
+                            html { overflow-y: auto !important; }
+                            body { overflow-y: visible !important; }
                             ::-webkit-scrollbar { width: 0 !important; height: 0 !important; display: none !important; }
-                            body { overscroll-behavior-y: none !important; }
                         `;
                         document.head && document.head.appendChild(style);
                     })();"#,
