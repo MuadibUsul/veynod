@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Veynod Vertical Promo</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700;900&family=JetBrains+Mono:wght@500;700&display=block" rel="stylesheet">
+<!--
+  Veynod 9:16 short (58s): one agent -> a team -> a diagram -> a loop -> a federation.
+  Same engine as promo.html: render(t) draws timestamp t (seconds). Open in a
+  browser to preview (?t=20 jumps), or run `node promo/render.js vertical`.
+  Key text stays inside y 180-1660 so short-video app overlays don't cover it.
+-->
+<style>
+  :root {
+    --bg: #07080d; --panel: #12161e; --raised: #171d27; --line: #232d3b;
+    --text: #eef2f8; --muted: #a7b3c5; --faint: #8a97a9;
+    --violet: #8B7CFF; --violet-soft: #c4b5fd; --indigo: #4f46e5;
+    --scout: #38d9f0; --analyst: #ffb547; --auditor: #4ade80; --executor: #ff6b9d;
+    --danger: #ff5370; --amber: #fcd34d; --ice: #9fe7ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1080px; height: 1920px; overflow: hidden; background: var(--bg); }
+  body { font-family: "Noto Sans SC", "WenQuanYi Zen Hei", sans-serif; color: var(--text); }
+  .mono { font-family: "JetBrains Mono", "Noto Sans SC", monospace; }
+  #stage { position: absolute; inset: 0; overflow: hidden; }
+  #bgglow, #stars { position: absolute; inset: 0; }
+  #grid { position: absolute; inset: -60px; opacity: .3;
+    background-image: linear-gradient(rgba(139,124,255,.09) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(139,124,255,.09) 1px, transparent 1px);
+    background-size: 60px 60px; }
+  #tint { position: absolute; inset: 0; background: radial-gradient(ellipse at center, rgba(255,40,70,0), rgba(255,40,70,.6)); opacity: 0; }
+  #flash { position: absolute; inset: 0; background: #fff; opacity: 0; }
+  .scene { position: absolute; inset: 0; display: none; }
+  .a { position: absolute; left: 0; top: 0; white-space: nowrap; }
+  .h1 { font-size: 100px; font-weight: 900; letter-spacing: 2px; }
+  .h2 { font-size: 56px; font-weight: 700; color: var(--muted); }
+  .cap { font-size: 46px; font-weight: 700; }
+  .caret::after { content: "▍"; color: var(--violet); }
+  .grad { background: linear-gradient(120deg, #fff 10%, var(--violet-soft) 50%, var(--violet) 90%); -webkit-background-clip: text; background-clip: text; color: transparent; }
+
+  /* bots */
+  .bot { width: 170px; height: 210px; }
+  .bot .ant { position: absolute; left: 81px; top: 0; width: 8px; height: 34px; background: var(--c); border-radius: 4px; opacity: .8; }
+  .bot .ant::before { content: ""; position: absolute; left: -8px; top: -14px; width: 24px; height: 24px; border-radius: 50%; background: var(--c); box-shadow: 0 0 24px var(--c); }
+  .bot .head { position: absolute; left: 0; top: 30px; width: 170px; height: 132px; border-radius: 40px;
+    background: linear-gradient(160deg, color-mix(in srgb, var(--c) 92%, white), color-mix(in srgb, var(--c) 70%, black));
+    box-shadow: 0 18px 50px color-mix(in srgb, var(--c) 35%, transparent), inset 0 -8px 0 rgba(0,0,0,.15); }
+  .bot .face { position: absolute; left: 20px; top: 22px; width: 130px; height: 84px; border-radius: 26px; background: #0b0f17; }
+  .bot .eye { position: absolute; top: 22px; width: 24px; height: 36px; border-radius: 12px; background: #fff; box-shadow: 0 0 14px var(--c); display: flex; align-items: center; justify-content: center; }
+  .bot .eye.l { left: 30px; } .bot .eye.r { right: 30px; }
+  .bot.happy .eye { height: 16px; top: 34px; border-radius: 16px 16px 4px 4px; }
+  .bot.dizzy .eye { background: none; box-shadow: none; color: #fff; font-size: 40px; font-weight: 900; text-shadow: 0 0 10px var(--c); }
+  .bot.dizzy .eye::after { content: "✕"; }
+  .mb { width: 46px; height: 38px; border-radius: 13px; background: var(--c); box-shadow: 0 0 18px var(--c); }
+  .mb::before, .mb::after { content: ""; position: absolute; top: 12px; width: 8px; height: 12px; border-radius: 4px; background: #0b0f17; }
+  .mb::before { left: 11px; } .mb::after { right: 11px; }
+
+  .card { background: var(--panel); border: 2px solid var(--line); border-radius: 26px; box-shadow: 0 30px 80px rgba(0,0,0,.55); }
+  .pill { display: inline-block; padding: 8px 22px; border-radius: 999px; font-size: 30px; font-weight: 700; }
+  .chip { padding: 14px 28px; border-radius: 18px; font-size: 38px; font-weight: 700; }
+  .bubble { padding: 20px 32px; border-radius: 28px; font-size: 40px; font-weight: 700; background: #fff; color: #111; }
+
+  #ladder { display: flex; gap: 14px; align-items: center; }
+  #ladder .st { padding: 10px 24px; border-radius: 999px; font-size: 30px; font-weight: 700; border: 2px solid var(--line); color: var(--faint); background: rgba(18,22,30,.8); }
+  #ladder .st.on { border-color: var(--violet); color: #fff; background: rgba(139,124,255,.25); box-shadow: 0 0 30px rgba(139,124,255,.5); }
+  #ladder .st.done { border-color: rgba(74,222,128,.5); color: var(--auditor); }
+  #ladder .ar { color: var(--faint); font-size: 26px; }
+
+  .tile { width: 450px; height: 210px; padding: 26px 30px; }
+  .tile .ti { font-size: 46px; font-weight: 900; }
+  .tile .td { font-size: 28px; color: var(--muted); margin-top: 12px; }
+
+  .node { width: 166px; height: 62px; border-radius: 16px; border: 3px solid #344156; background: #121824; font-size: 26px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center; color: var(--muted); }
+  .ring-st { padding: 12px 26px; border-radius: 20px; font-size: 34px; font-weight: 700; background: #141a26; border: 3px solid #344156; }
+  .host { padding: 12px 22px; border-radius: 18px; font-size: 30px; font-weight: 700; background: #141a26; border: 2px solid var(--line); }
+  .ws { width: 170px; height: 170px; border-radius: 50%; border: 4px solid var(--c); background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--c) 30%, #1a1d2e), #0d1018);
+    box-shadow: 0 0 50px color-mix(in srgb, var(--c) 40%, transparent); }
+  .ws .wl { position: absolute; top: 188px; left: 50%; transform: translateX(-50%); font-size: 32px; font-weight: 700; white-space: nowrap; }
+  .ws i { position: absolute; width: 18px; height: 18px; border-radius: 50%; background: var(--c); box-shadow: 0 0 12px var(--c); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="bgglow"></div>
+  <div id="grid"></div>
+  <canvas id="stars" width="1080" height="1920"></canvas>
+  <div id="scenes"></div>
+  <div id="ladder" class="a"><span class="st">地基</span><span class="ar">▸</span><span class="st">图</span><span class="ar">▸</span><span class="st">Loop</span><span class="ar">▸</span><span class="st">联邦</span></div>
+  <div id="tint"></div>
+  <div id="flash"></div>
+</div>
+<div id="glyphs" style="position:absolute;visibility:hidden;white-space:pre;top:0;left:0"></div>
+
+<script>
+const W = 1080, H = 1920, CX = 540;
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const lerp = (a, b, p) => a + (b - a) * p;
+const eo = x => 1 - Math.pow(1 - x, 3);
+const eio = x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const back = x => { const c1 = 1.9, c3 = c1 + 1; return x <= 0 ? 0 : 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+const rnd = s => { const x = Math.sin(s * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+const $ = id => document.getElementById(id);
+function place(el, x, y, s = 1, r = 0, o = 1) {
+  el.style.transform = `translate(${x}px,${y}px) translate(-50%,-50%) scale(${s}) rotate(${r}deg)`;
+  el.style.opacity = o;
+}
+const pop = (t, a, d = .45) => back(prog(t, a, a + d));
+const fade = (t, a, b, fi = .3, fo = .3) => Math.min(prog(t, a, a + fi), 1 - prog(t, b - fo, b));
+function type(el, str, p) {
+  const ch = Array.from(str), n = Math.floor(ch.length * clamp(p));
+  el.textContent = ch.slice(0, n).join('');
+  el.classList.toggle('caret', p > 0 && p < 1);
+}
+const COL = ['var(--scout)', 'var(--analyst)', 'var(--auditor)', 'var(--executor)', 'var(--violet)'];
+const bot = (id, color) => `<div id="${id}" class="a bot" style="--c:${color}"><div class="ant"></div>
+  <div class="head"><div class="face"><div class="eye l"></div><div class="eye r"></div></div></div></div>`;
+function mood(el, t, m = '', seed = 0) {
+  el.className = 'a bot' + (m ? ' ' + m : '');
+  const blink = !m && ((t + seed * .77) % 2.6) < .12;
+  el.querySelectorAll('.eye').forEach(e => e.style.transform = blink ? 'scaleY(.12)' : '');
+}
+const logo = (size, id = '') => `<svg ${id ? `id="${id}"` : ''} class="a" width="${size}" height="${size}" viewBox="0 0 64 64" fill="none">
+  <rect x="1" y="1" width="62" height="62" rx="18" fill="#141824" stroke="rgba(255,255,255,.12)"/>
+  <path d="M32 45 45 19" stroke="#8B7CFF" stroke-opacity=".3" stroke-width="13" stroke-linecap="round"/>
+  <path class="p1" d="M19 19 32 45" stroke="#E8EAF0" stroke-width="7" stroke-linecap="round" pathLength="1" stroke-dasharray="1 1"/>
+  <path class="p2" d="M32 45 45 19" stroke="#8B7CFF" stroke-width="7" stroke-linecap="round" pathLength="1" stroke-dasharray="1 1"/></svg>`;
+// Act header: big in the middle, then settles under the ladder.
+function header(el, sub, u, dur) {
+  const p = eio(prog(u, .55, 1.0));
+  place(el, CX, lerp(900, 330, p), lerp(1.35, 1, p) * pop(u, 0, .4), 0, 1 - prog(u, dur - .3, dur));
+  if (sub) place(sub, CX, 430, 1, 0, prog(u, .9, 1.2) * (1 - prog(u, dur - .3, dur)));
+}
+
+const scenes = [];
+function scene(a, b, html, render, opts = {}) {
+  const el = document.createElement('div');
+  el.className = 'scene';
+  el.innerHTML = html;
+  $('scenes').appendChild(el);
+  scenes.push({ a, b, el, render, fi: opts.fi ?? .25, fo: opts.fo ?? .25 });
+}
+
+// ============ S1: 1 agent -> 10 agents (0 - 3.2) ============
+const TEAM = Array.from({ length: 10 }, (_, i) => [140 + (i % 5) * 200, 1060 + Math.floor(i / 5) * 230]);
+scene(0, 3.2, `
+  <div id="s1n" class="a grad" style="font-size:300px;font-weight:900">1</div>
+  <div id="s1c" class="a h2" style="color:var(--text)">个 AI Agent</div>
+  ${TEAM.map((_, i) => bot('s1b' + i, COL[i % 5])).join('')}
+  <div id="s1l1" class="a cap" style="color:var(--muted)">能写代码，能查资料 ✨</div>
+  <div id="s1l2" class="a h1" style="font-size:84px">一起干活会怎样？</div>
+`, t => {
+  const ten = t > 1.5;
+  $('s1n').textContent = ten ? '10' : '1';
+  place($('s1n'), CX, 560, ten ? pop(t, 1.5, .4) : pop(t, 0, .4));
+  place($('s1c'), CX, 770, 1, 0, prog(t, .2, .5));
+  TEAM.forEach(([x, y], i) => {
+    const el = $('s1b' + i);
+    if (i === 0) {
+      const m = eio(prog(t, 1.5, 1.9));
+      place(el, lerp(CX, x, m), lerp(1150, y, m) + Math.sin(t * 4) * 8, lerp(1.1, .62, m) * pop(t, .25, .45));
+    } else place(el, x, y + Math.sin(t * 4 + i) * 8, .62 * pop(t, 1.6 + i * .06, .35));
+    mood(el, t, '', i);
+  });
+  place($('s1l1'), CX, 1500, 1, 0, fade(t, .6, 1.6, .2, .2));
+  place($('s1l2'), CX, 1560, pop(t, 2.0, .4));
+}, { fi: .01 });
+
+// ============ S2: chaos (3.2 - 7.2) ============
+const FAILS = [['✗ 互相覆盖', 'var(--executor)'], ['✗ 死锁', 'var(--amber)'], ['✗ 乒乓循环 ×99', 'var(--analyst)'], ['✗ 人类指令被覆盖', 'var(--scout)'], ['🚨 一把钥匙删光数据', 'var(--danger)']];
+scene(3.2, 7.2, `
+  ${TEAM.map((_, i) => bot('s2b' + i, COL[i % 5])).join('')}
+  ${FAILS.map(([s, c], i) => `<div id="s2f${i}" class="a chip" style="font-size:54px;padding:18px 36px;background:#16101a;border:4px solid ${c};color:${c}">${s}</div>`).join('')}
+`, t => {
+  const u = t - 3.2, heat = prog(u, 0, 3.6);
+  TEAM.forEach(([x, y], i) => {
+    const dx = Math.sin(t * (5 + i) + i) * 70 * heat, dy = Math.cos(t * (4 + i * .7)) * 50 * heat;
+    place($('s2b' + i), x + dx, y + dy, .62, Math.sin(t * 9 + i) * 25 * heat);
+    mood($('s2b' + i), t, u > 1.2 ? 'dizzy' : '', i);
+  });
+  FAILS.forEach((_, i) => place($('s2f' + i), CX + (rnd(i) - .5) * 160, 330 + i * 140, pop(u, .25 + i * .55, .3), (rnd(i + 4) - .5) * 12));
+  $('tint').style.opacity = heat * .6 + (u > 3.4 ? (Math.floor(t * 20) % 2) * .3 : 0);
+  const sh = heat * heat * 18 + (u > 3.4 ? 30 : 0);
+  $('scenes').style.transform = `translate(${(rnd(Math.floor(t * 30)) - .5) * sh}px,${(rnd(Math.floor(t * 30) + 9) - .5) * sh}px)`;
+  $('scenes').style.filter = u > 3.5 ? `hue-rotate(${rnd(Math.floor(t * 30)) * 180}deg) saturate(2)` : '';
+}, { fi: .01, fo: .01 });
+
+// ============ S3: brand (7.2 - 11) ============
+scene(7.2, 11, `
+  <div id="s3q" class="a h2" style="color:var(--text);font-size:64px"></div>
+  ${logo(320, 's3logo')}
+  <div id="s3name" class="a" style="font-size:170px;font-weight:900">Veynod</div>
+  <div id="s3t1" class="a" style="font-size:66px;font-weight:900;color:var(--violet-soft)">Agent 干活，人类把关。</div>
+  <div id="s3t2" class="a h2" style="font-size:44px">从一个团队，到一张 Agent 网络</div>
+`, t => {
+  const u = t - 7.2;
+  $('scenes').style.transform = ''; $('scenes').style.filter = ''; $('tint').style.opacity = 0;
+  type($('s3q'), '所以我们造了……', prog(u, .1, .7));
+  place($('s3q'), CX, 960, 1, 0, 1 - prog(u, .85, 1.0));
+  const L = $('s3logo');
+  place(L, CX, lerp(900, 640, eio(prog(u, 1.6, 2.1))), pop(u, 1.0, .5) * lerp(1.4, 1, eio(prog(u, 1.6, 2.1))));
+  L.querySelector('.p1').setAttribute('stroke-dashoffset', 1 - eo(prog(u, 1.05, 1.3)));
+  L.querySelector('.p2').setAttribute('stroke-dashoffset', 1 - eo(prog(u, 1.25, 1.5)));
+  const np = eo(prog(u, 1.9, 2.3));
+  place($('s3name'), CX, 920, 1, 0, np); $('s3name').style.letterSpacing = lerp(50, 4, np) + 'px';
+  place($('s3t1'), CX, 1090, pop(u, 2.3, .4));
+  place($('s3t2'), CX, 1200, 1, 0, prog(u, 2.8, 3.1));
+  $('flash').style.opacity = u > 1.0 ? .4 * (1 - prog(u, 1.0, 1.25)) : 0;
+}, { fi: .01 });
+
+// ============ S4: foundation (11 - 17) ============
+const BASE = [['📄 共享黑板', '版本化 · 可验证 · 污点追踪'], ['📋 任务租约', '原子认领 · 心跳续期'], ['⚡ 熔断器', '死循环自动升级给人'],
+  ['🔒 主权锁', '人锁住的，Agent 改不动'], ['📡 实时事件', 'Postgres → SSE，零轮询'], ['↶ 批量撤销', '全程审计，整批回滚']];
+scene(11, 17, `
+  <div id="s4h" class="a h1">地基，已经打好</div>
+  <div id="s4s" class="a h2" style="font-size:40px">v3.21 · 已上线 · 每天自用</div>
+  ${BASE.map(([a, b], i) => `<div id="s4t${i}" class="a card tile"><div class="ti">${a}</div><div class="td">${b}</div></div>`).join('')}
+  <div id="s4slab" class="a" style="width:940px;height:110px;border-radius:24px;background:linear-gradient(90deg,#1c2433,#232d3f);border:3px solid rgba(74,222,128,.5);display:flex;align-items:center;justify-content:center;font-size:44px;font-weight:900;color:var(--auditor)">✓ 地基 · 6 大能力</div>
+`, t => {
+  const u = t - 11;
+  header($('s4h'), $('s4s'), u, 6);
+  const sink = eio(prog(u, 4.9, 5.5));
+  BASE.forEach((_, i) => {
+    const x = 300 + (i % 2) * 480, y = 720 + Math.floor(i / 2) * 250;
+    place($('s4t' + i), lerp(x, CX, sink), lerp(y, 1560, sink), pop(u, 1.1 + i * .35, .4) * lerp(1, .25, sink), 0, 1 - sink * .9);
+  });
+  place($('s4slab'), CX, 1560, lerp(.6, 1, eo(prog(u, 5.2, 5.5))), 0, prog(u, 5.2, 5.4));
+});
+
+// ============ S5: the diagram (17 - 29) ============
+const GCOLS = [['接口契约', '数据模型', '配置'], ['行情抓取', '存储层', '鉴权', '日志', '调度器'], ['回测引擎', '指标库', '风控', '缓存', '任务队列', '告警'], ['策略 API', '报表', '前端', '通知', '权限'], ['集成测试', '部署', '文档']];
+const RED = '2-2';
+const G = [];
+GCOLS.forEach((col, c) => col.forEach((label, j) => {
+  const parents = c ? [Math.floor(j * GCOLS[c - 1].length / col.length)] : [];
+  if (c && rnd(c * 10 + j) > .45) parents.push((parents[0] + 1) % GCOLS[c - 1].length);
+  G.push({ id: c + '-' + j, c, j, label, x: 120 + c * 210, y: 1000 + (j - (col.length - 1) / 2) * 104, parents: [...new Set(parents)].map(p => (c - 1) + '-' + p) });
+}));
+const GN = Object.fromEntries(G.map(n => [n.id, n]));
+G.forEach(n => {  // dispatch when every input is merged; a chunk takes 0.5-0.8s, the red one trips the breaker first
+  n.d = n.parents.length ? Math.max(...n.parents.map(p => GN[p].m)) + .15 : 22.7 + n.j * .06;
+  n.m = n.d + (n.id === RED ? 1.7 : .5 + rnd(n.c * 7 + n.j) * .3);
+});
+const G_DONE = Math.max(...G.map(n => n.m));
+const STATUS = [[19.7, '规划者 Agent 起草依赖图…'], [21.4, '人类：确认 ✓ → 冻结 ❄'], [22.6, '派发：一个 chunk，一个 Agent'], [24.5, '⚡ 风控连续被拒 → 熔断，换人重做'], [25.6, '上游合并 → 下游自动解锁'], [G_DONE, '✓ 全图合并']];
+scene(17, 29, `
+  <div id="s5h" class="a h1">第一层 · <span class="grad">图</span></div>
+  <div id="s5s" class="a h2" style="font-size:40px">一句话需求 → 一张可执行的依赖图</div>
+  <div id="s5req" class="a bubble" style="font-size:44px">🧑‍💻「<span id="s5rt"></span>」</div>
+  <div id="s5cnt" class="a mono" style="font-size:40px;font-weight:700"></div>
+  <svg id="s5svg" class="a" width="${W}" height="${H}" style="transform:none;left:0;top:0">
+    ${G.flatMap(n => n.parents.map(p => { const a = GN[p]; return `<path id="e${p}_${n.id}" d="M${a.x + 83} ${a.y} C${a.x + 140} ${a.y} ${n.x - 140} ${n.y} ${n.x - 83} ${n.y}" fill="none" stroke-width="4" pathLength="1" stroke-dasharray="1 1"/>`; })).join('')}
+  </svg>
+  ${G.map(n => `<div id="n${n.id}" class="a node">${n.label}</div>`).join('')}
+  ${G.map((n, i) => `<div id="m${n.id}" class="a mb" style="--c:${COL[i % 5]}"></div>`).join('')}
+  <div id="s5frz" class="a" style="font-size:150px">❄</div>
+  <div id="s5st" class="a cap"></div>
+  <div id="s5ok" class="a chip" style="background:var(--auditor);color:#06260f">✓ 确认</div>
+  <div id="s5fz" class="a chip" style="background:var(--ice);color:#06202b">❄ 冻结</div>
+  ${['契约先行', '文件锁', 'CI 门禁', '合并队列', '实现者不能自合并'].map((s, i) => `<div id="s5r${i}" class="a pill" style="background:rgba(139,124,255,.18);color:var(--violet-soft);font-size:32px;border:2px solid rgba(139,124,255,.4)">${s}</div>`).join('')}
+  <div id="s5scale" class="a mono" style="font-size:30px;color:var(--faint)">实测：30 chunk · 30 Agent · 20 个同时认领</div>
+`, t => {
+  const u = t - 17;
+  header($('s5h'), $('s5s'), u, 12);
+  type($('s5rt'), '做一个量化回测平台', prog(t, 18.2, 19.1));
+  place($('s5req'), CX, 560, pop(t, 18.0, .35), 0, 1 - prog(t, 21.2, 21.5));
+  // graph
+  const frozen = t > 22.1;
+  G.forEach(n => {
+    const el = $('n' + n.id), appear = pop(t, 19.7 + n.c * .3 + n.j * .05, .35);
+    const st = t >= n.m ? 'merged' : t >= n.d ? (n.id === RED && t < n.d + 1.0 && t > n.d + .35 ? 'red' : 'work') : 'idle';
+    el.style.borderColor = { idle: frozen ? 'rgba(159,231,255,.6)' : '#344156', work: 'var(--violet)', red: 'var(--danger)', merged: 'var(--auditor)' }[st];
+    el.style.background = { idle: '#121824', work: '#1d1a3a', red: '#3a1420', merged: '#123122' }[st];
+    el.style.color = { idle: 'var(--muted)', work: '#fff', red: 'var(--danger)', merged: 'var(--auditor)' }[st];
+    el.style.boxShadow = st === 'work' ? '0 0 28px rgba(139,124,255,.6)' : st === 'red' ? '0 0 34px rgba(255,83,112,.8)' : 'none';
+    const jit = st === 'red' ? Math.sin(t * 70) * 5 : 0;
+    place(el, n.x + jit, n.y, appear * (st === 'merged' && t < n.m + .25 ? 1 + .15 * Math.sin(prog(t, n.m, n.m + .25) * Math.PI) : 1));
+    // its agent flies in on dispatch, leaves on merge (the red chunk gets a second agent)
+    const mb = $('m' + n.id), seed = n.c * 13 + n.j;
+    const fly = eo(prog(t, n.d - .35, n.d));
+    const sx = rnd(seed) > .5 ? -60 : W + 60, sy = 600 + rnd(seed + 3) * 1000;
+    place(mb, lerp(sx, n.x - 80, fly), lerp(sy, n.y - 34, fly) + Math.sin(t * 12 + seed) * 4, .9, 0, t > n.d - .35 && t < n.m + .1 ? 1 : 0);
+    if (n.id === RED) mb.style.setProperty('--c', t > n.d + 1.0 ? 'var(--auditor)' : COL[seed % 5]);
+  });
+  G.forEach(n => n.parents.forEach(p => {
+    const e = $('e' + p + '_' + n.id);
+    e.setAttribute('stroke-dashoffset', 1 - eo(prog(t, 20.2 + n.c * .3, 20.7 + n.c * .3)));
+    e.setAttribute('stroke', t >= n.m ? 'rgba(74,222,128,.7)' : t >= n.d ? 'rgba(139,124,255,.9)' : frozen ? 'rgba(159,231,255,.35)' : '#3a475c');
+  }));
+  const fp = prog(t, 22.0, 22.6);
+  place($('s5frz'), CX, 1000, lerp(.5, 2.2, fp), fp * 40, Math.sin(fp * Math.PI) * .9);
+  $('flash').style.opacity = t > 22.0 && t < 22.3 ? .25 * (1 - prog(t, 22.0, 22.3)) : 0;
+  // status + controls
+  let k = 0; STATUS.forEach(([at], i) => { if (t >= at) k = i; });
+  $('s5st').textContent = STATUS[k][1];
+  $('s5st').style.color = k === 3 ? 'var(--danger)' : k === 5 ? 'var(--auditor)' : 'var(--text)';
+  place($('s5st'), CX, 1420, 1 + .08 * (1 - prog(t, STATUS[k][0], STATUS[k][0] + .25)), 0, prog(t, 19.7, 19.9));
+  place($('s5ok'), 360, 1540, pop(t, 21.3, .3) * (t > 21.55 && t < 21.7 ? .9 : 1), 0, 1 - prog(t, 22.5, 22.7));
+  place($('s5fz'), 720, 1540, pop(t, 21.5, .3) * (t > 21.95 && t < 22.1 ? .9 : 1), 0, 1 - prog(t, 22.5, 22.7));
+  const merged = G.filter(n => t >= n.m).length;
+  $('s5cnt').innerHTML = `合并 <span style="color:var(--auditor)">${merged}</span> / ${G.length} · 在岗 Agent <span style="color:var(--violet-soft)">${G.filter(n => t >= n.d && t < n.m).length}</span>`;
+  place($('s5cnt'), CX, 560, 1, 0, prog(t, 22.6, 22.9));
+  [0, 1, 2, 3, 4].forEach(i => place($('s5r' + i), [250, 540, 830, 330, 750][i], i < 3 ? 1530 : 1610, pop(t, 26.2 + i * .15, .35)));
+  place($('s5scale'), CX, 1356, 1, 0, prog(t, 27.4, 27.7));
+});
+
+// ============ S6: the loop (29 - 41) ============
+const RING = ['认领', '编码', 'CI 门禁', '审查', '部署', '验收'];
+const HOSTS = [['☁️ VPS', 150, 760], ['🍎 macOS', 930, 760], ['🪟 Windows', 150, 1360], ['🍓 树莓派', 930, 1360]];
+const QS = [['用 Redis 还是 PG？', false], ['变量名叫啥？', false], ['💰 花 $200 买行情 API？', true], ['要不要多加测试？', false]];
+const RC = [CX, 1060], RR = 280;
+scene(29, 41, `
+  <div id="s6h" class="a h1">第二层 · <span class="grad">Loop</span></div>
+  <div id="s6s" class="a h2" style="font-size:40px">让团队 7×24 自己转起来</div>
+  <div id="s6mode" class="a" style="display:flex;gap:0;border:3px solid var(--line);border-radius:22px;overflow:hidden;background:#11151e">
+    ${['手动', '半自动', '全自动'].map((s, i) => `<div id="s6m${i}" style="padding:16px 34px;font-size:36px;font-weight:700">${s}</div>`).join('')}</div>
+  <div id="s6world">
+    <svg id="s6svg" class="a" width="${W}" height="${H}" style="left:0;top:0;transform:none">
+      <circle cx="${RC[0]}" cy="${RC[1]}" r="${RR}" fill="none" stroke="#283245" stroke-width="10"/>
+      <circle id="s6arc" cx="${RC[0]}" cy="${RC[1]}" r="${RR}" fill="none" stroke="url(#s6g)" stroke-width="10" stroke-linecap="round" pathLength="1" stroke-dasharray=".18 .82" transform="rotate(-90 ${RC[0]} ${RC[1]})"/>
+      <defs><linearGradient id="s6g"><stop offset="0" stop-color="#8B7CFF" stop-opacity="0"/><stop offset="1" stop-color="#c4b5fd"/></linearGradient></defs>
+    </svg>
+    ${RING.map((s, i) => `<div id="s6r${i}" class="a ring-st">${s}</div>`).join('')}
+    <div id="s6core" class="a" style="text-align:center"><div id="s6clock" class="mono" style="font-size:64px;font-weight:700"></div>
+      <div style="font-size:30px;color:var(--muted)">🌙 你在睡觉</div><div id="s6done" style="font-size:36px;font-weight:700;color:var(--auditor);margin-top:10px"></div></div>
+    <div id="s6roll" class="a pill" style="background:rgba(252,211,77,.15);color:var(--amber);font-size:30px">↺ 先备份 · 冒烟失败自动回滚</div>
+    ${HOSTS.map(([s], i) => `<div id="s6h${i}" class="a host">${s}</div>`).join('')}
+    <div id="s6hc" class="a" style="font-size:30px;color:var(--muted)">任何能跑 Claude Code / Codex 的电脑都能加入</div>
+  </div>
+  <!-- questions filter -->
+  <div id="s6bar" class="a" style="width:980px;height:16px;border-radius:8px;background:linear-gradient(90deg,var(--violet),var(--scout));box-shadow:0 0 30px rgba(139,124,255,.8)"></div>
+  <div id="s6bl" class="a" style="font-size:32px;font-weight:700;color:var(--violet-soft)">技术问题：按安全默认值，自己定</div>
+  ${QS.map(([s, big], i) => `<div id="s6q${i}" class="a bubble" style="font-size:36px;${big ? 'background:var(--amber)' : ''}">${s}</div><div id="s6qa${i}" class="a pill" style="background:rgba(74,222,128,.18);color:var(--auditor)">✓ 已自行决定</div>`).join('')}
+  <div id="s6phone" class="a card" style="width:860px;padding:30px 36px;border-color:var(--amber)">
+    <div style="font-size:30px;color:var(--amber);font-weight:700">🔔 需要你决定</div>
+    <div style="font-size:44px;font-weight:900;margin-top:10px">花 $200 购买行情 API？</div>
+    <div style="display:flex;gap:20px;margin-top:22px"><span class="chip" style="background:var(--auditor);color:#06260f;font-size:32px">批准</span><span class="chip" style="background:#2a3445;font-size:32px">拒绝</span></div></div>
+  <div id="s6only" class="a cap" style="font-size:40px;text-align:center;line-height:1.5">只有 <span style="color:var(--amber)">钱 · 身份 · 法务 · 删数据 · 对外承诺</span><br>才会来找你</div>
+  <!-- heartbeat -->
+  <svg id="s6ecg" class="a" width="960" height="240" viewBox="0 0 960 240"><path id="s6ep" fill="none" stroke="var(--auditor)" stroke-width="7" stroke-linejoin="round"/></svg>
+  <div id="s6el" class="a cap" style="font-size:46px">Loop 停了？<span style="color:var(--danger)">90 秒内必知</span></div>
+  <div id="s6alert" class="a chip mono" style="background:rgba(255,83,112,.15);border:3px solid var(--danger);color:var(--danger);font-size:32px">⚠ agent.presence → offline · 82s</div>
+`, t => {
+  const u = t - 29;
+  header($('s6h'), $('s6s'), u, 12);
+  // automation mode switch
+  const mode = t < 30.4 ? 0 : t < 30.9 ? 1 : 2;
+  [0, 1, 2].forEach(i => { const m = $('s6m' + i); m.style.background = i === mode ? (i === 2 ? 'var(--violet)' : '#2a3445') : 'transparent'; m.style.color = i === mode ? '#fff' : 'var(--faint)'; });
+  place($('s6mode'), CX, 560, pop(t, 29.9, .35) * (t > 30.85 && t < 31 ? 1.08 : 1), 0, 1 - prog(t, 35.6, 35.9));
+  // ring world (dims for the questions, returns for the heartbeat)
+  const dim = 1 - Math.min(prog(t, 35.6, 35.9), 1 - prog(t, 38.9, 39.2));
+  const wo = prog(t, 30.9, 31.4) * dim * (1 - prog(t, 39, 39.3));
+  $('s6world').style.opacity = wo;
+  const speed = u => u < 2 ? 0 : (u - 2) * .45 + Math.pow(Math.max(0, u - 2), 2) * .06;  // laps
+  const laps = speed(u), ang = laps * 2 * Math.PI;
+  $('s6arc').setAttribute('transform', `rotate(${-90 + laps * 360} ${RC[0]} ${RC[1]})`);
+  RING.forEach((_, i) => {
+    const a = -Math.PI / 2 + i * Math.PI / 3, el = $('s6r' + i);
+    const lit = laps > 0 && Math.abs(((laps * 6 - i) % 6 + 6) % 6 - 5.5) < .7;
+    el.style.borderColor = lit ? 'var(--violet)' : '#344156'; el.style.boxShadow = lit ? '0 0 30px rgba(139,124,255,.8)' : 'none';
+    place(el, RC[0] + Math.cos(a) * RR, RC[1] + Math.sin(a) * RR, pop(t, 31.0 + i * .08, .35) * (lit ? 1.08 : 1));
+  });
+  const mins = Math.floor(lerp(0, 270, prog(t, 31.2, 39)));
+  $('s6clock').textContent = `0${3 + Math.floor(mins / 60)}:${String(mins % 60).padStart(2, '0')}`;
+  $('s6done').textContent = `已交付 ${Math.floor(laps)} · 已部署 ${Math.floor(laps * .6)}`;
+  place($('s6core'), RC[0], RC[1], pop(t, 31.3, .4));
+  const rb = (laps % 1);
+  place($('s6roll'), CX, RC[1] + RR + 110, 1, 0, laps > 1 && rb > .55 && rb < .95 ? 1 : 0);
+  HOSTS.forEach(([, x, y], i) => place($('s6h' + i), x, y + Math.sin(t * 2 + i) * 10, pop(t, 32.2 + i * .45, .35)));
+  place($('s6hc'), CX, 1500, 1, 0, prog(t, 33.4, 33.7));
+  // question filter (35.9 - 39)
+  const qOn = t > 35.8 && t < 39.1;
+  place($('s6bar'), CX, 1000, 1, 0, qOn ? prog(t, 35.8, 36.0) * (1 - prog(t, 38.8, 39.0)) : 0);
+  place($('s6bl'), CX, 1060, 1, 0, qOn ? prog(t, 35.9, 36.1) * (1 - prog(t, 38.8, 39.0)) : 0);
+  QS.forEach(([, big], i) => {
+    // technical questions bounce off the bar and settle; the money question goes through to the owner
+    const t0 = 36.0 + i * .45, p = prog(t, t0, t0 + .55), x = [290, 790, CX, CX][i], rest = [1180, 1180, 0, 1330][i];
+    const el = $('s6q' + i), ok = $('s6qa' + i);
+    let y, o = qOn && t > t0 ? 1 : 0;
+    if (big) y = t < t0 + .55 ? lerp(1450, 1000, eio(p)) : lerp(1000, 640, eo(prog(t, t0 + .55, t0 + .9)));
+    else y = p < .7 ? lerp(1450, 1030, eo(p / .7)) : lerp(1030, rest, eo((p - .7) / .3));
+    if (big) o *= 1 - prog(t, t0 + .8, t0 + .95);
+    place(el, x, y, 1, (rnd(i) - .5) * 8, o * (1 - prog(t, 38.8, 39.0)));
+    place(ok, x + 150, rest - 50, pop(t, t0 + .55, .3), 6, !big && qOn ? 1 - prog(t, 38.8, 39.0) : 0);
+  });
+  place($('s6phone'), CX, 620, pop(t, 37.85, .35), 0, qOn ? 1 - prog(t, 38.8, 39.0) : 0);
+  place($('s6only'), CX, 1560, 1, 0, qOn ? prog(t, 37.4, 37.7) * (1 - prog(t, 38.8, 39.0)) : 0);
+  // heartbeat (39.1 - 41)
+  const hp = prog(t, 39.1, 40.6), pts = [];
+  for (let x = 0; x <= 960; x += 8) {
+    const ph = x / 960; let y = 120;
+    if (ph < hp) { const local = (x % 240) / 240; if (ph < .6) y = 120 - (local > .4 && local < .46 ? 90 : local > .46 && local < .52 ? -60 : 0); }
+    else continue;
+    pts.push(`${x},${y}`);
+  }
+  $('s6ep').setAttribute('d', pts.length ? 'M' + pts.join(' L') : '');
+  $('s6ep').setAttribute('stroke', hp > .62 ? 'var(--danger)' : 'var(--auditor)');
+  place($('s6ecg'), CX, 1000, 1, 0, prog(t, 39.1, 39.3));
+  place($('s6el'), CX, 760, 1, 0, prog(t, 39.2, 39.4));
+  place($('s6alert'), CX, 1250, pop(t, 40.25, .3));
+}, { fo: .2 });
+
+// ============ S7: the federation (41 - 53) ============
+const WS = [['设计工作室', 210, 640, 'var(--executor)'], ['量化团队', 870, 640, 'var(--analyst)'], ['翻译社', 170, 1060, 'var(--scout)'],
+  ['安全审计所', 910, 1060, 'var(--auditor)'], ['数据实验室', 250, 1470, 'var(--amber)'], ['开源社区', 830, 1470, 'var(--violet-soft)']];
+const ME = [CX, 1000], AUDIT = 3;
+const MANY = Array.from({ length: 150 }, (_, i) => {
+  const a = rnd(i + 50) * Math.PI * 2, r = 260 + Math.sqrt(rnd(i + 90)) * 1150;
+  return [ME[0] + Math.cos(a) * r * .75, ME[1] + Math.sin(a) * r, COL[i % 5]];
+});
+scene(41, 53, `
+  <div id="s7many">
+    <svg class="a" width="${W}" height="${H}" style="left:0;top:0;transform:none">
+      ${MANY.map(([x, y], i) => { const [x2, y2] = i ? MANY[Math.floor(rnd(i + 7) * i)] : ME; return `<line x1="${x}" y1="${y}" x2="${x2}" y2="${y2}" stroke="rgba(139,124,255,.22)" stroke-width="2"/>`; }).join('')}
+    </svg>
+    ${MANY.map(([, , c], i) => `<div id="mn${i}" class="a" style="width:22px;height:22px;border-radius:50%;background:${c};box-shadow:0 0 14px ${c}"></div>`).join('')}
+  </div>
+  <div id="s7world">
+    <svg class="a" width="${W}" height="${H}" style="left:0;top:0;transform:none">
+      ${WS.map(([, x, y], i) => `<line id="s7l${i}" x1="${ME[0]}" y1="${ME[1]}" x2="${x}" y2="${y}" stroke-width="4" stroke-dasharray="12 12"/>`).join('')}
+      ${WS.map(([, x, y], i) => `<line id="s7k${i}" x1="${x}" y1="${y}" x2="${WS[(i + 2) % 6][1]}" y2="${WS[(i + 2) % 6][2]}" stroke="rgba(139,124,255,.18)" stroke-width="3"/>`).join('')}
+    </svg>
+    ${WS.map(([n, , , c], i) => `<div id="s7w${i}" class="a ws" style="--c:${c}"><i></i><i></i><i></i><div class="wl">${n}</div></div>`).join('')}
+    <div id="s7me" class="a ws" style="--c:var(--violet);width:230px;height:230px;border-width:6px"><i></i><i></i><i></i><i></i>
+      <div class="wl" style="top:248px;color:var(--violet-soft);font-size:36px">你的工作区</div></div>
+    <div id="s7ring" class="a" style="width:560px;height:560px;border-radius:50%;border:10px solid #8B7CFF;box-shadow:0 0 50px rgba(139,124,255,.6)"></div>
+    <div id="s7env" class="a" style="font-size:80px">🔏</div>
+    <div id="s7ret" class="a" style="font-size:80px">📦</div>
+  </div>
+  <div id="s7h" class="a h1">第三层 · <span class="grad">联邦</span></div>
+  <div id="s7s" class="a pill" style="background:rgba(252,211,77,.14);color:var(--amber);border:2px solid rgba(252,211,77,.5);font-size:32px">🚧 建设中 · 架构已定</div>
+  <div id="s7grant" class="a card" style="width:760px;padding:32px 40px;border-color:var(--auditor)">
+    <div style="font-size:30px;color:var(--auditor);font-weight:700">🤝 方向性授权 → 安全审计所</div>
+    <div style="font-size:38px;margin-top:16px;line-height:1.6">✓ 审查 <span class="mono">repo:api</span><br><span style="color:var(--faint)">✗ 写入　✗ 再委派</span><br>⏱ 7 天后到期 · 随时撤销</div></div>
+  <div id="s7rc" class="a card" style="width:760px;padding:28px 40px;border-color:var(--amber)">
+    <div style="font-size:30px;color:var(--amber);font-weight:700">🧾 成本收据</div>
+    <div style="font-size:36px;margin-top:12px;line-height:1.6">对方用自己的算力 · 不借你的密钥<br><span style="color:var(--muted);font-size:30px">签名信封 · 至少一次投递 · 去重</span></div></div>
+  <div id="s7big" class="a" style="text-align:center"><div class="h1" style="font-size:88px;line-height:1.3">跨组织的<br><span class="grad">Agent 协作网络</span></div></div>
+`, t => {
+  const u = t - 41;
+  header($('s7h'), null, u, 12);
+  place($('s7s'), CX, 430, pop(t, 41.9, .35), 0, 1 - prog(t, 52.7, 53));
+  // the loop ring collapses into "your workspace"
+  const cp = eio(prog(t, 41.0, 41.9));
+  place($('s7ring'), ME[0], ME[1], lerp(1, .41, cp), 0, 1 - prog(t, 41.7, 42.0));
+  place($('s7me'), ME[0], ME[1], pop(t, 41.75, .4) * (1 + .04 * Math.sin(t * 4)));
+  const zoom = lerp(1, .5, eio(prog(t, 50.3, 51.6)));
+  $('s7world').style.transform = `translate(${ME[0]}px,${ME[1]}px) scale(${zoom}) translate(${-ME[0]}px,${-ME[1]}px)`;
+  const focus = t > 44.6 && t < 50.3;
+  WS.forEach(([, x, y], i) => {
+    const w = $('s7w' + i);
+    place(w, x, y + Math.sin(t * 1.5 + i) * 8, pop(t, 42.4 + i * .22, .4), 0, focus && i !== AUDIT ? .3 : 1);
+    w.querySelectorAll('i').forEach((d, k) => {
+      const a = t * (1.2 + k * .3) + k * 2.1 + i;
+      d.style.left = 76 + Math.cos(a) * 62 + 'px'; d.style.top = 76 + Math.sin(a) * 62 + 'px';
+      d.style.background = i === AUDIT && t > 48.2 && t < 49.6 ? '#fff' : '';
+    });
+    const l = $('s7l' + i);
+    const linked = t > 44.6 && i === AUDIT;
+    l.setAttribute('stroke', linked ? 'var(--auditor)' : 'rgba(139,124,255,.35)');
+    l.setAttribute('stroke-dashoffset', -t * 40);
+    l.setAttribute('opacity', prog(t, 42.6 + i * .22, 43 + i * .22) * (focus && !linked ? .3 : 1));
+    $('s7k' + i).setAttribute('opacity', prog(t, 43.8, 44.3) * (focus ? .3 : 1));
+  });
+  $('s7me').querySelectorAll('i').forEach((d, k) => {
+    const a = t * (1 + k * .25) + k * 1.6;
+    d.style.left = 100 + Math.cos(a) * 82 + 'px'; d.style.top = 100 + Math.sin(a) * 82 + 'px';
+  });
+  place($('s7grant'), CX, 1440, pop(t, 45.0, .4), 0, 1 - prog(t, 47.4, 47.7));
+  // signed envelope out, result + receipt back
+  const [ax, ay] = [WS[AUDIT][1], WS[AUDIT][2]];
+  const go = eio(prog(t, 47.6, 48.2)), back_ = eio(prog(t, 49.5, 50.1));
+  place($('s7env'), lerp(ME[0], ax, go), lerp(ME[1], ay, go) - Math.sin(go * Math.PI) * 160, 1, (go - .5) * 30, t > 47.5 && t < 48.25 ? 1 : 0);
+  place($('s7ret'), lerp(ax, ME[0], back_), lerp(ay, ME[1], back_) - Math.sin(back_ * Math.PI) * 160, 1, 0, t > 49.45 && t < 50.15 ? 1 : 0);
+  place($('s7rc'), CX, 1440, pop(t, 50.0, .4), 0, 1 - prog(t, 50.9, 51.2));
+  // zoom out: a whole network appears
+  MANY.forEach(([x, y], i) => {
+    const p = pop(t, 50.6 + rnd(i + 31) * 1.4, .4);
+    place($('mn' + i), ME[0] + (x - ME[0]) * zoom, ME[1] + (y - ME[1]) * zoom, p * (.6 + .4 * Math.sin(t * 3 + i)));
+  });
+  $('s7many').style.opacity = prog(t, 50.6, 51.2);
+  $('s7many').querySelector('svg').style.transform = `translate(${ME[0]}px,${ME[1]}px) scale(${zoom}) translate(${-ME[0]}px,${-ME[1]}px)`;
+  place($('s7big'), CX, 1500, pop(t, 51.2, .45));
+});
+
+// ============ S8: call to action (53 - 58) ============
+const STEPS = ['一个 Agent', '一个团队', '一张图', '一个 Loop', '一张网'];
+scene(53, 58, `
+  ${STEPS.map((s, i) => `<div id="s8s${i}" class="a" style="font-size:${64 + i * 10}px;font-weight:900;${i === 4 ? '' : 'color:var(--muted)'}">${i === 4 ? `<span class="grad">${s}</span>` : s}</div>`).join('')}
+  ${logo(170, 's8logo')}
+  <div id="s8name" class="a" style="font-size:96px;font-weight:900">Veynod</div>
+  <div id="s8url" class="a" style="font-size:56px;font-weight:700">veynod.com<span style="color:var(--violet)">/demo</span></div>
+  <div id="s8cmd" class="a mono" style="font-size:32px;color:var(--muted);background:#0b0e15;border:2px solid var(--line);border-radius:16px;padding:14px 26px">$ docker compose up -d</div>
+`, t => {
+  const u = t - 53;
+  STEPS.forEach((_, i) => place($('s8s' + i), CX, 400 + i * 120, pop(u, .1 + i * .32, .35), 0, 1));
+  const L = $('s8logo');
+  L.querySelectorAll('path').forEach(p => p.setAttribute('stroke-dashoffset', 0));
+  place(L, CX, 1150, pop(u, 2.0, .45));
+  place($('s8name'), CX, 1320, 1, 0, prog(u, 2.3, 2.6));
+  place($('s8url'), CX, 1440, pop(u, 2.6, .4));
+  place($('s8cmd'), CX, 1550, 1, 0, prog(u, 3.0, 3.3));
+}, { fo: .01 });
+
+// ============ driver ============
+const DURATION = 58;
+const sctx = $('stars').getContext('2d');
+const STARS = Array.from({ length: 160 }, (_, i) => [rnd(i) * W, rnd(i + 400) * H, .5 + rnd(i + 800) * 1.8]);
+function render(t) {
+  const red = t > 3.2 && t < 7.2;
+  const fed = prog(t, 41, 43) * (1 - prog(t, 53.5, 55));
+  $('bgglow').style.background = red
+    ? `radial-gradient(ellipse at 50% 55%, rgba(255,60,90,.2), transparent 60%), var(--bg)`
+    : `radial-gradient(ellipse at ${50 + Math.sin(t * .4) * 20}% ${45 + Math.cos(t * .3) * 12}%, rgba(139,124,255,${.2 + fed * .1}), transparent 60%), var(--bg)`;
+  $('grid').style.transform = `translate(${(t * 12) % 60}px,${(t * 8) % 60}px)`;
+  $('grid').style.opacity = .3 * (1 - fed);
+  // starfield fades in for the federation act
+  sctx.clearRect(0, 0, W, H);
+  if (fed > 0) STARS.forEach(([x, y, r], i) => {
+    sctx.globalAlpha = fed * (.35 + .4 * Math.sin(t * 2 + i));
+    sctx.fillStyle = '#c4b5fd';
+    sctx.beginPath(); sctx.arc(x, (y + t * 6 * r) % H, r, 0, Math.PI * 2); sctx.fill();
+  });
+  if (!(t > 7.2 && t < 9) && !(t > 21.9 && t < 22.4)) $('flash').style.opacity = 0;
+  if (!(t > 3.2 && t < 7.2)) $('tint').style.opacity = 0;
+  for (const s of scenes) {
+    const on = t >= s.a && t < s.b;
+    s.el.style.display = on ? 'block' : 'none';
+    if (on) { s.el.style.opacity = fade(t, s.a, s.b, s.fi, s.fo); s.render(t); }
+  }
+  // progress ladder: 地基 / 图 / Loop / 联邦
+  const lv = t < 17 ? 0 : t < 29 ? 1 : t < 41 ? 2 : 3;
+  $('ladder').querySelectorAll('.st').forEach((el, i) => { el.className = 'st' + (i === lv ? ' on' : i < lv ? ' done' : ''); });
+  place($('ladder'), CX, 200, 1, 0, fade(t, 11.2, 53, .4, .4));
+  $('stage').style.opacity = 1 - prog(t, DURATION - .5, DURATION);
+}
+window.render = render;
+window.DURATION = DURATION;
+// Lay out every string the film can show once, so web-font subsets load up front.
+$('glyphs').textContent = $('scenes').textContent + STATUS.map(s => s[1]).join('') +
+  '0123456789:合并在岗 Agent 已交付已部署 / · 做一个量化回测平台 所以我们造了…… 10 个 AI';
+['400', '700', '900'].forEach(w => { const d = document.createElement('div'); d.style.fontWeight = w; d.textContent = $('glyphs').textContent; $('glyphs').appendChild(d); });
+
+if (!navigator.webdriver) {
+  const q = +new URLSearchParams(location.search).get('t') || 0;
+  const t0 = performance.now() - q * 1000;
+  const loop = now => { render(((now - t0) / 1000) % DURATION); requestAnimationFrame(loop); };
+  requestAnimationFrame(loop);
+} else render(0);
+</script>
+</body>
+</html>
