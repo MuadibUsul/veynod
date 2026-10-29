@@ -461,6 +461,7 @@ def _json_ld(lang: str, version: str) -> str:
             "sameAs": [
                 "https://github.com/veynod/veynod",
                 "https://www.npmjs.com/package/veynod",
+                "https://glama.ai/mcp/servers/veynod/veynod",
             ],
         },
         {"@type": "WebSite", "name": "Veynod", "url": "https://veynod.com/"},

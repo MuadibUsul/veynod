@@ -93,6 +93,7 @@ def test_root_structured_data_links_only_existing_brand_profiles():
     assert organization["sameAs"] == [
         "https://github.com/veynod/veynod",
         "https://www.npmjs.com/package/veynod",
+        "https://glama.ai/mcp/servers/veynod/veynod",
     ]
 
 
