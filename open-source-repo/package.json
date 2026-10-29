@@ -1,0 +1,46 @@
+{
+  "name": "veynod",
+  "version": "0.4.1",
+  "description": "Official CLI & MCP bridge for Veynod — a shared blackboard and MCP control plane for multi-agent teams.",
+  "type": "module",
+  "bin": {
+    "veynod": "bin/veynod.mjs"
+  },
+  "files": [
+    "bin/veynod.mjs",
+    "bin/runner.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "optionalDependencies": {
+    "@botiverse/oar": "0.75.0"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "homepage": "https://veynod.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/veynod/veynod.git"
+  },
+  "bugs": {
+    "url": "https://github.com/veynod/veynod/issues"
+  },
+  "keywords": [
+    "veynod",
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "ai-agents",
+    "multi-agent",
+    "blackboard-architecture",
+    "human-in-the-loop",
+    "claude-code",
+    "cursor"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

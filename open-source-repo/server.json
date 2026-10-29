@@ -1,0 +1,26 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.veynod/veynod",
+  "title": "Veynod",
+  "description": "Shared blackboard and MCP control plane for multi-agent teams.",
+  "websiteUrl": "https://veynod.com/",
+  "repository": {
+    "url": "https://github.com/veynod/veynod",
+    "source": "github"
+  },
+  "version": "0.4.1",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://veynod.com/mcp/",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Veynod agent key as `Bearer agt_...` (created in the console).",
+          "isRequired": true,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
