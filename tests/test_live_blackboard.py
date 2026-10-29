@@ -372,3 +372,47 @@ async def test_stuck_task_alert_and_wake_coverage(client, admin_headers, workspa
     await client.put("/v1/agents/me/wake", headers=agent, json={"url": "https://example.com/w"})
     coverage = (await client.get("/v1/presence", headers=owner)).json()["wake_coverage"]
     assert coverage["rate"] == 1.0, agent_id
+
+
+async def test_an_agent_working_through_calls_is_online(client, admin_headers, workspace):
+    """No stream and no heartbeat, but recent REST/MCP calls: online over api."""
+    owner = workspace["headers"]
+    agent, _, agent_id = await _agent(client, admin_headers, workspace)
+    await _sql("UPDATE agent_directory SET last_seen_at = NULL WHERE agent_id = $1 "
+               "AND workspace_id = $2::uuid", agent_id, workspace["workspace"]["id"])
+    working = await client.get("/v1/tasks", headers=agent)
+    assert working.status_code == 200, working.text
+
+    entry = (await client.get(f"/v1/agents/{agent_id}", headers=owner)).json()
+    assert entry["presence"]["state"] == "online", entry["presence"]
+    assert entry["presence"]["transport"] == "api"
+    listed = (await client.get("/v1/presence", headers=owner)).json()
+    mine = next(item for item in listed["items"] if item["agent_id"] == agent_id)
+    assert mine["state"] == "online"
+
+    # Ten quiet minutes and it is no longer online.
+    await _sql("UPDATE agent_presence SET seen_at = NOW() - INTERVAL '11 minutes' "
+               "WHERE workspace_id = $1::uuid", workspace["workspace"]["id"])
+    entry = (await client.get(f"/v1/agents/{agent_id}", headers=owner)).json()
+    assert entry["presence"]["state"] == "unwakeable"
+
+
+async def test_a_card_goes_to_the_agent_whose_current_name_matches(client, admin_headers,
+                                                                   workspace):
+    """An old name another entry once carried never steals a holder's card."""
+    worker, signature, worker_id = await _agent(client, admin_headers, workspace)
+    _, _, other_id = await _agent(client, admin_headers, workspace,
+                                  name="aa_" + uuid.uuid4().hex[:6])
+    await _sql("UPDATE agent_directory SET legacy_names = array_append(legacy_names, $1) "
+               "WHERE agent_id = $2 AND workspace_id = $3::uuid", signature, other_id,
+               workspace["workspace"]["id"])
+    key = f"bb-{uuid.uuid4().hex[:6]}"
+    made = await client.post("/v1/tasks", headers=workspace["headers"], json={
+        "task_key": key, "title": "held by the worker", "assigned_role": "EXECUTOR"})
+    assert made.status_code == 201, made.text
+    claimed = await client.post(f"/v1/tasks/{key}/claim", headers=worker, json={})
+    assert claimed.status_code == 200, claimed.text
+
+    board = await _board(client, admin_headers, workspace)
+    assert key in _avatar(board, worker_id)["working_on"]
+    assert key not in _avatar(board, other_id)["working_on"]

@@ -70,6 +70,7 @@ from app.schemas import (
     NamespaceRegisterRequest,
     PeerReviewRequest,
     PeerReviewSubmitRequest,
+    PlacementReportRequest,
     PolicyListResponse,
     ProposalApplyRequest,
     ProposalApplyResponse,
@@ -1510,6 +1511,81 @@ async def get_host(
     from app.services import runners
 
     return await runners.get_host(session, principal, ref)
+
+
+@router.get("/runner/placements",
+            summary="Which host each task was put on, and why a task has none")
+async def list_placements(
+    task_key: str | None = Query(default=None, max_length=128),
+    open_only: bool = Query(default=False),
+    step: str | None = Query(default=None, pattern="^(work|review|merge|supervise)$"),
+    limit: int = Query(default=100, ge=1, le=500),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import scheduler
+
+    return await scheduler.placements(session, principal, task_key=task_key,
+                                      open_only=open_only, step=step, limit=limit)
+
+
+@router.get("/runner/placements/{placement_id}",
+            summary="One placement with its detail; a supervise round carries its agenda")
+async def get_placement(
+    placement_id: str = Path(max_length=40),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import scheduler
+
+    return await scheduler.placement_detail(session, principal, placement_id)
+
+
+@router.post("/runner/placements/{placement_id}/report",
+             summary="The runner reports how a step ended: finished or failed")
+async def report_placement(
+    body: PlacementReportRequest,
+    placement_id: str = Path(max_length=40),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import scheduler
+
+    return await scheduler.report(session, principal, placement_id, body.outcome, body.note)
+
+
+@router.post("/runner/schedule",
+             summary="Run the scheduler for this workspace now (people and commanders)")
+async def schedule_now(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import scheduler
+
+    return await scheduler.schedule_now(session, principal)
+
+
+@router.post("/runner/hosts/{ref}/pause",
+             summary="Owner: give this computer no new work; its tasks move to others")
+async def pause_host(
+    ref: str = Path(max_length=64),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import runners
+
+    return await runners.set_paused(session, principal, ref, True)
+
+
+@router.post("/runner/hosts/{ref}/resume", summary="Owner: let a paused computer work again")
+async def resume_host(
+    ref: str = Path(max_length=64),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import runners
+
+    return await runners.set_paused(session, principal, ref, False)
 
 
 @router.post("/runner/hosts/{ref}/revoke",

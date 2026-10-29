@@ -1,13 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useI18n } from "../i18n";
 import type { ApiRequest } from "../types";
 import { relativeTime } from "../types";
-import { AcceptanceCard } from "./acceptance";
 import { AutomationModeCard } from "./automation";
-import { LiveBoard } from "./live-board";
+import { HostsPanel } from "./hosts-panel";
+import { LiveBoard, type BoardEvent } from "./live-board";
 
 /*
  * How the agent loop is doing, second only to the diagram. One strip says
@@ -21,6 +21,33 @@ type Alert = {
   severity: "high" | "medium" | "low";
   subject: { kind: string; ref: string };
   last_seen: string;
+};
+
+type Unplaced = { placement_id: string; task_key: string | null; reason: string; note: string };
+type Round = { status: string; reason: string | null; note: string | null; created_at: string;
+  ended_at: string | null };
+
+// Why no runner can take a task, in the owner's words.
+const UNPLACED_LABEL: Record<string, string> = {
+  no_host_online: "No runner is online",
+  no_host_for_role: "No runner can take this kind of task",
+  no_host_for_namespace: "No runner may work in this namespace",
+  no_host_with_capabilities: "No runner has the skills it needs",
+  no_host_for_repo: "No runner can reach its repository",
+  no_host_with_runtime: "No runner has Claude Code or Codex ready",
+  every_host_failed: "Every runner that could take it already failed it",
+  hosts_out_of_quota: "Every runner that could take it is out of quota",
+  no_reviewer_host: "No reviewer computer can check it",
+  no_supervisor_host: "No supervisor computer looks after the Loop",
+};
+
+const ROUND_LABEL: Record<string, string> = {
+  offered: "Supervisor round running",
+  claimed: "Supervisor round running",
+  delivered: "Last supervisor round finished",
+  failed: "Last supervisor round failed",
+  moved: "Last supervisor round was cut short",
+  withdrawn: "Last supervisor round found nothing",
 };
 
 const MODE_LABEL: Record<string, string> = {
@@ -67,6 +94,8 @@ export function LoopView({
   const { t } = useI18n();
   const [mode, setMode] = useState<string | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [unplaced, setUnplaced] = useState<Unplaced[]>([]);
+  const [round, setRound] = useState<Round | null>(null);
   const [editingMode, setEditingMode] = useState(false);
 
   const load = useCallback(async () => {
@@ -77,6 +106,18 @@ export function LoopView({
       setAlerts(result.items.filter((item) => item.severity === "high"));
     } catch {
       setAlerts([]);
+    }
+    try {
+      const placements = await request<{ needs_you: Unplaced[] }>(
+        "/v1/runner/placements?open_only=true",
+      );
+      setUnplaced(placements.needs_you);
+      const rounds = await request<{ items: Round[] }>(
+        "/v1/runner/placements?step=supervise&limit=5",
+      );
+      setRound(rounds.items.find((item) => item.status !== "unplaced") ?? null);
+    } catch {
+      setUnplaced([]);
     }
     if (sessionMode) {
       try {
@@ -93,7 +134,23 @@ export function LoopView({
     return () => window.clearInterval(timer);
   }, [load]);
 
-  const needs = alerts.length + waitingReview;
+  const needs = alerts.length + waitingReview + unplaced.length;
+
+  // Hosts and placements follow the board's own event stream, not a timer.
+  const [hostsKey, setHostsKey] = useState(0);
+  const refresh = useRef<number | undefined>(undefined);
+  const onEvent = useCallback((event: BoardEvent) => {
+    const kind = event.event_type || event.type || "";
+    if (!/^(HOST_|TASK_PLACED|TASK_UNPLACED|TASK_SCHEDULER|LOOP_ROUND|CHUNK_|AGENT_PRESENCE|task\.claimed)/.test(kind)) {
+      return;
+    }
+    window.clearTimeout(refresh.current);
+    refresh.current = window.setTimeout(() => {
+      setHostsKey((value) => value + 1);
+      void load();
+    }, 800);
+  }, [load]);
+  useEffect(() => () => window.clearTimeout(refresh.current), []);
 
   return (
     <div className="loop">
@@ -108,6 +165,13 @@ export function LoopView({
             </button>
           </div>
         )}
+        {round && (
+          <div className="loop-mode loop-round">
+            <span className="loop-label">{t("Supervisor")}</span>
+            <strong>{t(ROUND_LABEL[round.status] ?? round.status)}</strong>
+            <small>{relativeTime(round.ended_at ?? round.created_at)}</small>
+          </div>
+        )}
         <div className={`loop-needs${needs ? " has" : ""}`}>
           <span className="loop-label">{t("Needs you")}</span>
           {needs === 0 ? (
@@ -118,6 +182,21 @@ export function LoopView({
                 <li>
                   <button type="button" className="loop-link" onClick={onOpenTasks}>
                     {waitingReview} {t("tasks wait for your review")}
+                  </button>
+                </li>
+              )}
+              {unplaced.slice(0, 3).map((item) => (
+                <li key={item.placement_id}>
+                  <button type="button" className="loop-link" onClick={onOpenTasks}>
+                    {t(UNPLACED_LABEL[item.reason] ?? item.note)}
+                    {item.task_key && <small> · {item.task_key}</small>}
+                  </button>
+                </li>
+              ))}
+              {unplaced.length > 3 && (
+                <li>
+                  <button type="button" className="loop-link" onClick={onOpenTasks}>
+                    {t("and")} {unplaced.length - 3} {t("more tasks wait for a runner")}
                   </button>
                 </li>
               )}
@@ -142,18 +221,15 @@ export function LoopView({
       </section>
 
       {editingMode && sessionMode && <AutomationModeCard request={request} notify={notify} />}
-      {sessionMode && (
-        <details className="loop-accept">
-          <summary>{t("Try and accept delivered work")}</summary>
-          <AcceptanceCard request={request} notify={notify} />
-        </details>
-      )}
+
+      <HostsPanel request={request} notify={notify} refreshKey={hostsKey} canManage={sessionMode} />
 
       <LiveBoard
         apiBase={apiBase}
         credential={credential}
         workspaceId={workspaceId}
         sessionMode={sessionMode}
+        onEvent={onEvent}
       />
     </div>
   );

@@ -277,6 +277,22 @@ async def test_revocation_cascades_releases_and_taints(tree):
                                 headers=c2["headers"], json={"reason": "not mine"})
     assert sibling.status_code == 403
 
+    # g1's own calls bring it online (transport api); let that change be
+    # announced first so the long poll below only wakes for the revocation.
+    assert (await client.get("/v1/tokens/self", headers=g1["headers"])).status_code == 200
+    conn = await asyncpg.connect(_dsn())
+    try:
+        for _ in range(40):
+            state = await conn.fetchval(
+                "SELECT presence_state FROM agent_directory WHERE $1 = ANY(token_ids)",
+                g1["token_id"])
+            if state == "online":
+                break
+            await asyncio.sleep(0.5)
+    finally:
+        await conn.close()
+    assert state == "online"
+    await asyncio.sleep(0.5)
     poll = asyncio.create_task(client.get("/v1/events?wait_seconds=25", headers=g1["headers"]))
     await asyncio.sleep(1.5)
     started = time.monotonic()

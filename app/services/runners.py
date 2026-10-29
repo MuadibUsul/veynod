@@ -268,7 +268,7 @@ async def get_host(session: AsyncSession, principal: Principal, ref: str) -> dic
 def _owner_only(principal: Principal) -> None:
     if not principal.is_human or (principal.auth_kind is AuthKind.HUMAN
                                   and principal.human_role not in ("OWNER", "ADMIN")):
-        raise Forbidden("only the workspace owner or an admin can revoke a host")
+        raise Forbidden("only the workspace owner or an admin can pause or revoke a host")
 
 
 async def revoke_host(session: AsyncSession, principal: Principal, ref: str,
@@ -294,3 +294,26 @@ async def revoke_host(session: AsyncSession, principal: Principal, ref: str,
         reason=(reason or "host revoked by the owner").strip()[:500])
     fresh = await _find(session, principal.workspace.id, row["host_id"])
     return {**host_out(fresh), "released_leases": revoked["released_leases"]}
+
+
+async def set_paused(session: AsyncSession, principal: Principal, ref: str,
+                     paused: bool) -> dict[str, Any]:
+    """Owner: stop giving a host work (its tasks move on), or let it work again."""
+    _owner_only(principal)
+    row = await _find(session, principal.workspace.id, ref)
+    if row["status"] == "revoked":
+        raise ApiError(409, "host_revoked", "a revoked host cannot be paused or resumed",
+                       details={"host_id": row["host_id"]})
+    wanted = "paused" if paused else "active"
+    if row["status"] != wanted:
+        by = f"human:{principal.user_id}" if principal.user_id else "admin"
+        await session.execute(text(
+            "UPDATE runner_hosts SET status = :status, updated_at = NOW() WHERE host_id = :id"),
+            {"status": wanted, "id": row["host_id"]})
+        await append_event(
+            session, workspace_id=principal.workspace.id, agent="runners",
+            event_type="HOST_PAUSED" if paused else "HOST_RESUMED",
+            payload={"host_id": row["host_id"], "agent_id": row["agent_id"], "by": by,
+                     "targets": [f"agent:{row['agent_id']}"] if row["agent_id"] else []})
+        await session.commit()
+    return host_out(await _find(session, principal.workspace.id, row["host_id"]))

@@ -787,11 +787,6 @@ class TimelineEventRequest(StrictModel):
 AutomationMode = Literal["manual", "semi", "full"]
 
 
-class AcceptanceRequest(StrictModel):
-    verdict: Literal["works", "broken", "change"]
-    note: str | None = Field(default=None, max_length=4_000)
-
-
 class AutomationModeRequest(StrictModel):
     mode: AutomationMode
     auto_deploy_allowed: bool = False
@@ -1457,6 +1452,11 @@ class RunnerHeartbeatRequest(StrictModel):
     runtimes: list[dict[str, Any]] | None = Field(
         default=None, max_length=8, description="Fresh runtime list, e.g. new quota windows")
     max_concurrency: int | None = Field(default=None, ge=1, le=64)
+
+
+class PlacementReportRequest(StrictModel):
+    outcome: Literal["finished", "failed"]
+    note: str | None = Field(default=None, max_length=500)
 
 
 class HostRevokeRequest(StrictModel):

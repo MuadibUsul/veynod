@@ -33,7 +33,7 @@ import { dirname, join, posix } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-export const VERSION = "0.3.0";
+export const VERSION = "0.4.0";
 const SEAL_INFO = Buffer.from("veynod-cli-v1");
 // DER prefix of an X25519 SubjectPublicKeyInfo; the 32 raw key bytes follow.
 const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
@@ -309,6 +309,12 @@ export function parseArgs(argv) {
     heartbeat: true,
     dryRun: false,
     subcommand: null,
+    runner: false,
+    runtime: process.env.VEYNOD_RUNTIME || "claude",
+    slots: Number(process.env.VEYNOD_SLOTS) || 1,
+    repos: (process.env.VEYNOD_REPOS || "").split(",").map((item) => item.trim()).filter(Boolean),
+    diskMb: Number(process.env.VEYNOD_DISK_MB) || 5120,
+    gitBase: process.env.VEYNOD_GIT_BASE || "https://github.com/",
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -331,6 +337,12 @@ export function parseArgs(argv) {
     else if (arg === "--key-file") options.keyFile = value();
     else if (arg === "--no-heartbeat") options.heartbeat = false;
     else if (arg === "--dry-run") options.dryRun = true;
+    else if (arg === "--runner") options.runner = true;
+    else if (arg === "--runtime") options.runtime = value();
+    else if (arg === "--slots") options.slots = Number(value());
+    else if (arg === "--repo") options.repos.push(...value().split(",").map((item) => item.trim()).filter(Boolean));
+    else if (arg === "--disk-mb") options.diskMb = Number(value());
+    else if (arg === "--git-base") options.gitBase = value();
     else if (!arg.startsWith("-") && !options.command) options.command = arg;
     else if (!arg.startsWith("-") && options.command === "service" && !options.subcommand) {
       options.subcommand = arg;
@@ -340,6 +352,15 @@ export function parseArgs(argv) {
   options.clients = [...new Set(options.clients.map((item) => item.trim()).filter(Boolean))];
   const unknown = options.clients.filter((item) => !CLIENTS.includes(item));
   if (unknown.length) throw new Error(`unknown client ${unknown.join(", ")} (use ${CLIENTS.join(", ")})`);
+  if (!Number.isInteger(options.slots) || options.slots < 1 || options.slots > 64) {
+    throw new Error("--slots must be a whole number from 1 to 64");
+  }
+  if (!["claude", "codex", "custom"].includes(options.runtime)) {
+    throw new Error(`unknown runtime ${options.runtime} (claude, codex or custom)`);
+  }
+  options.repos = [...new Set(options.repos)];
+  const badRepo = options.repos.find((repo) => !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo));
+  if (badRepo) throw new Error(`--repo takes owner/name, not ${badRepo}`);
   options.host = options.host.replace(/\/+$/, "");
   if (!/^https?:\/\//.test(options.host)) options.host = `https://${options.host}`;
   return options;
@@ -353,7 +374,10 @@ ${bold("Usage")}
   npx veynod listen [--exec CMD] [--key KEY | --key-file PATH] [--host URL] [--once]
                     [--no-heartbeat]
 
-  veynod service install|uninstall|status|audit [--key KEY | --key-file PATH]
+  veynod runner [--key KEY | --key-file PATH] [--runtime claude|codex|custom]
+                [--slots N] [--repo owner/name,...] [--disk-mb N] [--exec CMD]
+
+  veynod service install|uninstall|status|audit [--runner] [--key KEY | --key-file PATH]
                     [--exec CMD] [--host URL] [--dry-run]
 
 ${bold("What listen does")}
@@ -366,6 +390,18 @@ ${bold("What listen does")}
   also sends a loop heartbeat, so the board shows the agent offline within
   90 s of this process dying, even when a proxy keeps the stream half-open.
 
+${bold("What runner does")}
+  Makes this computer run agents for the board. It tells the platform what the
+  computer can do (system, Claude Code / Codex with models and quota, --slots
+  tasks at once, the --repo repositories it may work on) and sends a heartbeat
+  every 30 s. When the platform places a task here it starts the runtime in a
+  fresh git worktree on branch veynod/<task> (pushes of any other branch are
+  refused) with a prompt to claim and do the task, and cleans up afterwards.
+  Three failed starts leave the task for another computer. --runtime custom
+  runs --exec CMD with the prompt in VEYNOD_PROMPT. Receipts are written to
+  ~/.veynod/runner-receipts.jsonl. Use OAR (npm i -g @botiverse/oar, Node 24+)
+  for quota-aware runs; without it the runtime's own CLI is used.
+
 ${bold("What service does")}
   install    Runs listen in the background: a systemd user service (Linux), a
              LaunchAgent (macOS) or a hidden logon task (Windows; no console
@@ -375,6 +411,7 @@ ${bold("What service does")}
   audit      Lists scheduled tasks and services that start node, python,
              PowerShell, cmd or batch files, and flags those that open a
              visible console window. It changes nothing.
+  --runner   Installs the runner instead of listen (key in ~/.veynod/runner.key).
   --dry-run  Prints the files and commands instead of applying them.
 
 ${bold("What init does")}
@@ -633,7 +670,9 @@ async function follow(options, say) {
           const poke = JSON.parse(event.data);
           const seq = Number(event.id || poke.event_seq);
           if (lastSeq && seq <= lastSeq) continue; // seen before a reconnect
-          if (options.exec) {
+          if (options.onPoke) {
+            await options.onPoke(poke);
+          } else if (options.exec) {
             const code = await runHook(options.exec, poke);
             if (code !== 0) {
               const message = `--exec exited ${code}; event ${seq} was not acknowledged`;
@@ -682,6 +721,21 @@ export function listenArguments({ script, host, keyFile, exec }) {
   return [script, "listen", "--host", host, "--key-file", keyFile, ...(exec ? ["--exec", exec] : [])];
 }
 
+export function runnerArguments({ script, host, keyFile, exec, runtime = "claude", slots = 1, repos = [],
+  diskMb = 5120 }) {
+  return [script, "runner", "--host", host, "--key-file", keyFile, "--runtime", runtime,
+    "--slots", String(slots), ...(repos.length ? ["--repo", repos.join(",")] : []),
+    "--disk-mb", String(diskMb), ...(exec ? ["--exec", exec] : [])];
+}
+
+// The listen service and the runner service live side by side.
+const SERVICE_NAMES = {
+  listen: { unit: SERVICE_NAME, label: LAUNCHD_LABEL, task: WINDOWS_TASK, log: "listen.log",
+    title: "Veynod listen: keep this agent online and receive pokes" },
+  runner: { unit: "veynod-runner", label: "com.veynod.runner", task: "VeynodRunner", log: "runner.log",
+    title: "Veynod runner: run agents for the board on this computer" },
+};
+
 export function servicePlan(action, {
   os = platform(),
   home = homedir(),
@@ -691,18 +745,23 @@ export function servicePlan(action, {
   keyFile,
   exec = "",
   cwd = process.cwd(),
+  mode = "listen",
+  runner = {},
 } = {}) {
   // --exec runs from the directory install ran in, so relative hooks resolve.
-  const args = listenArguments({ script, host, keyFile, exec });
+  const names = SERVICE_NAMES[mode];
+  const args = mode === "runner"
+    ? runnerArguments({ script, host, keyFile, exec, ...runner })
+    : listenArguments({ script, host, keyFile, exec });
   const stateDir = os === "win32" ? join(home, ".veynod") : posix.join(home, ".veynod");
-  const log = os === "win32" ? join(stateDir, "listen.log") : posix.join(stateDir, "listen.log");
+  const log = os === "win32" ? join(stateDir, names.log) : posix.join(stateDir, names.log);
   const plan = { os, files: [], remove: [], commands: [], notes: [] };
   if (os === "linux") {
-    const unit = posix.join(home, ".config", "systemd", "user", `${SERVICE_NAME}.service`);
+    const unit = posix.join(home, ".config", "systemd", "user", `${names.unit}.service`);
     if (action === "install") {
       plan.files.push({ path: unit, mode: 0o644, content: [
         "[Unit]",
-        "Description=Veynod listen: keep this agent online and receive pokes",
+        `Description=${names.title}`,
         "After=network-online.target",
         "Wants=network-online.target",
         "",
@@ -718,25 +777,25 @@ export function servicePlan(action, {
         "",
       ].join("\n") });
       plan.commands.push(["systemctl", "--user", "daemon-reload"],
-        ["systemctl", "--user", "enable", "--now", `${SERVICE_NAME}.service`]);
+        ["systemctl", "--user", "enable", "--now", `${names.unit}.service`]);
       plan.notes.push("To start it at boot without a login session: loginctl enable-linger $USER",
-        `Logs: journalctl --user -u ${SERVICE_NAME} -f`);
+        `Logs: journalctl --user -u ${names.unit} -f`);
     } else if (action === "uninstall") {
-      plan.commands.push(["systemctl", "--user", "disable", "--now", `${SERVICE_NAME}.service`],
+      plan.commands.push(["systemctl", "--user", "disable", "--now", `${names.unit}.service`],
         ["systemctl", "--user", "daemon-reload"]);
       plan.remove.push(unit);
     } else {
-      plan.commands.push(["systemctl", "--user", "status", "--no-pager", `${SERVICE_NAME}.service`]);
+      plan.commands.push(["systemctl", "--user", "status", "--no-pager", `${names.unit}.service`]);
     }
   } else if (os === "darwin") {
-    const plist = posix.join(home, "Library", "LaunchAgents", `${LAUNCHD_LABEL}.plist`);
+    const plist = posix.join(home, "Library", "LaunchAgents", `${names.label}.plist`);
     if (action === "install") {
       plan.files.push({ path: plist, mode: 0o644, content: [
         '<?xml version="1.0" encoding="UTF-8"?>',
         '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
         '<plist version="1.0">',
         "<dict>",
-        `  <key>Label</key><string>${LAUNCHD_LABEL}</string>`,
+        `  <key>Label</key><string>${names.label}</string>`,
         "  <key>ProgramArguments</key>",
         "  <array>",
         ...[node, ...args].map((item) => `    <string>${xmlEscape(item)}</string>`),
@@ -758,17 +817,17 @@ export function servicePlan(action, {
       plan.commands.push(["launchctl", "unload", "-w", plist]);
       plan.remove.push(plist);
     } else {
-      plan.commands.push(["launchctl", "list", LAUNCHD_LABEL]);
+      plan.commands.push(["launchctl", "list", names.label]);
     }
   } else if (os === "win32") {
     // wscript runs the loop with window style 0: no console window ever opens,
     // and the loop restarts listen 5 s after it exits.
-    const launcher = join(stateDir, `${SERVICE_NAME}.vbs`);
+    const launcher = join(stateDir, `${names.unit}.vbs`);
     if (action === "install") {
       const inner = [node, ...args].map(winQuote).join(" ");
       const line = `cmd /s /c "cd /d ${winQuote(cwd)} && ${inner} >> ${winQuote(log)} 2>&1"`;
       plan.files.push({ path: launcher, mode: 0o600, content: [
-        "' Veynod listen, hidden: no console window; restarted 5 s after it exits.",
+        `' ${names.title}, hidden: no console window; restarted 5 s after it exits.`,
         'Set shell = CreateObject("WScript.Shell")',
         "Do",
         `  shell.Run "${line.replace(/"/g, '""')}", 0, True`,
@@ -776,17 +835,17 @@ export function servicePlan(action, {
         "Loop",
         "",
       ].join("\r\n") });
-      plan.commands.push(["schtasks", "/Create", "/TN", WINDOWS_TASK, "/SC", "ONLOGON", "/RL", "LIMITED",
+      plan.commands.push(["schtasks", "/Create", "/TN", names.task, "/SC", "ONLOGON", "/RL", "LIMITED",
         "/TR", `wscript.exe //B //Nologo "${launcher}"`, "/F"],
-      ["schtasks", "/Run", "/TN", WINDOWS_TASK]);
+      ["schtasks", "/Run", "/TN", names.task]);
       plan.notes.push(`Logs: ${log}`, "No console window opens; check with: veynod service status");
     } else if (action === "uninstall") {
-      plan.commands.push(["schtasks", "/End", "/TN", WINDOWS_TASK],
-        ["schtasks", "/Delete", "/TN", WINDOWS_TASK, "/F"]);
+      plan.commands.push(["schtasks", "/End", "/TN", names.task],
+        ["schtasks", "/Delete", "/TN", names.task, "/F"]);
       plan.remove.push(launcher);
-      plan.notes.push("If listen is still running, end the wscript.exe and node.exe processes it started.");
+      plan.notes.push(`If ${mode} is still running, end the wscript.exe and node.exe processes it started.`);
     } else {
-      plan.commands.push(["schtasks", "/Query", "/TN", WINDOWS_TASK, "/V", "/FO", "LIST"]);
+      plan.commands.push(["schtasks", "/Query", "/TN", names.task, "/V", "/FO", "LIST"]);
     }
   } else {
     throw new Error(`service is not supported on ${os}`);
@@ -904,7 +963,7 @@ function audit() {
 
 function serviceKeyFile(options) {
   if (options.keyFile) return options.keyFile;
-  const path = join(homedir(), ".veynod", "listen.key");
+  const path = join(homedir(), ".veynod", options.runner ? "runner.key" : "listen.key");
   if (options.key) {
     if (!options.dryRun) {
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -929,6 +988,8 @@ async function service(options) {
     script,
     exec: options.exec,
     keyFile: action === "install" ? serviceKeyFile(options) : "",
+    mode: options.runner ? "runner" : "listen",
+    runner: { runtime: options.runtime, slots: options.slots, repos: options.repos, diskMb: options.diskMb },
   });
   if (action === "install" && /[\\/]_npx[\\/]/.test(script)) {
     plan.notes.unshift("This copy runs from the npx cache, which can be cleaned: install it first with "
@@ -997,6 +1058,17 @@ export async function main(argv = process.argv.slice(2)) {
   if (options.command === "service" && !options.help) {
     try {
       return await service(options);
+    } catch (error) {
+      process.stderr.write(`\n  ${red("✗")} ${error.message}\n\n`);
+      return 1;
+    }
+  }
+  if (options.command === "runner" && !options.help) {
+    try {
+      if (!options.key) throw new Error("runner needs the runner's agent key: --key, --key-file or VEYNOD_KEY");
+      const { runRunner } = await import("./runner.mjs");
+      const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
+      return await runRunner(options, { follow, version: VERSION, say });
     } catch (error) {
       process.stderr.write(`\n  ${red("✗")} ${error.message}\n\n`);
       return 1;

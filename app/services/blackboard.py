@@ -78,13 +78,15 @@ class _Agents:
     def __init__(self, entries: list[dict[str, Any]]) -> None:
         self.entries = entries
         self.by_name: dict[str, str] = {}
-        for entry in entries:
-            names = [entry["agent_id"], entry["principal_id"], *(entry["signatures"] or []),
-                     *(entry["legacy_names"] or [])]
-            for name in names:
-                if name:
-                    self.by_name.setdefault(name, entry["agent_id"])
-                    self.by_name.setdefault(f"agent:{name}", entry["agent_id"])
+        # Same precedence as the directory: an id beats a current signature,
+        # which beats an old name another entry used to carry.
+        for field in ("agent_id", "principal_id", "signatures", "legacy_names"):
+            for entry in entries:
+                value = entry.get(field)
+                for name in (value if isinstance(value, list) else [value]):
+                    if name:
+                        self.by_name.setdefault(name, entry["agent_id"])
+                        self.by_name.setdefault(f"agent:{name}", entry["agent_id"])
 
     def resolve(self, name: str | None) -> str | None:
         if not name:

@@ -46,6 +46,7 @@ LAYERS = ("interface", "implementation")
 IN_FLIGHT = ("dispatched", "in_progress", "awaiting_gate", "awaiting_ci", "awaiting_review",
              "ready_to_merge", "queued", "verified", "merged")
 # Suggested values from the spec (M-22, M-23, M-29), final once the owner confirms.
+REPO = re.compile(r"^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
 TRUST_START = 100
 TRUST_AFTER_UPGRADE = 80
 COST_CI_FAILURE = 10
@@ -298,6 +299,17 @@ async def _event(session: AsyncSession, principal: Principal, diagram: dict[str,
 _WATCHER = re.compile(r"^(agent|human):[A-Za-z0-9_.:@-]{1,150}$")
 
 
+def _repo(raw: Any) -> str | None:
+    """The repository the chunks change (owner/name), passed on to chunk tasks."""
+    if raw in (None, ""):
+        return None
+    repo = str(raw).strip()
+    if not REPO.fullmatch(repo):
+        raise ApiError(422, "validation_error", "repo is owner/name",
+                       details={"field": "repo"})
+    return repo
+
+
 def _watchers(raw: Any) -> list[str]:
     items = [str(item) for item in raw or []]
     bad = [item for item in items if not _WATCHER.match(item)]
@@ -361,9 +373,10 @@ async def create(session: AsyncSession, principal: Principal,
     self_check = {item: body.get("self_check", {}).get(item) for item in SELF_CHECK}
     row = (await session.execute(text(
         "INSERT INTO diagrams (workspace_id, diagram_key, title, namespace, doc_key, "
-        "description, self_check, watchers, created_by) VALUES (:ws, :k, :t, :ns, :doc, :d, "
-        "CAST(:sc AS jsonb), CAST(:wa AS text[]), :by) RETURNING *"),
+        "description, self_check, watchers, created_by, repo) VALUES (:ws, :k, :t, :ns, :doc, "
+        ":d, CAST(:sc AS jsonb), CAST(:wa AS text[]), :by, :repo) RETURNING *"),
         {"ws": principal.workspace.id, "k": key, "t": str(body.get("title") or key)[:256],
+         "repo": _repo(body.get("repo")),
          "ns": namespace, "doc": f"diagrams/{key}", "d": body.get("description"),
          "sc": json.dumps(self_check), "wa": _watchers(body.get("watchers")),
          "by": _me(principal)})).mappings().one()
@@ -417,8 +430,9 @@ async def edit_draft(session: AsyncSession, principal: Principal, key: str,
     diagram = dict((await session.execute(text(
         "UPDATE diagrams SET version = :v, title = COALESCE(:t, title), description = "
         "COALESCE(:desc, description), self_check = COALESCE(CAST(:sc AS jsonb), self_check), "
-        "updated_at = NOW() WHERE id = :id RETURNING *"),
+        "repo = COALESCE(:repo, repo), updated_at = NOW() WHERE id = :id RETURNING *"),
         {"v": version, "t": body.get("title"), "desc": body.get("description"),
+         "repo": _repo(body.get("repo")),
          "sc": json.dumps({item: body["self_check"].get(item) for item in SELF_CHECK})
          if isinstance(body.get("self_check"), dict) else None,
          "id": diagram["id"]})).mappings().one())
@@ -468,6 +482,16 @@ async def freeze(session: AsyncSession, principal: Principal, key: str,
     await _write_document(session, principal, diagram, chunks)
     await _event(session, principal, diagram, "DIAGRAM_FROZEN", version=diagram["version"],
                  baseline=baseline)
+    from app.services import automation
+
+    if await automation.current_mode(session, principal.workspace.id) == "full":
+        # Full automation: the first chunks go out with the freeze; the rest
+        # follow their upstream merges (M-14), so nobody dispatches by hand.
+        by_key = {chunk["chunk_key"]: chunk for chunk in chunks}
+        for chunk in chunks:
+            if chunk["state"] == "pending":
+                outcome = await _dispatch_one(session, principal, diagram, chunk, by_key)
+                by_key[chunk["chunk_key"]] = {**chunk, "state": outcome["state"]}
     await session.commit()
     return await view(session, principal, key)
 
@@ -599,6 +623,7 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
         description=(f"{chunk['scope']}\n\nInterface contract (ICD):\n"
                      f"{json.dumps(chunk['icd'], ensure_ascii=False, indent=2)}")[:20_000],
         namespace=diagram["namespace"],
+        repo=diagram.get("repo"),
         # Chunks are implementation work, whoever dispatches them.
         assigned_role="EXECUTOR",
         acceptance=[AcceptanceItem(id=f"DC-{index + 1}", kind="AUTO", text=criterion[:2_000])
@@ -621,7 +646,7 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
         },
     )
     task = await _create_task_core(session, principal, request, agent=_me(principal),
-                                   batch=uuid.uuid4(), commit=False)
+                                   batch=uuid.uuid4(), commit=False, by_graph=True)
     baseline = (diagram.get("baseline") or {}).get("version")
     context_slice = {
         "description_and_acceptance": {"source": f"chunk {chunk['chunk_key']}",
@@ -1689,6 +1714,7 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
     return {
         "diagram_key": diagram["diagram_key"], "title": diagram["title"],
         "namespace": diagram["namespace"], "description": diagram["description"],
+        "repo": diagram.get("repo"),
         "status": diagram["status"], "version": diagram["version"],
         "watchers": diagram["watchers"],
         "baseline": diagram["baseline"], "document": f"doc://{diagram['doc_key']}",

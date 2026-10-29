@@ -28,6 +28,9 @@ logger = logging.getLogger("agentgraph.pokes")
 
 INSTANCE = uuid.uuid4().hex[:16]  # this server process
 ONLINE_WINDOW = timedelta(seconds=90)
+# An agent that works through REST or MCP calls (no stream, no heartbeat) is
+# online for this long after its last call: think time between calls is long.
+API_WINDOW = timedelta(minutes=10)
 TOUCH_EVERY_SECONDS = 30
 
 
@@ -93,8 +96,9 @@ async def _announce(workspace_id: Any) -> None:
 async def sweep_presence() -> int:
     async def run(session: AsyncSession) -> int:
         result = await session.execute(text(
-            "DELETE FROM agent_presence WHERE seen_at < :cutoff"),
-            {"cutoff": _now() - ONLINE_WINDOW})
+            "DELETE FROM agent_presence WHERE (transport <> 'api' AND seen_at < :cutoff) "
+            "OR seen_at < :api_cutoff"),
+            {"cutoff": _now() - ONLINE_WINDOW, "api_cutoff": _now() - API_WINDOW})
         return result.rowcount or 0
 
     return await _unscoped(run)
@@ -106,13 +110,16 @@ async def presence_for_tokens(session: AsyncSession, workspace_id: Any,
     if not token_ids:
         return {"online": False, "connections": 0, "last_seen_at": None}
     row = (await session.execute(text(
-        "SELECT count(*) FILTER (WHERE seen_at >= :cutoff) AS live, max(seen_at) AS seen "
+        "SELECT count(*) FILTER (WHERE transport <> 'api' AND seen_at >= :cutoff) AS live, "
+        "count(*) FILTER (WHERE transport = 'api' AND seen_at >= :api_cutoff) AS api, "
+        "max(seen_at) AS seen "
         "FROM agent_presence WHERE workspace_id = :ws AND token_id = ANY(CAST(:ids AS text[]))"),
-        {"ws": workspace_id, "ids": list(token_ids), "cutoff": _now() - ONLINE_WINDOW})
+        {"ws": workspace_id, "ids": list(token_ids), "cutoff": _now() - ONLINE_WINDOW,
+         "api_cutoff": _now() - API_WINDOW})
     ).mappings().one()
-    return {"online": bool(row["live"]), "connections": int(row["live"] or 0),
+    return {"online": bool(row["live"] or row["api"]), "connections": int(row["live"] or 0),
             "last_seen_at": row["seen"].isoformat() if row["seen"] else None,
-            "transport": "sse" if row["live"] else None}
+            "transport": "sse" if row["live"] else ("api" if row["api"] else None)}
 
 
 async def online_refs(session: AsyncSession, workspace_id: Any) -> set[str]:
@@ -121,7 +128,7 @@ async def online_refs(session: AsyncSession, workspace_id: Any) -> set[str]:
         "SELECT p.agent_ref, d.agent_id, d.principal_id, t.agent_signature "
         "FROM agent_presence p LEFT JOIN agent_directory d ON p.token_id = ANY(d.token_ids) "
         "LEFT JOIN agent_tokens t ON t.canonical_id = p.token_id "
-        "WHERE p.workspace_id = :ws AND p.seen_at >= :cutoff"),
+        "WHERE p.workspace_id = :ws AND p.seen_at >= :cutoff AND p.transport <> 'api'"),
         {"ws": workspace_id, "cutoff": _now() - ONLINE_WINDOW})).mappings().all()
     refs: set[str] = set()
     for row in rows:

@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ app
     app_name: str = "Veynod"
     # Bump on every release and add notes in app/services/releases.py.
-    app_version: str = "3.21.0"
+    app_version: str = "3.22.0"
     environment: Literal["development", "staging", "production", "test"] = "development"
     debug: bool = False
     host: str = "0.0.0.0"
@@ -86,6 +86,15 @@ class Settings(BaseSettings):
     probe_token_quota: int = Field(default=10, ge=0, le=1000)
     probe_token_max_ttl_hours: int = Field(default=24, ge=1, le=720)
     task_unclaimed_timeout_seconds: int = Field(default=7200, ge=60, le=86_400)
+    # Full-managed Loop (runner-3): when the scheduler moves a task to another host.
+    runner_offline_reassign_seconds: int = Field(default=120, ge=30, le=86_400)
+    runner_claim_timeout_seconds: int = Field(default=180, ge=30, le=86_400)
+    runner_quota_exhausted_percent: float = Field(default=98.0, ge=50.0, le=100.0)
+    # Loop steps: how long a review or merge may take before another host gets it,
+    # and how often the supervisor walks the floor when something waits.
+    runner_step_timeout_seconds: int = Field(default=1800, ge=60, le=86_400)
+    runner_supervise_every_seconds: int = Field(default=600, ge=60, le=86_400)
+    runner_supervise_timeout_seconds: int = Field(default=1200, ge=60, le=86_400)
     max_reject_history: int = Field(default=20, ge=1, le=500)
     human_override_default_lock: bool = True
 

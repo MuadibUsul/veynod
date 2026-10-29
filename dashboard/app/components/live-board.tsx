@@ -161,15 +161,20 @@ function kindOf(event: StreamEvent, previous: LiveCard | undefined): Kind | null
   return null;
 }
 
+export type BoardEvent = StreamEvent;
+
 export function LiveBoard({
   apiBase,
   credential,
   workspaceId,
   sessionMode,
+  onEvent,
 }: {
   apiBase: string;
   credential: string;
   workspaceId: string;
+  /** Every event the board receives, for panels that follow the same stream. */
+  onEvent?: (event: StreamEvent) => void;
   sessionMode: boolean;
 }) {
   const { t } = useI18n();
@@ -197,6 +202,8 @@ export function LiveBoard({
   const [archiveOpen, setArchiveOpen] = useState(false);
 
   const cursorRef = useRef<number | null>(null);
+  const onEventRef = useRef(onEvent);
+  onEventRef.current = onEvent;
   const queueRef = useRef<StreamEvent[]>([]);
   const seenRef = useRef<Set<number>>(new Set());
   const settledRef = useRef(0);
@@ -491,6 +498,7 @@ export function LiveBoard({
               }
               cursorRef.current = Math.max(cursorRef.current ?? 0, event.id);
               queueRef.current.push(event);
+              onEventRef.current?.(event);
             } catch {
               // a malformed frame is skipped; the next snapshot corrects it
             }

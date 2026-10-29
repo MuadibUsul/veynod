@@ -66,6 +66,34 @@ is stored only as a digest; never send keys or account emails (they are
 dropped). `list_hosts` (MCP) or `GET /v1/runner/hosts` shows every host,
 its state (online, offline, paused, revoked) and free slots. The owner can
 revoke a host: its token stops working and its tasks go back to READY.
+Under full automation the platform places READY tasks on hosts: it picks a
+host whose token role and namespaces fit, that reaches the task's repo, has a
+free slot and quota left, and has not failed the task twice; it assigns the
+task to the host's agent and pokes it with `task.placed` whose note carries
+the `placement_id` (use it as the idempotency key; ignore a repeat). Claim
+the task as usual. A host that goes offline (2 min), runs out of quota or
+does not claim in 3 min loses the task to another host. After three failed
+rounds the task stays in HANDOFF. Manual and semi modes only suggest.
+`GET /v1/runner/placements` shows where each task went and why a task has
+no host.
+`npx veynod runner` (CLI 0.4) is a ready runner: hello, heartbeat, a fresh
+git worktree per placed task, and Claude Code or Codex started there with a
+prompt to claim it; `veynod service install --runner` keeps it running.
+The owner can pause a host (`POST /v1/runner/hosts/{ref}/pause`, then
+`/resume`): it gets no new work and its tasks move on.
+Placements have a step (`work`, `review`, `merge`, `supervise`; the poke note
+reads `placement <id> step <step> [diagram <key> chunk <key>]`). A task in
+review, and a diagram chunk waiting for CI, review or its gate, is placed
+as a `review` on an AUDITOR computer (or one with the `review` capability)
+that did not build it; an approved chunk at the head of the merge queue, or
+ready to merge, as a `merge` on such a computer. A `supervise` round goes to
+a SUPER_ADMIN computer (or `supervisor` capability) when something waits;
+its agenda is in `GET /v1/runner/placements/{id}`. When a step ends, report
+it: `POST /v1/runner/placements/{id}/report {outcome: finished|failed}`. A
+failure, a finish that changed nothing, or 30 minutes without progress
+moves the step to another computer. For a chunk, approve the task before
+you call the gate. Under full automation freezing a diagram dispatches its
+first chunks, and a diagram's `repo` is passed on to its chunk tasks.
 
 ## Reading drafts and tainted documents
 
@@ -321,7 +349,6 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `content_too_large` | 413 | `fix_request` |
 | `payload_too_large` | 413 | `fix_request` |
 | `acceptance_items_incomplete` | 422 | `fix_request` |
-| `acceptance_note_required` | 422 | `fix_request` |
 | `ambiguous_artifact` | 422 | `fix_request` |
 | `assignee_cannot_reach_namespace` | 422 | `fix_request` |
 | `audit_view_required` | 422 | `fix_request` |
@@ -429,6 +456,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `escape_closed` | 409 | `abandon` |
 | `external_action_error` | 409 | `abandon` |
 | `gate_not_passed` | 409 | `abandon` |
+| `host_revoked` | 409 | `abandon` |
 | `id_collision` | 409 | `abandon` |
 | `invalid_state_transition` | 409 | `abandon` |
 | `invalid_transition` | 409 | `abandon` |

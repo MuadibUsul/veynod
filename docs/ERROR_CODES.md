@@ -105,7 +105,6 @@ do not edit by hand. Every error body is
 | `content_too_large` | 413 | `fix_request` | `split_into_parts` | Split into parts (details.action). |
 | `payload_too_large` | 413 | `fix_request` | `fix_request_then_resend` | Send a smaller archive (details.limit_bytes). |
 | `acceptance_items_incomplete` | 422 | `fix_request` | `fix_request_then_resend` | Give a PASS result for every acceptance item. |
-| `acceptance_note_required` | 422 | `fix_request` | `fix_request_then_resend` | Say in plain words what does not work or what to change. |
 | `ambiguous_artifact` | 422 | `fix_request` | `fix_request_then_resend` | Provide artifact_text or artifact_uri, not both. |
 | `assignee_cannot_reach_namespace` | 422 | `fix_request` | `fix_request_then_resend` | Use a namespace the assignee reads, or widen its token. |
 | `audit_view_required` | 422 | `fix_request` | `fix_request_then_resend` | Call get_audit_view, then resend. |
@@ -213,6 +212,7 @@ do not edit by hand. Every error body is
 | `escape_closed` | 409 | `abandon` | `abandon_and_release_local_state` | The escape is already FIXED or WAIVED. |
 | `external_action_error` | 409 | `abandon` | `abandon_and_release_local_state` | Re-read the action state. |
 | `gate_not_passed` | 409 | `abandon` | `abandon_and_release_local_state` | Merge after a passing gate on the current submission. |
+| `host_revoked` | 409 | `abandon` | `abandon_and_release_local_state` | Ask the owner for a new runner token. |
 | `id_collision` | 409 | `abandon` | `abandon_and_release_local_state` | Abort the import or import into a new tenant. |
 | `invalid_state_transition` | 409 | `abandon` | `abandon_and_release_local_state` | Re-read the task; give up this action. |
 | `invalid_transition` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |

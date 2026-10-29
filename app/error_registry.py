@@ -174,6 +174,7 @@ REGISTRY: dict[str, ErrorSpec] = {
         409, FIX_REQUEST, "Call open_admin_access first (the node is notified)."
     ),
     "agent_id_taken": _spec(409, FIX_REQUEST, "Choose another agent_id."),
+    "host_revoked": _spec(409, ABANDON, "Ask the owner for a new runner token."),
     "runner_hello_required": _spec(
         409, FIX_REQUEST, "Call POST /v1/runner/hello with this host, then retry."
     ),
@@ -444,8 +445,6 @@ REGISTRY: dict[str, ErrorSpec] = {
     "stale_change": _spec(
         409, ABANDON, "The diagram moved on; file the change again on details.current_version."),
     # Automation (Loop v1).
-    "acceptance_note_required": _spec(
-        422, FIX_REQUEST, "Say in plain words what does not work or what to change."),
     "decide_with_safe_default": _spec(
         409, ABANDON,
         "Automation is on: choose the safest default, note it on the task and continue; "

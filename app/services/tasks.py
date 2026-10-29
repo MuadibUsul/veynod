@@ -367,8 +367,12 @@ async def _create_task_core(
     batch: uuid.UUID,
     commit: bool,
     parent: CollabTask | None = None,
+    by_graph: bool = False,
 ) -> CollabTask:
-    require_permission(principal, "task:create")
+    # A diagram chunk released by its upstream merge is the graph's own work
+    # (M-14): the merger, often a reviewer, does not need task:create for it.
+    if not by_graph:
+        require_permission(principal, "task:create")
     namespace, source = await collab.infer_namespace(session, principal, request, parent)
     ensure_namespace(principal, namespace, write=True)
     if source == "default":
@@ -1017,7 +1021,7 @@ async def handoff_task(
             and await automation.current_mode(session, principal.workspace.id) == "full"):
         add_warning("owner_report_missing",
                     "full automation: add owner_report {what_changed, how_to_try, "
-                    "not_yet_done} in plain words; the owner reads it at acceptance",
+                    "not_yet_done} in plain words; it is what the owner reads",
                     field="brief.owner_report")
     await collab.handoff_checks(session, principal, task, agent, request.next_status, brief)
 

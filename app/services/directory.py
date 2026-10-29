@@ -811,6 +811,14 @@ async def touch(principal: Principal, *, write: bool) -> None:
             text("SELECT 1 FROM agent_directory WHERE :token = ANY(token_ids)"),
             {"token": principal.token_cid},
         )
+        if row is not None:
+            # Working through calls counts as being here (transport api).
+            await session.execute(text(
+                "INSERT INTO agent_presence (workspace_id, token_id, agent_ref, instance, "
+                "transport) VALUES (:ws, :t, :a, 'api', 'api') ON CONFLICT (token_id, instance) "
+                "DO UPDATE SET seen_at = NOW()"),
+                {"ws": principal.workspace.id, "t": principal.token_cid,
+                 "a": f"agent:{row[0]}"})
         await session.commit()
     if write and not registered:
         add_warning("not_registered",

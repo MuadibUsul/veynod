@@ -341,3 +341,39 @@ Task `runner-2-host-handshake`, step 2 of 5 (`runner-1`..`runner-5`). Any comput
 | A-03 read and revoke | Done | `GET /v1/runner/hosts[/{ref}]`, MCP `list_hosts`; owner revoke revokes the token and frees its leases. |
 | A-04 nothing secret | Done | Whitelisted fields only; emails and key-shaped values dropped; hostname stored as a digest. |
 | A-05 docs | Done | Agent guide "Runners" section and the docs site. |
+
+## Full-managed Loop: scheduler (runner-3)
+
+Task `runner-3-scheduler`, step 3 of 5.
+
+| Item | Status | Notes |
+|---|---|---|
+| A-01 pick a host | Done | Role, namespaces, capabilities, repo, free slots, quota; assignment plus a `task.placed` poke with `placement_id` as the idempotency key. |
+| A-02 move on outage | Done | Offline 2 min, out of quota, revoked, or not claimed in 3 min: lease released, task re-placed in the next reaper cycle (15 s), reason recorded. |
+| A-03 failures | Done | Two failures on a host exclude it for that task; three failed rounds leave the task in HANDOFF with no ping. |
+| A-04 no host | Done | Task stays READY; `GET /v1/runner/placements` and the Loop page's Needs you say why in plain words. |
+| A-05 modes | Done | Manual and semi record a suggestion only; full assigns. |
+
+## Full-managed Loop: runner program, worktrees, hosts panel (runner-1, runner-4, runner-5)
+
+| Item | Status | Notes |
+|---|---|---|
+| runner-1 A-01 headless runner | Done | `veynod runner` (CLI 0.4.0): follows the inbox stream, wakes Claude Code or Codex through OAR when installed, else their CLI; `custom` adapter for tests. Same receipts as the desktop sidecar (delivered, accepted, started, finished/failed) and three tries before giving the task back. |
+| runner-1 A-02 handshake | Done | `/v1/runner/hello` on start, `/v1/runner/heartbeat` every 30 s with running tasks and fresh quota; a last heartbeat on exit. |
+| runner-1 A-03 service | Done | `veynod service install --runner`: systemd user unit, LaunchAgent, hidden Windows logon task; restarts within 5 s. |
+| runner-1 A-04 Windows client | Open | Interface written in the PR; the desktop client can spawn `veynod runner` instead of its own stream code. Needs the client coder's agreement. |
+| runner-1 A-05 tests | Done | `cli/test/runner.test.mjs`: placement parsing, inventory without emails, custom runtime, end to end against a fake server. |
+| runner-4 worktrees | Done | Cached bare clone per repo, one worktree per task on `veynod/<task>`, pre-push hook refuses other branches, unknown repos refused, disk cap removes oldest finished first. |
+| runner-5 hosts panel | Done | Loop page Computers panel; pause, resume, take off the Loop with confirmation and events; refresh from the event stream; install command when empty. |
+
+## Loop breakpoints: review and merge placed, supervisor rounds (loop-review-merge-placement, loop-supervisor)
+
+| Item | Status | Notes |
+|---|---|---|
+| Review step | Done | Tasks in REVIEWING and chunks in awaiting_ci / awaiting_review / awaiting_gate are placed on a reviewer computer that did not build them. |
+| Merge step | Done | Chunks ready_to_merge, verified, or queued at the head go to a non-builder reviewer computer; merging releases downstream chunks (graph dispatch, no task:create needed). |
+| Step reports and moves | Done | `POST /v1/runner/placements/{id}/report`; failed report, finished without progress (2 min), or 30 min timeout move the step; one failure excludes that computer for the step. |
+| Diagram repo, dispatch on freeze | Done | `repo` on create/edit, carried to chunk tasks; full automation dispatches pending chunks at freeze. |
+| Supervisor rounds | Done | Agenda of alerts, unplaced tasks, stopped tasks, deploy waits and failed steps; one round at a time, every 10 min at most, only when the agenda is not empty; no-supervisor notice; last round on the Loop page. |
+| Runner prompts per step | Done | CLI: work, review (approve then gate), merge (queue-check, merge PR, record), supervise (agenda, act, owner only for owner topics). |
+| End to end | Done | `tests/test_loop_steps.py`: a two-chunk diagram goes from freeze to both merged with no person. |

@@ -30,7 +30,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import Principal
 from app.errors import ApiError
 from app.services.common import append_event
-from app.services.pokes import INSTANCE, ONLINE_WINDOW, TOUCH_EVERY_SECONDS, _now, _unscoped
+from app.services.pokes import (
+    API_WINDOW,
+    INSTANCE,
+    ONLINE_WINDOW,
+    TOUCH_EVERY_SECONDS,
+    _now,
+    _unscoped,
+)
 
 logger = logging.getLogger("agentgraph.presence")
 
@@ -50,8 +57,11 @@ SELECT d.workspace_id, d.agent_id, d.principal_id, d.display_name, d.presence_st
 FROM agent_directory d
 LEFT JOIN LATERAL (
     SELECT max(seen_at) AS seen,
-           count(*) FILTER (WHERE seen_at >= :cutoff) AS live,
-           array_agg(DISTINCT transport) FILTER (WHERE seen_at >= :cutoff) AS transports
+           count(*) FILTER (WHERE seen_at >= :cutoff
+                            OR (transport = 'api' AND seen_at >= :api_cutoff)) AS live,
+           array_agg(DISTINCT transport) FILTER (
+               WHERE seen_at >= :cutoff
+                  OR (transport = 'api' AND seen_at >= :api_cutoff)) AS transports
     FROM agent_presence
     WHERE workspace_id = d.workspace_id AND token_id = ANY(d.token_ids)
 ) p ON TRUE
@@ -98,7 +108,7 @@ def describe(row: dict[str, Any]) -> dict[str, Any]:
 
 async def rows(session: AsyncSession, workspace_id: Any = None,
                principal_ids: list[str] | None = None) -> list[dict[str, Any]]:
-    where, params = "", {"cutoff": _now() - LIVE_WINDOW}
+    where, params = "", {"cutoff": _now() - LIVE_WINDOW, "api_cutoff": _now() - API_WINDOW}
     if workspace_id is not None:
         where += " AND d.workspace_id = :ws"
         params["ws"] = workspace_id
