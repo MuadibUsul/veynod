@@ -377,3 +377,11 @@ Task `runner-3-scheduler`, step 3 of 5.
 | Supervisor rounds | Done | Agenda of alerts, unplaced tasks, stopped tasks, deploy waits and failed steps; one round at a time, every 10 min at most, only when the agenda is not empty; no-supervisor notice; last round on the Loop page. |
 | Runner prompts per step | Done | CLI: work, review (approve then gate), merge (queue-check, merge PR, record), supervise (agenda, act, owner only for owner topics). |
 | End to end | Done | `tests/test_loop_steps.py`: a two-chunk diagram goes from freeze to both merged with no person. |
+
+## Loop over MCP and supervisor steering (loop-mcp-tool)
+
+| Item | Status | Notes |
+|---|---|---|
+| A-01 MCP `loop` tool | Done | agenda, placements, placement, report, move, withdraw, schedule_now, hosts. |
+| A-02 move / withdraw | Done | `POST /v1/runner/placements/{id}/move {host_id?}`: ends the placement as moved (supervisor_moved), takes the task back and offers it to the named or best other host; the old host is not picked again (not counted as a failed round). `/withdraw`: task READY and unassigned, held until someone claims it or it is moved. Reviews and merges are moved, not held. People, super admins and supervisor computers only. |
+| A-03 MCP-first prompts | Done | Runner review/merge/supervise prompts name `diagram(...)` and `loop(...)` with a REST fallback line. |

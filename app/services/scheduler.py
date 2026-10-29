@@ -298,6 +298,86 @@ def _words(reason: str, task: CollabTask) -> str:
         repo=task.repo or "", capabilities=", ".join(task.required_capabilities or []))
 
 
+def _online(hosts: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
+    return [host for host in hosts if host["status"] == "active"
+            and now - host["last_seen_at"] <= ONLINE_WINDOW]
+
+
+async def _load(session: AsyncSession, workspace_id: Any,
+                hosts: list[dict[str, Any]]) -> dict[str, int]:
+    """Busy slots per host: open offers and claims, or what the host says it runs."""
+    load = {host["host_id"]: 0 for host in hosts}
+    for host_id, active in (await session.execute(text(
+            "SELECT host_id, count(*) FROM runner_placements WHERE workspace_id = :ws "
+            "AND status IN ('offered', 'claimed') GROUP BY host_id"),
+            {"ws": workspace_id})).all():
+        if host_id in load:
+            load[host_id] = active
+    for host in hosts:
+        load[host["host_id"]] = max(load[host["host_id"]], len(host["running"] or []))
+    return load
+
+
+async def _work_failures(session: AsyncSession, task: CollabTask) -> tuple[dict[str, int], int]:
+    """Hosts to avoid for this task (failed twice, or moved off by the supervisor)
+    and the failed rounds so far. A supervisor's move does not count as a round."""
+    rows = (await session.execute(text(
+        "SELECT host_id, status, count(*) FROM runner_placements WHERE task_id = :t "
+        "AND step = 'work' AND host_id IS NOT NULL AND (status = 'failed' "
+        "OR (status = 'moved' AND reason = 'supervisor_moved')) GROUP BY host_id, status"),
+        {"t": task.id})).all()
+    failures: dict[str, int] = {}
+    rounds = 0
+    for host_id, status, count in rows:
+        if status == "failed":
+            failures[host_id] = failures.get(host_id, 0) + count
+            rounds += count
+        else:
+            failures[host_id] = FAILS_PER_HOST
+    return failures, rounds
+
+
+async def _held(session: AsyncSession, task: CollabTask) -> bool:
+    """The supervisor withdrew the task from the computers and nobody took it since."""
+    latest = (await session.execute(text(
+        "SELECT status, reason, lease_epoch FROM runner_placements WHERE task_id = :t "
+        "AND step = 'work' ORDER BY created_at DESC LIMIT 1"), {"t": task.id})
+    ).mappings().one_or_none()
+    return (latest is not None and latest["status"] == "withdrawn"
+            and latest["reason"] == "held"
+            and (latest["lease_epoch"] or 0) >= (task.lease_epoch or 0))
+
+
+async def _offer_work(session: AsyncSession, task: CollabTask, host: dict[str, Any],
+                      now: datetime, actor: str = "scheduler") -> str:
+    """Assign the task to the host's agent and wake it with a task.placed poke."""
+    placement_id = (await session.execute(text(
+        "INSERT INTO runner_placements (workspace_id, task_id, task_key, host_id, agent_id, "
+        "mode, status, lease_epoch) VALUES (:ws, :t, :key, :host, :agent, 'assign', "
+        "'offered', :epoch) RETURNING placement_id"),
+        {"ws": task.workspace_id, "t": task.id, "key": task.task_key, "host": host["host_id"],
+         "agent": host["agent_id"], "epoch": task.lease_epoch or 0})).scalar_one()
+    assignee = f"agent:{host['agent_id']}"
+    before = task_snapshot(task)
+    task.assignee = assignee
+    task.version += 1
+    task.updated_at = now
+    await session.flush()
+    await record_audit(session, workspace_id=task.workspace_id, session_batch_id=uuid.uuid4(),
+                       agent_signature=actor, target_table="collab_tasks",
+                       target_record_id=task.id, operation="UPDATE", before=before,
+                       after=task_snapshot(task))
+    await append_event(
+        session, workspace_id=task.workspace_id, agent=actor, event_type="TASK_PLACED",
+        payload={"task_key": task.task_key, "host_id": host["host_id"],
+                 "placement_id": placement_id, "idempotency_key": placement_id,
+                 "targets": [assignee],
+                 "details": {"delivery_kind": "task.placed", "priority": 1,
+                             "note": f"placement {placement_id}"}},
+        namespace=task.namespace)
+    return placement_id
+
+
 async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
     """One scheduling pass over a workspace. Commits."""
     hosts = await _hosts(session, workspace_id)
@@ -308,17 +388,8 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
     by_id = {host["host_id"]: host for host in hosts}
     counts = await _reconcile(session, workspace_id, by_id, now, mode)
 
-    online = [host for host in hosts if host["status"] == "active"
-              and now - host["last_seen_at"] <= ONLINE_WINDOW]
-    load = {host["host_id"]: 0 for host in hosts}
-    for host_id, active in (await session.execute(text(
-            "SELECT host_id, count(*) FROM runner_placements WHERE workspace_id = :ws "
-            "AND status IN ('offered', 'claimed') GROUP BY host_id"),
-            {"ws": workspace_id})).all():
-        if host_id in load:
-            load[host_id] = active
-    for host in hosts:
-        load[host["host_id"]] = max(load[host["host_id"]], len(host["running"] or []))
+    online = _online(hosts, now)
+    load = await _load(session, workspace_id, hosts)
 
     tasks = (await session.execute(
         select(CollabTask).where(
@@ -331,11 +402,10 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
         .limit(100).with_for_update(skip_locked=True))).scalars().all()
     placed = suggested = unplaced = gave_up = 0
     for task in tasks:
-        history = (await session.execute(text(
-            "SELECT host_id, count(*) FROM runner_placements WHERE task_id = :t "
-            "AND step = 'work' AND status = 'failed' GROUP BY host_id"), {"t": task.id})).all()
-        failures = {host_id: count for host_id, count in history if host_id}
-        if sum(failures.values()) >= MAX_ROUNDS and mode == "full":
+        if await _held(session, task):
+            continue
+        failures, rounds = await _work_failures(session, task)
+        if rounds >= MAX_ROUNDS and mode == "full":
             before = task_snapshot(task)
             task.status = TaskStatus.HANDOFF
             task.version += 1
@@ -348,7 +418,7 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
             await append_event(
                 session, workspace_id=workspace_id, agent="scheduler",
                 event_type="TASK_SCHEDULER_STOPPED",
-                payload={"task_key": task.task_key, "rounds": sum(failures.values()),
+                payload={"task_key": task.task_key, "rounds": rounds,
                          "note": "failed on hosts three times; left in HANDOFF"},
                 namespace=task.namespace)
             gave_up += 1
@@ -392,30 +462,7 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
                  "host": host["host_id"], "agent": host["agent_id"]})
             suggested += 1
             continue
-        placement_id = (await session.execute(text(
-            "INSERT INTO runner_placements (workspace_id, task_id, task_key, host_id, agent_id, "
-            "mode, status, lease_epoch) VALUES (:ws, :t, :key, :host, :agent, 'assign', "
-            "'offered', :epoch) RETURNING placement_id"),
-            {"ws": workspace_id, "t": task.id, "key": task.task_key, "host": host["host_id"],
-             "agent": host["agent_id"], "epoch": task.lease_epoch or 0})).scalar_one()
-        assignee = f"agent:{host['agent_id']}"
-        before = task_snapshot(task)
-        task.assignee = assignee
-        task.version += 1
-        task.updated_at = now
-        await session.flush()
-        await record_audit(session, workspace_id=workspace_id, session_batch_id=uuid.uuid4(),
-                           agent_signature="scheduler", target_table="collab_tasks",
-                           target_record_id=task.id, operation="UPDATE", before=before,
-                           after=task_snapshot(task))
-        await append_event(
-            session, workspace_id=workspace_id, agent="scheduler", event_type="TASK_PLACED",
-            payload={"task_key": task.task_key, "host_id": host["host_id"],
-                     "placement_id": placement_id, "idempotency_key": placement_id,
-                     "targets": [assignee],
-                     "details": {"delivery_kind": "task.placed", "priority": 1,
-                                 "note": f"placement {placement_id}"}},
-            namespace=task.namespace)
+        await _offer_work(session, task, host, now)
         placed += 1
     steps = await _place_steps(session, workspace_id, online, load, mode, now) \
         if mode == "full" else {}
@@ -656,7 +703,8 @@ async def _place_steps(session: AsyncSession, workspace_id: Any, online: list[di
         names, built = await _builders(session, task)
         history = (await session.execute(text(
             "SELECT host_id, count(*) FROM runner_placements WHERE task_id = :t AND step = :s "
-            "AND status = 'failed' GROUP BY host_id"), {"t": task.id, "s": step})).all()
+            "AND (status = 'failed' OR reason = 'supervisor_moved') GROUP BY host_id"),
+            {"t": task.id, "s": step})).all()
         failures = {host_id: count for host_id, count in history if host_id}
         host, reason = _choose_reviewer(task, online, names, built, failures, load)
         chunk = chunks.get(task_key)
@@ -680,24 +728,31 @@ async def _place_steps(session: AsyncSession, workspace_id: Any, online: list[di
         if open_row is not None:
             await _end(session, dict(open_row), "withdrawn")
         load[host["host_id"]] += 1
-        placement_id = (await session.execute(text(
-            "INSERT INTO runner_placements (workspace_id, task_id, task_key, host_id, agent_id, "
-            "mode, status, step, diagram_key, chunk_key, lease_epoch) VALUES (:ws, :t, :key, "
-            ":host, :agent, 'assign', 'offered', :step, :dk, :ck, :epoch) "
-            "RETURNING placement_id"),
-            {"ws": workspace_id, "t": task.id, "key": task.task_key, "host": host["host_id"],
-             "agent": host["agent_id"], "step": step, "dk": chunk and chunk["diagram_key"],
-             "ck": chunk and chunk["chunk_key"], "epoch": task.lease_epoch or 0})).scalar_one()
-        await append_event(
-            session, workspace_id=workspace_id, agent="scheduler", event_type="TASK_PLACED",
-            payload={"task_key": task.task_key, "step": step, "host_id": host["host_id"],
-                     "placement_id": placement_id, "idempotency_key": placement_id,
-                     "targets": [f"agent:{host['agent_id']}"],
-                     "details": {"delivery_kind": "task.placed", "priority": 1,
-                                 "note": _step_note(placement_id, step, chunk)}},
-            namespace=task.namespace)
+        await _offer_step(session, task, host, step, chunk)
         placed += 1
     return {"steps_placed": placed, "steps_waiting": waiting}
+
+
+async def _offer_step(session: AsyncSession, task: CollabTask, host: dict[str, Any], step: str,
+                      chunk: dict[str, Any] | None, actor: str = "scheduler") -> str:
+    """Put a review or merge on a host and wake it; the task stays as it is."""
+    placement_id = (await session.execute(text(
+        "INSERT INTO runner_placements (workspace_id, task_id, task_key, host_id, agent_id, "
+        "mode, status, step, diagram_key, chunk_key, lease_epoch) VALUES (:ws, :t, :key, "
+        ":host, :agent, 'assign', 'offered', :step, :dk, :ck, :epoch) "
+        "RETURNING placement_id"),
+        {"ws": task.workspace_id, "t": task.id, "key": task.task_key, "host": host["host_id"],
+         "agent": host["agent_id"], "step": step, "dk": chunk and chunk["diagram_key"],
+         "ck": chunk and chunk["chunk_key"], "epoch": task.lease_epoch or 0})).scalar_one()
+    await append_event(
+        session, workspace_id=task.workspace_id, agent=actor, event_type="TASK_PLACED",
+        payload={"task_key": task.task_key, "step": step, "host_id": host["host_id"],
+                 "placement_id": placement_id, "idempotency_key": placement_id,
+                 "targets": [f"agent:{host['agent_id']}"],
+                 "details": {"delivery_kind": "task.placed", "priority": 1,
+                             "note": _step_note(placement_id, step, chunk)}},
+        namespace=task.namespace)
+    return placement_id
 
 
 # ------------------------------------------------------------------ supervisor
@@ -891,3 +946,172 @@ async def report(session: AsyncSession, principal: Principal, placement_id: str,
     return _placement_out(dict((await session.execute(text(
         "SELECT * FROM runner_placements WHERE placement_id = :id"),
         {"id": placement_id})).mappings().one()))
+
+
+# ------------------------------------------------------------------ steering
+
+
+async def _may_steer(session: AsyncSession, principal: Principal) -> None:
+    """People, commanders, super admins and supervisor computers steer the Loop."""
+    if principal.is_human or principal.is_commander or principal.is_super_admin:
+        return
+    if principal.token_cid:
+        hosts = await _hosts(session, principal.workspace.id)
+        if any(host["token_id"] == principal.token_cid and host["status"] != "revoked"
+               and _supervisor(host) for host in hosts):
+            return
+    raise Forbidden("people, super admins and supervisor computers steer the Loop")
+
+
+async def loop_agenda(session: AsyncSession, principal: Principal) -> dict[str, Any]:
+    """What waits or went wrong right now, the list a supervise round is given."""
+    await _may_steer(session, principal)
+    async with async_session_factory() as platform:
+        last = (await platform.execute(text(
+            "SELECT created_at FROM runner_placements WHERE workspace_id = :ws "
+            "AND step = 'supervise' AND status <> 'unplaced' ORDER BY created_at DESC LIMIT 1"),
+            {"ws": principal.workspace.id})).scalar_one_or_none()
+        items = await agenda(platform, principal.workspace.id, since=last)
+    return {"items": items, "since": last.isoformat() if last else None}
+
+
+async def _steerable(platform: AsyncSession, principal: Principal,
+                     placement_id: str) -> dict[str, Any]:
+    row = (await platform.execute(text(
+        "SELECT * FROM runner_placements WHERE workspace_id = :ws AND placement_id = :id "
+        "FOR UPDATE"), {"ws": principal.workspace.id, "id": placement_id})
+    ).mappings().one_or_none()
+    if row is None:
+        raise NotFound("placement")
+    return dict(row)
+
+
+def _not_movable(placement: dict[str, Any], why: str) -> ApiError:
+    return ApiError(409, "placement_not_movable", why,
+                    details={"placement_id": placement["placement_id"],
+                             "status": placement["status"], "step": placement["step"]})
+
+
+async def move(session: AsyncSession, principal: Principal, placement_id: str,
+               host_ref: str | None = None, note: str | None = None) -> dict[str, Any]:
+    """Take a task or step off its computer and put it on another one: the named
+    host, or the best other host. The old host is not picked again for it. A task
+    the supervisor held comes back onto the computers the same way."""
+    await _may_steer(session, principal)
+    actor = principal.agent_signature or "supervisor"
+    async with async_session_factory() as platform:
+        placement = await _steerable(platform, principal, placement_id)
+        held = placement["status"] == "withdrawn" and placement["reason"] == "held"
+        if placement["step"] == "supervise":
+            raise _not_movable(placement, "a supervise round is not moved; withdraw it")
+        if placement["status"] not in OPEN and not held:
+            raise _not_movable(placement, "this placement already ended")
+        hosts = await _hosts(platform, principal.workspace.id)
+        now = _now()
+        target = None
+        if host_ref:
+            target = next((host for host in hosts if host_ref in (
+                host["host_id"], host["agent_id"], f"host:{host['host_id']}")), None)
+            if target is None:
+                raise NotFound("host")
+            problem = "host_offline" if target not in _online(hosts, now) \
+                else _host_problem(target, now)
+            if problem or (target["host_id"] == placement["host_id"] and not held):
+                raise ApiError(409, "host_does_not_fit",
+                               "that computer cannot take it now" if problem
+                               else "it is already on that computer",
+                               details={"host_id": target["host_id"],
+                                        "reason": problem or "same_host"})
+        task = await platform.get(CollabTask, placement["task_id"], with_for_update=True)
+        if task is None:
+            raise _not_movable(placement, "the task is gone")
+        old = next((host for host in hosts if host["host_id"] == placement["host_id"]), None)
+        result: dict[str, Any] = {"moved": placement_id, "from_host": placement["host_id"]}
+        if placement["step"] == "work":
+            if task.status not in (TaskStatus.READY, TaskStatus.IN_PROGRESS):
+                raise _not_movable(placement, f"the task is {task.status.value}; nothing to move")
+            if target is not None:
+                misses = _fits(task, target)
+                if misses:
+                    raise ApiError(409, "host_does_not_fit", _words(misses[0], task),
+                                   details={"host_id": target["host_id"], "reason": misses[0]})
+            if old is not None:
+                await _take_back(platform, task, old, "supervisor_moved")
+            if not held:
+                await _end(platform, placement, "moved", "supervisor_moved", note)
+            if target is None:
+                failures, _ = await _work_failures(platform, task)
+                target, reason = _choose(task, _online(hosts, now), failures,
+                                         await _load(platform, principal.workspace.id, hosts))
+                result["reason"] = None if target else reason
+            if target is not None:
+                result["placement_id"] = await _offer_work(platform, task, target, now, actor)
+        else:
+            chunk = (await _chunk_states(platform, principal.workspace.id)).get(task.task_key)
+            if target is not None:
+                names, built = await _builders(platform, task)
+                if not _reviewer(target) or target["host_id"] in built or {
+                        target["agent_id"], target["agent_signature"]} & names:
+                    raise ApiError(409, "host_does_not_fit",
+                                   "a review or merge goes to a reviewer computer that did "
+                                   "not build the work",
+                                   details={"host_id": target["host_id"],
+                                            "reason": "not_a_reviewer"})
+            await _end(platform, placement, "moved", "supervisor_moved", note)
+            if target is not None:
+                result["placement_id"] = await _offer_step(platform, task, target,
+                                                           placement["step"], chunk, actor)
+            else:
+                result["reason"] = "placed at the next pass"
+        result["to_host"] = target["host_id"] if target else None
+        await append_event(
+            platform, workspace_id=principal.workspace.id, agent=actor,
+            event_type="PLACEMENT_MOVED",
+            payload={"task_key": task.task_key, "step": placement["step"],
+                     "placement_id": placement_id, "from_host": placement["host_id"],
+                     "to_host": result["to_host"], "note": note and note[:500]},
+            namespace=task.namespace)
+        await platform.commit()
+    return result
+
+
+async def withdraw(session: AsyncSession, principal: Principal, placement_id: str,
+                   note: str | None = None) -> dict[str, Any]:
+    """Take a task off the computers: its host lets go, the task is READY and
+    unassigned, and the scheduler leaves it alone until someone claims it or the
+    placement is moved. A supervise round just ends."""
+    await _may_steer(session, principal)
+    actor = principal.agent_signature or "supervisor"
+    async with async_session_factory() as platform:
+        placement = await _steerable(platform, principal, placement_id)
+        if placement["status"] not in OPEN:
+            raise _not_movable(placement, "this placement already ended")
+        if placement["step"] in ("review", "merge"):
+            raise _not_movable(placement, "a review or merge is not held; move it instead")
+        task = None
+        if placement["step"] == "work":
+            task = await platform.get(CollabTask, placement["task_id"], with_for_update=True)
+            if task is None or task.status not in (TaskStatus.READY, TaskStatus.IN_PROGRESS):
+                raise _not_movable(placement, "the task is past the work step")
+            host = next((item for item in await _hosts(platform, principal.workspace.id)
+                         if item["host_id"] == placement["host_id"]), None)
+            if host is not None:
+                await _take_back(platform, task, host, "supervisor_withdrew")
+            elif task.assignee:
+                await _unassign(platform, task, actor)
+            await _end(platform, placement, "withdrawn", "held", note)
+            await platform.execute(text(
+                "UPDATE runner_placements SET lease_epoch = :e WHERE placement_id = :id"),
+                {"e": task.lease_epoch or 0, "id": placement_id})
+        else:
+            await _end(platform, placement, "withdrawn", "supervisor_withdrew", note)
+        await append_event(
+            platform, workspace_id=principal.workspace.id, agent=actor,
+            event_type="PLACEMENT_WITHDRAWN",
+            payload={"task_key": placement["task_key"], "step": placement["step"],
+                     "placement_id": placement_id, "host_id": placement["host_id"],
+                     "note": note and note[:500]},
+            namespace=task.namespace if task else "default")
+        await platform.commit()
+    return {"withdrawn": placement_id, "step": placement["step"],
+            "task_key": placement["task_key"], "held": placement["step"] == "work"}

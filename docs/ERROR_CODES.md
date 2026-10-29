@@ -78,6 +78,7 @@ do not edit by hand. Every error body is
 | `diagram_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another diagram key or edit the existing one. |
 | `google_email_mismatch` | 409 | `fix_request` | `fix_request_then_resend` | Use the Google account for this email. |
 | `google_identity_conflict` | 409 | `fix_request` | `fix_request_then_resend` | Unlink the other identity first. |
+| `host_does_not_fit` | 409 | `fix_request` | `fix_request_then_resend` | Pick another computer, or omit host_id to let the scheduler choose. |
 | `human_user_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another email. |
 | `idempotency_key_reused` | 409 | `fix_request` | `use_new_idempotency_key` | Generate a new idempotency key; confirm this is a different request. |
 | `increment_out_of_order` | 409 | `fix_request` | `fix_request_then_resend` | Import details.prev_export_id first, then this increment. |
@@ -225,6 +226,7 @@ do not edit by hand. Every error body is
 | `not_queue_head` | 409 | `abandon` | `abandon_and_release_local_state` | Only the queue head is checked; wait for this chunk's turn. |
 | `nothing_to_probe` | 409 | `abandon` | `abandon_and_release_local_state` | Write and index documents first. |
 | `oauth_request_decided` | 409 | `abandon` | `abandon_and_release_local_state` | Start the connection again from your client. |
+| `placement_not_movable` | 409 | `abandon` | `abandon_and_release_local_state` | Read the placement again; it ended or its task moved past this step. |
 | `proposal_not_pending` | 409 | `abandon` | `abandon_and_release_local_state` | The proposal was already decided. |
 | `queue_not_verified` | 409 | `abandon` | `abandon_and_release_local_state` | Queued work merges from the queue after the controller re-tests it. |
 | `queue_ticket_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Call acquire_resource again to re-queue. |

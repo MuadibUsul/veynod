@@ -70,18 +70,21 @@ test("each step gets its own prompt", () => {
   const review = promptFor({ taskKey: "DG-x-api", placementId: "plc_X", host: "h", step: "review", diagramKey: "x", chunkKey: "api" });
   assert.match(review, /get_audit_view\("DG-x-api"\)/);
   assert.match(review, /review_task\("DG-x-api", approve\) first, then the diagram gate/);
-  assert.match(review, /\/v1\/diagrams\/x\/chunks\/api\/gate/);
+  assert.match(review, /diagram\(action="review", diagram_key="x", chunk_key="api"/);
+  assert.match(review, /use the REST API instead/);
   assert.match(review, /Do not change the code yourself/);
   const plain = promptFor({ taskKey: "t1", placementId: "plc_X", host: "h", step: "review" });
   assert.match(plain, /review_task\("t1"\)/);
   assert.doesNotMatch(plain, /diagrams/);
   const merge = promptFor({ taskKey: "DG-x-api", placementId: "plc_X", host: "h", step: "merge", diagramKey: "x", chunkKey: "api" });
-  assert.match(merge, /queue-check/);
-  assert.match(merge, /chunks\/api\/merge \{artifact: <merge commit>\}/);
+  assert.match(merge, /diagram\(action="queue_check", diagram_key="x", chunk_key="api"/);
+  assert.match(merge, /diagram\(action="merge", diagram_key="x", chunk_key="api", args=\{artifact: <merge commit>\}\)/);
   const round = promptFor({ placementId: "plc_X", host: "h", step: "supervise", agenda: [{ kind: "no_host", task_key: "t9" }] });
   assert.match(round, /supervisor round/);
   assert.match(round, /"task_key":"t9"/);
   assert.match(round, /Do not write code in this round/);
+  assert.match(round, /loop\(action="move", placement_id/);
+  assert.match(round, /loop\(action="withdraw", placement_id\)/);
 });
 
 test("the prompt names the task, the branch and the hand-off", () => {

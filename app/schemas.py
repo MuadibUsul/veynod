@@ -1459,6 +1459,15 @@ class PlacementReportRequest(StrictModel):
     note: str | None = Field(default=None, max_length=500)
 
 
+class PlacementMoveRequest(StrictModel):
+    host_id: str | None = Field(default=None, max_length=128)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class PlacementWithdrawRequest(StrictModel):
+    note: str | None = Field(default=None, max_length=500)
+
+
 class HostRevokeRequest(StrictModel):
     reason: str | None = Field(default=None, max_length=500)
 

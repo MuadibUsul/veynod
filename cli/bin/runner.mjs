@@ -107,6 +107,11 @@ export function placementOf(poke) {
   };
 }
 
+// Agents use Veynod's MCP tools; REST is the fallback for one that has none.
+const NO_MCP = "Without Veynod's MCP tools, use the REST API instead: diagram actions are POST "
+  + "/v1/diagrams/<key>/chunks/<chunk>/<gate|queue-check|merge>, loop actions are under /v1/runner "
+  + "(agenda, placements/<id>/move, placements/<id>/withdraw).";
+
 export function promptFor({ taskKey, placementId, branch, host, step = "work", diagramKey, chunkKey, agenda = [] }) {
   const where = branch
     ? `This directory is a fresh checkout of the default branch (local branch ${branch}).`
@@ -118,21 +123,23 @@ export function promptFor({ taskKey, placementId, branch, host, step = "work", d
       `1. Read it on Veynod (${host}) with get_audit_view("${taskKey}"): its acceptance, the brief, the pull request.`,
       `2. ${where} Check out the work under review and run the project's checks.`,
       diagramKey
-        ? `3. If it passes: review_task("${taskKey}", approve) first, then the diagram gate: POST /v1/diagrams/${diagramKey}/chunks/${chunkKey}/gate {result: "pass", checks}. If not: review_task reject with what to fix, then the gate with result "fail" and the evidence.`
+        ? `3. If it passes: review_task("${taskKey}", approve) first, then the diagram gate: diagram(action="review", diagram_key="${diagramKey}", chunk_key="${chunkKey}", args={result: "pass", checks, evidence}). If not: review_task reject with what to fix, then the gate with result "fail" and the evidence.`
         : `3. Approve or reject with review_task("${taskKey}"), giving a result for every acceptance item and, when rejecting, exactly what to fix.`,
       "You did not build this; judge it only against its acceptance. Do not change the code yourself.",
+      ...(diagramKey ? [NO_MCP] : []),
     ].join("\n");
   }
   if (step === "merge") {
     return [
       `Veynod asks this computer to merge chunk ${chunkKey} of diagram ${diagramKey} (task ${taskKey}, placement ${placementId}).`,
-      `1. Read the chunk on Veynod (${host}): GET /v1/diagrams/${diagramKey} and the task's pull request.`,
+      `1. Read the chunk on Veynod (${host}): diagram(action="get", diagram_key="${diagramKey}") and the task's pull request.`,
       `2. ${where} If the chunk waits in the merge queue, rebase its branch on the default branch,`,
-      `   run the chunk's commands, and report POST /v1/diagrams/${diagramKey}/chunks/${chunkKey}/queue-check`,
-      "   (pass, or rebase_conflict / test_failed with the evidence; stop there if it is not a pass).",
+      `   run the chunk's commands, and report diagram(action="queue_check", diagram_key="${diagramKey}", chunk_key="${chunkKey}",`,
+      "   args={result: \"pass\"} or rebase_conflict / test_failed with the evidence; stop there if it is not a pass).",
       "3. Merge the pull request into the default branch (squash), then record it:",
-      `   POST /v1/diagrams/${diagramKey}/chunks/${chunkKey}/merge {artifact: <merge commit>}.`,
+      `   diagram(action="merge", diagram_key="${diagramKey}", chunk_key="${chunkKey}", args={artifact: <merge commit>}).`,
       "You did not build this chunk. Never push anything but the merge itself.",
+      NO_MCP,
     ].join("\n");
   }
   if (step === "supervise") {
@@ -141,11 +148,15 @@ export function promptFor({ taskKey, placementId, branch, host, step = "work", d
       `Veynod asks this computer to look after the Loop (supervisor round, placement ${placementId}).`,
       `These things wait or went wrong on ${host}:`,
       ...(lines.length ? lines : ["- (nothing listed)"]),
-      "For each: find out why (list_tasks, get_task_tree, get_metrics, list_alerts, list_hosts),",
-      "then act: reassign or release a stuck task, split one that keeps failing into smaller tasks,",
-      "cancel what is obsolete, acknowledge an alert you resolved. Decide technical matters yourself.",
+      "For each: find out why (loop(action=\"agenda\"), loop(action=\"placements\"), list_tasks,",
+      "get_task_tree, get_metrics, list_alerts, loop(action=\"hosts\")), then act:",
+      "- a task or step stuck on a computer: loop(action=\"move\", placement_id, host_id optional);",
+      "- a task that should not run as it is: loop(action=\"withdraw\", placement_id), then fix or split it;",
+      "- split one that keeps failing into smaller tasks, cancel what is obsolete,",
+      "  acknowledge an alert you resolved. Decide technical matters yourself.",
       "Only money, identity, legal, deleting data or outside commitments go to the owner, together,",
       "in one short message in plain words. Do not write code in this round.",
+      NO_MCP,
     ].join("\n");
   }
   return [

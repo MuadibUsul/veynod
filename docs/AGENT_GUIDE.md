@@ -94,6 +94,13 @@ failure, a finish that changed nothing, or 30 minutes without progress
 moves the step to another computer. For a chunk, approve the task before
 you call the gate. Under full automation freezing a diagram dispatches its
 first chunks, and a diagram's `repo` is passed on to its chunk tasks.
+The MCP tool `loop` covers all of this: `agenda`, `placements`, `placement`,
+`report`, `hosts`, `schedule_now`, and for people, super admins and
+supervisor computers `move` (put a task or step on another computer, named
+by `host_id` or the best other one; the old one is not picked again for it)
+and `withdraw` (take a task off the computers until someone claims it or it
+is moved; ends a supervise round). REST: `GET /v1/runner/agenda`,
+`POST /v1/runner/placements/{id}/move {host_id?, note?}` and `/withdraw`.
 
 ## Reading drafts and tainted documents
 
@@ -322,6 +329,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `diagram_exists` | 409 | `fix_request` |
 | `google_email_mismatch` | 409 | `fix_request` |
 | `google_identity_conflict` | 409 | `fix_request` |
+| `host_does_not_fit` | 409 | `fix_request` |
 | `human_user_exists` | 409 | `fix_request` |
 | `idempotency_key_reused` | 409 | `fix_request` |
 | `increment_out_of_order` | 409 | `fix_request` |
@@ -469,6 +477,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `not_queue_head` | 409 | `abandon` |
 | `nothing_to_probe` | 409 | `abandon` |
 | `oauth_request_decided` | 409 | `abandon` |
+| `placement_not_movable` | 409 | `abandon` |
 | `proposal_not_pending` | 409 | `abandon` |
 | `queue_not_verified` | 409 | `abandon` |
 | `queue_ticket_expired` | 409 | `abandon` |

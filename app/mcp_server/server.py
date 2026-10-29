@@ -2013,6 +2013,72 @@ async def list_hosts(host: str | None = None, include_revoked: bool = False) -> 
     return _compact(result)
 
 
+_LOOP_ACTIONS = ("agenda", "placements", "placement", "report", "move", "withdraw",
+                 "schedule_now", "hosts")
+
+
+@mcp.tool(name="loop")
+async def loop(action: str, placement_id: str | None = None, host_id: str | None = None,
+               outcome: str | None = None, note: str | None = None,
+               task_key: str | None = None, step: str | None = None,
+               open_only: bool = False) -> dict[str, Any]:
+    """The full-managed Loop: which computer runs which task or step, and steering it.
+
+    action:
+    - agenda: what waits or went wrong now (the list a supervise round gets).
+    - placements: placements, filtered by task_key, step (work|review|merge|
+      supervise) and open_only; needs_you lists the ones no computer can take.
+    - placement: one placement with its detail (placement_id).
+    - report: the computer a step was placed on says how it ended (placement_id,
+      outcome finished|failed, note). A finish that changes nothing counts as a
+      failure after 2 minutes.
+    - move: put a task or step on another computer (placement_id, host_id
+      optional: without it the best other computer; the old one is not picked
+      again for this task). Also puts a held task back on the computers.
+    - withdraw: take a task off the computers until someone claims it or it is
+      moved (placement_id); ends a supervise round. Reviews and merges are moved.
+    - schedule_now: run a scheduling pass now (people and commanders).
+    - hosts: the computers, as list_hosts.
+    agenda, move and withdraw are for people, super admins and supervisor
+    computers (SUPER_ADMIN token or the supervisor capability)."""
+    from app.services import runners, scheduler
+
+    if action not in _LOOP_ACTIONS:
+        raise _api_error(ApiError(422, "validation_error", f"unknown action '{action}'",
+                                  details={"actions": list(_LOOP_ACTIONS)}))
+    if action in ("placement", "report", "move", "withdraw") and not placement_id:
+        raise _api_error(ApiError(422, "validation_error", f"{action} needs placement_id",
+                                  details={"field": "placement_id"}))
+    if step is not None and step not in ("work", "review", "merge", "supervise"):
+        raise _api_error(ApiError(422, "validation_error",
+                                  "step is work, review, merge or supervise",
+                                  details={"field": "step"}))
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            if action == "agenda":
+                result = await scheduler.loop_agenda(session, principal)
+            elif action == "placements":
+                result = await scheduler.placements(session, principal, task_key=task_key,
+                                                    open_only=open_only, step=step)
+            elif action == "placement":
+                result = await scheduler.placement_detail(session, principal, placement_id)
+            elif action == "report":
+                result = await scheduler.report(session, principal, placement_id,
+                                                outcome or "", note)
+            elif action == "move":
+                result = await scheduler.move(session, principal, placement_id, host_id, note)
+            elif action == "withdraw":
+                result = await scheduler.withdraw(session, principal, placement_id, note)
+            elif action == "schedule_now":
+                result = await scheduler.schedule_now(session, principal)
+            else:
+                result = await runners.list_hosts(session, principal)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
 _DIAGRAM_ACTIONS = {
     # action: (service function, needs diagram_key, needs chunk_key, takes body)
     "list": ("list_diagrams", False, False, False),

@@ -116,6 +116,10 @@ TOOL_ACTION_HANDLERS = {
         "request_diagram_increment", "decide_diagram_change", "signal_chunk",
         "escalate_chunk", "chunk_usage", "replay_diagram",
     ),
+    "loop": (
+        "loop_agenda", "list_placements", "get_placement", "report_placement",
+        "move_placement", "withdraw_placement", "schedule_now", "list_hosts",
+    ),
 }
 # MCP tools with no REST counterpart, and why.
 MCP_ONLY = {
