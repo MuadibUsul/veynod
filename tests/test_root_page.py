@@ -91,7 +91,7 @@ def test_root_structured_data_links_only_existing_brand_profiles():
     graph = json.loads(match.group(1))["@graph"]
     organization = next(item for item in graph if item["@type"] == "Organization")
     assert organization["sameAs"] == [
-        "https://github.com/MuadibUsul/veynod",
+        "https://github.com/veynod/veynod",
         "https://www.npmjs.com/package/veynod",
     ]
 

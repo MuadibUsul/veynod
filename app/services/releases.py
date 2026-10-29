@@ -29,6 +29,18 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.22.3",
+        "date": "2026-10-29",
+        "summary": "The public brand links point at the open-source veynod/veynod "
+        "repository now that it is live.",
+        "highlights": [
+            "Organization JSON-LD sameAs uses https://github.com/veynod/veynod; "
+            "the private repository is no longer advertised.",
+            "The public repository is MIT licensed, carries the CLI/MCP bridge and "
+            "is the npm repository home.",
+        ],
+    },
+    {
         "version": "3.22.2",
         "date": "2026-10-29",
         "summary": "The MCP tool list carries directory annotations, and the homepage "
