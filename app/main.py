@@ -466,6 +466,15 @@ async def favicon() -> FileResponse:
     )
 
 
+@app.get("/favicon.png", include_in_schema=False)
+async def favicon_png() -> FileResponse:
+    return FileResponse(
+        APPLE_TOUCH_ICON_PATH,
+        media_type="image/png",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @app.get("/apple-touch-icon.png", include_in_schema=False)
 async def apple_touch_icon() -> FileResponse:
     return FileResponse(
@@ -636,7 +645,7 @@ async def root(request: Request) -> Any:
         "changelog": {"namespace": "system", "doc_key": "system/changelog"},
         "capabilities": capabilities.describe(app),
     }
-    headers = {"Vary": "Accept", "Cache-Control": "no-store"}
+    headers = {"Vary": "Accept, Accept-Encoding", "Cache-Control": "no-store"}
     if (
         request.query_params.get("format", "").lower() == "json"
         or _wants_json(request.headers.get("accept", ""))
@@ -647,55 +656,33 @@ async def root(request: Request) -> Any:
     return HTMLResponse(render_root_page(descriptor, lang="en"), headers=headers)
 
 
-def _accept_quality(accept: str, candidate: str) -> float:
-    """Quality for one representation, honouring media-range specificity."""
-    candidate_type, candidate_subtype = candidate.split("/", 1)
-    best_specificity = -1
-    best_quality = 0.0
-    for item in accept.lower().split(","):
-        media, *params = item.strip().split(";")
+def _wants_json(accept: str) -> bool:
+    """Only an explicit JSON request selects the machine descriptor.
+
+    A wildcard, a browser Accept header, or a mixed `application/json,
+    text/html` header must keep the full HTML landing page: Googlebot sends
+    `*/*`, and a cache that stored the JSON for that request would hide the
+    page from search. `?format=json` remains the explicit escape hatch.
+    """
+    explicit = False
+    for item in accept.split(","):
+        media, *params = item.strip().lower().split(";")
         media = media.strip()
-        if media != "*/*" and "/" not in media:
+        if media in ("text/html", "text/*", "*/*", "application/*"):
+            return False
+        if media != "application/json":
             continue
-        range_type, _, range_subtype = media.partition("/")
         quality = 1.0
         for param in params:
-            if param.strip().startswith("q="):
+            name, _, value = param.strip().partition("=")
+            if name == "q":
                 try:
-                    quality = min(1.0, max(0.0, float(param.strip()[2:])))
+                    quality = float(value)
                 except ValueError:
                     quality = 0.0
-        if range_type == "*" and range_subtype == "*":
-            specificity = 0
-        elif range_subtype == "*":
-            specificity = 1
-        else:
-            specificity = 2
-        matches = (
-            (range_type == "*" and range_subtype == "*")
-            or (range_type == candidate_type and range_subtype == "*")
-            or (range_type == candidate_type and range_subtype == candidate_subtype)
-        )
-        if not matches:
-            continue
-        if specificity > best_specificity:
-            best_specificity = specificity
-            best_quality = quality
-        elif specificity == best_specificity and quality > best_quality:
-            best_quality = quality
-    return best_quality if best_specificity >= 0 else 0.0
-
-
-def _wants_json(accept: str) -> bool:
-    """Compare JSON and HTML quality; ties and `*/*` keep the HTML landing page."""
-    # A wildcard is insufficient to opt an agent into the orientation payload.
-    if not any(item.split(";", 1)[0].strip().lower() == "application/json"
-               for item in accept.split(",")):
-        return False
-    # XHTML is not a representation we serve; treating application/* as an
-    # XHTML request would make an API client's `application/*` select HTML.
-    html = _accept_quality(accept, "text/html")
-    return _accept_quality(accept, "application/json") > html
+        if quality > 0:
+            explicit = True
+    return explicit
 
 
 @app.get("/zh/", include_in_schema=False)
@@ -711,7 +698,7 @@ async def root_zh(request: Request) -> HTMLResponse:
     }
     return HTMLResponse(
         render_root_page(descriptor, lang="zh"),
-        headers={"Vary": "Accept", "Cache-Control": "no-store",
+        headers={"Vary": "Accept, Accept-Encoding", "Cache-Control": "no-store",
                  "Link": f'<{SEO_SITE_URL}/zh/>; rel="canonical"'},
     )
 
@@ -763,7 +750,7 @@ async def demo_page() -> HTMLResponse:
             ]
     return HTMLResponse(
         render_demo_page(documents, tasks, workspace_name=settings.demo_workspace_name),
-        headers={"Vary": "Accept", "Cache-Control": "public, max-age=60",
+        headers={"Vary": "Accept, Accept-Encoding", "Cache-Control": "public, max-age=60",
                  "Link": f'<{SEO_SITE_URL}/demo/>; rel="canonical"'},
     )
 

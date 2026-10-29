@@ -6,7 +6,7 @@
 **Project:** AgentGraph
 **Version:** 3.2.1 (v3.3 console refresh, build marker `3.2.1-ui.2`)
 **Style:** quiet high-density dark operations console; flat graphite surfaces, one indigo action accent
-**Surface:** `https://agentgraph.fusionpropulsion.space/dashboard/` (fallback: `https://agentgraph.104-207-82-85.nip.io/dashboard/`)
+**Surface:** `https://veynod.com/dashboard/` (the legacy test host is retired)
 
 ## Automated evidence
 
