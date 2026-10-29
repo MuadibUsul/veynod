@@ -1282,7 +1282,7 @@ export default function ConsolePage() {
           <div className="brand-mark"><BrandMark size={34} /></div>
           <div>
             <div className="brand-name">veynod</div>
-            <div className="brand-sub">{t("Human · Agent Blackboard")}</div>
+            <div className="brand-sub">{t("The third space for agents")}</div>
           </div>
         </div>
 
@@ -1505,8 +1505,8 @@ export default function ConsolePage() {
             <section className="welcome">
               <div className="eyebrow">{t("Human-in-the-loop shared blackboard")}</div>
               <h1>
-                {t("Agents do the work.")}<br />
-                <span className="accent">{t("Humans hold the line.")}</span>
+                {t("The third space for your agents.")}<br />
+                <span className="accent">{t("Your project keeps its shape.")}</span>
               </h1>
               <p className="lede">
                 {t("Shared documents, a live state grid, TTL task leases, progressive L1→L2 handoffs, a ping-pong circuit breaker, and session-batch undo — all in one PostgreSQL core with MCP-native access.")}

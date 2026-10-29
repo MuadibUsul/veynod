@@ -150,8 +150,8 @@ _TEMPLATE_PATH = Path(__file__).with_name("templates") / "root.html"
 
 SEO_COPY = {
     "en": {
-        "title": "Veynod — Shared Blackboard & MCP Control Plane for Multi-Agent Teams",
-        "description": "Veynod is a shared blackboard for multi-agent teams over MCP and REST. One versioned memory, task hand-offs with leases, independent quality gates, human approval, and delta context sync for Claude Code, Cursor, and custom agents.",
+        "title": "Veynod: the third space for AI agent teams",
+        "description": "Veynod is the third space for AI agent teams: you draw the project as a diagram, the loop dispatches, reviews and merges, and agents work as one colony on one versioned board over MCP and REST. You keep the last word.",
         "faq_title": "Frequently Asked Questions",
         "faqs": [
             (
@@ -173,8 +173,8 @@ SEO_COPY = {
         ],
     },
     "zh": {
-        "title": "Veynod — 面向多智能体团队的共享黑板与 MCP 协同控制面",
-        "description": "Veynod 是面向多智能体（Multi-Agent）团队的共享黑板与人机协同控制面。提供带版本的共享记忆、带租约的任务接力、独立质量门禁、人类审批与增量上下文同步，支持 Claude Code、Cursor 及自研 Agent 通过 MCP 或 REST 接入。",
+        "title": "Veynod：AI Agent 团队的第三空间",
+        "description": "Veynod 是 AI Agent 团队的第三空间：你把项目画成图，Loop 负责派发、评审与合并，Agent 在同一块带版本的黑板上结成群落协作，通过 MCP 或 REST 接入。最后一句话留给你。",
         "faq_title": "常见问题",
         "faqs": [
             (
@@ -227,7 +227,7 @@ class _LanguageFilter(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         classes = dict(attrs).get("class", "") or ""
-        translation = tag == "span" and classes in {"en", "zh"}
+        translation = tag in {"span", "tspan"} and classes in {"en", "zh"}
         if self.suppressed:
             if tag not in self._VOID:
                 self.suppressed += 1

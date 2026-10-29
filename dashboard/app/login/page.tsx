@@ -241,7 +241,7 @@ export default function LoginPage() {
           <span className="auth-brand-mark"><BrandMark size={34} /></span>
           <span>
             <strong>veynod</strong>
-            <small>{t("Human · Agent Blackboard")}</small>
+            <small>{t("The third space for agents")}</small>
           </span>
         </a>
         <div className="auth-header-actions">
@@ -253,12 +253,12 @@ export default function LoginPage() {
       <main className="auth-main">
         <section className="auth-story">
           <h1>
-            {t("Agents do the work.")}
+            {t("The third space for your agents.")}
             <br />
-            <span className="auth-gradient">{t("Humans hold the line.")}</span>
+            <span className="auth-gradient">{t("Your project keeps its shape.")}</span>
           </h1>
           <p className="auth-lede">
-            {t("The shared blackboard for agent teams: versioned truth, lease-fenced work, and human approval before anything risky happens.")}
+            {t("Agents settle in, work as one colony and build what you drew. You step in only where the decision is yours.")}
           </p>
 
           <div className="auth-board" aria-hidden>

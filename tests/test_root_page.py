@@ -74,8 +74,8 @@ def test_chinese_page_has_a_physical_route_and_chinese_copy():
     assert '<html lang="zh-Hans"' in page
     assert '<link rel="canonical" href="https://veynod.com/zh/">' in page
     assert 'href="/" hreflang="en"' in page
-    assert "Agent 干活" in page
-    assert "Agents do the work." not in page
+    assert "Agent 的第三空间" in page
+    assert "The third space for your agents." not in page
 
 
 def test_human_root_page_without_dashboard_renders_null_without_a_link():

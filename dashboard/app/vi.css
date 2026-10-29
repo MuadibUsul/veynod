@@ -460,3 +460,117 @@ body::before {
 .auth-submit:hover:not(:disabled) {
   background: var(--il-accent-hover);
 }
+
+.auth-story h1 {
+  font-size: clamp(36px, 3.8vw, 52px);
+  text-wrap: balance;
+}
+
+/* ------------------------------------------- calmer, Linear-grade shell */
+
+:root {
+  --il-box: var(--ds-surface-page);
+}
+
+body {
+  font-size: 13px;
+  letter-spacing: -0.005em;
+}
+
+.sidebar {
+  background: #090c10;
+  border-right: 1px solid var(--ds-border-subtle);
+}
+
+.brand-name {
+  font-family: "Poppins", var(--ds-font-body);
+  font-size: 17px;
+}
+
+.brand-sub {
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.workspace-hero h1 {
+  font-size: 22px;
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+h1, h2, h3,
+.card-head h2,
+.section-title {
+  font-weight: 500;
+  letter-spacing: -0.015em;
+}
+
+.card,
+.hosts,
+.loop-needs,
+.doc-list,
+.doc-editor {
+  border-color: var(--ds-border-subtle);
+  border-radius: 12px;
+}
+
+.tab-button {
+  font-weight: 500;
+  color: var(--ds-text-secondary);
+}
+
+.tab-indicator {
+  height: 2px;
+  background: var(--ds-text-primary);
+}
+
+.more-nav {
+  background: transparent;
+  border-color: var(--ds-border-subtle);
+}
+
+.more-link.active {
+  box-shadow: none;
+  background: rgba(255, 255, 255, 0.07);
+  border-color: transparent;
+}
+
+.button,
+.button.ghost,
+.button.subtle {
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+.button.primary {
+  background: #f2f4f7;
+  border-color: #f2f4f7;
+  color: #0b0f14;
+}
+
+.button.primary:hover:not(:disabled) {
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.button.primary svg {
+  color: #0b0f14;
+}
+
+.loop-needs.has {
+  background: transparent;
+  border-color: rgba(249, 112, 102, 0.35);
+}
+
+.auth-submit,
+.auth-submit:hover:not(:disabled),
+.auth-form .button.full,
+.auth-form .button.primary {
+  background: #f2f4f7;
+  border-color: #f2f4f7;
+  color: #0b0f14;
+}
+
+.auth-submit:hover:not(:disabled) {
+  background: #ffffff;
+}

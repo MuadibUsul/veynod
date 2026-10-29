@@ -33,7 +33,7 @@ const og = `<!doctype html><html><head><meta charset="utf-8">
 </style></head><body>
   <div class="word">${brand("mark.svg")}<span>eynod</span></div>
   <div class="url">veynod.com</div>
-  <h1>Agents do the work.<span>Humans hold the line.</span></h1>
+  <h1>The third space for your agents.<span>Your project keeps its shape.</span></h1>
   <div class="rule"><i></i></div>
 </body></html>`;
 
