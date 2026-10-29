@@ -149,6 +149,13 @@ def next_call(principal: Principal, state: str, row: dict[str, Any] | None,
     if state == "needs_registration":
         from app.services.directory import default_agent_id
 
+        if not principal.agent_id or principal.agent_id.startswith("unnamed-"):
+            return {"tool": "register_agent",
+                    "args": {"introduction": {"name": "<who you are, e.g. Claude Code>",
+                                              "function": "<what you do here, e.g. code>",
+                                              "maker": "<optional>"}},
+                    "why": "First handshake: introduce yourself and the platform gives you "
+                           "a name ({subject}-{function}) and a permanent address."}
         return {"tool": "register_agent",
                 "args": {"agent_id": default_agent_id(principal.agent_signature),
                          "capabilities": ["<what you do, in a few words>"]},

@@ -1428,10 +1428,50 @@ class TokenRenewRequest(StrictModel):
     ttl_seconds: int = Field(ge=60)
 
 
+class AgentIntroduction(StrictModel):
+    """What an agent says about itself on its first handshake."""
+
+    name: str = Field(min_length=1, max_length=64,
+                      description="Who you are, e.g. Claude Code, Grok, Codex")
+    function: str = Field(min_length=1, max_length=64,
+                          description="What you do here, e.g. code, review, deploy, audit")
+    maker: str | None = Field(default=None, max_length=64, description="e.g. Anthropic")
+    model: str | None = Field(default=None, max_length=64)
+    runs_on: str | None = Field(default=None, max_length=64,
+                                description="e.g. a laptop CLI, a cloud session, a bot")
+    note: str | None = Field(default=None, max_length=500)
+
+
+class RunnerHelloRequest(StrictModel):
+    host: dict[str, Any] = Field(
+        description="What this computer can do: os, arch, hostname (kept only as a digest), "
+                    "runner_version, runtimes [{id, version, available, models, usage: "
+                    "{plan, windows: [{name, used_percent, resets_at}]}}], max_concurrency, "
+                    "repos [owner/name]. Unknown fields and anything that looks like an "
+                    "email or a key are dropped.")
+
+
+class RunnerHeartbeatRequest(StrictModel):
+    running: list[str] | None = Field(default=None, max_length=64,
+                                      description="Task keys running on this host now")
+    runtimes: list[dict[str, Any]] | None = Field(
+        default=None, max_length=8, description="Fresh runtime list, e.g. new quota windows")
+    max_concurrency: int | None = Field(default=None, ge=1, le=64)
+
+
+class HostRevokeRequest(StrictModel):
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class AgentRegisterRequest(StrictModel):
     agent_id: str | None = Field(
         default=None, min_length=3, max_length=40,
-        description="Default: derived from the token label (lower case)")
+        description="Default: derived from the token label (lower case); an unnamed token "
+                    "may pass introduction instead and the platform names it")
+    introduction: AgentIntroduction | None = Field(
+        default=None,
+        description="First handshake: say who you are and what you do; the platform derives "
+                    "agent_id ({subject}-{function}), display name and a permanent address")
     display_name: str | None = Field(default=None, max_length=64,
                                      description="Default: the token label, case kept")
     role: str | None = Field(default=None, max_length=32, description="Default: the token role")

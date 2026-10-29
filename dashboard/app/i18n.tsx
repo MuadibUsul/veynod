@@ -430,10 +430,10 @@ const ZH: Record<string, string> = {
   "Status": "状态",
   "Allowed agent roles": "允许的 Agent 角色",
   "Agent signature": "Agent 标识",
-  "Naming happens on the agent side": "命名由 Agent 自己完成",
-  "No name is set here. On first connect the agent calls register_agent with a lowercase kebab-case id (for example zcode-deploy); the server adds the -v1 generation automatically. Later rotations keep the id and only bump the generation.":
-    "签发时不填名字。Agent 首次连接时调用 register_agent 自己选一个全小写、连字符分隔的 id（例如 zcode-deploy），服务端自动补上 -v1 代际；以后轮换只递增代际，id 不变。",
-  "Unnamed — self-naming on first connect": "未命名 — 等待 Agent 首次连接自命名",
+  "Naming happens on the agent side": "Agent 首次握手时自动命名",
+  "No name is set here. On first connect the agent introduces itself (who it is and what it does) and the platform names it, for example claude-code, plus a permanent address that never changes. The -v1 generation is added automatically; later rotations keep the id and only bump the generation.":
+    "签发时不填名字。Agent 首次连接时先自我介绍（是谁、做什么），平台据此给它起名（例如 claude-code），并分配一个永不改变的地址；服务端自动补上 -v1 代际，以后轮换只递增代际，id 不变。",
+  "Unnamed — self-naming on first connect": "未命名 — 等待 Agent 首次握手",
   "Stable agent id (optional)": "稳定 agent_id（可选）",
   "Lowercase machine identity. New tokens get a -v1 suffix and later generations increment it.":
     "小写机器身份。新令牌自动加 -v1，后续代际递增。",

@@ -329,3 +329,15 @@ Task `auto-loop-mode-impl-v2`, spec `agentgraph/spec-auto-loop-mode` v2 (pinned 
 | `include_cold` | Fixed 2026-10-27: `include_cold=false` leaves out cold documents (AG-ST-11). |
 | Schema apply under traffic | Fixed 2026-10-27: `apply_schema` records a fingerprint of every schema file (and the vector dimension); a server whose files match it skips the DDL instead of re-running init.sql under live reads. |
 | Playtest leftovers | 2026-10-27: REST `review_task` checks `task:review` before the body (#22 was MCP-only); #5's not_found for a forbidden namespace no longer reproduces (8 read paths answer 403 `NAMESPACE_FORBIDDEN`); "my own task events don't reach my inbox" is by design (the actor is never a recipient), now said in the agent guide. |
+
+## Full-managed Loop: runner hosts (runner-2)
+
+Task `runner-2-host-handshake`, step 2 of 5 (`runner-1`..`runner-5`). Any computer that can run Claude Code or Codex (VPS, Windows, macOS, Raspberry Pi, the Windows client) joins the Loop the same way.
+
+| Item | Status | Notes |
+|---|---|---|
+| A-01 host report | Done | `POST /v1/runner/hello` and `POST /v1/runner/heartbeat`: os, arch, hostname digest, runner version, runtimes with models and quota windows, max concurrency, repos, running tasks. |
+| A-02 one token, one host | Done | Unique per token; reconnecting keeps `host_id`; `permanent_address` is `host:hst_...`. |
+| A-03 read and revoke | Done | `GET /v1/runner/hosts[/{ref}]`, MCP `list_hosts`; owner revoke revokes the token and frees its leases. |
+| A-04 nothing secret | Done | Whitelisted fields only; emails and key-shaped values dropped; hostname stored as a digest. |
+| A-05 docs | Done | Agent guide "Runners" section and the docs site. |

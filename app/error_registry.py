@@ -174,6 +174,9 @@ REGISTRY: dict[str, ErrorSpec] = {
         409, FIX_REQUEST, "Call open_admin_access first (the node is notified)."
     ),
     "agent_id_taken": _spec(409, FIX_REQUEST, "Choose another agent_id."),
+    "runner_hello_required": _spec(
+        409, FIX_REQUEST, "Call POST /v1/runner/hello with this host, then retry."
+    ),
     "alias_taken": _spec(409, FIX_REQUEST, "Choose another alias."),
     "alias_tombstoned": _spec(409, FIX_REQUEST, "Choose another alias; tombstones never reuse."),
     "idempotency_key_reused": _spec(

@@ -65,6 +65,8 @@ def entry_out(row: dict[str, Any]) -> dict[str, Any]:
         "source": row.get("source") or "registered",
         "reach": row.get("reach") or {},
         "address": f"agent:{row['agent_id']}",
+        # Never changes, even when agent_id is renamed.
+        "permanent_address": f"agent:{row['principal_id']}",
     }
 
 
@@ -128,6 +130,89 @@ async def _taken(session: AsyncSession, tenant_id: str, agent_id: str) -> bool:
              "LIMIT 1"),
         {"t": tenant_id, "a": agent_id},
     ))
+
+
+# Common function words in Chinese, so 代码 still yields an ascii id.
+FUNCTION_WORDS = {
+    "代码": "code", "编码": "code", "开发": "code", "实现": "code", "审计": "audit",
+    "审核": "review", "评审": "review", "部署": "deploy", "发布": "publish", "出版": "publish",
+    "测试": "test", "规划": "plan", "计划": "plan", "研究": "research", "调研": "survey",
+    "文档": "docs", "运维": "ops", "设计": "design", "产品": "product", "主理": "desk",
+    "回测": "backtest", "探针": "probe", "分析": "analysis",
+}
+ROLE_WORDS = {"EXECUTOR": "work", "AUDITOR": "audit", "ANALYST": "plan", "ADMIN": "admin"}
+
+
+def _word(value: str | None) -> str:
+    """The first ascii word of a phrase, lower case, or ''."""
+    value = (value or "").strip()
+    for chinese, word in FUNCTION_WORDS.items():
+        if value.startswith(chinese):
+            return word
+    match = re.search(r"[A-Za-z][A-Za-z0-9]*", value)
+    return match.group(0).lower()[:18] if match else ""
+
+
+async def _derive_agent_id(session: AsyncSession, principal: Principal,
+                           intro: dict[str, Any] | None, data: dict[str, Any]) -> str | None:
+    """Name an agent from its handshake: {subject}-{function}, made unique."""
+    intro = intro or {}
+    subject = _word(intro.get("name")) or _word(data.get("display_name"))
+    if not subject:
+        if not intro:
+            return None
+        subject = "agent"  # a name with no Latin letters still gets a usable id
+    function = (_word(intro.get("function"))
+                or _word((data.get("capabilities") or [None])[0])
+                or ROLE_WORDS.get(principal.role.value, "agent"))
+    base = subject if function == subject else f"{subject}-{function}"
+    if len(base) < 3:
+        base = f"{base}-agent"
+    base = base[:36].strip("-")
+    generation = principal.generation or 1
+    for attempt in range(1, 100):
+        candidate = base if attempt == 1 else f"{base}-{attempt}"
+        if await _taken(session, principal.workspace.tenant_id, candidate):
+            continue
+        if await session.scalar(text(
+                "SELECT 1 FROM agent_tokens WHERE workspace_id = :ws "
+                "AND agent_signature = :sig AND id <> :id"),
+                {"ws": principal.workspace.id, "sig": f"{candidate}-v{generation}",
+                 "id": principal.token_id}):
+            continue
+        return candidate
+    return None
+
+
+def _clean_intro(given: Any) -> dict[str, Any] | None:
+    """The handshake as stored: known fields, trimmed; name and function required."""
+    if not given:
+        return None
+    if not isinstance(given, dict):
+        raise ApiError(422, "validation_error", "introduction must be an object",
+                       details={"field": "introduction"})
+    intro = {key: str(given[key]).strip()[:500 if key == "note" else 64]
+             for key in ("name", "function", "maker", "model", "runs_on", "note")
+             if given.get(key) not in (None, "")}
+    for key in ("name", "function"):
+        if not intro.get(key):
+            raise ApiError(422, "validation_error",
+                           f"introduction.{key} is required: say who you are and what you do",
+                           details={"field": f"introduction.{key}"})
+    return intro
+
+
+def _introduced(intro: dict[str, Any]) -> str:
+    """One line a person can read: who, by whom, doing what, where."""
+    who = intro["name"]
+    detail = ", ".join(part for part in (intro.get("maker"), intro.get("model")) if part)
+    line = f"{who} ({detail})" if detail else who
+    line = f"{line} · {intro['function']}"
+    if intro.get("runs_on"):
+        line = f"{line} · {intro['runs_on']}"
+    if intro.get("note"):
+        line = f"{line}. {intro['note']}"
+    return line[:500]
 
 
 async def _by_token(session: AsyncSession, token_cid: str | None) -> dict[str, Any] | None:
@@ -213,6 +298,11 @@ async def register_agent(session: AsyncSession, principal: Principal,
     if principal.auth_kind is not AuthKind.AGENT:
         raise Forbidden("register_agent is called by the agent's own token")
     workspace = principal.workspace
+    # One registration per tenant at a time, so two agents that introduce
+    # themselves at once cannot both take the same free name; the second waits
+    # here and then sees the first's row. Released at commit.
+    await session.execute(text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
+                          {"k": f"agent_directory:{workspace.tenant_id}"})
     existing = await _by_token(session, principal.token_cid)
     if existing is not None and existing.get("source") != "auto":
         raise ApiError(409, "already_registered", "this token is already registered",
@@ -221,9 +311,23 @@ async def register_agent(session: AsyncSession, principal: Principal,
     # rest of its profile.
     unnamed = not principal.agent_id or principal.agent_id.startswith("unnamed-")
     requested = (data.get("agent_id") or "").strip()
+    intro = _clean_intro(data.get("introduction"))
+    named_by = "self" if requested else "token"
+    if intro:
+        # First handshake: the agent says who it is, the platform fills the rest.
+        data = {**data,
+                "display_name": data.get("display_name")
+                or f"{intro['name']} · {intro['function']}"[:64],
+                "description": data.get("description") or _introduced(intro),
+                "capabilities": data.get("capabilities") or [
+                    _word(intro["function"]) or intro["function"][:64]]}
+    if unnamed and not requested:
+        requested = await _derive_agent_id(session, principal, intro, data) or ""
+        named_by = "platform"
     if unnamed and not requested:
         raise ApiError(422, "validation_error",
-                       "this token has no name yet; pass agent_id to name it",
+                       "this token has no name yet; pass introduction {name, function} "
+                       "and the platform names it, or pass agent_id",
                        details={"field": "agent_id"})
     agent_id = requested or (
         existing["agent_id"] if existing else default_agent_id(principal.agent_signature))
@@ -261,10 +365,10 @@ async def register_agent(session: AsyncSession, principal: Principal,
              "desc": (data.get("description") or None) and data["description"][:500],
              "reach": json.dumps(reach), "by": principal.token_cid,
              "id": existing["principal_id"]})).mappings().one()
-        await _adopt_name(session, principal, agent_id, named_signature)
+        await _adopt_name(session, principal, agent_id, named_signature, intro)
         await session.commit()
         await _registered(principal)
-        return entry_out(dict(row))
+        return {**entry_out(dict(row)), "named_by": named_by}
     issued_by_human = await session.scalar(
         text("SELECT issued_by_human FROM agent_tokens WHERE id = :id"),
         {"id": principal.token_id},
@@ -288,17 +392,23 @@ async def register_agent(session: AsyncSession, principal: Principal,
              "by": principal.token_cid},
         )
     ).mappings().one()
-    await _adopt_name(session, principal, agent_id, named_signature)
+    await _adopt_name(session, principal, agent_id, named_signature, intro)
     await _announce(session, workspace.id, "AGENT_REGISTERED",
                     {"agent_id": agent_id, "token_id": principal.token_cid})
     await session.commit()
     await _registered(principal)
-    return entry_out(dict(row))
+    return {**entry_out(dict(row)), "named_by": named_by}
 
 
 async def _adopt_name(session: AsyncSession, principal: Principal, agent_id: str,
-                      signature: str | None) -> None:
+                      signature: str | None, intro: dict[str, Any] | None = None) -> None:
     """Give an unnamed credential the identity its agent chose at registration."""
+    if intro:
+        await session.execute(text(
+            "UPDATE agent_tokens SET agent_profile = jsonb_set("
+            "coalesce(agent_profile, '{}'::jsonb), '{introduction}', "
+            "CAST(:intro AS jsonb), true) WHERE id = :id"),
+            {"intro": json.dumps(intro), "id": principal.token_id})
     if signature is None:
         return
     await session.execute(text(

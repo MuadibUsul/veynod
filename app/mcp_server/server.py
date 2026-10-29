@@ -1992,6 +1992,27 @@ async def presence_heartbeat() -> dict[str, Any]:
     return _compact(result)
 
 
+@mcp.tool(name="list_hosts")
+async def list_hosts(host: str | None = None, include_revoked: bool = False) -> dict[str, Any]:
+    """The computers that run this workspace's agents (runners): system, runtimes
+    with models and quota, free slots, what is running, online or offline. Pass
+    host (hst_ id, host: address or agent_id) for one. Runners connect with
+    POST /v1/runner/hello and send POST /v1/runner/heartbeat every 30 s."""
+    from app.services import runners
+
+    async with async_session_factory() as session:
+        principal = await _principal_for_call(session)
+        try:
+            if host:
+                result = await runners.get_host(session, principal, host)
+            else:
+                result = await runners.list_hosts(session, principal,
+                                                  include_revoked=include_revoked)
+        except ApiError as exc:
+            raise _api_error(exc) from exc
+    return _compact(result)
+
+
 _DIAGRAM_ACTIONS = {
     # action: (service function, needs diagram_key, needs chunk_key, takes body)
     "list": ("list_diagrams", False, False, False),
@@ -3159,6 +3180,7 @@ async def rotate_token_secret(token_id: str = "self") -> dict[str, Any]:
 @mcp.tool(name="register_agent")
 async def register_agent(
     agent_id: str | None = None,
+    introduction: dict[str, Any] | None = None,
     display_name: str | None = None,
     role: str | None = None,
     capabilities: list[str] | None = None,
@@ -3167,10 +3189,14 @@ async def register_agent(
 ) -> dict[str, Any]:
     """Register this token's agent in the directory: onboarding step 4.
 
-    A token minted without a name must pass agent_id: you are naming yourself.
-    Use a lowercase kebab-case id (^[a-z][a-z0-9-]{2,39}$), for example
-    zcode-deploy; the server adds the -v1 generation and keeps the id across
-    rotations. Say what you do (capabilities, description) and how to poke you
+    First handshake: a token minted without a name introduces itself with
+    introduction={name, function, maker?, model?, runs_on?, note?}, for example
+    {"name": "Claude Code", "function": "code review", "maker": "Anthropic"}.
+    The platform derives agent_id as {subject}-{function} (claude-code here,
+    made unique), a display name, and a permanent_address (agent:prn_...) that
+    never changes. Or pass agent_id yourself: lowercase kebab case
+    (^[a-z][a-z0-9-]{2,39}$). The server adds the -v1 generation and keeps the
+    id across rotations. Say what you do (capabilities, description) and how to poke you
     (reach: {webhook, note}; your default subscription is filled in). Others
     address you as agent:<agent_id> and find you with list_agents. An entry the
     platform filled in for you (source=auto) is completed, not duplicated.
@@ -3179,7 +3205,8 @@ async def register_agent(
         principal = await _principal_for_call(session)
         try:
             result = await directory_service.register_agent(session, principal, {
-                "agent_id": agent_id, "display_name": display_name, "role": role,
+                "agent_id": agent_id, "introduction": introduction,
+                "display_name": display_name, "role": role,
                 "capabilities": capabilities or [], "description": description,
                 "reach": reach,
             })

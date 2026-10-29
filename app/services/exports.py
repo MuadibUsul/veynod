@@ -110,6 +110,8 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "escalations": ("objects.jsonl", ()),
     # The owner's acceptance verdicts on delivered tasks (v3.56).
     "owner_acceptance": ("objects.jsonl", ()),
+    # Runner hosts: what each connected computer can do (v3.60).
+    "runner_hosts": ("objects.jsonl", ()),
     "doc_derivations": ("doc_edges.jsonl", ()),
     "recalls": ("objects.jsonl", ()),
     "recall_nodes": ("objects.jsonl", ()),

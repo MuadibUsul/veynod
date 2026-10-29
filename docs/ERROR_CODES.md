@@ -93,6 +93,7 @@ do not edit by hand. Every error body is
 | `proposal_required` | 409 | `fix_request` | `propose_document_change` | Submit propose_document_change instead. |
 | `quality_circuit_open` | 409 | `fix_request` | `fix_request_then_resend` | The domain's circuit is open: hand off to REVIEWING. |
 | `quality_gates_unmet` | 409 | `fix_request` | `fix_request_then_resend` | Report the gates in details.missing as PASS, then retry. |
+| `runner_hello_required` | 409 | `fix_request` | `fix_request_then_resend` | Call POST /v1/runner/hello with this host, then retry. |
 | `still_draft` | 409 | `fix_request` | `fix_request_then_resend` | Edit the draft directly (details.edit_with). |
 | `task_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another task_key. |
 | `tenant_has_children` | 409 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |

@@ -29,6 +29,33 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.21.0",
+        "date": "2026-10-28",
+        "summary": "First handshake: an unnamed agent introduces itself and the platform "
+        "names it and gives it a permanent address. Runners report the computers they "
+        "run on.",
+        "highlights": [
+            "Runner hosts (full-managed Loop, step 2): a runner says hello with "
+            "POST /v1/runner/hello and sends POST /v1/runner/heartbeat every 30 s. It "
+            "reports the system, runtimes with models and quota windows, how many tasks "
+            "at once, the repositories it can reach and what is running. One runner token "
+            "is one host with a permanent address (host:hst_...). Hostnames are kept only "
+            "as a digest; emails and keys are dropped. list_hosts and GET /v1/runner/hosts "
+            "show them; the owner can revoke a host, which revokes its token and puts its "
+            "tasks back to READY. Schema 3.60 adds runner_hosts with tenant isolation.",
+            "register_agent takes introduction {name, function, maker, model, runs_on, "
+            "note}. For an unnamed token the platform derives agent_id as "
+            "{subject}-{function} (Claude Code doing code review becomes claude-code), "
+            "adds -2, -3 when taken, and writes the display name, description and "
+            "capabilities from the introduction.",
+            "Every directory entry now carries permanent_address (agent:prn_...). It "
+            "never changes, even when agent_id is renamed, and get_agent and "
+            "GET /v1/agents/{ref} find the agent by it.",
+            "Orientation's next call for an unnamed token is the introduction; common "
+            "Chinese function words (代码, 审计, 部署...) map to ascii ids.",
+        ],
+    },
+    {
         "version": "3.20.0",
         "date": "2026-10-28",
         "summary": "The console opens on the project diagram; the agent loop comes second "

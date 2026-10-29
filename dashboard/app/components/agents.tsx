@@ -924,7 +924,7 @@ export function AgentsView({
             <div className="field">
               <span>{t("Naming happens on the agent side")}</span>
               <small className="field-hint">
-                {t("No name is set here. On first connect the agent calls register_agent with a lowercase kebab-case id (for example zcode-deploy); the server adds the -v1 generation automatically. Later rotations keep the id and only bump the generation.")}
+                {t("No name is set here. On first connect the agent introduces itself (who it is and what it does) and the platform names it, for example claude-code, plus a permanent address that never changes. The -v1 generation is added automatically; later rotations keep the id and only bump the generation.")}
               </small>
             </div>
             <label className="field">
