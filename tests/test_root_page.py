@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import re
+
 from app.mcp_server.server import mcp
 from app.root_page import ROOT_PRIMITIVES, render_root_page
 
@@ -79,3 +82,27 @@ def test_human_root_page_without_dashboard_renders_null_without_a_link():
     page = render_root_page(descriptor(None))
     assert 'href="/dashboard/"' not in page
     assert '<span class="value">null</span>' in page
+
+
+def test_root_structured_data_links_only_existing_brand_profiles():
+    page = render_root_page(descriptor())
+    match = re.search(r'<script type="application/ld\+json">(.*?)</script>', page)
+    assert match is not None
+    graph = json.loads(match.group(1))["@graph"]
+    organization = next(item for item in graph if item["@type"] == "Organization")
+    assert organization["sameAs"] == [
+        "https://github.com/MuadibUsul/veynod",
+        "https://www.npmjs.com/package/veynod",
+    ]
+
+
+def test_every_mcp_tool_has_directory_annotations():
+    tools = mcp._tool_manager.list_tools()
+    assert tools
+    assert all(tool.title for tool in tools)
+    assert all(tool.annotations is not None for tool in tools)
+    by_name = {tool.name: tool for tool in tools}
+    assert by_name["get_orientation"].annotations.readOnlyHint is True
+    assert by_name["get_orientation"].annotations.destructiveHint is False
+    assert by_name["cancel_task"].annotations.destructiveHint is True
+    assert by_name["create_task"].annotations.readOnlyHint is False

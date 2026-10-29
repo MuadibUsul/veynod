@@ -3803,6 +3803,41 @@ def errors_resource() -> str:
     return json.dumps(protocol_docs("errors"), default=str)
 
 
+_READ_ONLY_PREFIXES = ("get_", "list_", "read_", "query_", "dereference", "explain_", "poll_")
+_READ_ONLY_NAMES = {"workspace_sync"}
+_DESTRUCTIVE_PREFIXES = ("revoke_", "cancel_", "archive_", "recall_", "delete_", "purge_")
+_DESTRUCTIVE_NAMES = {"clear_taint", "supersede_document", "move_tenant", "detach_tenant"}
+_TITLE_WORDS = {"api", "mcp", "url", "id", "llm"}
+
+
+def _tool_title(name: str) -> str:
+    return " ".join(
+        word.upper() if word in _TITLE_WORDS else word.capitalize()
+        for word in name.split("_")
+    )
+
+
+def _tool_annotations(name: str) -> types.ToolAnnotations:
+    read_only = name in _READ_ONLY_NAMES or name.startswith(_READ_ONLY_PREFIXES)
+    destructive = name in _DESTRUCTIVE_NAMES or name.startswith(_DESTRUCTIVE_PREFIXES)
+    return types.ToolAnnotations(
+        title=_tool_title(name),
+        readOnlyHint=read_only,
+        destructiveHint=False if read_only else destructive,
+    )
+
+
+def _apply_tool_annotations() -> None:
+    """Give every MCP tool the three hints directory reviewers look for."""
+    for tool in mcp._tool_manager.list_tools():
+        if tool.title is None:
+            tool.title = _tool_title(tool.name)
+        if tool.annotations is None:
+            tool.annotations = _tool_annotations(tool.name)
+
+
+_apply_tool_annotations()
+
 _http_app: ASGIApp | None = None
 
 
