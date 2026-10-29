@@ -341,3 +341,15 @@ Task `runner-2-host-handshake`, step 2 of 5 (`runner-1`..`runner-5`). Any comput
 | A-03 read and revoke | Done | `GET /v1/runner/hosts[/{ref}]`, MCP `list_hosts`; owner revoke revokes the token and frees its leases. |
 | A-04 nothing secret | Done | Whitelisted fields only; emails and key-shaped values dropped; hostname stored as a digest. |
 | A-05 docs | Done | Agent guide "Runners" section and the docs site. |
+
+## Full-managed Loop: scheduler (runner-3)
+
+Task `runner-3-scheduler`, step 3 of 5.
+
+| Item | Status | Notes |
+|---|---|---|
+| A-01 pick a host | Done | Role, namespaces, capabilities, repo, free slots, quota; assignment plus a `task.placed` poke with `placement_id` as the idempotency key. |
+| A-02 move on outage | Done | Offline 2 min, out of quota, revoked, or not claimed in 3 min: lease released, task re-placed in the next reaper cycle (15 s), reason recorded. |
+| A-03 failures | Done | Two failures on a host exclude it for that task; three failed rounds leave the task in HANDOFF with no ping. |
+| A-04 no host | Done | Task stays READY; `GET /v1/runner/placements` and the Loop page's Needs you say why in plain words. |
+| A-05 modes | Done | Manual and semi record a suggestion only; full assigns. |

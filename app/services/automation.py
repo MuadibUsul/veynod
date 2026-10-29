@@ -11,7 +11,7 @@ It also changes what reaches the owner (spec agentgraph/spec-auto-loop-mode v2):
   ``decide_with_safe_default``; only money, identity, legal matters, deleting
   data and external commitments may go to the owner;
 * full: those questions never block the agent (it keeps the safe default and
-  the owner answers at acceptance), and a task rejected ``max_retries`` times
+  it is noted on the task), and a task rejected ``max_retries`` times
   passes to the next executor (HANDOFF) instead of escalating to a person.
 """
 

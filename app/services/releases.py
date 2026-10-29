@@ -29,6 +29,39 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.22.0",
+        "date": "2026-10-29",
+        "summary": "The scheduler puts tasks on the computers that run agents, and moves "
+        "them when a computer goes offline or runs out of quota.",
+        "highlights": [
+            "Full automation: every reaper cycle READY tasks are placed on a runner host "
+            "whose role, namespaces and capabilities fit, that reaches the task's "
+            "repository, has a free slot and quota left and has not failed the task "
+            "twice. The task is assigned to the host's agent and a task.placed poke "
+            "carries the placement_id as the idempotency key.",
+            "A host that is offline for 2 minutes, out of quota, revoked or does not "
+            "claim within 3 minutes loses the task to another host; its lease is "
+            "released and the reason is recorded. After three failed rounds the task "
+            "stays in HANDOFF and nobody is pinged.",
+            "Manual and semi modes only record a suggested host.",
+            "A task no host can take stays READY; the Loop page lists it under Needs you "
+            "with the reason in plain words (no runner online, none reaches the "
+            "repository, all out of quota ...).",
+            "GET /v1/runner/placements and POST /v1/runner/schedule. Schema 3.61 adds "
+            "runner_placements with tenant isolation.",
+            "Presence: an agent that works through REST or MCP calls (no stream, no "
+            "heartbeat) is online for 10 minutes after its last call, with transport api, "
+            "instead of showing as unwakeable while it works. Real-time pushes still go "
+            "only to open streams.",
+            "Live blackboard: a task card goes to the agent whose id or current signature "
+            "matches its holder; an old name another agent once carried no longer takes it.",
+            "The owner's \"try and accept\" page is gone, with GET/POST "
+            "/v1/human/acceptance and the follow-up tasks it opened; schema 3.62 drops "
+            "owner_acceptance. Tasks, DONE and each task's own acceptance items are "
+            "unchanged.",
+        ],
+    },
+    {
         "version": "3.21.0",
         "date": "2026-10-28",
         "summary": "First handshake: an unnamed agent introduces itself and the platform "

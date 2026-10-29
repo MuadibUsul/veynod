@@ -787,11 +787,6 @@ class TimelineEventRequest(StrictModel):
 AutomationMode = Literal["manual", "semi", "full"]
 
 
-class AcceptanceRequest(StrictModel):
-    verdict: Literal["works", "broken", "change"]
-    note: str | None = Field(default=None, max_length=4_000)
-
-
 class AutomationModeRequest(StrictModel):
     mode: AutomationMode
     auto_deploy_allowed: bool = False

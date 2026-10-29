@@ -66,6 +66,16 @@ is stored only as a digest; never send keys or account emails (they are
 dropped). `list_hosts` (MCP) or `GET /v1/runner/hosts` shows every host,
 its state (online, offline, paused, revoked) and free slots. The owner can
 revoke a host: its token stops working and its tasks go back to READY.
+Under full automation the platform places READY tasks on hosts: it picks a
+host whose token role and namespaces fit, that reaches the task's repo, has a
+free slot and quota left, and has not failed the task twice; it assigns the
+task to the host's agent and pokes it with `task.placed` whose note carries
+the `placement_id` (use it as the idempotency key; ignore a repeat). Claim
+the task as usual. A host that goes offline (2 min), runs out of quota or
+does not claim in 3 min loses the task to another host. After three failed
+rounds the task stays in HANDOFF. Manual and semi modes only suggest.
+`GET /v1/runner/placements` shows where each task went and why a task has
+no host.
 
 ## Reading drafts and tainted documents
 
@@ -321,7 +331,6 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `content_too_large` | 413 | `fix_request` |
 | `payload_too_large` | 413 | `fix_request` |
 | `acceptance_items_incomplete` | 422 | `fix_request` |
-| `acceptance_note_required` | 422 | `fix_request` |
 | `ambiguous_artifact` | 422 | `fix_request` |
 | `assignee_cannot_reach_namespace` | 422 | `fix_request` |
 | `audit_view_required` | 422 | `fix_request` |

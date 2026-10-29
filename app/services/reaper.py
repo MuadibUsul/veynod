@@ -83,6 +83,9 @@ async def lease_reaper_loop() -> None:
                 from app.services.pokes import sweep_presence
 
                 await sweep_presence()
+                from app.services.scheduler import run_all as schedule_runners
+
+                await schedule_runners()
                 from app.services.taint import retighten_internal_taint
 
                 untainted = await retighten_internal_taint()

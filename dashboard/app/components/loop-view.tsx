@@ -5,7 +5,6 @@ import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../i18n";
 import type { ApiRequest } from "../types";
 import { relativeTime } from "../types";
-import { AcceptanceCard } from "./acceptance";
 import { AutomationModeCard } from "./automation";
 import { LiveBoard } from "./live-board";
 
@@ -21,6 +20,20 @@ type Alert = {
   severity: "high" | "medium" | "low";
   subject: { kind: string; ref: string };
   last_seen: string;
+};
+
+type Unplaced = { placement_id: string; task_key: string; reason: string; note: string };
+
+// Why no runner can take a task, in the owner's words.
+const UNPLACED_LABEL: Record<string, string> = {
+  no_host_online: "No runner is online",
+  no_host_for_role: "No runner can take this kind of task",
+  no_host_for_namespace: "No runner may work in this namespace",
+  no_host_with_capabilities: "No runner has the skills it needs",
+  no_host_for_repo: "No runner can reach its repository",
+  no_host_with_runtime: "No runner has Claude Code or Codex ready",
+  every_host_failed: "Every runner that could take it already failed it",
+  hosts_out_of_quota: "Every runner that could take it is out of quota",
 };
 
 const MODE_LABEL: Record<string, string> = {
@@ -67,6 +80,7 @@ export function LoopView({
   const { t } = useI18n();
   const [mode, setMode] = useState<string | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [unplaced, setUnplaced] = useState<Unplaced[]>([]);
   const [editingMode, setEditingMode] = useState(false);
 
   const load = useCallback(async () => {
@@ -77,6 +91,14 @@ export function LoopView({
       setAlerts(result.items.filter((item) => item.severity === "high"));
     } catch {
       setAlerts([]);
+    }
+    try {
+      const placements = await request<{ needs_you: Unplaced[] }>(
+        "/v1/runner/placements?open_only=true",
+      );
+      setUnplaced(placements.needs_you);
+    } catch {
+      setUnplaced([]);
     }
     if (sessionMode) {
       try {
@@ -93,7 +115,7 @@ export function LoopView({
     return () => window.clearInterval(timer);
   }, [load]);
 
-  const needs = alerts.length + waitingReview;
+  const needs = alerts.length + waitingReview + unplaced.length;
 
   return (
     <div className="loop">
@@ -121,6 +143,21 @@ export function LoopView({
                   </button>
                 </li>
               )}
+              {unplaced.slice(0, 3).map((item) => (
+                <li key={item.placement_id}>
+                  <button type="button" className="loop-link" onClick={onOpenTasks}>
+                    {t(UNPLACED_LABEL[item.reason] ?? item.note)}
+                    <small> · {item.task_key}</small>
+                  </button>
+                </li>
+              ))}
+              {unplaced.length > 3 && (
+                <li>
+                  <button type="button" className="loop-link" onClick={onOpenTasks}>
+                    {t("and")} {unplaced.length - 3} {t("more tasks wait for a runner")}
+                  </button>
+                </li>
+              )}
               {alerts.slice(0, 3).map((alert) => (
                 <li key={alert.alert_id}>
                   <button type="button" className="loop-link" onClick={onOpenSituation}>
@@ -142,12 +179,6 @@ export function LoopView({
       </section>
 
       {editingMode && sessionMode && <AutomationModeCard request={request} notify={notify} />}
-      {sessionMode && (
-        <details className="loop-accept">
-          <summary>{t("Try and accept delivered work")}</summary>
-          <AcceptanceCard request={request} notify={notify} />
-        </details>
-      )}
 
       <LiveBoard
         apiBase={apiBase}

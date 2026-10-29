@@ -444,8 +444,6 @@ REGISTRY: dict[str, ErrorSpec] = {
     "stale_change": _spec(
         409, ABANDON, "The diagram moved on; file the change again on details.current_version."),
     # Automation (Loop v1).
-    "acceptance_note_required": _spec(
-        422, FIX_REQUEST, "Say in plain words what does not work or what to change."),
     "decide_with_safe_default": _spec(
         409, ABANDON,
         "Automation is on: choose the safest default, note it on the task and continue; "

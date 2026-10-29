@@ -217,59 +217,6 @@ async def test_full_automation_hands_on_instead_of_escalating(loop):
     assert relayed == 1
 
 
-async def test_owner_accepts_in_plain_words_and_feedback_becomes_a_task(loop):
-    ws = await _workspace(loop)
-    await _mode(loop, ws, "full")
-    key = await _claimed_task(loop, ws, priority=40)
-    bad = await loop.post(f"/v1/tasks/{key}/handoff", headers=ws["agent"], json={
-        "next_status": "REVIEWING", "brief": {**BRIEF, "owner_report": {"what_changed": ""}}})
-    assert bad.status_code == 422, bad.text
-    handed = await loop.post(f"/v1/tasks/{key}/handoff", headers=ws["agent"], json={
-        "next_status": "REVIEWING", "brief": {**BRIEF, "owner_report": REPORT}})
-    assert handed.status_code == 200, handed.text
-    assert "owner_report_missing" not in {
-        item["code"] for item in handed.json().get("warnings", [])}
-    approved = await loop.post(f"/v1/tasks/{key}/review", headers=ws["key"], json={
-        "decision": "approve", "next_status": "HANDOFF"})
-    assert approved.status_code == 200, approved.text
-
-    listed = await loop.get("/v1/human/acceptance", headers=ws["owner"])
-    assert listed.status_code == 200, listed.text
-    item = next(entry for entry in listed.json()["items"] if entry["task_key"] == key)
-    assert item["owner_report"]["how_to_try"] == REPORT["how_to_try"]
-    assert item["acceptance"] is None
-
-    reviewer = await loop.post(f"/v1/human/acceptance/{key}", headers=ws["reviewer"],
-                               json={"verdict": "works"})
-    assert reviewer.status_code == 403, reviewer.text
-    silent = await loop.post(f"/v1/human/acceptance/{key}", headers=ws["owner"],
-                             json={"verdict": "broken"})
-    assert silent.status_code == 422, silent.text
-    assert silent.json()["error"]["code"] == "acceptance_note_required"
-
-    words = "Export downloads an empty file.\nIt should have this month's rows."
-    changed = await loop.post(f"/v1/human/acceptance/{key}", headers=ws["owner"],
-                              json={"verdict": "change", "note": words})
-    assert changed.status_code == 200, changed.text
-    follow_key = changed.json()["follow_up_task_key"]
-    assert follow_key
-    follow = await loop.get(f"/v1/tasks/{follow_key}", headers=ws["agent"])
-    assert follow.status_code == 200, follow.text
-    task = follow.json()
-    assert task["status"] == "READY"
-    assert task["priority"] == 40
-    assert "Export downloads an empty file." in task["description"]
-    assert task["input_context"]["acceptance_of"] == key
-
-    works = await loop.post(f"/v1/human/acceptance/{key}", headers=ws["owner"],
-                            json={"verdict": "works"})
-    assert works.status_code == 200, works.text
-    assert works.json()["follow_up_task_key"] is None
-    latest = await loop.get("/v1/human/acceptance", headers=ws["owner"])
-    item = next(entry for entry in latest.json()["items"] if entry["task_key"] == key)
-    assert item["acceptance"]["verdict"] == "works"
-
-
 async def test_semi_automation_sends_the_owner_questions_together(loop):
     from app.database import async_session_factory
     from app.services.collab import send_batches

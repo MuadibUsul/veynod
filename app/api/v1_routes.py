@@ -1512,6 +1512,32 @@ async def get_host(
     return await runners.get_host(session, principal, ref)
 
 
+@router.get("/runner/placements",
+            summary="Which host each task was put on, and why a task has none")
+async def list_placements(
+    task_key: str | None = Query(default=None, max_length=128),
+    open_only: bool = Query(default=False),
+    limit: int = Query(default=100, ge=1, le=500),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import scheduler
+
+    return await scheduler.placements(session, principal, task_key=task_key,
+                                      open_only=open_only, limit=limit)
+
+
+@router.post("/runner/schedule",
+             summary="Run the scheduler for this workspace now (people and commanders)")
+async def schedule_now(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import scheduler
+
+    return await scheduler.schedule_now(session, principal)
+
+
 @router.post("/runner/hosts/{ref}/revoke",
              summary="Owner: take a computer off the Loop (token revoked, tasks freed)")
 async def revoke_host(

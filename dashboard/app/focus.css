@@ -869,14 +869,6 @@ body::before,
 .loop-link small {
   color: var(--ds-text-muted);
 }
-.loop-accept > summary {
-  cursor: pointer;
-  color: var(--ds-text-secondary);
-  font-size: 14px;
-  line-height: 20px;
-  font-weight: 600;
-  margin-bottom: var(--ds-space-3);
-}
 
 /* ---------------------------------------- phones: the work comes first */
 @media (max-width: 900px) {

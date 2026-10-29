@@ -1017,7 +1017,7 @@ async def handoff_task(
             and await automation.current_mode(session, principal.workspace.id) == "full"):
         add_warning("owner_report_missing",
                     "full automation: add owner_report {what_changed, how_to_try, "
-                    "not_yet_done} in plain words; the owner reads it at acceptance",
+                    "not_yet_done} in plain words; it is what the owner reads",
                     field="brief.owner_report")
     await collab.handoff_checks(session, principal, task, agent, request.next_status, brief)
 

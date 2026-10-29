@@ -108,10 +108,10 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "agent_directory": ("objects.jsonl", ()),
     "agent_aliases": ("objects.jsonl", ()),
     "escalations": ("objects.jsonl", ()),
-    # The owner's acceptance verdicts on delivered tasks (v3.56).
-    "owner_acceptance": ("objects.jsonl", ()),
     # Runner hosts: what each connected computer can do (v3.60).
     "runner_hosts": ("objects.jsonl", ()),
+    # Which host each task was put on, and why it moved (v3.61).
+    "runner_placements": ("objects.jsonl", ()),
     "doc_derivations": ("doc_edges.jsonl", ()),
     "recalls": ("objects.jsonl", ()),
     "recall_nodes": ("objects.jsonl", ()),
