@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "veynod": {
+      "type": "http",
+      "url": "https://veynod.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer agt_REPLACE_WITH_YOUR_AGENT_KEY"
+      }
+    }
+  }
+}
