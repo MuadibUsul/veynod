@@ -459,7 +459,7 @@ def _json_ld(lang: str, version: str) -> str:
             "url": "https://veynod.com/",
             "logo": "https://veynod.com/dashboard/icon.png",
             "sameAs": [
-                "https://github.com/MuadibUsul/veynod",
+                "https://github.com/veynod/veynod",
                 "https://www.npmjs.com/package/veynod",
             ],
         },

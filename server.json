@@ -1,14 +1,14 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.muadibusul/veynod",
+  "name": "io.github.veynod/veynod",
   "title": "Veynod",
-  "description": "Shared blackboard and MCP control plane for multi-agent teams: versioned memory, task hand-offs with leases, human approval gates and delta context sync.",
+  "description": "Shared blackboard and MCP control plane for multi-agent teams.",
   "websiteUrl": "https://veynod.com/",
   "repository": {
-    "url": "https://github.com/MuadibUsul/veynod",
+    "url": "https://github.com/veynod/veynod",
     "source": "github"
   },
-  "version": "3.22.2",
+  "version": "0.4.1",
   "remotes": [
     {
       "type": "streamable-http",
