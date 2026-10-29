@@ -8,7 +8,7 @@
     "url": "https://github.com/MuadibUsul/veynod",
     "source": "github"
   },
-  "version": "3.22.1",
+  "version": "3.22.2",
   "remotes": [
     {
       "type": "streamable-http",

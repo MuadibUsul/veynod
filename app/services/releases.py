@@ -29,6 +29,23 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.22.2",
+        "date": "2026-10-29",
+        "summary": "The MCP tool list carries directory annotations, and the homepage "
+        "links only the brand profiles that actually exist.",
+        "highlights": [
+            "Every MCP tool advertises title, readOnlyHint and destructiveHint on "
+            "tools/list, so registries and clients can show read-only/destructive "
+            "badges without guessing from names.",
+            "Organization JSON-LD sameAs lists the public GitHub repository and npm "
+            "package; unverified social and directory profiles are deliberately left "
+            "out until they are live.",
+            "The repository ships a remote-only server.json for the Official MCP "
+            "Registry and docs/SEO_ECOSYSTEM_SUBMISSION.md with the owner-only "
+            "submission checklist and launch copy.",
+        ],
+    },
+    {
         "version": "3.22.1",
         "date": "2026-10-29",
         "summary": "Search indexing: the retired test host redirects to veynod.com, and "
