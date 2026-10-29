@@ -29,6 +29,17 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.22.4",
+        "date": "2026-10-29",
+        "summary": "The claimed Glama listing is part of the public brand graph.",
+        "highlights": [
+            "Organization JSON-LD sameAs adds the claimed Glama server page "
+            "https://glama.ai/mcp/servers/veynod/veynod.",
+            "The public repository README now carries the Glama badge and the "
+            "Awesome-list entry links the claim.",
+        ],
+    },
+    {
         "version": "3.22.3",
         "date": "2026-10-29",
         "summary": "The public brand links point at the open-source veynod/veynod "
