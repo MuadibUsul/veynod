@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Veynod Promo</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;700;900&family=JetBrains+Mono:wght@500;700&display=block" rel="stylesheet">
+<!--
+  Veynod 50s promo. Every frame is a pure function of time: render(t) draws
+  timestamp t (seconds). Open in a browser for a live preview, or run
+  promo/render.js to export frames to an MP4.
+-->
+<style>
+  :root {
+    --bg: #080a0e; --panel: #12161e; --raised: #171d27; --line: #232d3b;
+    --text: #eef2f8; --muted: #a7b3c5; --faint: #8a97a9;
+    --violet: #8B7CFF; --violet-soft: #c4b5fd; --indigo: #4f46e5;
+    --scout: #38d9f0; --analyst: #ffb547; --auditor: #4ade80; --executor: #ff6b9d;
+    --danger: #ff5370; --amber: #fcd34d;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1920px; height: 1080px; overflow: hidden; background: var(--bg); }
+  body { font-family: "Noto Sans SC", "WenQuanYi Zen Hei", "PingFang SC", sans-serif; color: var(--text); }
+  .mono { font-family: "JetBrains Mono", "Noto Sans SC", "DejaVu Sans Mono", "WenQuanYi Zen Hei Mono", monospace; }
+  #stage { position: absolute; inset: 0; overflow: hidden; }
+  #bgglow { position: absolute; inset: 0; }
+  #grid { position: absolute; inset: -60px; opacity: .35;
+    background-image: linear-gradient(rgba(139,124,255,.08) 1px, transparent 1px),
+                      linear-gradient(90deg, rgba(139,124,255,.08) 1px, transparent 1px);
+    background-size: 60px 60px; }
+  #tint { position: absolute; inset: 0; background: radial-gradient(ellipse at center, rgba(255,40,70,.0), rgba(255,40,70,.55)); opacity: 0; pointer-events: none; }
+  #flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; }
+  .scene { position: absolute; inset: 0; display: none; }
+  .a { position: absolute; left: 0; top: 0; will-change: transform; white-space: nowrap; }
+  .h1 { font-size: 92px; font-weight: 700; letter-spacing: 2px; }
+  .h2 { font-size: 52px; color: var(--muted); }
+  .h3 { font-size: 40px; color: var(--muted); }
+  .caret::after { content: "▍"; color: var(--violet); }
+
+  /* ---------- bots ---------- */
+  .bot { width: 170px; height: 210px; }
+  .bot .ant { position: absolute; left: 81px; top: 0; width: 8px; height: 34px; background: var(--c); border-radius: 4px; opacity: .8; }
+  .bot .ant::before { content: ""; position: absolute; left: -8px; top: -14px; width: 24px; height: 24px; border-radius: 50%; background: var(--c); box-shadow: 0 0 24px var(--c); }
+  .bot .head { position: absolute; left: 0; top: 30px; width: 170px; height: 132px; border-radius: 40px;
+    background: linear-gradient(160deg, color-mix(in srgb, var(--c) 92%, white), color-mix(in srgb, var(--c) 70%, black));
+    box-shadow: 0 18px 50px color-mix(in srgb, var(--c) 35%, transparent), inset 0 -8px 0 rgba(0,0,0,.15); }
+  .bot .face { position: absolute; left: 20px; top: 22px; width: 130px; height: 84px; border-radius: 26px; background: #0b0f17; }
+  .bot .eye { position: absolute; top: 22px; width: 24px; height: 36px; border-radius: 12px; background: #fff; box-shadow: 0 0 14px var(--c); display: flex; align-items: center; justify-content: center; }
+  .bot .eye.l { left: 30px; } .bot .eye.r { right: 30px; }
+  .bot.happy .eye { height: 16px; top: 34px; border-radius: 16px 16px 4px 4px; }
+  .bot.sad .eye { height: 12px; top: 40px; border-radius: 4px 4px 12px 12px; }
+  .bot.dizzy .eye { background: none; box-shadow: none; color: #fff; font-size: 40px; font-weight: 900; text-shadow: 0 0 10px var(--c); }
+  .bot.dizzy .eye::after { content: "✕"; }
+  .bot .tag { position: absolute; left: 50%; top: 172px; transform: translateX(-50%); padding: 6px 16px; border-radius: 999px;
+    font-size: 22px; font-weight: 700; letter-spacing: 2px; color: var(--c); background: color-mix(in srgb, var(--c) 14%, transparent);
+    border: 2px solid color-mix(in srgb, var(--c) 45%, transparent); }
+
+  .human { width: 150px; height: 150px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #2a2f55, #141830);
+    border: 5px solid var(--violet); box-shadow: 0 0 40px rgba(139,124,255,.5); display: flex; align-items: center; justify-content: center; font-size: 84px; }
+
+  /* ---------- generic cards ---------- */
+  .card { background: var(--panel); border: 2px solid var(--line); border-radius: 22px; box-shadow: 0 30px 80px rgba(0,0,0,.5); }
+  .doc { width: 420px; height: 280px; padding: 28px 30px; }
+  .doc .dt { font-size: 30px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; }
+  .doc .ln { height: 14px; border-radius: 7px; background: #2a3445; margin-top: 22px; }
+  .pill { display: inline-block; padding: 6px 16px; border-radius: 999px; font-size: 22px; font-weight: 700; }
+  .stamp { font-size: 64px; font-weight: 900; padding: 10px 30px; border: 8px solid currentColor; border-radius: 18px; letter-spacing: 4px; }
+  .bubble { padding: 16px 26px; border-radius: 24px; font-size: 34px; font-weight: 700; background: #fff; color: #111; }
+  .chip { padding: 12px 24px; border-radius: 14px; font-size: 30px; font-weight: 700; }
+
+  .ftitle .num { font-size: 34px; color: var(--violet); font-weight: 700; letter-spacing: 6px; }
+  .ftitle .zh { font-size: 96px; font-weight: 700; margin-top: 8px; }
+  .ftitle .en { font-size: 30px; color: var(--faint); letter-spacing: 3px; margin-top: 6px; }
+  .ftitle .desc { font-size: 36px; color: var(--muted); margin-top: 34px; line-height: 1.55; white-space: normal; width: 640px; }
+
+  .col { width: 280px; height: 560px; border-radius: 22px; background: rgba(23,29,39,.7); border: 2px dashed var(--line); }
+  .col .ch { text-align: center; font-size: 30px; font-weight: 700; color: var(--muted); padding-top: 20px; }
+  .task { width: 240px; height: 110px; padding: 18px 20px; font-size: 28px; font-weight: 700; }
+  .task .who { margin-top: 12px; font-size: 20px; }
+
+  .layer { width: 1180px; height: 150px; border-radius: 26px; display: flex; flex-direction: column; justify-content: center; padding: 0 50px; border: 2px solid; }
+  .layer .lt { font-size: 44px; font-weight: 700; }
+  .layer .ls { font-size: 26px; color: var(--muted); margin-top: 8px; }
+
+  .term { width: 1040px; border-radius: 22px; background: #05070b; border: 2px solid var(--line); overflow: hidden; box-shadow: 0 30px 90px rgba(0,0,0,.6); }
+  .term .bar { height: 50px; background: #121722; display: flex; align-items: center; gap: 12px; padding-left: 22px; }
+  .term .bar i { width: 16px; height: 16px; border-radius: 50%; display: block; }
+  .term .body { padding: 30px 36px; font-size: 38px; line-height: 1.6; min-height: 170px; white-space: pre; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="bgglow"></div>
+  <div id="grid"></div>
+  <div id="scenes"></div>
+  <div id="tint"></div>
+  <div id="flash"></div>
+</div>
+<div id="glyphs" style="position:absolute;visibility:hidden;white-space:pre;top:0;left:0"></div>
+
+<script>
+// ---------- math helpers ----------
+const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
+const prog = (t, a, b) => clamp((t - a) / (b - a));
+const lerp = (a, b, p) => a + (b - a) * p;
+const eo = x => 1 - Math.pow(1 - x, 3);
+const eio = x => x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
+const back = x => { const c1 = 1.9, c3 = c1 + 1; return x <= 0 ? 0 : 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+const rnd = s => { const x = Math.sin(s * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+const $ = id => document.getElementById(id);
+
+// Place an element by its centre point.
+function place(el, x, y, s = 1, r = 0, o = 1) {
+  el.style.transform = `translate(${x}px,${y}px) translate(-50%,-50%) scale(${s}) rotate(${r}deg)`;
+  el.style.opacity = o;
+}
+// Pop-in: scale with overshoot, starting at time a.
+const pop = (t, a, d = .45) => back(prog(t, a, a + d));
+const fade = (t, a, b, fi = .3, fo = .3) => Math.min(prog(t, a, a + fi), 1 - prog(t, b - fo, b));
+function type(el, str, p) {
+  const n = Math.floor(Array.from(str).length * clamp(p));
+  el.textContent = Array.from(str).slice(0, n).join('');
+  el.classList.toggle('caret', p > 0 && p < 1);
+}
+
+// ---------- components ----------
+const COLORS = { SCOUT: 'var(--scout)', ANALYST: 'var(--analyst)', AUDITOR: 'var(--auditor)', EXECUTOR: 'var(--executor)' };
+const bot = (id, color, label = '') => `
+  <div id="${id}" class="a bot" style="--c:${color}">
+    <div class="ant"></div>
+    <div class="head"><div class="face"><div class="eye l"></div><div class="eye r"></div></div></div>
+    ${label ? `<div class="tag">${label}</div>` : ''}
+  </div>`;
+function mood(el, t, m = '', seed = 0) {
+  el.className = 'a bot' + (m ? ' ' + m : '');
+  if (!m) {
+    const blink = ((t + seed * .77) % 2.6) < .12;
+    el.querySelectorAll('.eye').forEach(e => e.style.transform = blink ? 'scaleY(.12)' : '');
+  } else el.querySelectorAll('.eye').forEach(e => e.style.transform = '');
+}
+const human = (id, emoji = '🧑‍💻') => `<div id="${id}" class="a human">${emoji}</div>`;
+const doc = (id, title, chip = '', lines = 4, extra = '') => `
+  <div id="${id}" class="a card doc" ${extra}>
+    <div class="dt"><span>${title}</span>${chip}</div>
+    ${Array.from({ length: lines }, (_, i) => `<div class="ln" style="width:${[92, 78, 86, 60, 70][i]}%"></div>`).join('')}
+  </div>`;
+const ftitle = (id, num, zh, en, desc) => `
+  <div id="${id}" class="a ftitle" style="text-align:left">
+    <div class="num">${num}</div><div class="zh">${zh}</div><div class="en">${en}</div><div class="desc">${desc}</div>
+  </div>`;
+// Feature title block slides in from the left, anchored at x=470.
+function showTitle(el, u, dur) {
+  const p = eo(prog(u, 0, .5));
+  place(el, lerp(330, 470, p), 540, 1, 0, p * (1 - prog(u, dur - .3, dur)));
+}
+
+// ---------- scenes ----------
+const scenes = [];
+function scene(a, b, html, render, opts = {}) {
+  const el = document.createElement('div');
+  el.className = 'scene';
+  el.innerHTML = html;
+  $('scenes').appendChild(el);
+  scenes.push({ a, b, el, render, fi: opts.fi ?? .25, fo: opts.fo ?? .25 });
+}
+
+// S1 — "You have an AI agent team." (0 – 4.5)
+scene(0, 4.5, `
+  <div id="s1t1" class="a h1"></div>
+  ${bot('s1b1', COLORS.SCOUT, 'SCOUT')}${bot('s1b2', COLORS.ANALYST, 'ANALYST')}
+  ${bot('s1b3', COLORS.AUDITOR, 'AUDITOR')}${bot('s1b4', COLORS.EXECUTOR, 'EXECUTOR')}
+  <div id="s1t2" class="a h2">听起来很美好……</div>
+`, t => {
+  type($('s1t1'), '你有一支 AI Agent 团队。', prog(t, .2, 1.2));
+  place($('s1t1'), 960, 250);
+  ['s1b1', 's1b2', 's1b3', 's1b4'].forEach((id, i) => {
+    const s = pop(t, 1.2 + i * .2);
+    const bob = Math.sin(t * 4 + i) * 10;
+    place($(id), 960 + (i - 1.5) * 330, 590 + bob, s, Math.sin(t * 3 + i) * 3);
+    mood($(id), t, t > 2.8 ? 'happy' : '', i);
+  });
+  place($('s1t2'), 960, 880, 1, 0, prog(t, 2.8, 3.2));
+}, { fi: 0.01 });
+
+// S2 — the five ways it goes wrong (4.5 – 15.5)
+const FAILS = ['上下文爆炸', '互相覆盖 · 死锁', '生成 ↔ 审查 乒乓循环', '人类指令被旧逻辑覆盖', '一把共享密钥删光核心数据'];
+scene(4.5, 15.5, `
+  <div id="s2h" class="a h1">直到它们开始一起干活……</div>
+  <div id="s2lab" class="a" style="display:flex;align-items:center;gap:24px">
+    <span id="s2n" class="pill" style="background:var(--danger);color:#fff;font-size:34px;padding:8px 24px">翻车 #1</span>
+    <span id="s2name" style="font-size:52px;font-weight:700"></span>
+  </div>
+  <!-- v1 context explosion -->
+  <div id="v1">
+    ${bot('v1b', COLORS.ANALYST, 'ANALYST')}
+    <div id="v1doc" class="a card" style="width:420px;height:300px;padding:30px;background:#1b2130">
+      <div style="font-size:28px;color:var(--muted)">context window</div>
+      <div id="v1n" class="mono" style="font-size:50px;font-weight:700;margin-top:20px;color:var(--amber)"></div>
+      <div class="ln" style="height:14px;border-radius:7px;background:#2a3445;margin-top:30px;width:90%"></div>
+      <div class="ln" style="height:14px;border-radius:7px;background:#2a3445;margin-top:20px;width:70%"></div>
+    </div>
+    <div id="v1boom" class="a" style="font-size:300px">💥</div>
+  </div>
+  <!-- v2 overwrite / deadlock -->
+  <div id="v2">
+    ${bot('v2a', COLORS.SCOUT, 'Agent A')}${bot('v2b', COLORS.EXECUTOR, 'Agent B')}
+    <div id="v2doc" class="a card doc" style="height:260px">
+      <div class="dt"><span>plan.md</span><span class="pill" style="background:#2a3445;color:var(--muted)">v3</span></div>
+      <div id="v2txt" style="font-size:40px;font-weight:700;margin-top:40px"></div>
+    </div>
+    <div id="v2stamp" class="a stamp" style="color:var(--danger)">DEADLOCK 死锁</div>
+  </div>
+  <!-- v3 ping-pong -->
+  <div id="v3">
+    ${bot('v3a', COLORS.ANALYST, '生成者')}${bot('v3b', COLORS.AUDITOR, '审查者')}
+    <div id="v3ball" class="a" style="width:56px;height:56px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff,#ffd27a);box-shadow:0 0 30px #ffb547"></div>
+    <div id="v3l" class="a bubble">改好了！</div><div id="v3r" class="a bubble">重写！</div>
+    <div id="v3n" class="a mono" style="font-size:64px;font-weight:700;color:var(--amber)"></div>
+  </div>
+  <!-- v4 human instruction overwritten -->
+  <div id="v4">
+    ${human('v4h', '🙂')}
+    <div id="v4note" class="a" style="width:440px;height:300px;background:#fde68a;color:#3b2f00;border-radius:12px;padding:40px;font-size:50px;font-weight:700;line-height:1.5;box-shadow:0 20px 60px rgba(0,0,0,.5)">周五别上线！<br><span style="font-size:32px">—— 人类</span></div>
+    <div id="v4new" class="a" style="width:460px;height:310px;background:#93c5fd;color:#0b2447;border-radius:12px;padding:40px;font-size:50px;font-weight:700;line-height:1.5;box-shadow:0 20px 60px rgba(0,0,0,.5)">照计划上线 🚀<br><span style="font-size:32px">（三天前的逻辑）</span></div>
+    ${bot('v4b', COLORS.EXECUTOR, 'EXECUTOR')}
+  </div>
+  <!-- v5 shared key wipes state -->
+  <div id="v5">
+    <div id="v5t" class="a term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+      <div id="v5body" class="body mono"></div></div>
+    <div id="v5x" class="a" style="font-size:80px;font-weight:900;color:var(--danger)">🚨 核心状态已清空 🚨</div>
+  </div>
+`, t => {
+  const u = t - 4.5;
+  // header: big centre, then gone
+  place($('s2h'), 960, 540, 1, 0, fade(t, 4.5, 5.6, .2, .25));
+  const k = clamp(Math.floor((t - 5.5) / 2), 0, 4);
+  const lab = t >= 5.5;
+  $('s2n').textContent = '翻车 #' + (k + 1);
+  $('s2name').textContent = FAILS[k];
+  const lp = eo(prog(t, 5.5 + k * 2, 5.5 + k * 2 + .25));
+  place($('s2lab'), 960, lerp(90, 130, lp), 1, 0, lab ? lp : 0);
+
+  const show = (id, i) => { const on = t >= 5.5 + i * 2 && t < 7.5 + i * 2; $(id).style.display = on ? '' : 'none'; return t - (5.5 + i * 2); };
+
+  // v1
+  let v = show('v1', 0);
+  if (v >= 0 && v < 2) {
+    const grow = v < 1.6 ? .7 + Math.pow(v / 1.6, 2) * 1.6 : 2.3 + (v - 1.6) * 6;
+    place($('v1doc'), 1120, 560, grow, Math.sin(v * 40) * v * 2, v < 1.6 ? 1 : 1 - prog(v, 1.6, 1.75));
+    const n = v < 1.55 ? Math.floor(8000 * Math.pow(2, v * 7.2)) : Infinity;
+    $('v1n').textContent = (n === Infinity ? '∞' : n.toLocaleString('en-US')) + ' tok';
+    place($('v1b'), 520 + Math.sin(v * 50) * v * 6, 600, 1, Math.sin(v * 30) * v * 3);
+    mood($('v1b'), t, v > 1.55 ? 'dizzy' : '');
+    place($('v1boom'), 1120, 540, pop(v, 1.6, .3) * 1.1, 0, 1 - prog(v, 1.85, 2));
+  }
+  // v2
+  v = show('v2', 1);
+  if (v >= 0 && v < 2) {
+    const tug = Math.sin(v * 28);
+    place($('v2a'), 470 + tug * 25, 600, 1, 8 + tug * 4);
+    place($('v2b'), 1450 - tug * 25, 600, 1, -8 - tug * 4);
+    mood($('v2a'), t, v > 1.3 ? 'sad' : ''); mood($('v2b'), t, v > 1.3 ? 'sad' : '', 1);
+    $('v2txt').textContent = Math.floor(v / .14) % 2 ? 'B：用方案二！' : 'A：用方案一！';
+    $('v2txt').style.color = Math.floor(v / .14) % 2 ? 'var(--executor)' : 'var(--scout)';
+    place($('v2doc'), 960 + tug * 10, 560, 1, tug * 3);
+    const sp = prog(v, 1.3, 1.5);
+    place($('v2stamp'), 960, 560, lerp(2.2, 1, eo(sp)), -10, sp);
+  }
+  // v3
+  v = show('v3', 2);
+  if (v >= 0 && v < 2) {
+    place($('v3a'), 430, 620); place($('v3b'), 1490, 620);
+    const per = .25, ph = (v % per) / per, leg = Math.floor(v / per);
+    const dir = leg % 2 === 0;
+    const bx = lerp(dir ? 560 : 1360, dir ? 1360 : 560, ph);
+    place($('v3ball'), bx, 560 - Math.sin(ph * Math.PI) * 220);
+    place($('v3l'), 430, 380, 1, -4, dir ? 1 - ph : 0);
+    place($('v3r'), 1490, 380, 1, 4, dir ? 0 : 1 - ph);
+    $('v3n').textContent = '第 ' + (1 + Math.floor(Math.pow(v / 2, 1.6) * 98)) + ' 轮';
+    place($('v3n'), 960, 860);
+    mood($('v3a'), t, v > 1.4 ? 'dizzy' : ''); mood($('v3b'), t, v > 1.4 ? 'dizzy' : '', 2);
+  }
+  // v4
+  v = show('v4', 3);
+  if (v >= 0 && v < 2) {
+    place($('v4h'), 470, 560, pop(v, 0, .3) * (v > 1.05 ? 1.15 : 1), v > 1.05 ? Math.sin(v * 50) * 6 : 0);
+    $('v4h').textContent = v > 1.05 ? '😱' : '🙂';
+    place($('v4note'), 1050, 560, 1, -3);
+    const sl = eo(prog(v, .55, 1.0));
+    place($('v4b'), lerp(2050, 1520, eo(prog(v, .3, .8))) + (v > 1.0 ? (v - 1) * 300 : 0), 600, 1, v > 1 ? 10 : -8);
+    mood($('v4b'), t, 'happy');
+    place($('v4new'), lerp(1700, 1070, sl), lerp(600, 570, sl), 1, lerp(20, 4, sl), sl > 0 ? 1 : 0);
+  }
+  // v5
+  v = show('v5', 4);
+  if (v >= 0 && v < 2) {
+    const l1 = '$ agent --key=SHARED_ADMIN_KEY', l2 = '> DROP TABLE core_state;';
+    const p1 = prog(v, 0, .4), p2 = prog(v, .45, .95);
+    $('v5body').innerHTML = l1.slice(0, Math.floor(l1.length * p1)) + (p1 >= 1 ? '\n<span style="color:#ff5370">' + l2.slice(0, Math.floor(l2.length * p2)) + '</span>' : '');
+    place($('v5t'), 960, 500);
+    place($('v5x'), 960, 820, pop(v, 1.1, .3), Math.sin(v * 60) * 2, v > 1.1 ? 1 : 0);
+  }
+  // global chaos: red tint, camera shake, glitch
+  const heat = prog(t, 5.5, 15.2);
+  $('tint').style.opacity = heat * .55 + (t > 14.6 && t < 15.5 ? (Math.floor(t * 20) % 2) * .35 : 0);
+  const sh = heat * heat * 14 + (t > 14.6 ? 24 : 0);
+  $('scenes').style.transform = `translate(${(rnd(Math.floor(t * 30)) - .5) * sh}px,${(rnd(Math.floor(t * 30) + 9) - .5) * sh}px)`;
+  $('scenes').style.filter = t > 14.9 ? `hue-rotate(${rnd(Math.floor(t * 30)) * 180}deg) saturate(2)` : '';
+}, { fi: .01, fo: .01 });
+
+// S3 — logo reveal (15.5 – 20)
+scene(15.5, 20, `
+  <div id="s3q" class="a h2" style="color:var(--text)"></div>
+  <svg id="s3logo" class="a" width="300" height="300" viewBox="0 0 64 64" fill="none">
+    <rect id="s3tile" x="1" y="1" width="62" height="62" rx="18" fill="#141824" stroke="rgba(255,255,255,.12)"/>
+    <path id="s3glow" d="M32 45 45 19" stroke="#8B7CFF" stroke-opacity=".28" stroke-width="13" stroke-linecap="round"/>
+    <path id="s3p1" d="M19 19 32 45" stroke="#E8EAF0" stroke-width="7" stroke-linecap="round" pathLength="1" stroke-dasharray="1 1"/>
+    <path id="s3p2" d="M32 45 45 19" stroke="#8B7CFF" stroke-width="7" stroke-linecap="round" pathLength="1" stroke-dasharray="1 1"/>
+  </svg>
+  <div id="s3name" class="a" style="font-size:150px;font-weight:700">Veynod</div>
+  <div id="s3t1" class="a h2">多 Agent 团队的共享黑板</div>
+  <div id="s3t2" class="a" style="font-size:64px;font-weight:700;color:var(--violet-soft)">Agent 干活，人类把关。</div>
+`, t => {
+  const u = t - 15.5;
+  $('scenes').style.transform = ''; $('scenes').style.filter = '';
+  $('tint').style.opacity = 0;
+  type($('s3q'), '有没有一种可能……', prog(u, .1, .7));
+  place($('s3q'), 960, 540, 1, 0, 1 - prog(u, .85, 1.0));
+  const lp = pop(u, .9, .5);
+  place($('s3logo'), 960, lerp(540, 330, eio(prog(u, 1.6, 2.1))), lp * lerp(1.4, 1, eio(prog(u, 1.6, 2.1))));
+  $('s3p1').setAttribute('stroke-dashoffset', 1 - eo(prog(u, .95, 1.25)));
+  $('s3p2').setAttribute('stroke-dashoffset', 1 - eo(prog(u, 1.2, 1.5)));
+  $('s3glow').setAttribute('stroke-opacity', .28 + .25 * Math.sin(u * 6));
+  const np = eo(prog(u, 1.9, 2.4));
+  place($('s3name'), 960, 590, 1, 0, np); $('s3name').style.letterSpacing = lerp(40, 4, np) + 'px';
+  place($('s3t1'), 960, lerp(740, 720, eo(prog(u, 2.4, 2.8))), 1, 0, prog(u, 2.4, 2.8));
+  place($('s3t2'), 960, 830, pop(u, 3.0, .45), 0, prog(u, 3.0, 3.2));
+  $('flash').style.opacity = .4 * (1 - prog(u, .9, 1.15)) * (u > .9 ? 1 : 0);
+}, { fi: .01 });
+
+// F1 — shared documents (20 – 23.5)
+scene(20, 23.5, `
+  ${ftitle('f1t', '01 / 共享文档', '共享黑板', 'SHARED DOCUMENTS', '每次写入都有版本号<br>可验证、可追溯<br>不可信来源自动标记污点')}
+  ${doc('f1d1', 'research.md', '<span class="pill" style="background:#2a3445;color:var(--muted)">v1</span>')}
+  ${doc('f1d2', 'research.md', '<span class="pill" style="background:#2a3445;color:var(--muted)">v2</span>')}
+  ${doc('f1d3', 'research.md', '<span class="pill" style="background:var(--indigo);color:#fff">v3</span>')}
+  <div id="f1ok" class="a stamp" style="color:var(--auditor);font-size:48px">✓ VERIFIED</div>
+  <div id="f1taint" class="a card" style="padding:22px 28px;filter:grayscale(1);opacity:.8">
+    <div style="font-size:26px;font-weight:700">web_scrape.md</div>
+    <div class="pill" style="margin-top:12px;background:rgba(252,211,77,.15);color:var(--amber)">⚠ tainted · 默认隔离</div>
+  </div>
+`, t => {
+  const u = t - 20;
+  showTitle($('f1t'), u, 3.5);
+  ['f1d1', 'f1d2', 'f1d3'].forEach((id, i) => {
+    const p = eo(prog(u, .25 + i * .35, .6 + i * .35));
+    place($(id), 1240 + i * 40, lerp(300, 540 - i * 40, p), 1, lerp(-12, (i - 1) * 2, p), p);
+  });
+  place($('f1ok'), 1360, 690, lerp(2.2, 1, eo(prog(u, 1.7, 1.9))), -8, prog(u, 1.7, 1.8));
+  place($('f1taint'), 1640, lerp(80, 230, back(prog(u, 2.2, 2.6))), 1, 6, prog(u, 2.2, 2.35) * .9);
+});
+
+// F2 — task board with leases (23.5 – 27)
+scene(23.5, 27, `
+  ${ftitle('f2t', '02 / 任务看板', '抢活不打架', 'TASK BOARD · LEASES', '原子认领，TTL 租约<br>心跳续期，交接必带简报')}
+  <div id="f2c1" class="a col"><div class="ch">待领取</div></div>
+  <div id="f2c2" class="a col"><div class="ch">进行中</div></div>
+  <div id="f2c3" class="a col"><div class="ch">已完成</div></div>
+  <div id="f2k2" class="a card task">写周报<div class="who" style="color:var(--faint)">等待认领</div></div>
+  <div id="f2k3" class="a card task">回测策略<div class="who" style="color:var(--auditor)">✓ AUDITOR 已审</div></div>
+  <div id="f2k1" class="a card task" style="border-color:var(--scout)">抓取行情<div id="f2who" class="who" style="color:var(--faint)">等待认领</div>
+    <svg id="f2ring" width="64" height="64" viewBox="0 0 64 64" style="position:absolute;right:14px;top:22px">
+      <circle cx="32" cy="32" r="26" stroke="#2a3445" stroke-width="7" fill="none"/>
+      <circle id="f2arc" cx="32" cy="32" r="26" stroke="#38d9f0" stroke-width="7" fill="none" pathLength="1" stroke-dasharray="1 1" transform="rotate(-90 32 32)" stroke-linecap="round"/>
+    </svg>
+  </div>
+  <div id="f2heart" class="a" style="font-size:70px">💓</div>
+  <div id="f2lease" class="a pill" style="background:rgba(56,217,240,.15);color:var(--scout);font-size:26px">lease · TTL 30s</div>
+`, t => {
+  const u = t - 23.5;
+  showTitle($('f2t'), u, 3.5);
+  const cx = [1040, 1360, 1680];
+  ['f2c1', 'f2c2', 'f2c3'].forEach((id, i) => place($(id), cx[i], 560, 1, 0, eo(prog(u, .1 + i * .1, .4 + i * .1))));
+  const ko = eo(prog(u, .3, .6));
+  place($('f2k2'), cx[0], 520, 1, 0, ko);
+  place($('f2k3'), cx[2], 380, 1, 0, ko);
+  const m1 = eio(prog(u, .7, 1.1)), m2 = eio(prog(u, 2.7, 3.1));
+  const x1 = lerp(lerp(cx[0], cx[1], m1), cx[2], m2), y1 = lerp(lerp(380, 380, m1), 520, m2);
+  place($('f2k1'), x1, y1 - Math.sin(m1 * Math.PI) * 60 - Math.sin(m2 * Math.PI) * 60, 1 + .06 * Math.sin(m1 * Math.PI), 0, ko);
+  $('f2who').textContent = u > 2.9 ? '✓ 已交付 · 附简报' : u > .9 ? '● SCOUT 认领中' : '等待认领';
+  $('f2who').style.color = u > 2.9 ? 'var(--auditor)' : u > .9 ? 'var(--scout)' : 'var(--faint)';
+  // lease ring drains, heartbeat refills it at 2.0
+  const left = u < 1.1 ? 1 : u < 2.0 ? 1 - (u - 1.1) * .7 : Math.min(1, .37 + (u - 2.0) * 4) - Math.max(0, u - 2.2) * .3;
+  $('f2arc').setAttribute('stroke-dashoffset', 1 - clamp(left));
+  $('f2ring').style.opacity = u > 1.0 && u < 2.8 ? 1 : 0;
+  const hb = prog(u, 1.95, 2.45);
+  place($('f2heart'), cx[1] + 150, 300 - hb * 40, hb > 0 ? 1 + Math.sin(hb * Math.PI) * .5 : 0, 0, Math.sin(hb * Math.PI));
+  place($('f2lease'), cx[1], 880, 1, 0, prog(u, 1.1, 1.3) * (1 - prog(u, 2.8, 3)));
+});
+
+// F3 — circuit breaker (27 – 30.5)
+scene(27, 30.5, `
+  ${ftitle('f3t', '03 / 熔断器', '拒绝死循环', 'CIRCUIT BREAKER', '生成 ↔ 审查来回拉扯？<br>自动熔断，升级给人类拍板')}
+  ${bot('f3a', COLORS.ANALYST, '生成者')}${bot('f3b', COLORS.AUDITOR, '审查者')}
+  <div id="f3ball" class="a" style="width:52px;height:52px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff,#ffd27a);box-shadow:0 0 30px #ffb547"></div>
+  <div id="f3brk" class="a chip" style="background:var(--danger);color:#fff;font-size:44px">⚡ CIRCUIT OPEN</div>
+  <div id="f3n" class="a mono" style="font-size:40px;color:var(--amber)"></div>
+  ${human('f3h', '🧑‍💼')}
+  <div id="f3say" class="a bubble">我来拍板 👌</div>
+`, t => {
+  const u = t - 27;
+  showTitle($('f3t'), u, 3.5);
+  const bp = pop(u, .1, .4);
+  place($('f3a'), 1010, 640, bp); place($('f3b'), 1690, 640, bp);
+  const hits = .3, per = .4, open = 1.9;
+  let bx, by, bo = 1;
+  if (u < hits) { bx = 1100; by = 600; bo = 0; }
+  else if (u < open) {
+    const ph = ((u - hits) % per) / per, leg = Math.floor((u - hits) / per), dir = leg % 2 === 0;
+    bx = lerp(dir ? 1110 : 1590, dir ? 1590 : 1110, ph); by = 580 - Math.sin(ph * Math.PI) * 200;
+  } else {
+    const f = u - open; bx = 1350 + f * 120; by = Math.min(800, 500 + f * f * 900); bo = 1 - prog(u, open + .6, open + .9);
+  }
+  place($('f3ball'), bx, by, 1, 0, bo);
+  const round = Math.min(4, 1 + Math.floor(Math.max(0, u - hits) / per));
+  $('f3n').textContent = u < open ? `round ${round} / 阈值 3` : 'round 4 → 已熔断';
+  place($('f3n'), 1350, 860, 1, 0, prog(u, .3, .5));
+  place($('f3brk'), 1350, 330, lerp(1.8, 1, eo(prog(u, open, open + .2))), -4 + Math.sin(u * 40) * (u < open + .4 ? 3 : 0), prog(u, open, open + .1));
+  place($('f3h'), 1350, 600, pop(u, open + .5, .45));
+  place($('f3say'), 1350, 470, pop(u, open + .8, .4));
+  mood($('f3a'), t, u > open + .6 ? 'happy' : ''); mood($('f3b'), t, u > open + .6 ? 'happy' : '', 3);
+  $('flash').style.opacity = u > open && u < open + .25 ? .35 * (1 - prog(u, open, open + .25)) : 0;
+});
+
+// F4 — human sovereignty lock (30.5 – 34)
+scene(30.5, 34, `
+  ${ftitle('f4t', '04 / 人类主权锁', '人类说了算', 'HUMAN SOVEREIGNTY', '人类锁定的状态<br>任何 Agent 都改不动')}
+  ${doc('f4d', 'prod_config.yaml', '<span style="font-size:44px">🔒</span>', 4, 'style="border-color:var(--violet)"')}
+  <div id="f4lock" class="a pill" style="background:rgba(139,124,255,.18);color:var(--violet-soft);font-size:28px">locked_by_human</div>
+  ${bot('f4b', COLORS.EXECUTOR, 'EXECUTOR')}
+  <div id="f4err" class="a chip mono" style="background:rgba(255,83,112,.15);color:var(--danger);border:3px solid var(--danger)">403 HUMAN_SOVEREIGNTY_LOCKED</div>
+`, t => {
+  const u = t - 30.5;
+  showTitle($('f4t'), u, 3.5);
+  const hit = 1.1;
+  const shake = u > hit && u < hit + .35 ? Math.sin(u * 80) * 8 : 0;
+  place($('f4d'), 1200 + shake, 560, pop(u, .1, .45), shake * .3);
+  place($('f4lock'), 1200, 740, 1, 0, prog(u, .4, .6));
+  const bx = u < hit ? lerp(2000, 1480, eio(prog(u, .4, hit))) : lerp(1480, 1690, eo(prog(u, hit, hit + .5)));
+  place($('f4b'), bx, 580 - (u > hit ? Math.sin(prog(u, hit, hit + .5) * Math.PI) * 90 : 0), 1, u < hit ? -14 : lerp(-14, 12, prog(u, hit, hit + .3)));
+  mood($('f4b'), t, u > hit ? (u < hit + .9 ? 'dizzy' : 'sad') : 'happy');
+  place($('f4err'), 1360, 300, pop(u, hit + .05, .35), -3, u > hit ? 1 : 0);
+});
+
+// F5 — realtime event bus (34 – 37.5)
+const F5N = [['SCOUT', COLORS.SCOUT], ['ANALYST', COLORS.ANALYST], ['HUMAN', ''], ['AUDITOR', COLORS.AUDITOR], ['EXECUTOR', COLORS.EXECUTOR]];
+scene(34, 37.5, `
+  ${ftitle('f5t', '05 / 实时事件总线', '不用再轮询', 'REALTIME EVENT BUS', 'Postgres 触发器 → 事务 outbox<br>→ 可回放的 SSE 推送')}
+  <svg id="f5svg" class="a" width="900" height="900" viewBox="-450 -450 900 900" style="overflow:visible">
+    ${F5N.map((_, i) => { const a = -Math.PI / 2 + i * 2 * Math.PI / 5; return `<line x1="0" y1="0" x2="${Math.cos(a) * 330}" y2="${Math.sin(a) * 330}" stroke="#2c3848" stroke-width="5" stroke-dasharray="10 12"/>`; }).join('')}
+    ${F5N.map((_, i) => [0, 1].map(j => `<circle id="f5p${i}${j}" r="12" fill="#c4b5fd" style="filter:drop-shadow(0 0 10px #8B7CFF)"/>`).join('')).join('')}
+  </svg>
+  <div id="f5hub" class="a" style="width:190px;height:190px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#3a3480,#1a1840);border:5px solid var(--violet);display:flex;flex-direction:column;align-items:center;justify-content:center;box-shadow:0 0 60px rgba(139,124,255,.5)">
+    <div style="font-size:60px">🐘</div><div style="font-size:24px;font-weight:700">PostgreSQL</div></div>
+  ${F5N.map(([l, c], i) => c ? bot('f5n' + i, c, l) : human('f5n' + i, '🧑‍💻')).join('')}
+`, t => {
+  const u = t - 34;
+  showTitle($('f5t'), u, 3.5);
+  const C = [1300, 560];
+  place($('f5svg'), C[0], C[1], 1, 0, prog(u, .2, .5));
+  place($('f5hub'), C[0], C[1], pop(u, .1, .45) * (1 + .05 * Math.sin(u * 9)));
+  F5N.forEach((_, i) => {
+    const a = -Math.PI / 2 + i * 2 * Math.PI / 5;
+    const el = $('f5n' + i);
+    place(el, C[0] + Math.cos(a) * 330, C[1] + Math.sin(a) * 330, pop(u, .3 + i * .1, .4) * (F5N[i][1] ? .58 : .7));
+    if (F5N[i][1]) mood(el, t, u > 1.4 ? 'happy' : '', i);
+    [0, 1].forEach(j => {
+      const p = ((u - .7 + j * .45 + i * .13) % .9) / .9;
+      const c = $('f5p' + i + j);
+      const on = u > .7;
+      c.setAttribute('cx', Math.cos(a) * 330 * p); c.setAttribute('cy', Math.sin(a) * 330 * p);
+      c.setAttribute('opacity', on ? Math.sin(p * Math.PI) : 0);
+    });
+  });
+});
+
+// F6 — scoped roles + batch undo (37.5 – 41)
+const ROLES = [['SCOUT', '侦察', '只读 · 搜集', COLORS.SCOUT], ['ANALYST', '分析', '写草稿 · 提案', COLORS.ANALYST], ['AUDITOR', '审计', '审查 · 验证', COLORS.AUDITOR], ['EXECUTOR', '执行', '落地 · 交付', COLORS.EXECUTOR]];
+scene(37.5, 41, `
+  ${ftitle('f6t', '06 / 权限 + 审计', '各司其职', 'SCOPED ROLES · AUDIT', '四种角色，命名空间沙箱<br>全程审计，整批一键撤销')}
+  ${ROLES.map(([r, zh, p, c], i) => `<div id="f6r${i}" class="a card" style="width:340px;height:170px;padding:26px 30px;border-color:${c}">
+      <div style="font-size:34px;font-weight:700;color:${c};letter-spacing:2px">${r}</div>
+      <div style="font-size:30px;margin-top:10px">${zh}</div><div style="font-size:24px;color:var(--muted);margin-top:6px">${p}</div></div>`).join('')}
+  <div id="f6btn" class="a chip" style="background:var(--indigo);color:#fff;font-size:40px;padding:20px 40px;border-radius:20px;box-shadow:0 0 40px rgba(79,70,229,.6)">↶ 撤销整批操作</div>
+  <div id="f6rip" class="a" style="width:120px;height:120px;border-radius:50%;border:3px solid var(--violet-soft)"></div>
+  <div id="f6ok" class="a pill" style="background:rgba(74,222,128,.15);color:var(--auditor);font-size:30px">✓ 已回滚 37 处改动</div>
+`, t => {
+  const u = t - 37.5;
+  showTitle($('f6t'), u, 3.5);
+  ROLES.forEach((_, i) => place($('f6r' + i), 1110 + (i % 2) * 380, 340 + Math.floor(i / 2) * 210, pop(u, .2 + i * .15, .4)));
+  const press = u > 2.2 && u < 2.35 ? .92 : 1;
+  place($('f6btn'), 1300, 820, pop(u, 1.4, .4) * press);
+  const rp = prog(u, 2.2, 2.6);
+  place($('f6rip'), 1300, 820, lerp(.5, 6, rp), 0, rp > 0 ? 1 - rp : 0);
+  place($('f6ok'), 1300, 940, pop(u, 2.4, .4));
+});
+
+// S5 — architecture (41 – 45.5)
+scene(41, 45.5, `
+  <div id="s5h" class="a h1" style="font-size:76px">一个 PostgreSQL，撑起整个团队</div>
+  <div id="s5l0" class="a layer" style="border-color:var(--violet);background:rgba(139,124,255,.1)"><div class="lt">🧑‍💻 人类指挥台</div><div class="ls">审批 · 状态覆写 · 文档编辑 · 审计 + 批量撤销</div></div>
+  <div id="s5l1" class="a layer" style="border-color:var(--scout);background:rgba(56,217,240,.08)"><div class="lt">⚡ Veynod Gateway · FastAPI</div><div class="ls">REST · MCP (streamable HTTP / stdio) · RBAC · 任务租约 · JSON Patch · 熔断</div></div>
+  <div id="s5l2" class="a layer" style="border-color:var(--auditor);background:rgba(74,222,128,.08)"><div class="lt">🐘 PostgreSQL 16 + pgvector</div><div class="ls">文档 · 任务 · 时间线 · 审计差异 · LISTEN / NOTIFY</div></div>
+  ${[0, 1, 2, 3].map(i => `<div id="s5d${i}" class="a" style="width:16px;height:16px;border-radius:50%;background:#c4b5fd;box-shadow:0 0 14px #8B7CFF"></div>`).join('')}
+`, t => {
+  const u = t - 41;
+  place($('s5h'), 960, lerp(150, 170, eo(prog(u, 0, .4))), 1, 0, prog(u, 0, .4));
+  [0, 1, 2].forEach(i => { const p = eo(prog(u, .3 + i * .25, .8 + i * .25)); place($('s5l' + i), 960, lerp(1200, 390 + i * 210, p), 1, 0, p); });
+  [0, 1, 2, 3].forEach(i => {
+    const p = ((u + i * .37) % 1.1) / 1.1, up = i % 2;
+    const seg = i < 2 ? [465, 600] : [675, 810];
+    place($('s5d' + i), 760 + i * 130, lerp(seg[up], seg[1 - up], p), 1, 0, u > 1.2 ? Math.sin(p * Math.PI) : 0);
+  });
+});
+
+// S6 — call to action (45.5 – 50)
+scene(45.5, 50, `
+  <div id="s6h" class="a h1" style="font-size:80px">让你的 Agent 团队，<span style="color:var(--violet-soft)">靠谱起来。</span></div>
+  ${bot('s6b0', COLORS.SCOUT)}${bot('s6b1', COLORS.ANALYST)}${human('s6h0', '🧑‍💻')}${bot('s6b2', COLORS.AUDITOR)}${bot('s6b3', COLORS.EXECUTOR)}
+  <div id="s6t" class="a term"><div class="bar"><i style="background:#ff5f57"></i><i style="background:#febc2e"></i><i style="background:#28c840"></i></div>
+    <div id="s6body" class="body mono"></div></div>
+  <div id="s6url" class="a" style="display:flex;align-items:center;gap:30px">
+    <svg width="96" height="96" viewBox="0 0 64 64" fill="none"><rect x="1" y="1" width="62" height="62" rx="18" fill="#141824" stroke="rgba(255,255,255,.12)"/><path d="M32 45 45 19" stroke="#8B7CFF" stroke-opacity=".28" stroke-width="13" stroke-linecap="round"/><path d="M19 19 32 45" stroke="#E8EAF0" stroke-width="7" stroke-linecap="round"/><path d="M32 45 45 19" stroke="#8B7CFF" stroke-width="7" stroke-linecap="round"/></svg>
+    <div><div style="font-size:64px;font-weight:700">veynod.com<span style="color:var(--violet)">/demo</span></div><div style="font-size:30px;color:var(--muted)">REST + MCP · 一条命令自托管</div></div>
+  </div>
+  ${Array.from({ length: 70 }, (_, i) => `<div id="cf${i}" class="a" style="width:${10 + rnd(i) * 12}px;height:${16 + rnd(i + 5) * 14}px;border-radius:3px;background:${['#8B7CFF', '#38d9f0', '#ffb547', '#4ade80', '#ff6b9d', '#fcd34d'][i % 6]}"></div>`).join('')}
+`, t => {
+  const u = t - 45.5;
+  place($('s6h'), 960, 150, 1, 0, eo(prog(u, 0, .4)));
+  const ids = ['s6b0', 's6b1', 's6h0', 's6b2', 's6b3'];
+  ids.forEach((id, i) => {
+    const jump = Math.abs(Math.sin((u * 2.2 + i * .35) * Math.PI)) * 50;
+    place($(id), 960 + (i - 2) * 250, 420 - jump, pop(u, .1 + i * .08, .4) * (id === 's6h0' ? .85 : .8), Math.sin(u * 5 + i) * 5);
+    if (id !== 's6h0') mood($(id), t, 'happy');
+  });
+  const cmd = '$ docker compose up -d', p = prog(u, .7, 1.6);
+  $('s6body').innerHTML = cmd.slice(0, Math.floor(cmd.length * p)) + (u > 1.9 ? '\n<span style="color:#4ade80">✓ veynod 已启动 · localhost:8000</span>' : '');
+  place($('s6t'), 960, lerp(720, 700, eo(prog(u, .4, .8))), .82, 0, prog(u, .4, .7) * (1 - prog(u, 2.6, 2.9)));
+  place($('s6url'), 960, lerp(760, 720, eo(prog(u, 2.8, 3.2))), 1, 0, prog(u, 2.8, 3.1));
+  for (let i = 0; i < 70; i++) {
+    const st = .1 + rnd(i + 2) * 1.6, f = u - st;
+    const x = rnd(i + 11) * 1920 + Math.sin(f * 3 + i) * 40, y = -40 + f * (420 + rnd(i + 3) * 320);
+    place($('cf' + i), x, y, 1, f * 360 * (rnd(i + 7) - .5) * 2, f > 0 ? 1 : 0);
+  }
+}, { fo: .35 });
+
+// ---------- driver ----------
+const DURATION = 50;
+function render(t) {
+  // background: violet glow drifts, goes red in the chaos act
+  const red = t > 4.5 && t < 15.5;
+  $('bgglow').style.background = red
+    ? `radial-gradient(ellipse at 50% 60%, rgba(255,60,90,.18), transparent 60%), var(--bg)`
+    : `radial-gradient(ellipse at ${50 + Math.sin(t * .4) * 18}% ${45 + Math.cos(t * .3) * 10}%, rgba(139,124,255,.20), transparent 55%), var(--bg)`;
+  $('grid').style.transform = `translate(${(t * 12) % 60}px,${(t * 8) % 60}px)`;
+  if (!(t > 15.5 && t < 17)) $('flash').style.opacity = 0;
+  for (const s of scenes) {
+    const on = t >= s.a && t < s.b;
+    s.el.style.display = on ? 'block' : 'none';
+    if (on) { s.el.style.opacity = fade(t, s.a, s.b, s.fi, s.fo); s.render(t); }
+  }
+  // final fade to black
+  document.getElementById('stage').style.opacity = 1 - prog(t, DURATION - .5, DURATION);
+}
+window.render = render;
+// Lay out every string the film can show once, so web-font subsets load up front.
+$('glyphs').textContent = $('scenes').textContent + FAILS.join('') +
+  '∞ tok 第轮 0123456789,→ 已熔断 阈值 round ✓ 已交付 · 附简报 ● SCOUT 认领中 等待认领 😱🙂 veynod 已启动 localhost:8000 $ docker compose up -d agent --key=SHARED_ADMIN_KEY > DROP TABLE core_state; 有没有一种可能…… 你有一支 AI Agent 团队。';
+['400', '700', '900'].forEach(w => { const d = document.createElement('div'); d.style.fontWeight = w; d.textContent = $('glyphs').textContent; $('glyphs').appendChild(d); });
+window.DURATION = DURATION;
+
+// live preview when opened directly (?t=12 to jump)
+if (!navigator.webdriver) {
+  const q = +new URLSearchParams(location.search).get('t') || 0;
+  const t0 = performance.now() - q * 1000;
+  const loop = now => { render(((now - t0) / 1000) % DURATION); requestAnimationFrame(loop); };
+  requestAnimationFrame(loop);
+} else render(0);
+</script>
+</body>
+</html>
