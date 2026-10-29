@@ -212,6 +212,7 @@ do not edit by hand. Every error body is
 | `escape_closed` | 409 | `abandon` | `abandon_and_release_local_state` | The escape is already FIXED or WAIVED. |
 | `external_action_error` | 409 | `abandon` | `abandon_and_release_local_state` | Re-read the action state. |
 | `gate_not_passed` | 409 | `abandon` | `abandon_and_release_local_state` | Merge after a passing gate on the current submission. |
+| `host_revoked` | 409 | `abandon` | `abandon_and_release_local_state` | Ask the owner for a new runner token. |
 | `id_collision` | 409 | `abandon` | `abandon_and_release_local_state` | Abort the import or import into a new tenant. |
 | `invalid_state_transition` | 409 | `abandon` | `abandon_and_release_local_state` | Re-read the task; give up this action. |
 | `invalid_transition` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |

@@ -353,3 +353,15 @@ Task `runner-3-scheduler`, step 3 of 5.
 | A-03 failures | Done | Two failures on a host exclude it for that task; three failed rounds leave the task in HANDOFF with no ping. |
 | A-04 no host | Done | Task stays READY; `GET /v1/runner/placements` and the Loop page's Needs you say why in plain words. |
 | A-05 modes | Done | Manual and semi record a suggestion only; full assigns. |
+
+## Full-managed Loop: runner program, worktrees, hosts panel (runner-1, runner-4, runner-5)
+
+| Item | Status | Notes |
+|---|---|---|
+| runner-1 A-01 headless runner | Done | `veynod runner` (CLI 0.4.0): follows the inbox stream, wakes Claude Code or Codex through OAR when installed, else their CLI; `custom` adapter for tests. Same receipts as the desktop sidecar (delivered, accepted, started, finished/failed) and three tries before giving the task back. |
+| runner-1 A-02 handshake | Done | `/v1/runner/hello` on start, `/v1/runner/heartbeat` every 30 s with running tasks and fresh quota; a last heartbeat on exit. |
+| runner-1 A-03 service | Done | `veynod service install --runner`: systemd user unit, LaunchAgent, hidden Windows logon task; restarts within 5 s. |
+| runner-1 A-04 Windows client | Open | Interface written in the PR; the desktop client can spawn `veynod runner` instead of its own stream code. Needs the client coder's agreement. |
+| runner-1 A-05 tests | Done | `cli/test/runner.test.mjs`: placement parsing, inventory without emails, custom runtime, end to end against a fake server. |
+| runner-4 worktrees | Done | Cached bare clone per repo, one worktree per task on `veynod/<task>`, pre-push hook refuses other branches, unknown repos refused, disk cap removes oldest finished first. |
+| runner-5 hosts panel | Done | Loop page Computers panel; pause, resume, take off the Loop with confirmation and events; refresh from the event stream; install command when empty. |

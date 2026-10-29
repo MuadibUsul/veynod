@@ -234,3 +234,33 @@ async def test_the_reaper_places_tasks_without_being_asked(client):
             break
         await asyncio.sleep(0.5)
     assert (await _task_row(client, ws, key))["assignee"] == host["assignee"]
+
+
+async def test_a_paused_host_gives_its_task_away_and_can_resume(client):
+    ws = await _workspace(client, "full")
+    first = await _host(client, ws, f"aa-{uuid.uuid4().hex[:4]}", slots=3)
+    second = await _host(client, ws, f"bb-{uuid.uuid4().hex[:4]}", slots=1)
+    key = await _task(client, ws)
+    await _schedule(client, ws)
+    assert (await _task_row(client, ws, key))["assignee"] == first["assignee"]
+
+    refused = await client.post(f"/v1/runner/hosts/{first['host_id']}/pause",
+                                headers=first["headers"])
+    assert refused.status_code == 403, refused.text
+    paused = await client.post(f"/v1/runner/hosts/{first['host_id']}/pause",
+                               headers=ws["owner"])
+    assert paused.status_code == 200, paused.text
+    assert paused.json()["state"] == "paused"
+    # Heartbeats and a fresh hello keep it paused.
+    beat = await client.post("/v1/runner/heartbeat", headers=first["headers"], json={})
+    assert beat.json()["status"] == "paused"
+
+    await _schedule(client, ws)
+    assert (await _task_row(client, ws, key))["assignee"] == second["assignee"]
+    history = {item["host_id"]: item for item in await _placements(client, ws, key)}
+    assert history[first["host_id"]]["reason"] == "host_paused"
+
+    resumed = await client.post(f"/v1/runner/hosts/host:{first['host_id']}/resume",
+                                headers=ws["owner"])
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["state"] == "online"

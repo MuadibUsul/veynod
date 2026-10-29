@@ -76,6 +76,11 @@ does not claim in 3 min loses the task to another host. After three failed
 rounds the task stays in HANDOFF. Manual and semi modes only suggest.
 `GET /v1/runner/placements` shows where each task went and why a task has
 no host.
+`npx veynod runner` (CLI 0.4) is a ready runner: hello, heartbeat, a fresh
+git worktree per placed task, and Claude Code or Codex started there with a
+prompt to claim it; `veynod service install --runner` keeps it running.
+The owner can pause a host (`POST /v1/runner/hosts/{ref}/pause`, then
+`/resume`): it gets no new work and its tasks move on.
 
 ## Reading drafts and tainted documents
 
@@ -438,6 +443,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `escape_closed` | 409 | `abandon` |
 | `external_action_error` | 409 | `abandon` |
 | `gate_not_passed` | 409 | `abandon` |
+| `host_revoked` | 409 | `abandon` |
 | `id_collision` | 409 | `abandon` |
 | `invalid_state_transition` | 409 | `abandon` |
 | `invalid_transition` | 409 | `abandon` |

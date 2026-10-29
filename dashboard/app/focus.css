@@ -870,6 +870,128 @@ body::before,
   color: var(--ds-text-muted);
 }
 
+/* ------------------------------------------------------------- hosts */
+.hosts {
+  display: grid;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-4);
+  border: 1px solid var(--ds-border-default);
+  border-radius: 12px;
+  background: var(--ds-surface-panel);
+}
+.hosts .skeleton.block {
+  height: 72px;
+  border-radius: 8px;
+}
+.hosts-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--ds-space-3);
+}
+.hosts-head h3 {
+  margin: 0;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 600;
+}
+.hosts-count {
+  color: var(--ds-text-muted);
+  font-size: 13px;
+}
+.hosts-empty {
+  display: grid;
+  gap: 8px;
+  color: var(--ds-text-secondary);
+  font-size: 14px;
+  line-height: 22px;
+}
+.hosts-empty p {
+  margin: 0;
+}
+.hosts-empty code {
+  padding: 8px 12px;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: 8px;
+  background: var(--ds-surface-subtle);
+  font-family: var(--ds-font-mono);
+  font-size: 13px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.hosts-note {
+  color: var(--ds-text-muted);
+  font-size: 13px;
+}
+.hosts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--ds-space-3);
+}
+.host {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: 8px;
+  background: var(--ds-surface-subtle);
+  transition: border-color 300ms var(--ds-ease), opacity 300ms var(--ds-ease);
+}
+.host.state-offline,
+.host.state-paused {
+  opacity: 0.72;
+}
+.host-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.host-top strong {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.host-state {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 16px;
+  font-weight: 600;
+  background: var(--ds-surface-raised);
+  color: var(--ds-text-secondary);
+}
+.host-state.state-online {
+  color: var(--ds-status-success);
+  background: var(--ds-status-success-soft);
+}
+.host-state.state-paused {
+  color: var(--ds-status-proposal);
+  background: var(--ds-status-proposal-soft);
+}
+.host-meta {
+  color: var(--ds-text-muted);
+  font-size: 13px;
+  line-height: 20px;
+}
+.host-facts {
+  display: grid;
+  gap: 2px;
+  color: var(--ds-text-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+.host-actions {
+  display: flex;
+  gap: 8px;
+}
+
 /* ---------------------------------------- phones: the work comes first */
 @media (max-width: 900px) {
   .shell[data-session="true"] .sidebar {

@@ -1538,6 +1538,29 @@ async def schedule_now(
     return await scheduler.schedule_now(session, principal)
 
 
+@router.post("/runner/hosts/{ref}/pause",
+             summary="Owner: give this computer no new work; its tasks move to others")
+async def pause_host(
+    ref: str = Path(max_length=64),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import runners
+
+    return await runners.set_paused(session, principal, ref, True)
+
+
+@router.post("/runner/hosts/{ref}/resume", summary="Owner: let a paused computer work again")
+async def resume_host(
+    ref: str = Path(max_length=64),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import runners
+
+    return await runners.set_paused(session, principal, ref, False)
+
+
 @router.post("/runner/hosts/{ref}/revoke",
              summary="Owner: take a computer off the Loop (token revoked, tasks freed)")
 async def revoke_host(

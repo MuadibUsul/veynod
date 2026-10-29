@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useI18n } from "../i18n";
 import type { ApiRequest } from "../types";
 import { relativeTime } from "../types";
 import { AutomationModeCard } from "./automation";
-import { LiveBoard } from "./live-board";
+import { HostsPanel } from "./hosts-panel";
+import { LiveBoard, type BoardEvent } from "./live-board";
 
 /*
  * How the agent loop is doing, second only to the diagram. One strip says
@@ -117,6 +118,22 @@ export function LoopView({
 
   const needs = alerts.length + waitingReview + unplaced.length;
 
+  // Hosts and placements follow the board's own event stream, not a timer.
+  const [hostsKey, setHostsKey] = useState(0);
+  const refresh = useRef<number | undefined>(undefined);
+  const onEvent = useCallback((event: BoardEvent) => {
+    const kind = event.event_type || event.type || "";
+    if (!/^(HOST_|TASK_PLACED|TASK_UNPLACED|TASK_SCHEDULER|AGENT_PRESENCE|task\.claimed)/.test(kind)) {
+      return;
+    }
+    window.clearTimeout(refresh.current);
+    refresh.current = window.setTimeout(() => {
+      setHostsKey((value) => value + 1);
+      void load();
+    }, 800);
+  }, [load]);
+  useEffect(() => () => window.clearTimeout(refresh.current), []);
+
   return (
     <div className="loop">
       <section className="loop-strip" aria-label={t("Loop status")}>
@@ -180,11 +197,14 @@ export function LoopView({
 
       {editingMode && sessionMode && <AutomationModeCard request={request} notify={notify} />}
 
+      <HostsPanel request={request} notify={notify} refreshKey={hostsKey} canManage={sessionMode} />
+
       <LiveBoard
         apiBase={apiBase}
         credential={credential}
         workspaceId={workspaceId}
         sessionMode={sessionMode}
+        onEvent={onEvent}
       />
     </div>
   );

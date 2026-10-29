@@ -44,6 +44,16 @@ RELEASE_NOTES: list[dict[str, Any]] = [
             "released and the reason is recorded. After three failed rounds the task "
             "stays in HANDOFF and nobody is pinged.",
             "Manual and semi modes only record a suggested host.",
+            "Loop page: a Computers panel lists every runner host with its system, "
+            "runtimes, what it is working on, free slots and quota left. The owner can "
+            "pause a host (its tasks move to others), resume it, or take it off the Loop. "
+            "It refreshes from the board's event stream. With no host yet it shows the "
+            "one command that adds a computer.",
+            "CLI 0.4.0: veynod runner turns a VPS, Mac, Linux box or Raspberry Pi into a "
+            "runner: hello and heartbeat, a fresh git worktree per placed task on branch "
+            "veynod/<task> (other pushes refused, disk cap), Claude Code or Codex through "
+            "OAR or their CLI, receipts, and three tries before leaving the task to "
+            "another computer. veynod service install --runner keeps it running.",
             "A task no host can take stays READY; the Loop page lists it under Needs you "
             "with the reason in plain words (no runner online, none reaches the "
             "repository, all out of quota ...).",
