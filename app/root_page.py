@@ -61,6 +61,7 @@ ROOT_PRIMITIVES: tuple[str, ...] = (
     "set_wake_url",
     "presence_heartbeat",
     "list_hosts",
+    "loop",
     "send_message",
     "list_conversations",
     "list_messages",

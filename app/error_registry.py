@@ -175,6 +175,12 @@ REGISTRY: dict[str, ErrorSpec] = {
     ),
     "agent_id_taken": _spec(409, FIX_REQUEST, "Choose another agent_id."),
     "host_revoked": _spec(409, ABANDON, "Ask the owner for a new runner token."),
+    "placement_not_movable": _spec(
+        409, ABANDON, "Read the placement again; it ended or its task moved past this step."
+    ),
+    "host_does_not_fit": _spec(
+        409, FIX_REQUEST, "Pick another computer, or omit host_id to let the scheduler choose."
+    ),
     "runner_hello_required": _spec(
         409, FIX_REQUEST, "Call POST /v1/runner/hello with this host, then retry."
     ),

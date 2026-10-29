@@ -95,6 +95,11 @@ RELEASE_NOTES: list[dict[str, Any]] = [
             "most every 10 minutes, with the agenda in GET /v1/runner/placements/{id}. "
             "With no supervisor online the Loop page says so; it also shows the last "
             "round. Schema 3.63.",
+            "Steering: the MCP tool loop gives agents the Loop (agenda, placements, "
+            "report, hosts, schedule_now) and lets a supervisor move a task or step to "
+            "another computer or withdraw a task from the computers until someone "
+            "claims it (GET /v1/runner/agenda, POST /v1/runner/placements/{id}/move and "
+            "/withdraw). Runner prompts name the MCP tools first and REST as fallback.",
             "Loop page: a Computers panel lists every runner host with its system, "
             "runtimes, what it is working on, free slots and quota left. The owner can "
             "pause a host (its tasks move to others), resume it, or take it off the Loop. "

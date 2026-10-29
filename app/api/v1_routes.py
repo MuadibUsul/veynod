@@ -70,7 +70,9 @@ from app.schemas import (
     NamespaceRegisterRequest,
     PeerReviewRequest,
     PeerReviewSubmitRequest,
+    PlacementMoveRequest,
     PlacementReportRequest,
+    PlacementWithdrawRequest,
     PolicyListResponse,
     ProposalApplyRequest,
     ProposalApplyResponse,
@@ -1552,6 +1554,42 @@ async def report_placement(
     from app.services import scheduler
 
     return await scheduler.report(session, principal, placement_id, body.outcome, body.note)
+
+
+@router.post("/runner/placements/{placement_id}/move",
+             summary="Supervisor: put a task or step on another computer (named or best)")
+async def move_placement(
+    body: PlacementMoveRequest,
+    placement_id: str = Path(max_length=40),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import scheduler
+
+    return await scheduler.move(session, principal, placement_id, body.host_id, body.note)
+
+
+@router.post("/runner/placements/{placement_id}/withdraw",
+             summary="Supervisor: take a task off the computers until someone claims it")
+async def withdraw_placement(
+    body: PlacementWithdrawRequest,
+    placement_id: str = Path(max_length=40),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import scheduler
+
+    return await scheduler.withdraw(session, principal, placement_id, body.note)
+
+
+@router.get("/runner/agenda", summary="Supervisor: what waits or went wrong in the Loop now")
+async def loop_agenda(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import scheduler
+
+    return await scheduler.loop_agenda(session, principal)
 
 
 @router.post("/runner/schedule",

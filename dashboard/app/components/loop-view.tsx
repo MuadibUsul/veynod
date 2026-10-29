@@ -141,7 +141,7 @@ export function LoopView({
   const refresh = useRef<number | undefined>(undefined);
   const onEvent = useCallback((event: BoardEvent) => {
     const kind = event.event_type || event.type || "";
-    if (!/^(HOST_|TASK_PLACED|TASK_UNPLACED|TASK_SCHEDULER|LOOP_ROUND|CHUNK_|AGENT_PRESENCE|task\.claimed)/.test(kind)) {
+    if (!/^(HOST_|TASK_PLACED|TASK_UNPLACED|TASK_SCHEDULER|LOOP_ROUND|PLACEMENT_|CHUNK_|AGENT_PRESENCE|task\.claimed)/.test(kind)) {
       return;
     }
     window.clearTimeout(refresh.current);
