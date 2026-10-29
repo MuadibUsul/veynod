@@ -869,7 +869,7 @@ python:3.12-slim
 | 数据库 | 独立 `agentgraph_pgdata` 卷，不与其他项目共用 |
 | 网络 | 内部 `agentgraph_internal` + 共享 `web`；不发布宿主端口 |
 | 反向代理 | Caddy：`veynod.com` → `agentgraph-api:8000` |
-| 旧域名 | `agentgraph.fusionpropulsion.space` 与 `*.nip.io` 已从 Caddy 删除，不再提供服务 |
+| 旧域名 | 历史测试域名与 `*.nip.io` 已从 Caddy 删除，不再提供服务 |
 | 主控制台 | `https://veynod.com/dashboard/` |
 | MCP | `https://veynod.com/mcp/` |
 | 健康检查 | `https://veynod.com/readyz` |

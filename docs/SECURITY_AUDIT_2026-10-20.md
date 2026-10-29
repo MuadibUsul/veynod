@@ -4,7 +4,7 @@
 > `https://veynod.com`；旧 AgentGraph 域名已从 VPS 移除。本文保留当时的
 > 审计对象与证据，不随品牌和版本改写。
 
-**审计对象：** `E:\Codes\AgentGraph`，生产 `https://agentgraph.fusionpropulsion.space`
+**审计对象：** `E:\Codes\AgentGraph`，生产域名（审计时使用旧测试域名，现已退役）
 **审计方式：** 攻击者视角静态审计 + 本地一次性 pgvector 环境复现（未对生产做破坏性测试）+ 生产只读配置/响应头核验
 **结论：** 当前生产配置下未发现“无需认证直接接管”的 Critical 漏洞；但存在 **8 组 High**，其中 4 组已在一次性测试工作区复现。最严重的问题不是数据库 RLS，而是**应用层的 namespace 边界和人类审批门禁没有真正闭合**。
 

@@ -29,6 +29,23 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.22.1",
+        "date": "2026-10-29",
+        "summary": "Search indexing: the retired test host redirects to veynod.com, and "
+        "the landing page returns JSON only to explicit API clients.",
+        "highlights": [
+            "The old test hostname is served by Caddy as a path-preserving 301 to "
+            "veynod.com once its DNS record is restored; the duplicate application is "
+            "not brought back.",
+            "The root route returns the machine descriptor only when Accept explicitly "
+            "asks for application/json without text/html, text/*, application/* or */*. "
+            "Googlebot and browsers always receive the full HTML page; ?format=json "
+            "remains the explicit escape hatch.",
+            "Vary: Accept, Accept-Encoding on the public landing pages so a cache cannot "
+            "serve a JSON probe to a crawler.",
+        ],
+    },
+    {
         "version": "3.22.0",
         "date": "2026-10-29",
         "summary": "The scheduler puts tasks on the computers that run agents, and moves "

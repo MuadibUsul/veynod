@@ -1,4 +1,4 @@
-# Veynod v3.6.7
+# Veynod — https://veynod.com
 [![M8ven Score](https://m8ven.ai/badge/mcp/muadibusul-veynod-kn13k8?v=7a5062809891a3ce6e5018610ceccf13)](https://m8ven.ai/mcp/muadibusul-veynod-kn13k8?s=readme)
 > **Status: actively developed.** Veynod is under active development and dogfooded daily. Expect frequent changes; the roadmap below is directional, not a promise.
 

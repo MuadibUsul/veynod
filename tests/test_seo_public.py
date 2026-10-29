@@ -39,9 +39,18 @@ async def test_homepage_negotiation_and_locales(monkeypatch):
         weighted = await client.get(
             "/", headers={"Accept": "application/json;q=0.1,text/*;q=0.9"})
         assert weighted.headers["content-type"].startswith("text/html")
+        mixed = await client.get(
+            "/", headers={"Accept": "application/json, text/html"})
+        assert mixed.headers["content-type"].startswith("text/html")
+        wildcard_json = await client.get(
+            "/", headers={"Accept": "application/json, */*"})
+        assert wildcard_json.headers["content-type"].startswith("text/html")
+        forced = await client.get("/?format=json", headers={"Accept": "text/html"})
+        assert forced.headers["content-type"].startswith("application/json")
         api = await client.get("/", headers={"Accept": "application/json"})
         assert api.status_code == 200
         assert "Accept" in api.headers["vary"]
+        assert "Accept-Encoding" in api.headers["vary"]
         assert api.json()["name"] == "Veynod"
         assert api.headers["x-robots-tag"] == "noindex"
 
