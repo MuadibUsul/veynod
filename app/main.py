@@ -657,21 +657,20 @@ async def root(request: Request) -> Any:
 
 
 def _wants_json(accept: str) -> bool:
-    """Only an explicit JSON request selects the machine descriptor.
+    """Only an explicit, higher-weighted JSON request selects the machine descriptor.
 
-    A wildcard, a browser Accept header, or a mixed `application/json,
+    A wildcard, a browser Accept header, or an equal-weight `application/json,
     text/html` header must keep the full HTML landing page: Googlebot sends
     `*/*`, and a cache that stored the JSON for that request would hide the
-    page from search. `?format=json` remains the explicit escape hatch.
+    page from search. JSON therefore wins only when it is named explicitly and
+    outranks every HTML-ish alternative, as in `application/json,text/html;q=0.9`;
+    a tie keeps the HTML page. `?format=json` remains the explicit escape hatch.
     """
-    explicit = False
+    json_quality = 0.0
+    html_quality = 0.0
     for item in accept.split(","):
         media, *params = item.strip().lower().split(";")
         media = media.strip()
-        if media in ("text/html", "text/*", "*/*", "application/*"):
-            return False
-        if media != "application/json":
-            continue
         quality = 1.0
         for param in params:
             name, _, value = param.strip().partition("=")
@@ -680,9 +679,11 @@ def _wants_json(accept: str) -> bool:
                     quality = float(value)
                 except ValueError:
                     quality = 0.0
-        if quality > 0:
-            explicit = True
-    return explicit
+        if media == "application/json":
+            json_quality = max(json_quality, quality)
+        elif media in ("text/html", "text/*", "*/*", "application/*"):
+            html_quality = max(html_quality, quality)
+    return json_quality > 0 and json_quality > html_quality
 
 
 @app.get("/zh/", include_in_schema=False)
