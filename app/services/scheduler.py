@@ -25,6 +25,7 @@ Every reaper cycle, for each workspace that has runner hosts:
 
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -36,7 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth import Principal
 from app.config import get_settings
 from app.database import async_session_factory
-from app.errors import Forbidden
+from app.errors import ApiError, Forbidden, NotFound
 from app.models import CollabTask, TaskStatus
 from app.services import automation
 from app.services.common import append_event, record_audit, task_snapshot
@@ -63,6 +64,8 @@ UNPLACED = {
     "every_host_failed": "Every runner that could take it already failed it twice.",
     "hosts_out_of_quota": "Every runner that could take it is out of quota.",
     "hosts_busy": "Every runner that could take it is busy; it waits for a free slot.",
+    "no_reviewer_host": "No reviewer computer is online that did not build it.",
+    "no_supervisor_host": "No supervisor computer is online to look after the Loop.",
 }
 # Reasons that wait on their own; the rest need the owner.
 SELF_RESOLVING = {"hosts_busy"}
@@ -167,10 +170,16 @@ async def _reconcile(session: AsyncSession, workspace_id: Any,
         "SELECT * FROM runner_placements WHERE workspace_id = :ws AND status IN "
         "('suggested', 'offered', 'claimed', 'unplaced')"),
         {"ws": workspace_id})).mappings().all()
+    chunks = await _chunk_states(session, workspace_id)
     for row in rows:
         placement = dict(row)
-        task = await session.get(CollabTask, placement["task_id"], with_for_update=True)
         host = hosts.get(placement["host_id"]) if placement["host_id"] else None
+        if placement["step"] != "work":
+            outcome = await _reconcile_step(session, workspace_id, placement, host, chunks, now)
+            if outcome:
+                counts[outcome] = counts.get(outcome, 0) + 1
+            continue
+        task = await session.get(CollabTask, placement["task_id"], with_for_update=True)
         status = placement["status"]
         if task is None:
             continue
@@ -324,7 +333,7 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
     for task in tasks:
         history = (await session.execute(text(
             "SELECT host_id, count(*) FROM runner_placements WHERE task_id = :t "
-            "AND status = 'failed' GROUP BY host_id"), {"t": task.id})).all()
+            "AND step = 'work' AND status = 'failed' GROUP BY host_id"), {"t": task.id})).all()
         failures = {host_id: count for host_id, count in history if host_id}
         if sum(failures.values()) >= MAX_ROUNDS and mode == "full":
             before = task_snapshot(task)
@@ -346,7 +355,7 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
             continue
         host, reason = _choose(task, online, failures, load)
         waiting = (await session.execute(text(
-            "SELECT * FROM runner_placements WHERE task_id = :t "
+            "SELECT * FROM runner_placements WHERE task_id = :t AND step = 'work' "
             "AND status IN ('suggested', 'unplaced')"), {"t": task.id})).mappings().one_or_none()
         if waiting is not None:
             same = ((host is None and waiting["status"] == "unplaced"
@@ -408,9 +417,13 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
                                  "note": f"placement {placement_id}"}},
             namespace=task.namespace)
         placed += 1
+    steps = await _place_steps(session, workspace_id, online, load, mode, now) \
+        if mode == "full" else {}
+    rounds = await _supervise(session, workspace_id, hosts, online, now) \
+        if mode == "full" else 0
     await session.commit()
     return {"mode": mode, "hosts": len(online), "placed": placed, "suggested": suggested,
-            "unplaced": unplaced, "stopped": gave_up, **counts}
+            "unplaced": unplaced, "stopped": gave_up, **counts, **steps, "rounds": rounds}
 
 
 async def run_all() -> int:
@@ -429,6 +442,363 @@ async def run_all() -> int:
     return placed
 
 
+# ------------------------------------------------------------------ steps
+#
+# After the work comes its review and, for diagram chunks, the merge. Each is
+# placed like a task: on a reviewer computer that did not build it, moved when
+# it fails or stalls. A step is done when its task or chunk moves past it.
+
+REVIEW_STATES = ("awaiting_ci", "awaiting_review", "awaiting_gate")
+MERGE_STATES = ("ready_to_merge", "verified")
+REVIEWER_ROLES = {"AUDITOR"}
+SUPERVISOR_ROLES = {"SUPER_ADMIN"}
+REPORT_GRACE = timedelta(minutes=2)
+
+
+async def _chunk_states(session: AsyncSession, workspace_id: Any) -> dict[str, dict[str, Any]]:
+    """Chunk tasks of frozen diagrams: task key -> diagram, chunk, status, queue head."""
+    from app.services.diagrams import _queue, status_of
+
+    rows = (await session.execute(text(
+        "SELECT c.*, d.diagram_key, d.id AS d_id FROM diagram_chunks c "
+        "JOIN diagrams d ON d.id = c.diagram_id WHERE d.workspace_id = :ws "
+        "AND d.status = 'frozen' AND c.task_key IS NOT NULL "
+        "AND c.state NOT IN ('merged', 'retired', 'pending', 'blocked')"),
+        {"ws": workspace_id})).mappings().all()
+    if not rows:
+        return {}
+    tasks = {row["task_key"]: dict(row) for row in (await session.execute(text(
+        "SELECT task_key, status, updated_at FROM collab_tasks WHERE workspace_id = :ws "
+        "AND task_key = ANY(CAST(:keys AS text[]))"),
+        {"ws": workspace_id, "keys": [row["task_key"] for row in rows]})).mappings().all()}
+    heads: dict[int, str | None] = {}
+    out = {}
+    for row in rows:
+        chunk = dict(row)
+        task = tasks.get(chunk["task_key"])
+        if task is not None:
+            task = {**task, "status": getattr(task["status"], "value", task["status"])}
+        if chunk["d_id"] not in heads:
+            entries = await _queue(session, chunk["d_id"])
+            heads[chunk["d_id"]] = entries[0]["chunk_key"] if entries else None
+        out[chunk["task_key"]] = {
+            "diagram_key": chunk["diagram_key"], "chunk_key": chunk["chunk_key"],
+            "status": status_of(chunk, task),
+            "head": heads[chunk["d_id"]] == chunk["chunk_key"],
+        }
+    return out
+
+
+def _step_pending(step: str, task: CollabTask | None, chunk: dict[str, Any] | None,
+                  chunk_task: bool = False) -> bool:
+    if step == "review":
+        if chunk is not None or chunk_task:
+            return chunk is not None and chunk["status"] in REVIEW_STATES
+        return task is not None and task.status == TaskStatus.REVIEWING
+    if step == "merge":
+        return chunk is not None and (chunk["status"] in MERGE_STATES
+                                      or (chunk["status"] == "queued" and chunk["head"]))
+    return False
+
+
+async def _reconcile_step(session: AsyncSession, workspace_id: Any, placement: dict[str, Any],
+                          host: dict[str, Any] | None, chunks: dict[str, dict[str, Any]],
+                          now: datetime) -> str | None:
+    step, status = placement["step"], placement["status"]
+    if step == "supervise":
+        if status == "unplaced":
+            return None  # the round planner refreshes or places it
+        timed_out = now - placement["created_at"] > timedelta(
+            seconds=settings.runner_supervise_timeout_seconds)
+        if placement["reported"] == "finished":
+            await _end(session, placement, "delivered", "finished", placement["report_note"])
+            return "delivered"
+        if placement["reported"] == "failed":
+            await _end(session, placement, "failed", "reported_failed", placement["report_note"])
+            return "failed"
+        problem = "host_removed" if host is None else _host_problem(host, now)
+        if problem or timed_out:
+            await _end(session, placement, "moved", problem or "timed_out")
+            return "moved"
+        return None
+    task = await session.get(CollabTask, placement["task_id"]) if placement["task_id"] else None
+    chunk = chunks.get(placement["task_key"]) if placement["task_key"] else None
+    if not _step_pending(step, task, chunk, chunk_task=placement["chunk_key"] is not None):
+        now_state = chunk["status"] if chunk else (task.status.value.lower() if task else "gone")
+        if status == "unplaced":
+            await _end(session, placement, "withdrawn", now_state)
+            return "withdrawn"
+        await _end(session, placement, "delivered", now_state)
+        return "delivered"
+    if status == "unplaced":
+        return None
+    problem = None
+    if host is None:
+        problem = "host_removed"
+    elif placement["reported"] == "failed":
+        problem = "reported_failed"
+    elif placement["reported"] == "finished" and placement["reported_at"] \
+            and now - placement["reported_at"] > REPORT_GRACE:
+        problem = "no_progress"
+    else:
+        problem = _host_problem(host, now)
+        if problem is None and now - placement["created_at"] > timedelta(
+                seconds=settings.runner_step_timeout_seconds):
+            problem = "timed_out"
+    if problem is None:
+        return None
+    # A host that ran it and failed counts against itself; an outage does not.
+    outcome = "failed" if problem in ("reported_failed", "no_progress", "timed_out") else "moved"
+    await _end(session, placement, outcome, problem, placement["report_note"])
+    await append_event(
+        session, workspace_id=workspace_id, agent="scheduler", event_type="TASK_UNPLACED",
+        payload={"task_key": placement["task_key"], "step": step,
+                 "host_id": placement["host_id"], "placement_id": placement["placement_id"],
+                 "reason": problem,
+                 "targets": [f"agent:{host['agent_id']}"] if host and host["agent_id"] else []})
+    return outcome
+
+
+def _reviewer(host: dict[str, Any]) -> bool:
+    caps = {item.lower() for item in host["capabilities"] or []}
+    return host["role_scope"] in REVIEWER_ROLES or "review" in caps
+
+
+def _supervisor(host: dict[str, Any]) -> bool:
+    caps = {item.lower() for item in host["capabilities"] or []}
+    return host["role_scope"] in SUPERVISOR_ROLES or "supervisor" in caps
+
+
+async def _builders(session: AsyncSession, task: CollabTask) -> tuple[set[str], set[str]]:
+    """Names and hosts that worked on the task: they never review or merge it."""
+    names = {name for name in (task.claimed_by, task.lease_owner, task.handed_off_by,
+                               task.orphaned_from) if name}
+    rows = (await session.execute(text(
+        "SELECT DISTINCT l.holder FROM leases l WHERE l.workspace_id = :ws "
+        "AND l.resource_kind = 'task' AND l.resource_ref = :ref"),
+        {"ws": task.workspace_id, "ref": task.canonical_id})).scalars().all()
+    names.update(name for name in rows if name)
+    hosts = set((await session.execute(text(
+        "SELECT DISTINCT host_id FROM runner_placements WHERE task_id = :t AND step = 'work' "
+        "AND host_id IS NOT NULL AND status IN ('claimed', 'delivered', 'failed')"),
+        {"t": task.id})).scalars().all())
+    return names, hosts
+
+
+def _choose_reviewer(task: CollabTask, online: list[dict[str, Any]], names: set[str],
+                     built: set[str], failures: dict[str, int],
+                     load: dict[str, int]) -> tuple[dict[str, Any] | None, str]:
+    pool = [host for host in online if _reviewer(host)
+            and host["host_id"] not in built
+            and host["agent_signature"] not in names and host["agent_id"] not in names]
+    if not pool:
+        return None, "no_reviewer_host"
+    for check in ("no_host_for_namespace", "no_host_for_repo", "no_host_with_runtime"):
+        narrowed = [host for host in pool if check not in _fits(task, host)]
+        if not narrowed:
+            return None, check
+        pool = narrowed
+    # One failed review or merge is enough to try another computer.
+    pool = [host for host in pool if not failures.get(host["host_id"])]
+    if not pool:
+        return None, "every_host_failed"
+    pool = [host for host in pool
+            if (quota_used(host) or 0) < settings.runner_quota_exhausted_percent]
+    if not pool:
+        return None, "hosts_out_of_quota"
+    pool = [host for host in pool if host["max_concurrency"] - load[host["host_id"]] > 0]
+    if not pool:
+        return None, "hosts_busy"
+    return min(pool, key=lambda host: (-(host["max_concurrency"] - load[host["host_id"]]),
+                                       quota_used(host) or 0.0, host["host_id"])), ""
+
+
+def _step_note(placement_id: str, step: str, chunk: dict[str, Any] | None) -> str:
+    note = f"placement {placement_id} step {step}"
+    if chunk:
+        note += f" diagram {chunk['diagram_key']} chunk {chunk['chunk_key']}"
+    return note
+
+
+async def _place_steps(session: AsyncSession, workspace_id: Any, online: list[dict[str, Any]],
+                       load: dict[str, int], mode: str, now: datetime) -> dict[str, int]:
+    """Place reviews of delivered work and merges of approved chunks."""
+    chunks = await _chunk_states(session, workspace_id)
+    wanted: dict[str, str] = {}
+    for task_key, chunk in chunks.items():
+        if chunk["status"] in REVIEW_STATES:
+            wanted[task_key] = "review"
+        elif chunk["status"] in MERGE_STATES or (chunk["status"] == "queued" and chunk["head"]):
+            wanted[task_key] = "merge"
+    # Plain tasks in review; a diagram chunk's review follows the chunk, not its task.
+    reviewing = (await session.execute(text(
+        "SELECT t.task_key FROM collab_tasks t WHERE t.workspace_id = :ws "
+        "AND t.status = 'REVIEWING' AND (t.kind IS NULL OR t.kind = 'work') "
+        "AND NOT EXISTS (SELECT 1 FROM diagram_chunks c JOIN diagrams d ON d.id = c.diagram_id "
+        "WHERE d.workspace_id = t.workspace_id AND c.task_key = t.task_key) "
+        "ORDER BY t.priority DESC, t.updated_at LIMIT 100"),
+        {"ws": workspace_id})).scalars().all()
+    for task_key in reviewing:
+        wanted.setdefault(task_key, "review")
+    placed = waiting = 0
+    for task_key, step in wanted.items():
+        task = (await session.execute(select(CollabTask).where(
+            CollabTask.workspace_id == workspace_id,
+            CollabTask.task_key == task_key))).scalar_one_or_none()
+        if task is None:
+            continue
+        open_row = (await session.execute(text(
+            "SELECT * FROM runner_placements WHERE task_id = :t AND status IN "
+            "('suggested', 'offered', 'claimed', 'unplaced')"), {"t": task.id})
+        ).mappings().one_or_none()
+        if open_row is not None and open_row["status"] != "unplaced":
+            continue
+        names, built = await _builders(session, task)
+        history = (await session.execute(text(
+            "SELECT host_id, count(*) FROM runner_placements WHERE task_id = :t AND step = :s "
+            "AND status = 'failed' GROUP BY host_id"), {"t": task.id, "s": step})).all()
+        failures = {host_id: count for host_id, count in history if host_id}
+        host, reason = _choose_reviewer(task, online, names, built, failures, load)
+        chunk = chunks.get(task_key)
+        if host is None:
+            if open_row is not None and open_row["step"] == step and open_row["reason"] == reason:
+                await session.execute(text(
+                    "UPDATE runner_placements SET updated_at = NOW() WHERE placement_id = :id"),
+                    {"id": open_row["placement_id"]})
+            else:
+                if open_row is not None:
+                    await _end(session, dict(open_row), "withdrawn")
+                await session.execute(text(
+                    "INSERT INTO runner_placements (workspace_id, task_id, task_key, mode, status, "
+                    "step, diagram_key, chunk_key, reason, note) VALUES (:ws, :t, :key, 'assign', "
+                    "'unplaced', :step, :dk, :ck, :reason, :note)"),
+                    {"ws": workspace_id, "t": task.id, "key": task.task_key, "step": step,
+                     "dk": chunk and chunk["diagram_key"], "ck": chunk and chunk["chunk_key"],
+                     "reason": reason, "note": _words(reason, task)})
+            waiting += 1
+            continue
+        if open_row is not None:
+            await _end(session, dict(open_row), "withdrawn")
+        load[host["host_id"]] += 1
+        placement_id = (await session.execute(text(
+            "INSERT INTO runner_placements (workspace_id, task_id, task_key, host_id, agent_id, "
+            "mode, status, step, diagram_key, chunk_key, lease_epoch) VALUES (:ws, :t, :key, "
+            ":host, :agent, 'assign', 'offered', :step, :dk, :ck, :epoch) "
+            "RETURNING placement_id"),
+            {"ws": workspace_id, "t": task.id, "key": task.task_key, "host": host["host_id"],
+             "agent": host["agent_id"], "step": step, "dk": chunk and chunk["diagram_key"],
+             "ck": chunk and chunk["chunk_key"], "epoch": task.lease_epoch or 0})).scalar_one()
+        await append_event(
+            session, workspace_id=workspace_id, agent="scheduler", event_type="TASK_PLACED",
+            payload={"task_key": task.task_key, "step": step, "host_id": host["host_id"],
+                     "placement_id": placement_id, "idempotency_key": placement_id,
+                     "targets": [f"agent:{host['agent_id']}"],
+                     "details": {"delivery_kind": "task.placed", "priority": 1,
+                                 "note": _step_note(placement_id, step, chunk)}},
+            namespace=task.namespace)
+        placed += 1
+    return {"steps_placed": placed, "steps_waiting": waiting}
+
+
+# ------------------------------------------------------------------ supervisor
+
+
+async def agenda(session: AsyncSession, workspace_id: Any,
+                 since: datetime | None = None) -> list[dict[str, Any]]:
+    """What the supervisor should look at: things that wait or went wrong."""
+    items: list[dict[str, Any]] = []
+    for row in (await session.execute(text(
+            "SELECT rule, severity, subject_kind, subject_ref FROM situation_alerts "
+            "WHERE workspace_id = :ws AND state = 'open' AND severity IN ('high', 'medium') "
+            "ORDER BY severity, last_seen DESC LIMIT 15"), {"ws": workspace_id})).mappings():
+        items.append({"kind": "alert", "rule": row["rule"], "severity": row["severity"],
+                      "subject": f"{row['subject_kind']}:{row['subject_ref']}"})
+    for row in (await session.execute(text(
+            "SELECT task_key, step, reason, note FROM runner_placements WHERE workspace_id = :ws "
+            "AND status = 'unplaced' AND step <> 'supervise' "
+            "AND reason <> ALL(CAST(:quiet AS text[])) ORDER BY updated_at DESC LIMIT 15"),
+            {"ws": workspace_id, "quiet": sorted(SELF_RESOLVING)})).mappings():
+        items.append({"kind": "no_host", "task_key": row["task_key"], "step": row["step"],
+                      "reason": row["reason"], "note": row["note"]})
+    for row in (await session.execute(text(
+            "SELECT t.task_key FROM collab_tasks t WHERE t.workspace_id = :ws "
+            "AND t.status = 'HANDOFF' AND (SELECT count(*) FROM runner_placements p "
+            "WHERE p.task_id = t.id AND p.step = 'work' AND p.status = 'failed') >= :rounds "
+            "LIMIT 10"), {"ws": workspace_id, "rounds": MAX_ROUNDS})).mappings():
+        items.append({"kind": "stopped", "task_key": row["task_key"],
+                      "note": "failed on computers three times; needs a different approach"})
+    for row in (await session.execute(text(
+            "SELECT task_key FROM collab_tasks WHERE workspace_id = :ws AND status = 'HANDOFF' "
+            "AND reviewed_by IS NOT NULL AND repo IS NOT NULL ORDER BY updated_at LIMIT 10"),
+            {"ws": workspace_id})).mappings():
+        items.append({"kind": "awaiting_deploy", "task_key": row["task_key"],
+                      "note": "approved; waits for a verified deploy"})
+    if since is not None:
+        failed = (await session.execute(text(
+            "SELECT task_key, step, reason FROM runner_placements WHERE workspace_id = :ws "
+            "AND step <> 'supervise' AND status IN ('failed', 'moved') AND ended_at >= :since "
+            "ORDER BY ended_at DESC LIMIT 15"), {"ws": workspace_id, "since": since})
+        ).mappings().all()
+        for row in failed:
+            items.append({"kind": "step_failed", "task_key": row["task_key"],
+                          "step": row["step"], "reason": row["reason"]})
+    return items[:40]
+
+
+async def _supervise(session: AsyncSession, workspace_id: Any, hosts: list[dict[str, Any]],
+                     online: list[dict[str, Any]], now: datetime) -> int:
+    """Wake a supervisor computer for a round when something waits, at most every so often."""
+    open_round = (await session.execute(text(
+        "SELECT * FROM runner_placements WHERE workspace_id = :ws AND step = 'supervise' "
+        "AND status IN ('suggested', 'offered', 'claimed', 'unplaced')"),
+        {"ws": workspace_id})).mappings().one_or_none()
+    if open_round is not None and open_round["status"] != "unplaced":
+        return 0
+    last = (await session.execute(text(
+        "SELECT created_at FROM runner_placements WHERE workspace_id = :ws AND step = 'supervise' "
+        "AND status <> 'unplaced' ORDER BY created_at DESC LIMIT 1"),
+        {"ws": workspace_id})).scalar_one_or_none()
+    if last is not None and now - last < timedelta(seconds=settings.runner_supervise_every_seconds):
+        return 0
+    items = await agenda(session, workspace_id, since=last)
+    if not items:
+        if open_round is not None:
+            await _end(session, dict(open_round), "withdrawn", "nothing_waits")
+        return 0
+    detail = json.dumps({"agenda": items})
+    pool = [host for host in online if _supervisor(host)
+            and (quota_used(host) or 0) < settings.runner_quota_exhausted_percent]
+    if not pool:
+        if open_round is not None:
+            await session.execute(text(
+                "UPDATE runner_placements SET detail = CAST(:d AS jsonb), updated_at = NOW() "
+                "WHERE placement_id = :id"), {"d": detail, "id": open_round["placement_id"]})
+        else:
+            await session.execute(text(
+                "INSERT INTO runner_placements (workspace_id, mode, status, step, reason, note, "
+                "detail) VALUES (:ws, 'assign', 'unplaced', 'supervise', 'no_supervisor_host', "
+                ":note, CAST(:d AS jsonb))"),
+                {"ws": workspace_id, "note": UNPLACED["no_supervisor_host"], "d": detail})
+        return 0
+    if open_round is not None:
+        await _end(session, dict(open_round), "withdrawn", "supervisor_online")
+    host = min(pool, key=lambda item: (quota_used(item) or 0.0, item["host_id"]))
+    placement_id = (await session.execute(text(
+        "INSERT INTO runner_placements (workspace_id, host_id, agent_id, mode, status, step, "
+        "detail) VALUES (:ws, :host, :agent, 'assign', 'offered', 'supervise', "
+        "CAST(:d AS jsonb)) RETURNING placement_id"),
+        {"ws": workspace_id, "host": host["host_id"], "agent": host["agent_id"],
+         "d": detail})).scalar_one()
+    await append_event(
+        session, workspace_id=workspace_id, agent="scheduler", event_type="LOOP_ROUND",
+        payload={"placement_id": placement_id, "host_id": host["host_id"], "items": len(items),
+                 "idempotency_key": placement_id,
+                 "targets": [f"agent:{host['agent_id']}"],
+                 "details": {"delivery_kind": "task.placed", "priority": 1,
+                             "note": _step_note(placement_id, "supervise", None)}})
+    return 1
+
+
 # ------------------------------------------------------------------ reading
 
 
@@ -439,7 +809,11 @@ def _placement_out(row: dict[str, Any]) -> dict[str, Any]:
         "host_id": row["host_id"],
         "agent_id": row["agent_id"],
         "mode": row["mode"],
+        "step": row.get("step", "work"),
+        "diagram_key": row.get("diagram_key"),
+        "chunk_key": row.get("chunk_key"),
         "status": row["status"],
+        "reported": row.get("reported"),
         "reason": row["reason"],
         "note": row["note"],
         "needs_you": row["status"] == "unplaced" and row["reason"] not in SELF_RESOLVING,
@@ -450,9 +824,12 @@ def _placement_out(row: dict[str, Any]) -> dict[str, Any]:
 
 async def placements(session: AsyncSession, principal: Principal, *,
                      task_key: str | None = None, open_only: bool = False,
-                     limit: int = 100) -> dict[str, Any]:
+                     step: str | None = None, limit: int = 100) -> dict[str, Any]:
     clauses = ["workspace_id = :ws"]
     params: dict[str, Any] = {"ws": principal.workspace.id, "limit": limit}
+    if step:
+        clauses.append("step = :step")
+        params["step"] = step
     if task_key:
         clauses.append("task_key = :key")
         params["key"] = task_key
@@ -471,3 +848,46 @@ async def schedule_now(session: AsyncSession, principal: Principal) -> dict[str,
         raise Forbidden("people and commanders run the scheduler by hand")
     async with async_session_factory() as platform:
         return await run_pass(platform, principal.workspace.id)
+
+
+async def _own_placement(session: AsyncSession, principal: Principal,
+                         placement_id: str) -> dict[str, Any]:
+    row = (await session.execute(text(
+        "SELECT p.*, h.token_id FROM runner_placements p LEFT JOIN runner_hosts h "
+        "ON h.host_id = p.host_id WHERE p.workspace_id = :ws AND p.placement_id = :id"),
+        {"ws": principal.workspace.id, "id": placement_id})).mappings().one_or_none()
+    if row is None:
+        raise NotFound("placement")
+    row = dict(row)
+    owner = principal.is_human or principal.is_commander
+    if not owner and row["token_id"] != principal.token_cid:
+        raise Forbidden("a placement is read and reported by the computer it was placed on")
+    return row
+
+
+async def placement_detail(session: AsyncSession, principal: Principal,
+                           placement_id: str) -> dict[str, Any]:
+    """One placement with its detail (a supervise round carries its agenda)."""
+    row = await _own_placement(session, principal, placement_id)
+    return {**_placement_out(row), "detail": row.get("detail") or {},
+            "report_note": row.get("report_note")}
+
+
+async def report(session: AsyncSession, principal: Principal, placement_id: str,
+                 outcome: str, note: str | None = None) -> dict[str, Any]:
+    """The runner says how a step ended. A failure moves it to another computer at
+    the next pass; a finish that changed nothing counts as a failure after 2 min."""
+    if outcome not in ("finished", "failed"):
+        raise ApiError(422, "validation_error", "outcome is finished or failed",
+                       details={"field": "outcome"})
+    row = await _own_placement(session, principal, placement_id)
+    if row["status"] not in OPEN:
+        return _placement_out(row)
+    await session.execute(text(
+        "UPDATE runner_placements SET reported = :o, reported_at = NOW(), report_note = :n, "
+        "updated_at = NOW() WHERE placement_id = :id"),
+        {"o": outcome, "n": (note or None) and note[:500], "id": placement_id})
+    await session.commit()
+    return _placement_out(dict((await session.execute(text(
+        "SELECT * FROM runner_placements WHERE placement_id = :id"),
+        {"id": placement_id})).mappings().one()))

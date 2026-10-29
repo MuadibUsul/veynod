@@ -27,9 +27,14 @@ function origin() {
   return { base: `file://${base}/`, repo };
 }
 
-test("a placement poke yields the task and its idempotency key", () => {
+test("a placement poke yields the task, the step and its idempotency key", () => {
   assert.deepEqual(placementOf({ kind: "task.placed", task_key: "fix-login", note: "placement plc_01M630S0A35N82N1TFY7XGSQ88" }),
-    { taskKey: "fix-login", placementId: "plc_01M630S0A35N82N1TFY7XGSQ88" });
+    { taskKey: "fix-login", placementId: "plc_01M630S0A35N82N1TFY7XGSQ88", step: "work" });
+  assert.deepEqual(placementOf({ kind: "task.placed", task_key: "DG-x-api",
+    note: "placement plc_01M630S0A35N82N1TFY7XGSQ88 step review diagram x chunk api" }),
+  { taskKey: "DG-x-api", placementId: "plc_01M630S0A35N82N1TFY7XGSQ88", step: "review", diagramKey: "x", chunkKey: "api" });
+  assert.deepEqual(placementOf({ kind: "task.placed", note: "placement plc_01M630S0A35N82N1TFY7XGSQ88 step supervise" }),
+    { taskKey: null, placementId: "plc_01M630S0A35N82N1TFY7XGSQ88", step: "supervise" });
   assert.deepEqual(placementOf({ kind: "task.placed", doc_key: "k", note: "placement plc_01M630S0A35N82N1TFY7XGSQ88" }).taskKey, "k");
   assert.equal(placementOf({ kind: "task.assigned", task_key: "x", note: "plc_01M630S0A35N82N1TFY7XGSQ88" }), null);
   assert.equal(placementOf({ kind: "task.placed", task_key: "x", note: "no id" }), null);
@@ -59,6 +64,24 @@ test("inventory reads OAR, keeps quota and drops the account email", async () =>
     { id: "codex", available: true, via: "cli", version: "codex-cli 0.80.0" },
   ]);
   assert.ok(!JSON.stringify(found).includes("dou@example.com"));
+});
+
+test("each step gets its own prompt", () => {
+  const review = promptFor({ taskKey: "DG-x-api", placementId: "plc_X", host: "h", step: "review", diagramKey: "x", chunkKey: "api" });
+  assert.match(review, /get_audit_view\("DG-x-api"\)/);
+  assert.match(review, /review_task\("DG-x-api", approve\) first, then the diagram gate/);
+  assert.match(review, /\/v1\/diagrams\/x\/chunks\/api\/gate/);
+  assert.match(review, /Do not change the code yourself/);
+  const plain = promptFor({ taskKey: "t1", placementId: "plc_X", host: "h", step: "review" });
+  assert.match(plain, /review_task\("t1"\)/);
+  assert.doesNotMatch(plain, /diagrams/);
+  const merge = promptFor({ taskKey: "DG-x-api", placementId: "plc_X", host: "h", step: "merge", diagramKey: "x", chunkKey: "api" });
+  assert.match(merge, /queue-check/);
+  assert.match(merge, /chunks\/api\/merge \{artifact: <merge commit>\}/);
+  const round = promptFor({ placementId: "plc_X", host: "h", step: "supervise", agenda: [{ kind: "no_host", task_key: "t9" }] });
+  assert.match(round, /supervisor round/);
+  assert.match(round, /"task_key":"t9"/);
+  assert.match(round, /Do not write code in this round/);
 });
 
 test("the prompt names the task, the branch and the hand-off", () => {
@@ -157,6 +180,8 @@ test("end to end: hello, a placed task runs in its worktree, heartbeats report i
         res.end(JSON.stringify({ host_id: "hst_1", agent_id: "pi-code" }));
       } else if (req.url === "/v1/runner/heartbeat") {
         res.end(JSON.stringify({ host_id: "hst_1" }));
+      } else if (req.url.endsWith("/report")) {
+        res.end(JSON.stringify({ status: "offered" }));
       } else if (req.url === "/v1/tasks/fix-login") {
         res.end(JSON.stringify({ task_key: "fix-login", repo: "acme/site" }));
       } else {
@@ -189,9 +214,47 @@ test("end to end: hello, a placed task runs in its worktree, heartbeats report i
   assert.ok(beats.some((running) => running.includes("fix-login")), JSON.stringify(beats));
   assert.deepEqual(beats.at(-1), []);
 
+  const reports = calls.filter((call) => call.path === "/v1/runner/placements/plc_01M630S0A35N82N1TFY7XGSQ88/report");
+  assert.deepEqual(reports.map((call) => call.body), [{ outcome: "finished" }]);
+
   const receipts = readFileSync(join(state, "runner-receipts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
   assert.deepEqual(receipts.map((item) => item.stage), ["delivered", "accepted", "started", "finished"]);
   assert.ok(receipts.every((item) => item.placement_id === "plc_01M630S0A35N82N1TFY7XGSQ88"));
   // The worktree it ran in is gone afterwards.
   assert.equal(existsSync(join(state, "runner", "work", "fix-login")), false);
+});
+
+
+test("a supervise round reads its agenda, runs, and reports a failure", async () => {
+  const state = mkdtempSync(join(tmpdir(), "veynod-state-"));
+  const calls = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      calls.push({ path: req.url, body: body ? JSON.parse(body) : null });
+      res.setHeader("Content-Type", "application/json");
+      if (req.url === "/v1/runner/hello") res.end(JSON.stringify({ host_id: "hst_2", agent_id: "boss" }));
+      else if (req.url === "/v1/runner/placements/plc_01M630S0A35N82N1TFY7XGSQ99") {
+        res.end(JSON.stringify({ detail: { agenda: [{ kind: "stopped", task_key: "t7" }] } }));
+      } else res.end("{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const host = `http://127.0.0.1:${server.address().port}`;
+  const follow = async (options) => {
+    await options.onPoke({ kind: "task.placed", note: "placement plc_01M630S0A35N82N1TFY7XGSQ99 step supervise" });
+    return 0;
+  };
+  // The runtime writes the prompt it got, then fails.
+  const exec = 'node -e "require(\'fs\').writeFileSync(require(\'path\').join(process.env.VEYNOD_STATE, \'prompt.txt\'), process.env.VEYNOD_PROMPT); process.exit(3)"';
+  process.env.VEYNOD_STATE = state;
+  const code = await runRunner({ host, key: "ag_boss", runtime: "custom", exec, slots: 1 },
+    { follow, version: "0.4.0", every: 50, stateDir: state, sleepMs: 0 });
+  server.close();
+  assert.equal(code, 0);
+  assert.match(readFileSync(join(state, "prompt.txt"), "utf8"), /"task_key":"t7"/);
+  const report = calls.find((call) => call.path.endsWith("/report"));
+  assert.equal(report.body.outcome, "failed");
+  assert.match(report.body.note, /exited 3/);
 });

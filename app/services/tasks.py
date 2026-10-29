@@ -367,8 +367,12 @@ async def _create_task_core(
     batch: uuid.UUID,
     commit: bool,
     parent: CollabTask | None = None,
+    by_graph: bool = False,
 ) -> CollabTask:
-    require_permission(principal, "task:create")
+    # A diagram chunk released by its upstream merge is the graph's own work
+    # (M-14): the merger, often a reviewer, does not need task:create for it.
+    if not by_graph:
+        require_permission(principal, "task:create")
     namespace, source = await collab.infer_namespace(session, principal, request, parent)
     ensure_namespace(principal, namespace, write=True)
     if source == "default":

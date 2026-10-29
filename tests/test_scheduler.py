@@ -209,7 +209,8 @@ async def test_no_fitting_host_says_why_in_plain_words(client):
     assert task["assignee"] is None and task["status"] == "READY"
     waiting = await client.get("/v1/runner/placements", headers=ws["owner"],
                                params={"open_only": "true"})
-    needs = waiting.json()["needs_you"]
+    # The supervisor notice (no supervisor computer) is covered in test_loop_steps.
+    needs = [item for item in waiting.json()["needs_you"] if item["step"] != "supervise"]
     assert [(item["task_key"], item["reason"]) for item in needs] == [
         (key, "no_host_for_repo")]
     assert needs[0]["note"] == "No online runner can reach acme/payments."

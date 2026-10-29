@@ -23,7 +23,9 @@ type Alert = {
   last_seen: string;
 };
 
-type Unplaced = { placement_id: string; task_key: string; reason: string; note: string };
+type Unplaced = { placement_id: string; task_key: string | null; reason: string; note: string };
+type Round = { status: string; reason: string | null; note: string | null; created_at: string;
+  ended_at: string | null };
 
 // Why no runner can take a task, in the owner's words.
 const UNPLACED_LABEL: Record<string, string> = {
@@ -35,6 +37,17 @@ const UNPLACED_LABEL: Record<string, string> = {
   no_host_with_runtime: "No runner has Claude Code or Codex ready",
   every_host_failed: "Every runner that could take it already failed it",
   hosts_out_of_quota: "Every runner that could take it is out of quota",
+  no_reviewer_host: "No reviewer computer can check it",
+  no_supervisor_host: "No supervisor computer looks after the Loop",
+};
+
+const ROUND_LABEL: Record<string, string> = {
+  offered: "Supervisor round running",
+  claimed: "Supervisor round running",
+  delivered: "Last supervisor round finished",
+  failed: "Last supervisor round failed",
+  moved: "Last supervisor round was cut short",
+  withdrawn: "Last supervisor round found nothing",
 };
 
 const MODE_LABEL: Record<string, string> = {
@@ -82,6 +95,7 @@ export function LoopView({
   const [mode, setMode] = useState<string | null>(null);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [unplaced, setUnplaced] = useState<Unplaced[]>([]);
+  const [round, setRound] = useState<Round | null>(null);
   const [editingMode, setEditingMode] = useState(false);
 
   const load = useCallback(async () => {
@@ -98,6 +112,10 @@ export function LoopView({
         "/v1/runner/placements?open_only=true",
       );
       setUnplaced(placements.needs_you);
+      const rounds = await request<{ items: Round[] }>(
+        "/v1/runner/placements?step=supervise&limit=5",
+      );
+      setRound(rounds.items.find((item) => item.status !== "unplaced") ?? null);
     } catch {
       setUnplaced([]);
     }
@@ -123,7 +141,7 @@ export function LoopView({
   const refresh = useRef<number | undefined>(undefined);
   const onEvent = useCallback((event: BoardEvent) => {
     const kind = event.event_type || event.type || "";
-    if (!/^(HOST_|TASK_PLACED|TASK_UNPLACED|TASK_SCHEDULER|AGENT_PRESENCE|task\.claimed)/.test(kind)) {
+    if (!/^(HOST_|TASK_PLACED|TASK_UNPLACED|TASK_SCHEDULER|LOOP_ROUND|CHUNK_|AGENT_PRESENCE|task\.claimed)/.test(kind)) {
       return;
     }
     window.clearTimeout(refresh.current);
@@ -147,6 +165,13 @@ export function LoopView({
             </button>
           </div>
         )}
+        {round && (
+          <div className="loop-mode loop-round">
+            <span className="loop-label">{t("Supervisor")}</span>
+            <strong>{t(ROUND_LABEL[round.status] ?? round.status)}</strong>
+            <small>{relativeTime(round.ended_at ?? round.created_at)}</small>
+          </div>
+        )}
         <div className={`loop-needs${needs ? " has" : ""}`}>
           <span className="loop-label">{t("Needs you")}</span>
           {needs === 0 ? (
@@ -164,7 +189,7 @@ export function LoopView({
                 <li key={item.placement_id}>
                   <button type="button" className="loop-link" onClick={onOpenTasks}>
                     {t(UNPLACED_LABEL[item.reason] ?? item.note)}
-                    <small> · {item.task_key}</small>
+                    {item.task_key && <small> · {item.task_key}</small>}
                   </button>
                 </li>
               ))}

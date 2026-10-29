@@ -1454,6 +1454,11 @@ class RunnerHeartbeatRequest(StrictModel):
     max_concurrency: int | None = Field(default=None, ge=1, le=64)
 
 
+class PlacementReportRequest(StrictModel):
+    outcome: Literal["finished", "failed"]
+    note: str | None = Field(default=None, max_length=500)
+
+
 class HostRevokeRequest(StrictModel):
     reason: str | None = Field(default=None, max_length=500)
 

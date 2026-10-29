@@ -44,6 +44,23 @@ RELEASE_NOTES: list[dict[str, Any]] = [
             "released and the reason is recorded. After three failed rounds the task "
             "stays in HANDOFF and nobody is pinged.",
             "Manual and semi modes only record a suggested host.",
+            "The Loop turns on its own: a task in review, or a diagram chunk waiting "
+            "for CI, review or its gate, is placed as a review step on a reviewer "
+            "computer (AUDITOR or the review capability) that did not build it; an "
+            "approved chunk at the head of the merge queue, or ready to merge, as a "
+            "merge step. A runner reports how each step ended "
+            "(POST /v1/runner/placements/{id}/report); a failure, a finish that changed "
+            "nothing, or 30 minutes without progress moves the step to another "
+            "computer. Freezing a diagram under full automation dispatches its first "
+            "chunks; a diagram's repo goes to its chunk tasks. Merging releases the "
+            "next chunks even when the merger may not create tasks itself.",
+            "Supervisor rounds: when something waits (open high or medium alerts, a task "
+            "no computer can take, a task stopped after three failed rounds, approved "
+            "work waiting for a deploy, a failed step) a supervisor computer "
+            "(SUPER_ADMIN or the supervisor capability) gets one round at a time, at "
+            "most every 10 minutes, with the agenda in GET /v1/runner/placements/{id}. "
+            "With no supervisor online the Loop page says so; it also shows the last "
+            "round. Schema 3.63.",
             "Loop page: a Computers panel lists every runner host with its system, "
             "runtimes, what it is working on, free slots and quota left. The owner can "
             "pause a host (its tasks move to others), resume it, or take it off the Loop. "

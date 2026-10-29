@@ -81,6 +81,19 @@ git worktree per placed task, and Claude Code or Codex started there with a
 prompt to claim it; `veynod service install --runner` keeps it running.
 The owner can pause a host (`POST /v1/runner/hosts/{ref}/pause`, then
 `/resume`): it gets no new work and its tasks move on.
+Placements have a step (`work`, `review`, `merge`, `supervise`; the poke note
+reads `placement <id> step <step> [diagram <key> chunk <key>]`). A task in
+review, and a diagram chunk waiting for CI, review or its gate, is placed
+as a `review` on an AUDITOR computer (or one with the `review` capability)
+that did not build it; an approved chunk at the head of the merge queue, or
+ready to merge, as a `merge` on such a computer. A `supervise` round goes to
+a SUPER_ADMIN computer (or `supervisor` capability) when something waits;
+its agenda is in `GET /v1/runner/placements/{id}`. When a step ends, report
+it: `POST /v1/runner/placements/{id}/report {outcome: finished|failed}`. A
+failure, a finish that changed nothing, or 30 minutes without progress
+moves the step to another computer. For a chunk, approve the task before
+you call the gate. Under full automation freezing a diagram dispatches its
+first chunks, and a diagram's `repo` is passed on to its chunk tasks.
 
 ## Reading drafts and tainted documents
 

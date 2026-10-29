@@ -365,3 +365,15 @@ Task `runner-3-scheduler`, step 3 of 5.
 | runner-1 A-05 tests | Done | `cli/test/runner.test.mjs`: placement parsing, inventory without emails, custom runtime, end to end against a fake server. |
 | runner-4 worktrees | Done | Cached bare clone per repo, one worktree per task on `veynod/<task>`, pre-push hook refuses other branches, unknown repos refused, disk cap removes oldest finished first. |
 | runner-5 hosts panel | Done | Loop page Computers panel; pause, resume, take off the Loop with confirmation and events; refresh from the event stream; install command when empty. |
+
+## Loop breakpoints: review and merge placed, supervisor rounds (loop-review-merge-placement, loop-supervisor)
+
+| Item | Status | Notes |
+|---|---|---|
+| Review step | Done | Tasks in REVIEWING and chunks in awaiting_ci / awaiting_review / awaiting_gate are placed on a reviewer computer that did not build them. |
+| Merge step | Done | Chunks ready_to_merge, verified, or queued at the head go to a non-builder reviewer computer; merging releases downstream chunks (graph dispatch, no task:create needed). |
+| Step reports and moves | Done | `POST /v1/runner/placements/{id}/report`; failed report, finished without progress (2 min), or 30 min timeout move the step; one failure excludes that computer for the step. |
+| Diagram repo, dispatch on freeze | Done | `repo` on create/edit, carried to chunk tasks; full automation dispatches pending chunks at freeze. |
+| Supervisor rounds | Done | Agenda of alerts, unplaced tasks, stopped tasks, deploy waits and failed steps; one round at a time, every 10 min at most, only when the agenda is not empty; no-supervisor notice; last round on the Loop page. |
+| Runner prompts per step | Done | CLI: work, review (approve then gate), merge (queue-check, merge PR, record), supervise (agenda, act, owner only for owner topics). |
+| End to end | Done | `tests/test_loop_steps.py`: a two-chunk diagram goes from freeze to both merged with no person. |

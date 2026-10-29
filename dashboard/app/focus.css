@@ -870,6 +870,11 @@ body::before,
   color: var(--ds-text-muted);
 }
 
+.loop-round small {
+  color: var(--ds-text-muted);
+  font-size: 12px;
+}
+
 /* ------------------------------------------------------------- hosts */
 .hosts {
   display: grid;

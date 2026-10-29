@@ -83,18 +83,73 @@ export async function inventory({ importer = (spec) => import(spec), run = execF
   return found;
 }
 
-/** The task a placement poke is about, with its placement id (the idempotency key). */
+const STEP = /\bstep (work|review|merge|supervise)\b/;
+const CHUNK = /\bdiagram (\S+) chunk (\S+)/;
+
+/**
+ * What a placement poke asks of this computer: its placement id (the
+ * idempotency key), the step (work, review, merge, supervise), and the task
+ * and diagram chunk it is about.
+ */
 export function placementOf(poke) {
   if (!poke || poke.kind !== "task.placed") return null;
-  const key = poke.task_key || poke.doc_key;
   const match = PLACEMENT.exec(poke.note || "");
-  if (!key || !match) return null;
-  return { taskKey: key, placementId: match[0] };
+  if (!match) return null;
+  const step = STEP.exec(poke.note)?.[1] ?? "work";
+  const chunk = CHUNK.exec(poke.note);
+  const key = poke.task_key || poke.doc_key || null;
+  if (!key && step !== "supervise") return null;
+  return {
+    taskKey: step === "supervise" ? null : key,
+    placementId: match[0],
+    step,
+    ...(chunk ? { diagramKey: chunk[1], chunkKey: chunk[2] } : {}),
+  };
 }
 
-export function promptFor({ taskKey, placementId, branch, host }) {
+export function promptFor({ taskKey, placementId, branch, host, step = "work", diagramKey, chunkKey, agenda = [] }) {
+  const where = branch
+    ? `This directory is a fresh checkout of the default branch (local branch ${branch}).`
+    : "Work in this directory.";
+  const chunk = diagramKey ? ` It is chunk ${chunkKey} of diagram ${diagramKey}.` : "";
+  if (step === "review") {
+    return [
+      `Veynod asks this computer to review task ${taskKey} (placement ${placementId}).${chunk}`,
+      `1. Read it on Veynod (${host}) with get_audit_view("${taskKey}"): its acceptance, the brief, the pull request.`,
+      `2. ${where} Check out the work under review and run the project's checks.`,
+      diagramKey
+        ? `3. If it passes: review_task("${taskKey}", approve) first, then the diagram gate: POST /v1/diagrams/${diagramKey}/chunks/${chunkKey}/gate {result: "pass", checks}. If not: review_task reject with what to fix, then the gate with result "fail" and the evidence.`
+        : `3. Approve or reject with review_task("${taskKey}"), giving a result for every acceptance item and, when rejecting, exactly what to fix.`,
+      "You did not build this; judge it only against its acceptance. Do not change the code yourself.",
+    ].join("\n");
+  }
+  if (step === "merge") {
+    return [
+      `Veynod asks this computer to merge chunk ${chunkKey} of diagram ${diagramKey} (task ${taskKey}, placement ${placementId}).`,
+      `1. Read the chunk on Veynod (${host}): GET /v1/diagrams/${diagramKey} and the task's pull request.`,
+      `2. ${where} If the chunk waits in the merge queue, rebase its branch on the default branch,`,
+      `   run the chunk's commands, and report POST /v1/diagrams/${diagramKey}/chunks/${chunkKey}/queue-check`,
+      "   (pass, or rebase_conflict / test_failed with the evidence; stop there if it is not a pass).",
+      "3. Merge the pull request into the default branch (squash), then record it:",
+      `   POST /v1/diagrams/${diagramKey}/chunks/${chunkKey}/merge {artifact: <merge commit>}.`,
+      "You did not build this chunk. Never push anything but the merge itself.",
+    ].join("\n");
+  }
+  if (step === "supervise") {
+    const lines = agenda.map((item) => `- ${JSON.stringify(item)}`);
+    return [
+      `Veynod asks this computer to look after the Loop (supervisor round, placement ${placementId}).`,
+      `These things wait or went wrong on ${host}:`,
+      ...(lines.length ? lines : ["- (nothing listed)"]),
+      "For each: find out why (list_tasks, get_task_tree, get_metrics, list_alerts, list_hosts),",
+      "then act: reassign or release a stuck task, split one that keeps failing into smaller tasks,",
+      "cancel what is obsolete, acknowledge an alert you resolved. Decide technical matters yourself.",
+      "Only money, identity, legal, deleting data or outside commitments go to the owner, together,",
+      "in one short message in plain words. Do not write code in this round.",
+    ].join("\n");
+  }
   return [
-    `Veynod placed task ${taskKey} on this computer (placement ${placementId}).`,
+    `Veynod placed task ${taskKey} on this computer (placement ${placementId}).${chunk}`,
     `1. Claim it on Veynod (${host}) with agent_claim_and_read("${taskKey}") and read what it asks.`,
     branch
       ? `2. Work in this directory. It is a fresh checkout on branch ${branch}; commit there and push only that branch.`
@@ -329,6 +384,7 @@ export async function runRunner(options, {
   fetchImpl = fetch,
   importer = (spec) => import(spec),
   every = RUNNER_HEARTBEAT_MS,
+  sleepMs = 2_000,
   stateDir = process.env.VEYNOD_STATE_DIR || join(homedir(), ".veynod"),
 } = {}) {
   const slots = Math.max(1, Number(options.slots) || 1);
@@ -371,38 +427,61 @@ export async function runRunner(options, {
   const timer = setInterval(() => void beat(), every);
   timer.unref?.();
 
-  async function work({ taskKey, placementId }) {
-    receipt({ task_key: taskKey, placement_id: placementId, stage: "accepted" });
+  async function work({ taskKey, placementId, step, diagramKey, chunkKey }) {
+    const slot = taskKey ?? placementId;
+    receipt({ task_key: taskKey, placement_id: placementId, step, stage: "accepted" });
     let repo = null;
     let tree = null;
+    let result = { ok: false, reason: "not run" };
     try {
-      const task = await callApi(fetchImpl, options.host, options.key, `/v1/tasks/${encodeURIComponent(taskKey)}`);
-      repo = task.repo || null;
-      if (repo) tree = worktrees.prepare(taskKey, repo, new Set([...running.keys()].map(repoSlug)));
+      let agenda = [];
+      if (step === "supervise") {
+        const detail = await callApi(fetchImpl, options.host, options.key,
+          `/v1/runner/placements/${encodeURIComponent(placementId)}`);
+        agenda = detail.detail?.agenda ?? [];
+      } else {
+        const task = await callApi(fetchImpl, options.host, options.key, `/v1/tasks/${encodeURIComponent(taskKey)}`);
+        repo = task.repo || null;
+        // Reviews and merges get their own checkout so they never touch the builder's.
+        const treeKey = step === "work" ? taskKey : `${step}-${taskKey}`;
+        if (repo) tree = worktrees.prepare(treeKey, repo, new Set([...running.keys()].map(repoSlug)));
+        if (tree) tree.key = treeKey;
+      }
       const cwd = tree?.dir ?? options.cwd ?? process.cwd();
-      const prompt = promptFor({ taskKey, placementId, branch: tree?.branch, host: options.host });
-      const env = { VEYNOD_KEY: options.key, VEYNOD_HOST: options.host, VEYNOD_TASK_KEY: taskKey, VEYNOD_PLACEMENT_ID: placementId };
-      let result = { ok: false, reason: "not run" };
+      const prompt = promptFor({ taskKey, placementId, branch: tree?.branch, host: options.host,
+        step, diagramKey, chunkKey, agenda });
+      const env = { VEYNOD_KEY: options.key, VEYNOD_HOST: options.host, VEYNOD_TASK_KEY: taskKey ?? "",
+        VEYNOD_PLACEMENT_ID: placementId, VEYNOD_STEP: step };
       for (let attempt = 1; attempt <= WAKE_ATTEMPTS; attempt += 1) {
-        receipt({ task_key: taskKey, placement_id: placementId, stage: "started", attempt, runtime: adapter.id });
+        receipt({ task_key: taskKey, placement_id: placementId, step, stage: "started", attempt, runtime: adapter.id });
         result = await adapter.run({ cwd, prompt, env });
         if (result.ok) break;
-        if (attempt < WAKE_ATTEMPTS) await sleep(Math.min(30_000, 2_000 * attempt));
+        if (attempt < WAKE_ATTEMPTS) await sleep(Math.min(30_000, sleepMs * attempt));
       }
-      receipt({ task_key: taskKey, placement_id: placementId, stage: result.ok ? "finished" : "failed", reason: result.reason });
-      say(`${taskKey}: ${result.ok ? "finished" : `failed (${result.reason})`}`);
+      receipt({ task_key: taskKey, placement_id: placementId, step, stage: result.ok ? "finished" : "failed", reason: result.reason });
+      say(`${slot} (${step}): ${result.ok ? "finished" : `failed (${result.reason})`}`);
     } catch (error) {
-      receipt({ task_key: taskKey, placement_id: placementId, stage: "failed", reason: error.code || error.message });
-      say(`${taskKey}: ${error.message}`);
+      result = { ok: false, reason: error.code || error.message };
+      receipt({ task_key: taskKey, placement_id: placementId, step, stage: "failed", reason: result.reason });
+      say(`${slot} (${step}): ${error.message}`);
     } finally {
       if (tree) {
         try {
-          worktrees.remove(taskKey, repo);
+          worktrees.remove(tree.key, repo);
         } catch {
           // cleaned on the next makeRoom
         }
       }
-      running.delete(taskKey);
+      // Tell the platform how the step ended, so a failure moves on at once.
+      try {
+        await callApi(fetchImpl, options.host, options.key,
+          `/v1/runner/placements/${encodeURIComponent(placementId)}/report`, {
+            method: "POST", body: { outcome: result.ok ? "finished" : "failed", ...(result.reason ? { note: String(result.reason).slice(0, 500) } : {}) },
+          });
+      } catch (error) {
+        if (error.status !== 404) say(`report ${placementId}: ${error.message}`);
+      }
+      running.delete(slot);
       void beat();
     }
   }
@@ -415,12 +494,13 @@ export async function runRunner(options, {
         const placed = placementOf(poke);
         if (!placed || seen.has(placed.placementId)) return 0;
         seen.add(placed.placementId);
-        receipt({ task_key: placed.taskKey, placement_id: placed.placementId, stage: "delivered" });
-        if (running.size >= slots || running.has(placed.taskKey)) {
-          receipt({ task_key: placed.taskKey, placement_id: placed.placementId, stage: "failed", reason: "no free slot" });
+        const slot = placed.taskKey ?? placed.placementId;
+        receipt({ task_key: placed.taskKey, placement_id: placed.placementId, step: placed.step, stage: "delivered" });
+        if (running.size >= slots || running.has(slot)) {
+          receipt({ task_key: placed.taskKey, placement_id: placed.placementId, step: placed.step, stage: "failed", reason: "no free slot" });
           return 0;
         }
-        running.set(placed.taskKey, work(placed));
+        running.set(slot, work(placed));
         void beat();
         return 0;
       },
