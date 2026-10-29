@@ -388,7 +388,7 @@ def _primitives_section(lang: str) -> str:
     docs = "开发文档" if lang == "zh" else "Developer docs"
     reference = "完整原语说明" if lang == "zh" else "Full primitive reference"
     return (
-        f'<section class="band" id="primitives"><div class="wrap"><div class="eyebrow">MCP · REST</div>'
+        f'<section class="band rule-top" id="primitives"><div class="wrap">'
         f'<h2>{title}</h2><p class="section-lede">{intro}</p><div class="primitive-list">{"".join(cards)}</div>'
         f'<div class="section-links"><a href="/v1/agent-docs">{reference} ↗</a><a href="/docs/">{docs} ↗</a></div></div></section>'
     )
@@ -400,7 +400,7 @@ def _faq_section(lang: str) -> str:
         f"<article><h3>{html.escape(question)}</h3><p>{html.escape(answer)}</p></article>"
         for question, answer in copy["faqs"]
     )
-    return f'<section class="band" id="faq"><div class="wrap"><h2>{copy["faq_title"]}</h2><div class="faq-list">{cards}</div></div></section>'
+    return f'<section class="band rule-top" id="faq"><div class="wrap"><h2>{copy["faq_title"]}</h2><div class="faq-list">{cards}</div></div></section>'
 
 
 def _footer(lang: str, has_console: bool) -> str:

@@ -1329,6 +1329,13 @@ const ZH: Record<string, string> = {
   "Needs readme": "待读说明",
   "Needs first action": "待首动作",
   "Onboarded": "已完成接入",
+  // Console places (v3.23): Loop holds tasks, agents and situation.
+  "Approvals and rules": "审批与规则",
+  "Settings": "设置",
+  "Loop sections": "Loop 分区",
+  "Settings sections": "设置分区",
+  "Find a document by name": "按名称找文档",
+  "Filters": "筛选",
 };
 
 const EN: Record<string, string> = {};

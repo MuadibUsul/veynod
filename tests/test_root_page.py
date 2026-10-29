@@ -63,8 +63,8 @@ def test_human_root_page_keeps_json_shape_and_marks_console_entry():
     assert "agentgraph.session_token" in page
     assert "agentgraph.admin_token" in page
     assert '"/dashboard/login/"' in page
-    assert '<h1 class="kicker">' in page
-    assert '<p class="hero-display">' in page
+    assert '<h1 class="hero-display">' in page
+    assert 'id="lever"' in page
     assert 'class="zh"' not in page
     assert 'class="en"' not in page
 

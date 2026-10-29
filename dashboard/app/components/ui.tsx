@@ -18,13 +18,21 @@ export function IconGraph({ size = 22 }: { size?: number }) {
 
 /** Veynod mark: a V whose right stroke is the agent's violet cursor. */
 export function BrandMark({ size = 32, tile = true }: { size?: number; tile?: boolean }) {
-  return (
-    <svg className="veynod-mark" width={size} height={size} viewBox="0 0 64 64" fill="none" aria-hidden>
-      {tile && <rect x="1" y="1" width="62" height="62" rx="18" fill="var(--mark-tile, #141824)" />}
-      {tile && <rect x="1.5" y="1.5" width="61" height="61" rx="17.5" stroke="var(--mark-edge, rgba(255,255,255,.12))" />}
-      <path d="M32 45 45 19" stroke="#8B7CFF" strokeOpacity=".28" strokeWidth="13" strokeLinecap="round" />
-      <path d="M19 19 32 45" stroke="var(--mark-ink, #E8EAF0)" strokeWidth="7" strokeLinecap="round" />
-      <path d="M32 45 45 19" stroke="#8B7CFF" strokeWidth="7" strokeLinecap="round" />
+  // The V: ink body, the top of the left arm in cyan (docs/brand/mark.svg).
+  const body = (
+    <>
+      <path d="M8 10H40L60 56L80 10H112L71 92Q67 98 60 98Q53 98 49 92Z" fill="var(--mark-ink, #FFFFFF)" />
+      <path d="M8 10H40L53 40L22 38Z" fill="#00C2FF" />
+    </>
+  );
+  return tile ? (
+    <svg className="veynod-mark" width={size} height={size} viewBox="0 0 160 160" aria-hidden>
+      <rect width="160" height="160" rx="36" fill="var(--mark-tile, #0B0F14)" />
+      <g transform="translate(26 31) scale(0.9)">{body}</g>
+    </svg>
+  ) : (
+    <svg className="veynod-mark" width={size} height={(size * 100) / 120} viewBox="0 0 120 100" aria-hidden>
+      {body}
     </svg>
   );
 }

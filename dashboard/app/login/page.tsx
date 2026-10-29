@@ -240,7 +240,7 @@ export default function LoginPage() {
         <a className="auth-brand" href="/dashboard/">
           <span className="auth-brand-mark"><BrandMark size={34} /></span>
           <span>
-            <strong>Veynod<span className="accent">.</span></strong>
+            <strong>veynod</strong>
             <small>{t("Human · Agent Blackboard")}</small>
           </span>
         </a>
@@ -252,10 +252,6 @@ export default function LoginPage() {
 
       <main className="auth-main">
         <section className="auth-story">
-          <div className="auth-kicker">
-            <span className="status-dot live" />
-            {t("Human-in-the-loop control plane")}
-          </div>
           <h1>
             {t("Agents do the work.")}
             <br />
@@ -311,9 +307,6 @@ export default function LoginPage() {
         <section className="auth-card-wrap">
           <div className="auth-card">
             <div className="auth-card-head">
-              <span className="auth-card-kicker">
-                {mode === "login" ? t("Account access") : t("New workspace")}
-              </span>
               <h2>{mode === "login" ? t("Welcome back") : t("Create your account")}</h2>
               <p>
                 {mode === "login"

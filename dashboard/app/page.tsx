@@ -21,22 +21,15 @@ import {
   TaskDetailModal,
 } from "./components/task-board";
 import {
-  IconAgents,
-  IconAudit,
-  IconBoard,
-  IconPulse,
   IconChevron,
   IconClose,
   IconCopy,
-  IconDocuments,
   BrandMark,
   IconKey,
-  IconLayers,
   IconLock,
   IconPlus,
   IconRefresh,
   IconSidebar,
-  IconTasks,
   IconUnlock,
   Modal,
   Spinner,
@@ -144,8 +137,10 @@ type Tab =
   | "agents"
   | "governance"
   | "audit";
-// The two things a person watches; everything else waits under "More".
-const PRIMARY: Tab[] = ["diagram", "loop"];
+// Four places: the diagram, the Loop (with its tasks, agents and situation),
+// the documents, and settings and records. Nothing else sits at the top.
+const LOOP_SECTIONS: Tab[] = ["loop", "tasks", "agents", "situation"];
+const SETTINGS_SECTIONS: Tab[] = ["governance", "blackboard", "audit"];
 
 export default function ConsolePage() {
   const { t, lang } = useI18n();
@@ -186,7 +181,7 @@ export default function ConsolePage() {
   const [audit, setAudit] = useState<AuditPayload>({ batches: [], diffs: [] });
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [tab, setTab] = useState<Tab>("diagram");
-  const [lastMore, setLastMore] = useState<Tab>("tasks");
+  const [lastSettings, setLastSettings] = useState<Tab>("governance");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   useEffect(() => {
     try {
@@ -223,7 +218,7 @@ export default function ConsolePage() {
   }, []);
   useEffect(() => {
     // "More" reopens on whichever secondary view was used last.
-    if (!PRIMARY.includes(tab)) setLastMore(tab);
+    if (SETTINGS_SECTIONS.includes(tab)) setLastSettings(tab);
   }, [tab]);
   const tabBarRef = useRef<HTMLDivElement>(null);
   const tabIndicator = useSlidingIndicator(tabBarRef, tab);
@@ -1238,32 +1233,34 @@ export default function ConsolePage() {
     }
   }
 
-  const tabs: Array<{ id: Tab; label: string; count?: number; alert?: number; icon: JSX.Element }> = [
-    { id: "tasks", label: t("Tasks"), count: tasks.length, alert: approvals.length, icon: <IconTasks /> },
-    { id: "documents", label: t("Documents"), count: docTotal, icon: <IconDocuments /> },
-    { id: "agents", label: t("Agents"), count: agents.length, icon: <IconAgents /> },
+  type Section = { id: Tab; label: string; count?: number; alert?: number };
+  const pendingProposals = proposals.filter((item) => item.status === "PENDING").length;
+  const loopSections: Section[] = [
+    { id: "loop", label: t("Overview") },
+    { id: "tasks", label: t("Tasks"), count: tasks.length, alert: approvals.length },
+    { id: "agents", label: t("Agents"), count: agents.length },
+    { id: "situation", label: t("Situation") },
+  ];
+  const settingsSections: Section[] = [
     {
       id: "governance",
-      label: t("Governance"),
-      count: proposals.filter((item) => item.status === "PENDING").length + actions.filter((item) => item.status === "PENDING_APPROVAL").length,
-      alert: proposals.filter((item) => item.status === "PENDING").length,
-      icon: <IconLayers />,
+      label: t("Approvals and rules"),
+      count: pendingProposals + actions.filter((item) => item.status === "PENDING_APPROVAL").length,
+      alert: pendingProposals,
     },
-    { id: "situation", label: t("Situation"), icon: <IconPulse /> },
-    { id: "blackboard", label: t("State slots"), count: slots.length, icon: <IconBoard /> },
-    { id: "audit", label: t("Audit"), count: audit.total_batches ?? audit.batches.length, icon: <IconAudit /> },
+    { id: "blackboard", label: t("State slots"), count: slots.length },
+    { id: "audit", label: t("History"), count: audit.total_batches ?? audit.batches.length },
   ];
-  const inMore = !PRIMARY.includes(tab);
-  const openMore = (next?: Tab) => {
-    const target = next ?? lastMore;
-    setLastMore(target);
-    setTab(target);
-  };
+  const inLoop = LOOP_SECTIONS.includes(tab);
+  const inSettings = SETTINGS_SECTIONS.includes(tab);
+  const sections = inLoop ? loopSections : inSettings ? settingsSections : null;
+  const openMore = (next?: Tab) => setTab(next ?? lastSettings);
   const navItems: Array<{ id: string; label: string; active: boolean; alert?: number; go: () => void }> = [
     { id: "diagram", label: t("Diagram"), active: tab === "diagram", go: () => setTab("diagram") },
-    { id: "loop", label: t("Loop"), active: tab === "loop", alert: approvals.length,
-      go: () => setTab("loop") },
-    { id: "more", label: t("More"), active: inMore, go: () => openMore() },
+    { id: "loop", label: t("Loop"), active: inLoop, alert: approvals.length, go: () => setTab("loop") },
+    { id: "documents", label: t("Documents"), active: tab === "documents", go: () => setTab("documents") },
+    { id: "more", label: t("Settings"), active: inSettings, alert: pendingProposals || undefined,
+      go: () => openMore() },
   ];
 
   if (!mounted) {
@@ -1284,7 +1281,7 @@ export default function ConsolePage() {
         <div className="brand">
           <div className="brand-mark"><BrandMark size={34} /></div>
           <div>
-            <div className="brand-name">Veynod<span className="accent">.</span></div>
+            <div className="brand-name">veynod</div>
             <div className="brand-sub">{t("Human · Agent Blackboard")}</div>
           </div>
         </div>
@@ -1462,7 +1459,7 @@ export default function ConsolePage() {
             >
               <IconRefresh /> {t("Refresh")}
             </button>
-            {!PRIMARY.includes(tab) && (
+            {tab === "loop" && (
               <button
                 type="button"
                 className="button ghost"
@@ -1628,15 +1625,15 @@ export default function ConsolePage() {
                 )}
               </div>
 
-              {inMore && (
-                <nav className="more-nav" aria-label={t("More views")}>
-                  {tabs.map((item) => (
+              {sections && (
+                <nav className="more-nav" aria-label={inLoop ? t("Loop sections") : t("Settings sections")}>
+                  {sections.map((item) => (
                     <button
                       key={item.id}
                       type="button"
                       className={`more-link${tab === item.id ? " active" : ""}`}
                       aria-current={tab === item.id ? "page" : undefined}
-                      onClick={() => openMore(item.id)}
+                      onClick={() => setTab(item.id)}
                     >
                       {item.label}
                       {typeof item.count === "number" && item.count > 0 && (
@@ -1651,7 +1648,7 @@ export default function ConsolePage() {
                 className="tab-panel"
                 role="tabpanel"
                 id="view-panel"
-                aria-labelledby={`view-tab-${inMore ? "more" : tab}`}
+                aria-labelledby={`view-tab-${inLoop ? "loop" : inSettings ? "more" : tab}`}
               >
               {loading && !stats ? (
                 <div className="card skeleton-card">
@@ -1679,8 +1676,8 @@ export default function ConsolePage() {
                       request={api}
                       notify={setNotice}
                       waitingReview={approvals.length}
-                      onOpenTasks={() => openMore("tasks")}
-                      onOpenSituation={() => openMore("situation")}
+                      onOpenTasks={() => setTab("tasks")}
+                      onOpenSituation={() => setTab("situation")}
                     />
                   )}
                   {tab === "blackboard" && (

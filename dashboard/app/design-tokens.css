@@ -1,19 +1,12 @@
 /*
- * Veynod design tokens — v3.3 console refresh.
+ * Veynod design tokens, dark console (v3.23). See DESIGN.md.
  *
- * Visual proposition: a quiet operations console for long human-in-the-loop
- * sessions. Flat neutral dark surfaces, one violet accent (#8B7CFF), Geist
- * type, and one clear hierarchy: the diagram first, the agent loop second,
- * everything else under "More".
+ * Ink ground, one cyan accent for the primary action and anything live,
+ * Poppins for everything people read, Geist Mono only for data. States keep
+ * their meaning everywhere: amber in progress, red needs you, green done,
+ * cyan waiting on a person.
  *
- * Visual system (v3.19, elayadesign ai-design-skills, Part B): Geist only,
- * spacing on the 2/4/8/12/16/24/32/40/48/64 scale, Tailwind radii, flat
- * backgrounds (gradients only on hero heading text), the dark surfaces
- * #000000 #131209 #181818 #1F1F1F #272727 #313131, and one motion curve.
- *
- * Token architecture:
- *   primitive → semantic → component aliases (legacy --bg/--surface map below).
- * The product identity remains dark; light mode is intentionally not shipped.
+ * Token architecture: primitive -> semantic -> legacy aliases (bottom).
  */
 
 :root {
@@ -32,73 +25,73 @@
   --ds-primitive-slate-11: #adb2c0;
   --ds-primitive-slate-12: #e8eaf0;
 
-  /* Brand violet (the "indigo" slot keeps its name for existing consumers). */
-  --ds-primitive-indigo-8: #8b7cff; /* the mark, glows, charts */
-  --ds-primitive-indigo-9: #6550f0; /* filled actions, white text 5.3:1 */
-  --ds-primitive-indigo-10: #7462f7;
-  --ds-primitive-indigo-11: #a99eff;
-  --ds-primitive-indigo-12: #e4e0ff;
-  --ds-primitive-violet-9: #a78bfa;
-  --ds-primitive-violet-11: #c4b5fd;
-  --ds-primitive-blue-9: #60a5fa;
-  --ds-primitive-blue-11: #93c5fd;
-  --ds-primitive-amber-9: #fbbf24;
-  --ds-primitive-amber-11: #fcd34d;
-  --ds-primitive-ruby-9: #fb7185;
-  --ds-primitive-ruby-11: #fda4af;
-  --ds-primitive-jade-9: #34d399;
-  --ds-primitive-jade-11: #6ee7b7;
+  /* Cyan accent (the "indigo" slot keeps its name for existing consumers). */
+  --ds-primitive-indigo-8: #00C2FF; /* cyan: the accent in the mark */
+  --ds-primitive-indigo-9: #00C2FF; /* filled primary action, ink text */
+  --ds-primitive-indigo-10: #4DD4FF;
+  --ds-primitive-indigo-11: #66DAFF;
+  --ds-primitive-indigo-12: #D9F6FF;
+  --ds-primitive-violet-9: #86a9f0;
+  --ds-primitive-violet-11: #a9c2f5;
+  --ds-primitive-blue-9: #00c2ff;
+  --ds-primitive-blue-11: #66daff;
+  --ds-primitive-amber-9: #fdb022;
+  --ds-primitive-amber-11: #fec84b;
+  --ds-primitive-ruby-9: #f97066;
+  --ds-primitive-ruby-11: #f38b7e;
+  --ds-primitive-jade-9: #47cd89;
+  --ds-primitive-jade-11: #74d59c;
 
   /* ------------------------------------------------------------ semantic */
   /* Surfaces: page < subtle < panel < raised < overlay */
-  --ds-surface-page: #000000;
-  --ds-surface-page-deep: #000000;
-  --ds-surface-subtle: #131209;
-  --ds-surface-panel: #181818;
-  --ds-surface-raised: #1f1f1f;
-  --ds-surface-inset: #131209;
+  --ds-surface-page: #0b0f14;
+  --ds-surface-page-deep: #080b0f;
+  --ds-surface-subtle: #0f141a;
+  --ds-surface-panel: #12171e;
+  --ds-surface-raised: #181e26;
+  --ds-surface-inset: #0f141a;
   --ds-surface-overlay: rgba(0, 0, 0, 0.78);
 
   /* Borders: subtle dividers, control borders, emphasis/focus candidates. */
-  --ds-border-subtle: #272727;
-  --ds-border-default: #313131;
-  --ds-border-control: #6b6b6b; /* 3.2:1 against #181818 */
-  --ds-border-strong: #3d3d3d;
+  --ds-border-subtle: #1f2630;
+  --ds-border-default: #2a323d;
+  --ds-border-control: #5d6675; /* 3.2:1 against #181818 */
+  --ds-border-strong: #363f4b;
   --ds-focus-ring: var(--ds-primitive-indigo-11);
 
   /* Text: verified against page and panel backgrounds in check_contrast.py. */
-  --ds-text-primary: #ededed;
-  --ds-text-secondary: #a8a8a8;
-  --ds-text-muted: #8f8f8f;
+  --ds-text-primary: #f2f4f7;
+  --ds-text-secondary: #a4adbb;
+  --ds-text-muted: #8590a2;
   --ds-text-inverse: #ffffff;
 
   /* Action: one primary accent; status colors are independent semantics. */
   --ds-action-primary: var(--ds-primitive-indigo-9);
   --ds-action-primary-hover: var(--ds-primitive-indigo-10);
-  --ds-action-primary-active: #5440dc;
-  --ds-action-primary-fg: var(--ds-text-inverse);
+  --ds-action-primary-active: #00A6DB;
+  --ds-action-primary-fg: #0b0f14;
   --ds-accent: var(--ds-primitive-indigo-11);
-  --ds-accent-strong: #d2ccff;
-  --ds-accent-soft: rgba(139, 124, 255, 0.12);
-  --ds-accent-border: rgba(139, 124, 255, 0.36);
+  --ds-accent-strong: #A6E9FF;
+  --ds-accent-soft: rgba(0, 194, 255, 0.12);
+  --ds-accent-border: rgba(0, 194, 255, 0.36);
 
   --ds-status-success: var(--ds-primitive-jade-9);
-  --ds-status-success-soft: rgba(52, 211, 153, 0.1);
-  --ds-status-warning: var(--ds-primitive-amber-11);
-  --ds-status-warning-soft: rgba(251, 191, 36, 0.1);
-  --ds-status-danger: var(--ds-primitive-ruby-11);
-  --ds-status-danger-soft: rgba(251, 113, 133, 0.1);
-  --ds-status-info: var(--ds-primitive-blue-11);
-  --ds-status-info-soft: rgba(96, 165, 250, 0.1);
-  --ds-status-proposal: var(--ds-primitive-violet-11);
-  --ds-status-proposal-soft: rgba(167, 139, 250, 0.1);
+  --ds-status-success-soft: rgba(71, 205, 137, 0.12);
+  --ds-status-warning: var(--ds-primitive-amber-9);
+  --ds-status-warning-soft: rgba(253, 176, 34, 0.12);
+  --ds-status-danger: var(--ds-primitive-ruby-9);
+  --ds-status-danger-soft: rgba(249, 112, 102, 0.12);
+  --ds-status-info: var(--ds-primitive-blue-9);
+  --ds-status-info-soft: rgba(0, 194, 255, 0.12);
+  --ds-status-proposal: var(--ds-primitive-blue-9);
+  --ds-status-proposal-soft: rgba(134, 169, 240, 0.12);
 
-  --ds-selection: rgba(139, 124, 255, 0.32);
+  --ds-selection: rgba(0, 194, 255, 0.32);
   --ds-shadow-panel: none;
-  --ds-shadow-float: 0 18px 48px rgba(0, 0, 0, 0.38);
+  --ds-shadow-float: 0 2px 6px rgba(0, 0, 0, 0.3), 0 18px 40px rgba(0, 0, 0, 0.36);
 
   /* ---------------------------------------------------------- typography */
-  --ds-font-body: "Geist", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+  --ds-font-body: "Poppins", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
     "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   --ds-font-mono: "Geist Mono", "SFMono-Regular", ui-monospace, "Cascadia Code",
     "Roboto Mono", Menlo, Consolas, monospace;

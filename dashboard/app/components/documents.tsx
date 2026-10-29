@@ -124,22 +124,31 @@ export function DocumentsView({
   // AG-TC-04: one summary line instead of a review badge on every document;
   // taint stays visible on each item (safety marks are never quietened).
   const [review, setReview] = useState<ReviewFilter>("all");
+  // People look for a document by its name; the precise filters wait behind a toggle.
+  const [query, setQuery] = useState("");
+  const advancedActive = Boolean(
+    filters.namespace || filters.verificationStatus || filters.tainted || filters.updatedAfter
+      || filters.updatedBefore || filters.sort !== "updated_desc",
+  );
+  const [showFilters, setShowFilters] = useState(advancedActive);
   const needsReview = useMemo(
     () => documents.filter((doc) => awaitsReview(doc)).length,
     [documents],
   );
   const visible = useMemo(
     () =>
-      documents.filter((doc) =>
-        review === "review"
+      documents.filter((doc) => {
+        const needle = query.trim().toLowerCase();
+        if (needle && !`${doc.title} ${doc.doc_key}`.toLowerCase().includes(needle)) return false;
+        return review === "review"
           ? awaitsReview(doc)
           : review === "verified"
             ? doc.verification_status === "VERIFIED"
             : review === "tainted"
               ? doc.tainted
-              : true,
-      ),
-    [documents, review],
+              : true;
+      }),
+    [documents, review, query],
   );
 
   const grouped = useMemo(() => {
@@ -368,6 +377,24 @@ export function DocumentsView({
             <IconPlus size={15} />
           </button>
         </div>
+        <div className="doc-search">
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("Find a document by name")}
+            aria-label={t("Find a document by name")}
+          />
+          <button
+            type="button"
+            className={`button ghost small${advancedActive ? " active" : ""}`}
+            aria-expanded={showFilters}
+            onClick={() => setShowFilters((open) => !open)}
+          >
+            {t("Filters")}{advancedActive ? " ·" : ""}
+          </button>
+        </div>
+        {showFilters && (
         <div className="doc-filters">
           <input
             value={filters.namespace}
@@ -388,10 +415,10 @@ export function DocumentsView({
             aria-label={t("Verification status")}
           >
             <option value="">{t("All statuses")}</option>
-            <option value="DRAFT">DRAFT</option>
-            <option value="PENDING_REVIEW">PENDING_REVIEW</option>
-            <option value="VERIFIED">VERIFIED</option>
-            <option value="DEPRECATED">DEPRECATED</option>
+            <option value="DRAFT">{t("DRAFT")}</option>
+            <option value="PENDING_REVIEW">{t("PENDING_REVIEW")}</option>
+            <option value="VERIFIED">{t("VERIFIED")}</option>
+            <option value="DEPRECATED">{t("DEPRECATED")}</option>
           </select>
           <select
             value={filters.tainted}
@@ -431,6 +458,7 @@ export function DocumentsView({
             aria-label={t("Updated before")}
           />
         </div>
+        )}
         <div className="review-summary">
           {needsReview > 0 ? (
             <button type="button" className="review-count" onClick={() => setReview("review")}>
@@ -529,7 +557,6 @@ export function DocumentsView({
           <>
             <div className="doc-editor-head">
               <div>
-                <div className="eyebrow">{selected.doc_key}</div>
                 <h2 className="doc-title-row">
                   {selected.title}
                   <span
@@ -545,6 +572,7 @@ export function DocumentsView({
                   </span>
                 </h2>
                 <div className="doc-meta">
+                  <span className="mono">{selected.doc_key}</span>
                   <span>v{selected.version}</span>
                   <span>{t("Updated")} {relativeTime(selected.updated_at)} {t("by")} {selected.updated_by}</span>
                   {selected.tainted && (
@@ -588,12 +616,12 @@ export function DocumentsView({
                     {mergedBusy ? <Spinner /> : <IconDocuments size={13} />} {t("Read all parts")}
                   </button>
                 )}
-                {selected.verification_status !== "VERIFIED" && (
-                  <button type="button" className="button ghost" onClick={verifyDocument} disabled={busy}>
+                {selected.verification_status !== "VERIFIED" && mode === "preview" && (
+                  <button type="button" className="button primary" onClick={verifyDocument} disabled={busy}>
                     {busy ? <Spinner /> : <IconCheck />} {t("Verify")}
                   </button>
                 )}
-                {selected.verification_status !== "DEPRECATED" && (
+                {selected.verification_status !== "DEPRECATED" && mode === "preview" && (
                   <button type="button" className="button ghost" onClick={deprecateDocument} disabled={busy}>
                     <IconX /> {t("Deprecate")}
                   </button>
@@ -603,9 +631,11 @@ export function DocumentsView({
                     {busy ? <Spinner /> : <IconUnlock />} {t("Unlock")}
                   </button>
                 )}
-                <button type="button" className="button primary" onClick={save} disabled={busy}>
-                  {busy ? <Spinner /> : <IconCheck />} {t("Save human edit")}
-                </button>
+                {mode === "edit" && (
+                  <button type="button" className="button primary" onClick={save} disabled={busy}>
+                    {busy ? <Spinner /> : <IconCheck />} {t("Save human edit")}
+                  </button>
+                )}
               </div>
             </div>
 

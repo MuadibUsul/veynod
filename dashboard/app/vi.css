@@ -1,0 +1,462 @@
+/*
+ * Veynod VI, dark console: the last stylesheet, so the console reads as one
+ * system (DESIGN.md). Earlier layers carried gradients, glows and glass from
+ * the previous identity; this layer settles them to flat ink surfaces, cyan
+ * for the one primary action, and a lamp beside every state word.
+ */
+
+:root {
+  --il-box: #080b0f;
+  --il-box-2: #0b0f14;
+  --il-box-line: rgba(255, 255, 255, 0.08);
+  --il-box-ink: #f2f4f7;
+  --il-box-ink-2: #a4adbb;
+  --il-ink: #0b0f14;
+  --il-accent: #00C2FF;
+  --il-accent-hover: #4DD4FF;
+  --il-accent-deep: #00A6DB;
+  --il-red: #f97066;
+  --il-green: #47cd89;
+  --il-blue: #00c2ff;
+  --mark-tile: #181e26;
+  --mark-ink: #ffffff;
+}
+
+::selection {
+  background: rgba(0, 194, 255, 0.4);
+  color: #fff;
+}
+
+html,
+body {
+  background: var(--ds-surface-page);
+}
+
+body {
+  background-image: none;
+  font-feature-settings: "ss01" off;
+}
+
+body::before {
+  display: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--il-accent);
+  outline-offset: 2px;
+}
+
+* {
+  scrollbar-color: #2a323d transparent;
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #2a323d;
+  border: 3px solid var(--ds-surface-page);
+  border-radius: 12px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ------------------------------------------------------------ the shell */
+
+.sidebar {
+  background: var(--il-box);
+  backdrop-filter: none;
+  border-right: 1px solid var(--il-box-line);
+  color: var(--il-box-ink);
+}
+
+.sidebar .brand-mark .veynod-mark { display: block; }
+
+.sidebar .muted,
+.sidebar .brand-sub,
+.sidebar small {
+  color: var(--il-box-ink-2);
+}
+
+.brand-name {
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-transform: lowercase;
+}
+
+.brand-name .accent {
+  display: none;
+}
+
+.workspace-item {
+  background: transparent;
+  border-color: transparent;
+  color: var(--il-box-ink);
+  box-shadow: none;
+}
+
+.workspace-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: transparent;
+}
+
+.workspace-item.active {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: var(--il-box-line);
+  box-shadow: none;
+}
+
+.workspace-item.active::before,
+.workspace-item.active::after {
+  display: none;
+}
+
+.sidebar .button.ghost,
+.sidebar .button.subtle {
+  background: transparent;
+  border-color: var(--il-box-line);
+  color: var(--il-box-ink);
+  box-shadow: none;
+}
+
+.sidebar .button.ghost:hover:not(:disabled),
+.sidebar .button.subtle:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.topbar {
+  background: var(--ds-surface-page);
+  backdrop-filter: none;
+  box-shadow: none;
+}
+
+/* -------------------------------------------------------------- buttons */
+
+.button {
+  font-weight: 600;
+  text-shadow: none;
+}
+
+.button.primary,
+.button.primary:active:not(:disabled) {
+  background: var(--il-accent);
+  border: 1px solid var(--il-accent-deep);
+  color: var(--il-ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  text-shadow: none;
+}
+
+.button.primary:hover:not(:disabled) {
+  background: var(--il-accent-hover);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 20px -8px rgba(0, 194, 255, 0.45);
+}
+
+.button.primary svg {
+  color: var(--il-ink);
+}
+
+.button.ghost,
+.button.subtle {
+  background: var(--ds-surface-panel);
+  border-color: var(--ds-border-default);
+  box-shadow: none;
+}
+
+.button.ghost:hover:not(:disabled),
+.button.subtle:hover:not(:disabled) {
+  background: var(--ds-surface-raised);
+  border-color: #3a4350;
+}
+
+.button.danger {
+  background: transparent;
+  border-color: rgba(249, 112, 102, 0.45);
+  color: var(--il-red);
+  box-shadow: none;
+}
+
+.button.danger:hover:not(:disabled) {
+  background: rgba(249, 112, 102, 0.1);
+}
+
+/* ------------------------------------------------------- surfaces, cards */
+
+.card,
+.panel,
+.hosts,
+.workspace-hero,
+.stat,
+.stat-card {
+  background-image: none;
+  backdrop-filter: none;
+}
+
+.card {
+  background: var(--ds-surface-panel);
+  border-color: var(--ds-border-subtle);
+  box-shadow: none;
+}
+
+/* ----------------------------------------------------- tabs and sections */
+
+.tab-indicator {
+  background: var(--il-accent);
+  box-shadow: none;
+  height: 3px;
+}
+
+.tab-button.active {
+  color: var(--ds-text-primary);
+}
+
+.tab-count.alert,
+.more-count.alert {
+  background: var(--il-red);
+  color: #1a0d0b;
+}
+
+.more-nav {
+  padding: 4px;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: 12px;
+  background: var(--ds-surface-panel);
+}
+
+.more-link {
+  border-radius: 8px;
+}
+
+.more-link.active {
+  background: var(--ds-surface-raised);
+  border-color: var(--ds-border-default);
+  box-shadow: inset 0 -2px 0 var(--il-accent);
+}
+
+/* ----------------------------------------------------- lamps for states */
+
+.status-pill,
+.pill {
+  background-image: none;
+  box-shadow: none;
+}
+
+.status-pill {
+  gap: 6px;
+  border-color: var(--ds-border-default);
+  background: var(--ds-surface-raised);
+  color: var(--ds-text-primary);
+}
+
+.status-pill::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--ds-text-muted);
+}
+
+.status-pill.tone-mint::before { background: var(--il-green); }
+.status-pill.tone-amber::before { background: #fdb022; }
+.status-pill.tone-rose::before { background: var(--il-red); }
+.status-pill.tone-violet::before,
+.status-pill.tone-sky::before { background: var(--il-blue); }
+
+.status-pill.tone-mint,
+.status-pill.tone-amber,
+.status-pill.tone-rose,
+.status-pill.tone-violet,
+.status-pill.tone-sky,
+.status-pill.tone-slate {
+  background: var(--ds-surface-raised);
+  border-color: var(--ds-border-default);
+  color: var(--ds-text-primary);
+}
+
+.status-dot,
+.status-dot-inline {
+  box-shadow: none;
+  animation: none;
+}
+
+.status-dot.live,
+.status-dot-inline.live {
+  background: var(--il-green);
+}
+
+.status-dot.dead,
+.status-dot-inline.dead {
+  background: var(--il-red);
+}
+
+/* ----------------------------------------------------------- sign in */
+
+.auth-aurora,
+.auth-grid-layer {
+  display: none;
+}
+
+.auth-gradient {
+  background: none;
+  -webkit-background-clip: initial;
+  background-clip: initial;
+  color: var(--ds-text-primary);
+  -webkit-text-fill-color: currentColor;
+}
+
+.auth-page {
+  background: var(--ds-surface-page);
+}
+
+.auth-card,
+.auth-panel,
+.auth-board {
+  background: var(--ds-surface-panel);
+  background-image: none;
+  box-shadow: var(--ds-shadow-float);
+  backdrop-filter: none;
+}
+
+.auth-brand-mark {
+  box-shadow: none;
+}
+
+.auth-brand strong {
+  text-transform: lowercase;
+}
+
+.auth-form .button.full,
+.auth-form .button.primary {
+  background: var(--il-accent);
+  background-image: none;
+  border-color: var(--il-accent-deep);
+  color: var(--il-ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.auth-tab.active {
+  background: var(--ds-surface-raised);
+  border-color: var(--ds-border-default);
+  box-shadow: inset 0 -2px 0 var(--il-accent);
+}
+
+/* ------------------------------------------------------ the Loop strip */
+
+/* "Needs you" is red: a person has to act. */
+.loop-needs.has {
+  border-color: rgba(249, 112, 102, 0.55);
+  background: rgba(249, 112, 102, 0.06);
+  box-shadow: none;
+}
+
+.loop-needs.has .loop-label {
+  color: var(--il-red);
+}
+
+/* ----------------------------------------------------------- documents */
+
+.doc-search {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--ds-border-subtle);
+}
+
+.doc-search input {
+  min-width: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--ds-border-default);
+  background: var(--ds-surface-page);
+  color: var(--ds-text-primary);
+  font: inherit;
+  font-size: 14px;
+}
+
+.doc-search input::placeholder {
+  color: var(--ds-text-muted);
+}
+
+.doc-search .button.active {
+  border-color: var(--il-accent);
+}
+
+.doc-filters input,
+.doc-filters select {
+  font-size: 12px;
+  padding: 4px 8px;
+}
+
+.doc-group-label {
+  text-transform: none;
+  letter-spacing: 0;
+  font-family: var(--ds-font-mono);
+}
+
+.doc-item.active {
+  background: var(--ds-surface-raised);
+  box-shadow: inset 2px 0 0 var(--il-accent), inset -1px 0 0 var(--ds-border-default),
+    inset 0 1px 0 var(--ds-border-default), inset 0 -1px 0 var(--ds-border-default);
+}
+
+/* Reading, not scanning: a measured column, roomy lines. */
+.doc-preview .markdown-body {
+  max-width: 72ch;
+  font-size: 15px;
+  line-height: 1.75;
+  color: var(--ds-text-primary);
+}
+
+.doc-preview .markdown-body h1,
+.doc-preview .markdown-body h2,
+.doc-preview .markdown-body h3 {
+  margin: 32px 0 12px;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+}
+
+.doc-preview .markdown-body h1 { font-size: 24px; }
+.doc-preview .markdown-body h2 { font-size: 20px; }
+.doc-preview .markdown-body h3 { font-size: 16px; }
+
+.doc-preview .markdown-body p,
+.doc-preview .markdown-body li {
+  color: var(--ds-text-primary);
+}
+
+.doc-preview .markdown-body code {
+  font-size: 13px;
+}
+
+.doc-preview .markdown-body a {
+  color: var(--il-accent);
+  text-underline-offset: 3px;
+}
+
+.doc-preview .property-panel {
+  max-width: 72ch;
+}
+
+.doc-meta .mono {
+  font-family: var(--ds-font-mono);
+  font-size: 12px;
+}
+
+.auth-submit,
+.auth-submit:hover:not(:disabled) {
+  background: var(--il-accent);
+  border-color: var(--il-accent-deep);
+  color: var(--il-ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.auth-submit:hover:not(:disabled) {
+  background: var(--il-accent-hover);
+}
