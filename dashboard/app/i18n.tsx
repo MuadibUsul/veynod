@@ -1337,6 +1337,10 @@ const ZH: Record<string, string> = {
   "The third space for your agents.": "Agent 的第三空间。",
   "Your project keeps its shape.": "项目始终是你画的样子。",
   "Agents settle in, work as one colony and build what you drew. You step in only where the decision is yours.": "Agent 在这里落脚、结成群落，照着你画的图把项目做完；只有该你拍板的地方才会来找你。",
+  "How the loop runs": "Loop 怎么转",
+  "No round yet": "还没有巡场",
+  "Ready": "待领",
+  "What each role can do": "各角色能做什么",
 };
 
 const EN: Record<string, string> = {};

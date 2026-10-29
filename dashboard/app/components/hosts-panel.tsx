@@ -116,70 +116,61 @@ export function HostsPanel({
   }
 
   if (hosts === null) {
-    return <section className="hosts" aria-busy="true"><div className="skeleton block" /></section>;
+    return <section className="lin-list" aria-busy="true"><div className="skeleton block" /></section>;
   }
 
+  const online = hosts.filter((host) => host.state === "online").length;
   return (
-    <section className="hosts" aria-label={t("Computers")}>
-      <header className="hosts-head">
-        <h3>{t("Computers")}</h3>
-        {hosts.length > 0 && (
-          <span className="hosts-count">
-            {hosts.filter((host) => host.state === "online").length} / {hosts.length} {t("online")}
-          </span>
-        )}
-      </header>
+    <section className="lin-list hosts-list-view" aria-label={t("Computers")}>
+      <div className="lin-group">
+        <i className={`lamp ${online ? "green" : ""}`} />
+        {t("Computers")}
+        <span className="lin-count">{online} / {hosts.length} {t("online")}</span>
+      </div>
       {hosts.length === 0 ? (
-        <div className="hosts-empty">
-          <p>
+        <div className="lin-row quiet hosts-empty-row">
+          <span className="lin-title">
             {t("No computer runs agents for this workspace yet. Issue a runner key under More, Agents, then on the computer that should do the work run:")}
-          </p>
+          </span>
           <code>{INSTALL}</code>
-          <p className="hosts-note">{t("Any VPS, Mac, Linux box or Raspberry Pi with Claude Code or Codex installed will do.")}</p>
         </div>
       ) : (
-        <ul className="hosts-list">
-          {hosts.map((host) => {
-            const left = quotaLeft(host);
-            return (
-              <li key={host.host_id} className={`host state-${host.state}`}>
-                <div className="host-top">
-                  <strong>{host.agent_id ?? host.host_id}</strong>
-                  <span className={`host-state state-${host.state}`}>{t(STATE_LABEL[host.state])}</span>
-                </div>
-                <div className="host-meta">
-                  {OS_LABEL[host.os] ?? host.os} · {host.arch}
-                  {host.runtimes.filter((runtime) => runtime.available).length > 0 && (
-                    <> · {host.runtimes.filter((runtime) => runtime.available)
-                      .map((runtime) => runtime.id === "claude" ? "Claude Code"
-                        : runtime.id === "codex" ? "Codex" : runtime.id).join(", ")}</>
+        hosts.map((host) => {
+          const left = quotaLeft(host);
+          const runtimes = host.runtimes.filter((runtime) => runtime.available)
+            .map((runtime) => runtime.id === "claude" ? "Claude Code" : runtime.id === "codex" ? "Codex" : runtime.id)
+            .join(", ");
+          return (
+            <div key={host.host_id} className={`lin-row host-row state-${host.state}`}>
+              <i className={`lamp ${host.state === "online" ? "green" : host.state === "paused" ? "amber" : host.state === "revoked" ? "red" : ""}`} />
+              <span className="lin-name">{host.agent_id ?? host.host_id}</span>
+              <span className="lin-title">
+                {host.running.length ? `${t("Working on")} ${host.running.join(", ")}` : t("Idle")}
+              </span>
+              <span className="lin-meta">{OS_LABEL[host.os] ?? host.os} · {host.arch}{runtimes ? ` · ${runtimes}` : ""}</span>
+              <span className="lin-meta">{t("Free slots")} {host.free_slots}/{host.max_concurrency}</span>
+              <span className="lin-meta">{t("Quota left")} {left === null ? "—" : `${left}%`}</span>
+              <span className="lin-meta">
+                {host.state === "online" ? t(STATE_LABEL[host.state])
+                  : host.last_seen_at ? `${t(STATE_LABEL[host.state])} · ${relativeTime(host.last_seen_at)}`
+                    : t(STATE_LABEL[host.state])}
+              </span>
+              {canManage && (
+                <span className="lin-actions">
+                  {host.status === "active" ? (
+                    <button type="button" className="button ghost small" disabled={busy !== null}
+                      onClick={() => void act(host, "pause")}>{t("Pause")}</button>
+                  ) : (
+                    <button type="button" className="button ghost small" disabled={busy !== null}
+                      onClick={() => void act(host, "resume")}>{t("Resume")}</button>
                   )}
-                </div>
-                <div className="host-facts">
-                  <span>{host.running.length ? `${t("Working on")} ${host.running.join(", ")}` : t("Idle")}</span>
-                  <span>{t("Free slots")} {host.free_slots}/{host.max_concurrency}</span>
-                  <span>{t("Quota left")} {left === null ? "—" : `${left}%`}</span>
-                  {host.state !== "online" && host.last_seen_at && (
-                    <span>{t("Last seen")} {relativeTime(host.last_seen_at)}</span>
-                  )}
-                </div>
-                {canManage && (
-                  <div className="host-actions">
-                    {host.status === "active" ? (
-                      <button type="button" className="button ghost small" disabled={busy !== null}
-                        onClick={() => void act(host, "pause")}>{t("Pause")}</button>
-                    ) : (
-                      <button type="button" className="button ghost small" disabled={busy !== null}
-                        onClick={() => void act(host, "resume")}>{t("Resume")}</button>
-                    )}
-                    <button type="button" className="button ghost small danger" disabled={busy !== null}
-                      onClick={() => void act(host, "revoke")}>{t("Take off the Loop")}</button>
-                  </div>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+                  <button type="button" className="button ghost small danger" disabled={busy !== null}
+                    onClick={() => void act(host, "revoke")}>{t("Take off the Loop")}</button>
+                </span>
+              )}
+            </div>
+          );
+        })
       )}
     </section>
   );

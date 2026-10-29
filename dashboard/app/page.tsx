@@ -10,7 +10,6 @@ import { DiagramView } from "./components/diagram-view";
 import { LoopView } from "./components/loop-view";
 import { DocumentsView } from "./components/documents";
 import { GovernanceView } from "./components/governance";
-import { useSlidingIndicator } from "./components/motion";
 import { AgentConnect, GettingStarted, type OnboardingStepId } from "./components/onboarding";
 import { SupportAccessCard } from "./components/support-access";
 import { UpgradeCard } from "./components/upgrade";
@@ -22,6 +21,10 @@ import {
 } from "./components/task-board";
 import {
   IconChevron,
+  IconDocuments,
+  IconGraph,
+  IconLayers,
+  IconPulse,
   IconClose,
   IconCopy,
   BrandMark,
@@ -65,7 +68,6 @@ import {
   normalizeBase,
   pretty,
   relativeTime,
-  shortDate,
   tierLabel,
 } from "./types";
 
@@ -220,8 +222,6 @@ export default function ConsolePage() {
     // "More" reopens on whichever secondary view was used last.
     if (SETTINGS_SECTIONS.includes(tab)) setLastSettings(tab);
   }, [tab]);
-  const tabBarRef = useRef<HTMLDivElement>(null);
-  const tabIndicator = useSlidingIndicator(tabBarRef, tab);
   const [selectedDocKey, setSelectedDocKey] = useState<string | null>(null);
   const [selectedDoc, setSelectedDoc] = useState<DocumentDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1181,28 +1181,6 @@ export default function ConsolePage() {
     }
   }
 
-  function handleTabKeyDown(
-    event: React.KeyboardEvent<HTMLButtonElement>,
-    index: number,
-  ) {
-    let nextIndex = index;
-    if (event.key === "ArrowRight" || event.key === "ArrowDown") {
-      nextIndex = (index + 1) % navItems.length;
-    } else if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
-      nextIndex = (index - 1 + navItems.length) % navItems.length;
-    } else if (event.key === "Home") {
-      nextIndex = 0;
-    } else if (event.key === "End") {
-      nextIndex = navItems.length - 1;
-    } else {
-      return;
-    }
-    event.preventDefault();
-    const next = navItems[nextIndex];
-    next.go();
-    document.getElementById(`view-tab-${next.id}`)?.focus();
-  }
-
   async function reopenChecklist() {
     try {
       await api("/v1/human/onboarding", {
@@ -1255,13 +1233,19 @@ export default function ConsolePage() {
   const inSettings = SETTINGS_SECTIONS.includes(tab);
   const sections = inLoop ? loopSections : inSettings ? settingsSections : null;
   const openMore = (next?: Tab) => setTab(next ?? lastSettings);
-  const navItems: Array<{ id: string; label: string; active: boolean; alert?: number; go: () => void }> = [
-    { id: "diagram", label: t("Diagram"), active: tab === "diagram", go: () => setTab("diagram") },
-    { id: "loop", label: t("Loop"), active: inLoop, alert: approvals.length, go: () => setTab("loop") },
-    { id: "documents", label: t("Documents"), active: tab === "documents", go: () => setTab("documents") },
+  const navItems: Array<{ id: string; label: string; active: boolean; alert?: number; icon: JSX.Element;
+    go: () => void }> = [
+    { id: "diagram", label: t("Diagram"), active: tab === "diagram", icon: <IconGraph />,
+      go: () => setTab("diagram") },
+    { id: "loop", label: t("Loop"), active: inLoop, alert: approvals.length, icon: <IconPulse />,
+      go: () => setTab("loop") },
+    { id: "documents", label: t("Documents"), active: tab === "documents", icon: <IconDocuments />,
+      go: () => setTab("documents") },
     { id: "more", label: t("Settings"), active: inSettings, alert: pendingProposals || undefined,
-      go: () => openMore() },
+      icon: <IconLayers />, go: () => openMore() },
   ];
+  const place = navItems.find((item) => item.active)?.label;
+  const section = sections && tab !== "loop" ? sections.find((item) => item.id === tab)?.label : undefined;
 
   if (!mounted) {
     return (
@@ -1279,23 +1263,30 @@ export default function ConsolePage() {
       </a>
       <aside className="sidebar" id="console-sidebar" hidden={sidebarCollapsed}>
         <div className="brand">
-          <div className="brand-mark"><BrandMark size={34} /></div>
-          <div>
-            <div className="brand-name">veynod</div>
-            <div className="brand-sub">{t("The third space for agents")}</div>
-          </div>
+          <div className="brand-mark"><BrandMark size={24} /></div>
+          <div className="brand-name">veynod</div>
         </div>
 
-        <div className={`server-chip ${serverOnline === false ? "offline" : ""}`}>
-          <span className={`status-dot ${serverOnline === true ? "live" : serverOnline === false ? "dead" : ""}`} />
-          <span>
-            {serverOnline === null
-              ? t("Checking gateway…")
-              : serverOnline
-                ? `${t("Gateway online")}${ready ? ` · v${ready.version}` : ""}`
-                : t("Gateway unreachable")}
-          </span>
-        </div>
+        {selectedWorkspace && !operatorLocked && (
+          <nav className="side-nav" aria-label={t("Workspace views")}>
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                id={`view-tab-${item.id}`}
+                className={`side-link${item.active ? " active" : ""}`}
+                aria-current={item.active ? "page" : undefined}
+                onClick={item.go}
+              >
+                {item.icon}
+                <span>{item.label}</span>
+                {typeof item.alert === "number" && item.alert > 0 && (
+                  <span className="side-count">{item.alert}</span>
+                )}
+              </button>
+            ))}
+          </nav>
+        )}
 
         <div className="sidebar-head">
           <span>{t("Workspaces")}</span>
@@ -1363,6 +1354,17 @@ export default function ConsolePage() {
           <UpgradeCard apiBase={apiBase} sessionToken={sessionToken} />
         )}
 
+        <div className={`server-chip ${serverOnline === false ? "offline" : ""}`}>
+          <span className={`status-dot ${serverOnline === true ? "live" : serverOnline === false ? "dead" : ""}`} />
+          <span>
+            {serverOnline === null
+              ? t("Checking gateway…")
+              : serverOnline
+                ? `${t("Gateway online")}${ready ? ` · v${ready.version}` : ""}`
+                : t("Gateway unreachable")}
+          </span>
+        </div>
+
         <nav className="sidebar-help" aria-label={t("Help")}>
           <span>{t("Help")}</span>
           <a href="/docs/quickstart/" target="_blank" rel="noreferrer">{t("Quickstart")}</a>
@@ -1424,9 +1426,19 @@ export default function ConsolePage() {
             <IconSidebar />
           </button>
           <div className="breadcrumbs">
-            <span>{t("Console")}</span>
-            <span className="crumb-sep">/</span>
-            <span className="crumb-current">{selectedWorkspace?.name ?? t("Overview")}</span>
+            <span className={place ? "" : "crumb-current"}>{selectedWorkspace?.name ?? t("Overview")}</span>
+            {place && (
+              <>
+                <span className="crumb-sep">/</span>
+                <span className={section ? "" : "crumb-current"}>{place}</span>
+              </>
+            )}
+            {section && (
+              <>
+                <span className="crumb-sep">/</span>
+                <span className="crumb-current">{section}</span>
+              </>
+            )}
             {connected && !sessionMode && (
               <span className={`live-pill ${live ? "on" : ""}`}>
                 <span className={`status-dot ${live ? "live" : "dead"}`} />
@@ -1547,25 +1559,14 @@ export default function ConsolePage() {
             </section>
           ) : (
             <section className={`workspace-view${tab === "diagram" ? " canvas-mode" : ""}`}>
-              {tab !== "diagram" && (
-              <div className="workspace-hero">
-                <div>
-                  <h1>{selectedWorkspace.name}</h1>
-                  <div className="hero-meta">
-                    <span className={`tier tier-${selectedWorkspace.tier}`}>{tierLabel(selectedWorkspace.tier)}</span>
-                    <span>{t("Created")} {shortDate(selectedWorkspace.created_at)}</span>
-                    <span>{t("Active")} {relativeTime(stats?.last_activity_at ?? selectedWorkspace.last_activity_at)}</span>
-                    {lastEvent && <span>{t("Event")} {lastEvent.table}/{lastEvent.action}</span>}
-                  </div>
+              {!sessionMode && tab !== "diagram" && (
+                <div className="operator-row">
+                  <span className={`tier tier-${selectedWorkspace.tier}`}>{tierLabel(selectedWorkspace.tier)}</span>
+                  <span>{t("Active")} {relativeTime(stats?.last_activity_at ?? selectedWorkspace.last_activity_at)}</span>
+                  <button type="button" className="button ghost small" onClick={rotateWorkspaceKey}>
+                    <IconKey /> {t("Rotate commander key")}
+                  </button>
                 </div>
-                {!sessionMode && (
-                  <div className="hero-actions">
-                    <button type="button" className="button ghost" onClick={rotateWorkspaceKey}>
-                      <IconKey /> {t("Rotate commander key")}
-                    </button>
-                  </div>
-                )}
-              </div>
               )}
 
               {sessionMode && checklistOpen && (
@@ -1588,43 +1589,6 @@ export default function ConsolePage() {
                 </div>
               ) : (
               <>
-              <div
-                ref={tabBarRef}
-                className={`tab-bar ${tabIndicator.ready ? "has-indicator" : ""}`}
-                role="tablist"
-                aria-label={t("Workspace views")}
-              >
-                {navItems.map((item, index) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    role="tab"
-                    id={`view-tab-${item.id}`}
-                    aria-selected={item.active}
-                    aria-controls="view-panel"
-                    tabIndex={item.active ? 0 : -1}
-                    className={`tab-button ${item.active ? "active" : ""}`}
-                    onClick={item.go}
-                    onKeyDown={(event) => handleTabKeyDown(event, index)}
-                  >
-                    <span>{item.label}</span>
-                    {typeof item.alert === "number" && item.alert > 0 && (
-                      <span className="tab-count alert">{item.alert}</span>
-                    )}
-                  </button>
-                ))}
-                {tabIndicator.ready && (
-                  <span
-                    className="tab-indicator"
-                    aria-hidden="true"
-                    style={{
-                      width: tabIndicator.width - 16,
-                      transform: `translateX(${tabIndicator.left + 8}px)`,
-                    }}
-                  />
-                )}
-              </div>
-
               {sections && (
                 <nav className="more-nav" aria-label={inLoop ? t("Loop sections") : t("Settings sections")}>
                   {sections.map((item) => (

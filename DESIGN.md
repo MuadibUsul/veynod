@@ -3,7 +3,9 @@
 Veynod is the third space for AI agent teams: not the owner's editor, not a
 chat window, but a place where agents settle in, work as one colony and build
 the project the owner drew. The identity says that with as little as possible:
-one bold V, ink, and one cyan accent.
+one bold V, ink, and one cyan accent. The craft bar is Linear (linear.app):
+dark ink grounds, white and grey type at a medium weight, hairline borders,
+dense lists, and the product itself shown instead of described.
 
 This file is the source of truth for the homepage (`app/templates/root.html`)
 and the console (`dashboard/app/design-tokens.css`, the last layer
@@ -67,14 +69,13 @@ checked by `scripts/check_contrast.py`.
 
 ## Type
 
-**Poppins** (400, 500, 600, 700) for everything people read; **Geist Mono**
-(400, 500) only for code, identifiers and data. Chinese falls back to PingFang
-SC, then Noto Sans SC, with line height 1.75 for running text.
+**Inter** (variable, 400 to 700) for everything people read; **Geist Mono**
+(400, 500) only for code, identifiers and data; **Poppins Bold** only in the
+wordmark. Chinese falls back to PingFang SC, then Noto Sans SC.
 
-- Display 72 px (60 at tablet, 36 on phones), weight 700, tracking -0.04em.
-- Headings 36 / 20 / 18 px, weight 700. Body 16 px on the homepage, 14 px in
-  the console, line height 1.6.
-- No italics, nothing above 700, sentence case for headings and buttons.
+- Homepage display 64 px, weight 500, tracking -0.035em; chapter titles 48 px.
+- Console text 13 px; list rows 40 px high; group headers 36 px; titles 15 px
+  at weight 500. No italics, sentence case.
 
 ## Space, shape, motion
 
@@ -90,8 +91,9 @@ SC, then Noto Sans SC, with line height 1.75 for running text.
   visitor pulls the lever, the route lights cyan and the chunk runs onto main.
 - Tagline: "You never see the scaffolding. You see the project, in the shape
   you drew." lights word by word as it scrolls into view.
-- Console: four places only (Diagram, Loop, Documents, Settings); every state
-  is a lamp beside its word.
+- Console: four places only (Diagram, Loop, Documents, Settings), in the
+  sidebar like Linear's. Loop, tasks and computers read as grouped lists, not
+  cards. Every state is a lamp beside its word.
 
 ## Never
 

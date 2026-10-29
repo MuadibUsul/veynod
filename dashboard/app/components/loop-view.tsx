@@ -154,69 +154,58 @@ export function LoopView({
 
   return (
     <div className="loop">
-      <section className="loop-strip" aria-label={t("Loop status")}>
+      <section className="lin-list" aria-label={t("Loop status")}>
+        <div className="lin-group">
+          <i className={`lamp ${needs ? "red" : "green"}`} />
+          {t("Needs you")}
+          <span className="lin-count">{needs}</span>
+        </div>
+        {needs === 0 && (
+          <div className="lin-row quiet"><span className="lin-title">{t("Nothing right now")}</span></div>
+        )}
+        {waitingReview > 0 && (
+          <button type="button" className="lin-row" onClick={onOpenTasks}>
+            <i className="lamp cyan" />
+            <span className="lin-title">{waitingReview} {t("tasks wait for your review")}</span>
+            <span className="lin-meta">{t("Tasks")}</span>
+          </button>
+        )}
+        {unplaced.map((item) => (
+          <button key={item.placement_id} type="button" className="lin-row" onClick={onOpenTasks}>
+            <i className="lamp amber" />
+            <span className="lin-title">{t(UNPLACED_LABEL[item.reason] ?? item.note)}</span>
+            {item.task_key && <span className="lin-key">{item.task_key}</span>}
+          </button>
+        ))}
+        {alerts.map((alert) => (
+          <button key={alert.alert_id} type="button" className="lin-row" onClick={onOpenSituation}>
+            <i className="lamp red" />
+            <span className="lin-title">{t(RULE_LABEL[alert.rule] ?? alert.rule)}</span>
+            <span className="lin-key">{alert.subject.ref}</span>
+            <span className="lin-meta">{relativeTime(alert.last_seen)}</span>
+          </button>
+        ))}
+
+        <div className="lin-group">
+          <i className="lamp cyan" />
+          {t("How the loop runs")}
+        </div>
         {mode && (
-          <div className="loop-mode">
-            <span className="loop-label">{t("Automation")}</span>
-            <strong>{t(MODE_LABEL[mode] ?? mode)}</strong>
+          <div className="lin-row">
+            <i className="lamp" />
+            <span className="lin-label">{t("Automation")}</span>
+            <span className="lin-title">{t(MODE_LABEL[mode] ?? mode)}</span>
             <button type="button" className="button ghost small"
               aria-expanded={editingMode} onClick={() => setEditingMode((value) => !value)}>
               {editingMode ? t("Done") : t("Change")}
             </button>
           </div>
         )}
-        {round && (
-          <div className="loop-mode loop-round">
-            <span className="loop-label">{t("Supervisor")}</span>
-            <strong>{t(ROUND_LABEL[round.status] ?? round.status)}</strong>
-            <small>{relativeTime(round.ended_at ?? round.created_at)}</small>
-          </div>
-        )}
-        <div className={`loop-needs${needs ? " has" : ""}`}>
-          <span className="loop-label">{t("Needs you")}</span>
-          {needs === 0 ? (
-            <strong>{t("Nothing right now")}</strong>
-          ) : (
-            <ul>
-              {waitingReview > 0 && (
-                <li>
-                  <button type="button" className="loop-link" onClick={onOpenTasks}>
-                    {waitingReview} {t("tasks wait for your review")}
-                  </button>
-                </li>
-              )}
-              {unplaced.slice(0, 3).map((item) => (
-                <li key={item.placement_id}>
-                  <button type="button" className="loop-link" onClick={onOpenTasks}>
-                    {t(UNPLACED_LABEL[item.reason] ?? item.note)}
-                    {item.task_key && <small> · {item.task_key}</small>}
-                  </button>
-                </li>
-              ))}
-              {unplaced.length > 3 && (
-                <li>
-                  <button type="button" className="loop-link" onClick={onOpenTasks}>
-                    {t("and")} {unplaced.length - 3} {t("more tasks wait for a runner")}
-                  </button>
-                </li>
-              )}
-              {alerts.slice(0, 3).map((alert) => (
-                <li key={alert.alert_id}>
-                  <button type="button" className="loop-link" onClick={onOpenSituation}>
-                    {t(RULE_LABEL[alert.rule] ?? alert.rule)}
-                    <small> · {alert.subject.ref} · {relativeTime(alert.last_seen)}</small>
-                  </button>
-                </li>
-              ))}
-              {alerts.length > 3 && (
-                <li>
-                  <button type="button" className="loop-link" onClick={onOpenSituation}>
-                    {t("and")} {alerts.length - 3} {t("more")}
-                  </button>
-                </li>
-              )}
-            </ul>
-          )}
+        <div className="lin-row">
+          <i className={`lamp ${round ? (round.status === "failed" ? "red" : "green") : ""}`} />
+          <span className="lin-label">{t("Supervisor")}</span>
+          <span className="lin-title">{round ? t(ROUND_LABEL[round.status] ?? round.status) : t("No round yet")}</span>
+          {round && <span className="lin-meta">{relativeTime(round.ended_at ?? round.created_at)}</span>}
         </div>
       </section>
 
