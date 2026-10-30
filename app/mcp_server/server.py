@@ -2117,7 +2117,8 @@ async def diagram(action: str, diagram_key: str | None = None, chunk_key: str | 
     triptych | queue | queue_check | merge | repoint | propose | increment |
     decide | signal | escalate | usage | replay. args is the body of the
     matching REST call (POST /v1/diagrams/...): create {diagram_key, title,
-    chunks, watchers}; submit {files, commit, diff}; ci {results: {compile,
+    chunks, watchers}; submit {files, commit, diff, self_check: [{cmd,
+    exit_code, output}]} (no CI step when the chunk names no commands); ci {results: {compile,
     lint, test}}; review {result, semantic, inconsistent_pane, evidence};
     queue_check {result, evidence}; merge {artifact (a commit or doc://; not
     needed after an accepted submission), note}; repoint {task_key} (the DONE

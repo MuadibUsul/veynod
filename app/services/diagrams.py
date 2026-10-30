@@ -231,6 +231,22 @@ async def _tasks(session: AsyncSession, principal: Principal,
     return {row["task_key"]: dict(row) for row in rows}
 
 
+def _needs_ci(chunk: dict[str, Any]) -> bool:
+    """M-19 asks for a sandbox run where the chunk names what to run; a chunk with no
+    commands (a design, a document) goes from its submission straight to review."""
+    commands = chunk.get("commands") or {}
+    return any(commands.get(stage) for stage in STAGES)
+
+
+def _ci_hold(chunk: dict[str, Any], submission: dict[str, Any]) -> str | None:
+    """What CI still holds the current submission at: awaiting_ci, rework, or nothing.
+    A run recorded for this commit always counts, even where none was required."""
+    ci = chunk.get("ci") or {}
+    if ci.get("commit") == submission.get("commit"):
+        return None if ci.get("green") else "rework"
+    return "awaiting_ci" if _needs_ci(chunk) else None
+
+
 def status_of(chunk: dict[str, Any], task: dict[str, Any] | None) -> str:
     """The status readers see: the chunk's own record, read through its task."""
     state = chunk["state"]
@@ -243,11 +259,9 @@ def status_of(chunk: dict[str, Any], task: dict[str, Any] | None) -> str:
     if submission:  # the automation path (M-17, M-19, M-20)
         if state == "rework" or not submission.get("accepted"):
             return "rework"
-        ci = chunk.get("ci") or {}
-        if ci.get("commit") != submission.get("commit"):
-            return "awaiting_ci"
-        if not ci.get("green"):
-            return "rework"
+        hold = _ci_hold(chunk, submission)
+        if hold:
+            return hold
         if gate.get("submission_at") != submission.get("at"):
             return "awaiting_review"
         if gate.get("result") != "pass":
@@ -800,7 +814,7 @@ def _semantic_review(chunk: dict[str, Any], body: dict[str, Any], result: str) -
     if not submission.get("accepted"):
         raise ApiError(409, "submission_rejected", "the latest submission broke its write "
                        "scope and never reached review (spec M-17)")
-    if ci.get("commit") != submission.get("commit") or not ci.get("green"):
+    if _ci_hold(chunk, submission):
         raise ApiError(409, "ci_not_green", "review starts only on a green sandbox run for "
                        "the current submission (spec M-19)",
                        details={"ci": {"commit": ci.get("commit"), "green": ci.get("green")},
@@ -866,6 +880,7 @@ async def submit(session: AsyncSession, principal: Principal, key: str, chunk_ke
     violations = _outside_scope(chunk, diagram, files)
     record = {"files": files, "commit": commit, "branch": body.get("branch"),
               "diff": (body.get("diff") or "")[:200_000], "diff_url": body.get("diff_url"),
+              "self_check": _self_check(body.get("self_check")),
               "by": _me(principal), "at": _now().isoformat(), "accepted": not violations,
               "violations": violations}
     await session.execute(text(
@@ -883,8 +898,30 @@ async def submit(session: AsyncSession, principal: Principal, key: str, chunk_ke
                      task_key=chunk["task_key"], commit=commit, files=len(files))
     await session.commit()
     return {"chunk_key": chunk_key, "accepted": not violations, "violations": violations,
-            "status": "rework" if violations else "awaiting_ci",
+            "status": "rework" if violations else (
+                "awaiting_ci" if _needs_ci(chunk) else "awaiting_review"),
             "commands": chunk["commands"]}
+
+
+def _self_check(raw: Any) -> list[dict[str, Any]]:
+    """The checks the implementer ran, for the reviewer to see (never a substitute for
+    the sandbox where the chunk names commands)."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or len(raw) > 10:
+        raise ApiError(422, "validation_error", "self_check is a list of at most 10 "
+                       "{cmd, exit_code, output}")
+    checks = []
+    for item in raw:
+        if not isinstance(item, dict) or not str(item.get("cmd") or "").strip():
+            raise ApiError(422, "validation_error", "each self_check names its cmd")
+        try:
+            code = int(item.get("exit_code", 0))
+        except (TypeError, ValueError):
+            raise ApiError(422, "validation_error", "exit_code is a number") from None
+        checks.append({"cmd": str(item["cmd"])[:500], "exit_code": code,
+                       "output": str(item.get("output") or "")[:4_000]})
+    return checks
 
 
 async def record_ci(session: AsyncSession, principal: Principal, key: str, chunk_key: str,
@@ -964,7 +1001,8 @@ async def triptych(session: AsyncSession, principal: Principal, key: str,
                    "diff": submission.get("diff"), "diff_url": submission.get("diff_url"),
                    "accepted": submission.get("accepted")},
         "right": {"commit": ci.get("commit"), "green": ci.get("green"),
-                  "stages": ci.get("stages")},
+                  "stages": ci.get("stages"), "ci_required": _needs_ci(chunk),
+                  "self_check": submission.get("self_check") or []},
     }
 
 

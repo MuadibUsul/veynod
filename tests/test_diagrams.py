@@ -726,6 +726,58 @@ async def _submit_green(client, key, chunk_key, executor, ci, commit):
     assert green.json()["review_woken"] is True, green.text
 
 
+async def test_a_chunk_without_commands_goes_from_submission_to_review(client):
+    """DX-4: no commands, no CI step; the implementer's own checks travel with the
+    submission. A chunk that names commands still waits for a green sandbox run."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    executor = await _agent(client, ws)
+    reviewer = await _agent(client, ws, "AUDITOR")
+    key, _ = await _frozen(client, ws, architect, [
+        _chunk("design", layer="interface"),
+        _chunk("build", layer="interface", commands={"compile": "tsc --noEmit",
+                                                     "test": "pytest -q"})])
+    for chunk_key in ("design", "build"):
+        made = (await client.post(f"/v1/diagrams/{key}/chunks/{chunk_key}/dispatch",
+                                  headers=architect["headers"])).json()
+        claimed = await client.post(f"/v1/tasks/{made['task_key']}/claim",
+                                    headers=executor["headers"], json={})
+        assert claimed.status_code == 200, claimed.text
+
+    bad = await client.post(f"/v1/diagrams/{key}/chunks/design/submit",
+                            headers=executor["headers"],
+                            json={"commit": "d1", "files": ["src/design.py"],
+                                  "self_check": [{"cmd": "node check.js", "exit_code": "x"}]})
+    assert bad.status_code == 422, bad.text
+    check = {"cmd": "node check.js design.html", "exit_code": 0, "output": "7/7 blocks"}
+    submitted = await client.post(f"/v1/diagrams/{key}/chunks/design/submit",
+                                  headers=executor["headers"],
+                                  json={"commit": "d1", "files": ["src/design.py"],
+                                        "self_check": [check]})
+    assert submitted.json()["status"] == "awaiting_review", submitted.text
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    design = {chunk["chunk_key"]: chunk for chunk in shown["chunks"]}["design"]
+    assert design["status"] == "awaiting_review"
+    assert design["submission"]["self_check"] == [check]
+    panes = (await client.get(f"/v1/diagrams/{key}/chunks/design/triptych",
+                              headers=reviewer["headers"])).json()
+    assert panes["right"]["ci_required"] is False and panes["right"]["self_check"] == [check]
+    reviewed = await client.post(f"/v1/diagrams/{key}/chunks/design/gate",
+                                 headers=reviewer["headers"],
+                                 json={"result": "pass", "semantic": _rules()})
+    assert reviewed.status_code == 200, reviewed.text
+    assert reviewed.json()["status"] == "queued"
+
+    built = await client.post(f"/v1/diagrams/{key}/chunks/build/submit",
+                              headers=executor["headers"],
+                              json={"commit": "b1", "files": ["src/build.py"]})
+    assert built.json()["status"] == "awaiting_ci", built.text
+    early = await client.post(f"/v1/diagrams/{key}/chunks/build/gate",
+                              headers=reviewer["headers"],
+                              json={"result": "pass", "semantic": _rules()})
+    assert early.status_code == 409 and early.json()["error"]["code"] == "ci_not_green"
+
+
 async def test_serial_merge_queue(client):
     """A-11 / A-14: approval queues; the controller verifies the head; one at a time."""
     ws = await _workspace(client)
