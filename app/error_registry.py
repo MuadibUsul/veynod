@@ -257,6 +257,13 @@ REGISTRY: dict[str, ErrorSpec] = {
     "cli_session_consumed": _spec(410, ABANDON, "The key was collected once; start a new setup."),
     "cli_code_unavailable": _spec(503, RETRY_BACKOFF, "Back off and retry."),
     "invalid_device_code": _spec(404, ABANDON, "Start a new setup with `npx veynod init`."),
+    "merge_without_deliverable": _spec(
+        409, FIX_REQUEST, "Pass artifact (a commit or doc:// link), or merge an accepted "
+        "submission."),
+    "not_chunk_lineage": _spec(
+        422, FIX_REQUEST, "Name a task of this chunk (DG-<diagram>-<chunk>[-n]); details "
+        "list them."),
+    "task_not_done": _spec(409, FIX_REQUEST, "Re-point a merged chunk to a DONE task."),
     "cli_identity_unknown": _spec(
         422, FIX_REQUEST, "Tick only identities the terminal asked for (index 1 or 2)."),
     "invalid_public_key": _spec(422, FIX_REQUEST, "Send a base64 X25519 public key (32 bytes)."),

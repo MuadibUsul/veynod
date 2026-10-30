@@ -329,7 +329,7 @@ async def test_contract_first_and_topology_unlock(client):
     await client.post(f"/v1/diagrams/{key}/chunks/schema/gate", headers=reviewer["headers"],
                       json={"result": "pass"})
     merged = (await client.post(f"/v1/diagrams/{key}/chunks/schema/merge", headers=ws["person"],
-                                json={})).json()
+                                json={"artifact": "commit schema1"})).json()
     # Both implementations are dispatched by the graph itself, nobody re-dispatches.
     assert sorted(item["chunk_key"] for item in merged["unblocked"]) == ["reader", "writer"]
     inbox = (await client.get("/v1/inbox", headers=watcher["headers"])).json()["items"]
@@ -393,6 +393,70 @@ async def test_block_reasons_are_current_and_merges_leave_circuits_alone(client)
         "blocked", "circuit", None)
 
 
+async def test_merge_needs_a_record_and_a_chunk_can_be_repointed(client):
+    """DX-2: nothing merges without a record of what it delivered; a chunk whose
+    duplicate dispatch failed is re-pointed to its DONE task, with a fix hint first."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    executor = await _agent(client, ws)
+    reviewer = await _agent(client, ws, "AUDITOR")
+    key, _ = await _frozen(client, ws, architect, [_chunk("p0", layer="interface")])
+    first = (await client.post(f"/v1/diagrams/{key}/chunks/p0/dispatch",
+                               headers=architect["headers"])).json()
+    await _deliver(client, executor, first["task_key"])
+    # The work is reviewed DONE on the board, then gated.
+    done = await client.post(f"/v1/tasks/{first['task_key']}/review", headers=ws["person"],
+                             json={"decision": "approve", "feedback": "ok"})
+    assert done.status_code == 200, done.text
+    await client.post(f"/v1/diagrams/{key}/chunks/p0/gate", headers=reviewer["headers"],
+                      json={"result": "pass"})
+    bare = await client.post(f"/v1/diagrams/{key}/chunks/p0/merge", headers=ws["person"],
+                             json={})
+    assert bare.status_code == 409, bare.text
+    assert bare.json()["error"]["code"] == "merge_without_deliverable"
+
+    # A duplicate dispatch is made and fails: the personal-website P0 case.
+    duplicate = f"{first['task_key']}-2"
+    made = await client.post("/v1/tasks", headers=ws["person"], json={
+        "task_key": duplicate, "title": "duplicate", "assigned_role": "EXECUTOR",
+        "namespace": "default"})
+    assert made.status_code == 201, made.text
+    await _sql("UPDATE collab_tasks SET status = 'FAILED' WHERE task_key = $1 "
+               "AND workspace_id = $2::uuid", duplicate, ws["id"])
+    merged = await client.post(f"/v1/diagrams/{key}/chunks/p0/merge", headers=ws["person"],
+                               json={"artifact": "doc://artifact/p0/delivery"})
+    assert merged.status_code == 200, merged.text
+    await _sql("UPDATE diagram_chunks SET task_key = $1 WHERE chunk_key = 'p0' AND "
+               "diagram_id = (SELECT id FROM diagrams WHERE diagram_key = $2)", duplicate, key)
+
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    [mismatch] = shown["board_consistency"]["mismatches"]
+    assert mismatch["problem"] == "merged, but its task is FAILED"
+    assert mismatch["fix"]["task_key"] == first["task_key"]
+    assert 'action="repoint"' in mismatch["fix"]["call"]
+
+    by_executor = await client.post(f"/v1/diagrams/{key}/chunks/p0/repoint",
+                                    headers=executor["headers"],
+                                    json={"task_key": first["task_key"]})
+    assert by_executor.status_code == 403
+    stranger = await client.post(f"/v1/diagrams/{key}/chunks/p0/repoint", headers=ws["person"],
+                                 json={"task_key": "some-other-task"})
+    assert stranger.json()["error"]["code"] == "not_chunk_lineage"
+    assert sorted(stranger.json()["error"]["details"]["lineage"]) == sorted(
+        [first["task_key"], duplicate])
+    not_done = await client.post(f"/v1/diagrams/{key}/chunks/p0/repoint", headers=ws["person"],
+                                 json={"task_key": duplicate})
+    assert not_done.json()["error"]["code"] == "task_not_done"
+    fixed = await client.post(f"/v1/diagrams/{key}/chunks/p0/repoint",
+                              headers=architect["headers"],
+                              json={"task_key": first["task_key"]})
+    assert fixed.status_code == 200, fixed.text
+    assert fixed.json() == {"chunk_key": "p0", "task_key": first["task_key"],
+                            "previous": duplicate}
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    assert shown["board_consistency"]["ok"] is True
+
+
 async def test_context_slice_write_scope_and_file_locks(client):
     """A-09."""
     ws = await _workspace(client)
@@ -416,7 +480,8 @@ async def test_context_slice_write_scope_and_file_locks(client):
     await client.post(f"/v1/diagrams/{key}/chunks/contract/gate", headers=reviewer["headers"],
                       json={"result": "pass"})
     released = (await client.post(f"/v1/diagrams/{key}/chunks/contract/merge",
-                                  headers=ws["person"], json={})).json()["unblocked"]
+                                  headers=ws["person"],
+                                  json={"artifact": "commit contract1"})).json()["unblocked"]
     by_key = {item["chunk_key"]: item for item in released}
     assert set(by_key) == {"a", "b"}, released
     # a and b go out; c wants src/*.py, which overlaps both: blocked on the lock, naming it.
@@ -577,7 +642,7 @@ async def _with_contract(client, ws, architect, chunks, key=None):
     await client.post(f"/v1/diagrams/{key}/chunks/contract/gate", headers=gatekeeper["headers"],
                       json={"result": "pass"})
     merged = (await client.post(f"/v1/diagrams/{key}/chunks/contract/merge",
-                                headers=ws["person"], json={})).json()
+                                headers=ws["person"], json={"artifact": "commit contract1"})).json()
     return key, {item["chunk_key"]: item for item in merged["unblocked"]}
 
 

@@ -2096,6 +2096,7 @@ _DIAGRAM_ACTIONS = {
     "queue": ("queue", True, False, False),
     "queue_check": ("queue_check", True, True, True),
     "merge": ("merge", True, True, True),
+    "repoint": ("repoint", True, True, True),
     "propose": ("propose", True, False, True),
     "increment": ("request_increment", True, False, True),
     "decide": ("decide", True, False, True),
@@ -2113,12 +2114,14 @@ async def diagram(action: str, diagram_key: str | None = None, chunk_key: str | 
     """Diagrams and chunked dispatch (spec-diagram-dispatch v3), one tool.
 
     action: list | get | create | edit | dispatch | submit | ci | review |
-    triptych | queue | queue_check | merge | propose | increment | decide |
-    signal | escalate | usage | replay. args is the body of the matching
-    REST call (POST /v1/diagrams/...): create {diagram_key, title, chunks,
-    watchers}; submit {files, commit, diff}; ci {results: {compile, lint,
-    test}}; review {result, semantic, inconsistent_pane, evidence};
-    queue_check {result, evidence}; propose {summary, patch}; increment
+    triptych | queue | queue_check | merge | repoint | propose | increment |
+    decide | signal | escalate | usage | replay. args is the body of the
+    matching REST call (POST /v1/diagrams/...): create {diagram_key, title,
+    chunks, watchers}; submit {files, commit, diff}; ci {results: {compile,
+    lint, test}}; review {result, semantic, inconsistent_pane, evidence};
+    queue_check {result, evidence}; merge {artifact (a commit or doc://; not
+    needed after an accepted submission), note}; repoint {task_key} (the DONE
+    task of this chunk that did the work); propose {summary, patch}; increment
     {request_text, target_chunk, chunk}; decide {decision} (with change_key);
     signal {reason}; escalate {mode: upgrade|spec}; usage {tokens}. Confirming,
     freezing, revoking and budgets are people's decisions (console or REST)."""

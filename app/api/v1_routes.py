@@ -1923,6 +1923,20 @@ async def merge_chunk(
     return await diagrams.merge(session, principal, diagram_key, chunk_key, body or {})
 
 
+@router.post("/diagrams/{diagram_key}/chunks/{chunk_key}/repoint",
+             summary="Point a chunk at the task of its own that did the work")
+async def repoint_chunk(
+    diagram_key: str,
+    chunk_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.repoint(session, principal, diagram_key, chunk_key, body)
+
+
 @router.post("/diagrams/{diagram_key}/changes", status_code=201,
              summary="Propose a diagram change with its impact")
 async def propose_diagram_change(

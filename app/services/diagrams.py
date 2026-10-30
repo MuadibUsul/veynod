@@ -1288,8 +1288,15 @@ async def merge(session: AsyncSession, principal: Principal, key: str, chunk_key
     if me in await _implementers(session, principal, task, chunk["task_key"]):
         raise ApiError(403, "merge_by_implementer", "the implementer cannot merge their own "
                        "chunk (spec M-10)", details={"merger": me})
-    record = {"by": me, "at": _now().isoformat(),
-              "artifact": body.get("artifact") or (chunk.get("queue_check") or {}).get("commit"),
+    submission = chunk.get("submission") or {}
+    artifact = (body.get("artifact") or (chunk.get("queue_check") or {}).get("commit")
+                or (submission.get("commit") if submission.get("accepted") else None))
+    if not artifact:
+        # Downstream chunks start from what this one delivered: never merge nothing.
+        raise ApiError(409, "merge_without_deliverable", "a merge records what the chunk "
+                       "delivered: pass artifact (a commit or a doc:// link), or merge an "
+                       "accepted submission", details={"chunk_key": chunk_key})
+    record = {"by": me, "at": _now().isoformat(), "artifact": artifact,
               "note": body.get("note"), "task_status": task["status"] if task else None,
               "via_queue": status == "verified"}
     await session.execute(text(
@@ -1304,6 +1311,52 @@ async def merge(session: AsyncSession, principal: Principal, key: str, chunk_key
                                                 "merge_commit": record["artifact"]})
     await session.commit()
     return {"chunk_key": chunk_key, "state": "merged", "merge": record, "unblocked": unblocked}
+
+
+def _lineage(diagram: dict[str, Any], chunk: dict[str, Any]) -> str:
+    """The task key a chunk is dispatched under; re-dispatches add -2, -3..."""
+    return f"DG-{diagram['diagram_key']}-{chunk['chunk_key']}"[:128]
+
+
+async def _lineage_tasks(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
+                         chunk: dict[str, Any]) -> list[dict[str, Any]]:
+    lineage = _lineage(diagram, chunk)
+    rows = (await session.execute(text(
+        "SELECT task_key, status::text AS status, updated_at FROM collab_tasks "
+        "WHERE workspace_id = :ws AND (task_key = :k OR task_key ~ :pattern) "
+        "ORDER BY updated_at DESC"),
+        {"ws": principal.workspace.id, "k": lineage,
+         "pattern": "^" + re.escape(lineage) + r"-[0-9]+$"})).mappings().all()
+    return [dict(row) for row in rows]
+
+
+async def repoint(session: AsyncSession, principal: Principal, key: str, chunk_key: str,
+                  body: dict[str, Any]) -> dict[str, Any]:
+    """M-08: point a chunk at the board task that actually did its work, e.g. after a
+    duplicate dispatch was withdrawn. Only a task of the chunk's own lineage, and a
+    DONE one for a merged chunk."""
+    if not _may_steer(principal):
+        raise Forbidden("people, super admins and planners re-point a chunk")
+    task_key = str(body.get("task_key") or "").strip()
+    if not task_key:
+        raise ApiError(422, "validation_error", "task_key is required")
+    diagram, chunk, _ = await _chunk_with_task(session, principal, key, chunk_key)
+    lineage = {row["task_key"]: row for row in
+               await _lineage_tasks(session, principal, diagram, chunk)}
+    if task_key not in lineage:
+        raise ApiError(422, "not_chunk_lineage", f"'{task_key}' is not a task of chunk "
+                       f"'{chunk_key}'", details={"lineage": sorted(lineage)})
+    if chunk["state"] == "merged" and lineage[task_key]["status"] != "DONE":
+        raise ApiError(409, "task_not_done", "a merged chunk points at a DONE task",
+                       details={"status": lineage[task_key]["status"]})
+    previous = chunk["task_key"]
+    await session.execute(text(
+        "UPDATE diagram_chunks SET task_key = :t, updated_at = NOW() WHERE id = :id"),
+        {"t": task_key, "id": chunk["id"]})
+    await _event(session, principal, diagram, "CHUNK_REPOINTED", chunk_key=chunk_key,
+                 task_key=task_key, previous=previous, note=body.get("note"))
+    await session.commit()
+    return {"chunk_key": chunk_key, "task_key": task_key, "previous": previous}
 
 
 async def _release_waiting(session: AsyncSession, principal: Principal,
@@ -1632,6 +1685,22 @@ async def _change(session: AsyncSession, diagram: dict[str, Any], change_key: st
     return dict(row)
 
 
+async def _mismatch_fix(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
+                        chunk: dict[str, Any]) -> dict[str, Any]:
+    """How to clear a board mismatch: re-point to the lineage task that did the work."""
+    done = [row["task_key"] for row in await _lineage_tasks(session, principal, diagram, chunk)
+            if row["status"] == "DONE" and row["task_key"] != chunk["task_key"]]
+    call = (f'diagram(action="repoint", diagram_key="{diagram["diagram_key"]}", '
+            f'chunk_key="{chunk["chunk_key"]}", args={{"task_key": "<task_key>"}})')
+    if done:
+        return {"action": "repoint", "task_key": done[0],
+                "text": f"{done[0]} is DONE for this chunk: re-point the chunk to it.",
+                "call": call.replace("<task_key>", done[0])}
+    return {"action": "repoint", "task_key": None,
+            "text": "No DONE task of this chunk's lineage: re-dispatch it, or re-point it "
+                    "once its work is DONE.", "call": call}
+
+
 def _public_submission(submission: dict[str, Any] | None) -> dict[str, Any] | None:
     if not submission:
         return None
@@ -1670,12 +1739,15 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
                 chunk = {**chunk, "block_reason": reason}
         task = tasks.get(chunk["task_key"]) if chunk["task_key"] else None
         status = status_of(chunk, task)
+        problem = None
         if chunk["task_key"] and task is None:
+            problem = "the dispatched task is gone from the board"
+        elif status == "merged" and task and task["status"] in ("FAILED", "CANCELLED"):
+            problem = f"merged, but its task is {task['status']}"
+        if problem:
             mismatches.append({"chunk_key": chunk["chunk_key"], "task_key": chunk["task_key"],
-                               "problem": "the dispatched task is gone from the board"})
-        if status == "merged" and task and task["status"] in ("FAILED", "CANCELLED"):
-            mismatches.append({"chunk_key": chunk["chunk_key"], "task_key": chunk["task_key"],
-                               "problem": f"merged, but its task is {task['status']}"})
+                               "problem": problem,
+                               "fix": await _mismatch_fix(session, principal, diagram, chunk)})
         if status != "retired":
             distribution[status] = distribution.get(status, 0) + 1
         if status in ("blocked", "blocked_by_spec"):
