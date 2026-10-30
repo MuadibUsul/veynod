@@ -890,6 +890,40 @@ async def test_confirm_names_manual_and_unchecked_criteria(client):
         ("DC-1", "AUTO"), ("DC-2", "MANUAL")]
 
 
+async def test_chunk_tasks_are_found_by_diagram_and_say_how_they_finish(client):
+    """DX-8: ?diagram_key= lists one diagram's chunk tasks; each carries next_steps
+    with the calls, and a chunk with no commands is told it has no CI step."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    executor = await _agent(client, ws)
+    first, _ = await _frozen(client, ws, architect, [
+        _chunk("design", layer="interface", allowed_write_paths=["design.html"]),
+        _chunk("api", layer="interface", commands={"test": "pytest -q"})])
+    other, _ = await _frozen(client, ws, architect, [_chunk("x", layer="interface")])
+    made = {}
+    for key, chunk_key in ((first, "design"), (first, "api"), (other, "x")):
+        made[chunk_key] = (await client.post(f"/v1/diagrams/{key}/chunks/{chunk_key}/dispatch",
+                                             headers=architect["headers"])).json()["task_key"]
+    listed = (await client.get("/v1/tasks", headers=executor["headers"],
+                               params={"diagram_key": first, "claimable_by_me": "true"})).json()
+    assert sorted(item["task_key"] for item in listed["items"]) == sorted(
+        [made["design"], made["api"]])
+
+    design = (await client.get(f"/v1/tasks/{made['design']}", headers=ws["key"])).json()
+    steps = design["input_context"]["next_steps"]
+    assert f'diagram(action="submit", diagram_key="{first}", chunk_key="design"' in steps[1]
+    assert "design.html" in steps[1]
+    assert steps[2].startswith("3. CI: none")
+    api = (await client.get(f"/v1/tasks/{made['api']}", headers=ws["key"])).json()
+    assert api["input_context"]["next_steps"][2] == "3. CI: someone else runs test: pytest -q."
+
+    import inspect
+
+    from app.mcp_server import server as mcp_server
+
+    assert "diagram_key" in inspect.signature(mcp_server.list_tasks).parameters
+
+
 async def test_serial_merge_queue(client):
     """A-11 / A-14: approval queues; the controller verifies the head; one at a time."""
     ws = await _workspace(client)

@@ -9602,6 +9602,13 @@
          "type": "string | null"
         },
         {
+         "description": "the chunk tasks of this diagram",
+         "in": "query",
+         "name": "diagram_key",
+         "required": false,
+         "type": "string | null"
+        },
+        {
          "description": "summary: short task cards (the MCP default)",
          "in": "query",
          "name": "detail",

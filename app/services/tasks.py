@@ -531,6 +531,7 @@ async def list_tasks(
     kind: str | None = None,
     claimable_by_me: bool = False,
     task_keys: list[str] | None = None,
+    diagram_key: str | None = None,
 ) -> TaskListResponse:
     require_permission(principal, "task:read")
     query = select(CollabTask).where(
@@ -552,6 +553,9 @@ async def list_tasks(
         query = query.where(CollabTask.parent_task_id == parent_task.id)
     if kind:
         query = query.where(CollabTask.kind == kind)
+    if diagram_key:
+        # A diagram's chunk tasks, however many times a chunk was dispatched.
+        query = query.where(CollabTask.input_context["diagram"]["key"].astext == diagram_key)
     if claimable_by_me:
         query = query.where(*await claimable_conditions(session, principal))
     if statuses:

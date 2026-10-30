@@ -1341,10 +1341,12 @@ async def list_tasks(
     task_key: Annotated[str | None, Field(max_length=2_000)] = None,
     limit: Annotated[int, Field(ge=1, le=500)] = 50,
     detail: Literal["summary", "standard", "full"] = "summary",
+    diagram_key: Annotated[str | None, Field(max_length=64)] = None,
 ) -> dict[str, Any]:
     """List tasks. claimable_by_me=true: what you may claim now (role, assignee,
     capabilities); assignee="me": tasks assigned to you; parent: a task's children;
-    task_key: comma-separated task keys or ids. status is a comma-separated list.
+    task_key: comma-separated task keys or ids; diagram_key: that diagram's chunk
+    tasks (combine with claimable_by_me). status is a comma-separated list.
     This mirrors REST GET /v1/tasks.
     detail=summary (default): key, title, status, priority, namespace, version,
     updated_at, role and holder; standard/full: every field.
@@ -1363,6 +1365,7 @@ async def list_tasks(
                 # so task_key used to return the whole board here too.
                 task_keys=[item.strip() for item in (task_key or "").split(",")
                            if item.strip()],
+                diagram_key=diagram_key,
             )
         except ApiError as exc:
             raise _api_error(exc) from exc

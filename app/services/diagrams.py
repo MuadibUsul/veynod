@@ -736,6 +736,7 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
             "escalation": upgrade,
             "submit_with": f"POST /v1/diagrams/{diagram['diagram_key']}/chunks/"
                            f"{chunk['chunk_key']}/submit",
+            "next_steps": _next_steps(diagram, chunk),
         },
     )
     task = await _create_task_core(session, principal, request, agent=_me(principal),
@@ -756,6 +757,30 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
                          "diagram document"],
     }
     return task.task_key, context_slice
+
+
+def _next_steps(diagram: dict[str, Any], chunk: dict[str, Any]) -> list[str]:
+    """How a chunk finishes, in order, with the calls (the task and the chunk each
+    have a lifecycle; this is the one path through both)."""
+    key, chunk_key = diagram["diagram_key"], chunk["chunk_key"]
+    base = f"/v1/diagrams/{key}/chunks/{chunk_key}"
+    commands = ", ".join(f"{stage}: {cmd}" for stage, cmd in (chunk["commands"] or {}).items()
+                         if cmd)
+    return [
+        "1. Claim this task; delivered upstream documents arrive in its context.",
+        f'2. Submit: diagram(action="submit", diagram_key="{key}", chunk_key="{chunk_key}", '
+        'args={"files": [{"path", "content"}] or paths with "commit", "self_check": '
+        f'[{{"cmd", "exit_code", "output"}}]}}) (REST POST {base}/submit). Only '
+        f"{', '.join(chunk['allowed_write_paths']) or 'the allowed paths'} may change.",
+        f"3. CI: someone else runs {commands}." if _needs_ci(chunk)
+        else "3. CI: none, this chunk names no commands; the submission goes to review.",
+        '4. Review and gate: someone else (diagram action="review"); a rejection names the '
+        "pane that disagrees and comes back to you.",
+        '5. Merge: someone else (diagram action="merge"); it unblocks the chunks after this '
+        "one and hands them what you delivered.",
+        '6. After submitting, hand this task off: agent_handoff_task(next_status="REVIEWING", '
+        "brief=...).",
+    ]
 
 
 # ------------------------------------------------------------------ gate and merge
