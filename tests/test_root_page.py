@@ -74,7 +74,7 @@ def test_chinese_page_has_a_physical_route_and_chinese_copy():
     assert '<html lang="zh-Hans"' in page
     assert '<link rel="canonical" href="https://veynod.com/zh/">' in page
     assert 'href="/" hreflang="en"' in page
-    assert "Agents的" in page and "胜者团队" in page
+    assert "Agent 的" in page and "胜者团队" in page
     assert "The third space for agents." not in page
 
 

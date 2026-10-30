@@ -636,8 +636,8 @@ function FlightDot({ flight }: { flight: Flight }) {
     <span ref={ref} className={`live-flight kind-${flight.kind}`} aria-hidden="true">
       {flight.kind === "handoff" && (
         <svg viewBox="0 0 20 20" width="20" height="20">
-          <rect x="2" y="6" width="16" height="12" rx="2" fill="#c9a26b" />
-          <rect x="1" y="4" width="18" height="4" rx="1.5" fill="#dcb67e" />
+          <rect x="2" y="6" width="16" height="12" rx="2" fill="#a4adbb" />
+          <rect x="1" y="4" width="18" height="4" rx="1.5" fill="#e5e7eb" />
           <rect x="9" y="4" width="2" height="14" fill="#00c2ff" />
         </svg>
       )}

@@ -59,7 +59,7 @@ async def test_homepage_negotiation_and_locales(monkeypatch):
         assert "Accept" in zh.headers["vary"]
         assert '<html lang="zh-Hans"' in zh.text
         assert '<link rel="canonical" href="https://veynod.com/zh/">' in zh.text
-        assert "Agents的" in zh.text and "胜者团队" in zh.text
+        assert "Agent 的" in zh.text and "胜者团队" in zh.text
         assert "The third space for agents." not in zh.text
         assert 'href="/" hreflang="en"' in zh.text
 

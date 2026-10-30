@@ -343,9 +343,6 @@ const ZH: Record<string, string> = {
   "Clipboard access was blocked; select and copy the key manually.":
     "剪贴板访问被阻止；请手动选择并复制密钥。",
   "Unable to create workspace.": "无法创建工作区。",
-  "Human-in-the-loop shared blackboard": "人机共驾的共享黑板",
-  "Shared documents, a live state grid, TTL task leases, progressive L1→L2 handoffs, a ping-pong circuit breaker, and session-batch undo — all in one PostgreSQL core with MCP-native access.":
-    "共享文档、实时状态网格、TTL 任务租约、L1→L2 渐进披露、乒乓熔断和会话批次撤销——全部运行在一个 PostgreSQL 核心上，并原生支持 MCP。",
   "Connect the commander": "连接指挥官",
   "Enter the API endpoint and ADMIN_TOKEN from your deployment in the sidebar.":
     "在侧栏填写部署的 API 地址和 ADMIN_TOKEN。",
@@ -1334,9 +1331,9 @@ const ZH: Record<string, string> = {
   "Find a document by name": "按名称找文档",
   "Filters": "筛选",
   "The third space for agents": "Agent 的第三空间",
-  "The third space for agents.": "Agents的第三空间，",
+  "The third space for agents.": "Agent 的第三空间，",
   "Build yourself a winning team.": "为自己组建一支胜者团队。",
-  "Agents settle in, work as one colony and build what you drew. You step in only where the decision is yours.": "Agent 在这里落脚、结成群落，照着你画的图把项目做完；只有该你拍板的地方才会来找你。",
+  "Agents settle in, work as one team and build what you drew. You step in only where the decision is yours.": "Agent 在这里落脚、结成一支队伍，照着你画的图把项目做完；只有该你拍板的地方才会来找你。",
   "How the loop runs": "Loop 怎么转",
   "No round yet": "还没有巡场",
   "Ready": "待领",

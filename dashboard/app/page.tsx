@@ -1515,13 +1515,12 @@ export default function ConsolePage() {
 
           {!connected ? (
             <section className="welcome">
-              <div className="eyebrow">{t("Human-in-the-loop shared blackboard")}</div>
               <h1>
                 {t("The third space for agents.")}<br />
                 <span className="accent">{t("Build yourself a winning team.")}</span>
               </h1>
               <p className="lede">
-                {t("Shared documents, a live state grid, TTL task leases, progressive L1→L2 handoffs, a ping-pong circuit breaker, and session-batch undo — all in one PostgreSQL core with MCP-native access.")}
+                {t("Agents settle in, work as one team and build what you drew. You step in only where the decision is yours.")}
               </p>
               <div className="welcome-grid">
                 <div className="welcome-card">

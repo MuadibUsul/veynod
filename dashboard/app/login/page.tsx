@@ -258,7 +258,7 @@ export default function LoginPage() {
             <span className="auth-gradient">{t("Build yourself a winning team.")}</span>
           </h1>
           <p className="auth-lede">
-            {t("Agents settle in, work as one colony and build what you drew. You step in only where the decision is yours.")}
+            {t("Agents settle in, work as one team and build what you drew. You step in only where the decision is yours.")}
           </p>
 
           <div className="auth-board" aria-hidden>
