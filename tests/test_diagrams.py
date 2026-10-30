@@ -457,6 +457,70 @@ async def test_merge_needs_a_record_and_a_chunk_can_be_repointed(client):
     assert shown["board_consistency"]["ok"] is True
 
 
+async def test_downstream_claims_carry_what_interface_chunks_delivered(client):
+    """DX-1: a merged interface chunk hands its delivered documents (pinned) and files
+    to the chunks after it; an implementation chunk hands over nothing (M-16)."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    executor = await _agent(client, ws)
+    reviewer = await _agent(client, ws, "AUDITOR")
+    suffix = uuid.uuid4().hex[:6]
+    contract_doc, core_doc = f"artifact/api-{suffix}/contract", f"artifact/core-{suffix}/notes"
+    for doc_key, content in ((contract_doc, "tokens: --color-accent"), (core_doc, "core code")):
+        stored = await client.put(f"/v1/documents/{doc_key}", headers=ws["key"],
+                                  json={"content": content, "expected_version": 0})
+        assert stored.status_code in (200, 201), stored.text
+    key, _ = await _frozen(client, ws, architect, [
+        _chunk("api", layer="interface"), _chunk("core", deps=["api"]),
+        _chunk("ui", deps=["core"])])
+    api = (await client.post(f"/v1/diagrams/{key}/chunks/api/dispatch",
+                             headers=architect["headers"])).json()
+    for later in ("core", "ui"):
+        await client.post(f"/v1/diagrams/{key}/chunks/{later}/dispatch",
+                          headers=architect["headers"])
+    await _deliver(client, executor, api["task_key"])
+    await client.post(f"/v1/diagrams/{key}/chunks/api/gate", headers=reviewer["headers"],
+                      json={"result": "pass"})
+    merged = await client.post(f"/v1/diagrams/{key}/chunks/api/merge", headers=ws["person"], json={
+        "artifact": "commit api1",
+        "deliverables": {"docs": [f"doc://{contract_doc}", "doc://artifact/none/missing"],
+                         "files": [{"path": "src/api.py", "sha256": "ab" * 32}]}})
+    assert merged.status_code == 200, merged.text
+    delivered = merged.json()["merge"]["delivered"]
+    assert delivered["files"] == [{"path": "src/api.py", "sha256": "ab" * 32}]
+    assert delivered["docs"][0]["doc_key"] == contract_doc and delivered["docs"][0]["version"] == 1
+    assert delivered["docs"][1] == {"uri": "doc://artifact/none/missing", "missing": True}
+    [core] = merged.json()["unblocked"]
+
+    # The contract changes after the merge: the downstream claim still reads what was merged.
+    await client.put(f"/v1/documents/{contract_doc}", headers=ws["key"],
+                     json={"content": "tokens: changed later", "expected_version": 1})
+    task = (await client.get(f"/v1/tasks/{core['task_key']}", headers=ws["key"])).json()
+    assert task["input_context"]["upstream_interfaces"]["api"]["docs"] == [f"doc://{contract_doc}"]
+    assert task["input_context"]["upstream_interfaces"]["api"]["files"] == delivered["files"]
+    claimed = await client.post(f"/v1/tasks/{core['task_key']}/claim", headers=executor["headers"],
+                                json={})
+    assert claimed.status_code == 200, claimed.text
+    [context] = [item for item in claimed.json()["context"] if not item.get("is_continuation")]
+    assert context["doc_ref"]["doc_key"] == contract_doc and context["version"] == 1
+    assert context["content"] == "tokens: --color-accent"
+
+    # core is implementation: its deliverables never reach ui (M-16).
+    handed = await client.post(f"/v1/tasks/{core['task_key']}/handoff", headers=executor["headers"],
+                               json={"next_status": "REVIEWING", "brief": BRIEF,
+                                     "lease_epoch": claimed.json()["task"]["lease_epoch"]})
+    assert handed.status_code == 200, handed.text
+    await client.post(f"/v1/diagrams/{key}/chunks/core/gate", headers=reviewer["headers"],
+                      json={"result": "pass"})
+    merged = await client.post(f"/v1/diagrams/{key}/chunks/core/merge", headers=ws["person"],
+                               json={"artifact": f"doc://{core_doc}"})
+    assert merged.status_code == 200, merged.text
+    [ui] = merged.json()["unblocked"]
+    task = (await client.get(f"/v1/tasks/{ui['task_key']}", headers=ws["key"])).json()
+    assert "docs" not in task["input_context"]["upstream_interfaces"]["core"]
+    assert task["context_docs"] == []
+
+
 async def test_context_slice_write_scope_and_file_locks(client):
     """A-09."""
     ws = await _workspace(client)

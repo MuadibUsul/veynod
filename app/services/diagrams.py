@@ -38,7 +38,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import Principal, can
+from app.auth import Principal, can, ensure_namespace
 from app.errors import ApiError, Forbidden, NotFound
 from app.services.common import append_event
 
@@ -612,12 +612,36 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
     description with its acceptance, its direct upstream interfaces, and its
     write scope. No diagram document, no repository, no upstream implementation,
     no other chunk; what was injected and from where is kept on the chunk."""
-    from app.schemas import AcceptanceItem, TaskCreateRequest
+    from app.schemas import AcceptanceItem, DocRef, TaskCreateRequest
     from app.services.tasks import _create_task_core
 
-    upstream = {dep: {"icd": chunks[dep]["icd"], "layer": chunks[dep]["layer"],
-                      "read_only_interfaces": chunks[dep]["read_only_interfaces"]}
-                for dep in chunk["depends_on"] if dep in chunks}
+    upstream: dict[str, dict[str, Any]] = {}
+    context_docs: list[DocRef] = []
+    unreadable: list[str] = []
+    for dep in chunk["depends_on"]:
+        if dep not in chunks:
+            continue
+        up = chunks[dep]
+        upstream[dep] = {"icd": up["icd"], "layer": up["layer"],
+                         "read_only_interfaces": up["read_only_interfaces"]}
+        delivered = (up.get("merge") or {}).get("delivered") or {}
+        if up["layer"] != "interface" or not delivered:
+            continue  # M-16: an implementation upstream hands over its contract only
+        # An interface chunk's deliverables are the interface: hand them over, pinned.
+        upstream[dep]["files"] = delivered.get("files") or []
+        upstream[dep]["docs"] = []
+        for doc in delivered.get("docs") or []:
+            if doc.get("missing"):
+                continue
+            try:
+                ensure_namespace(principal, doc["namespace"])
+            except ApiError:
+                unreadable.append(doc["uri"])
+                continue
+            upstream[dep]["docs"].append(doc["uri"])
+            if len(context_docs) < 20:
+                context_docs.append(DocRef(namespace=doc["namespace"], doc_key=doc["doc_key"],
+                                           version=doc["version"]))
     task_key = f"DG-{diagram['diagram_key']}-{chunk['chunk_key']}"[:128]
     taken = await session.scalar(text(
         "SELECT count(*) FROM collab_tasks WHERE workspace_id = :ws AND task_key LIKE :k"),
@@ -641,6 +665,8 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
                     for index, criterion in enumerate(chunk["done_criteria"][:50])],
         done_definition="All done criteria pass, the gate passes, and someone other than "
                         "the implementer merges (spec M-09/M-10).",
+        context_docs=context_docs,
+        allow_missing_context=True,
         input_context={
             "diagram": {"key": diagram["diagram_key"], "version": diagram["version"],
                         "baseline": (diagram.get("baseline") or {}).get("version")},
@@ -663,8 +689,12 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
         "description_and_acceptance": {"source": f"chunk {chunk['chunk_key']}",
                                        "acceptance": len(chunk["done_criteria"])},
         "upstream_interfaces": {dep: {"source": f"chunk {dep} at baseline {baseline}",
-                                      "files": upstream[dep]["read_only_interfaces"]}
+                                      "files": [*upstream[dep]["read_only_interfaces"],
+                                                *(item["path"] for item in
+                                                  upstream[dep].get("files") or [])],
+                                      "docs": upstream[dep].get("docs") or []}
                                 for dep in upstream},
+        "unreadable_upstream_docs": unreadable,
         "write_scope": chunk["allowed_write_paths"],
         "not_injected": ["repository", "upstream implementation", "other chunks",
                          "diagram document"],
@@ -1298,19 +1328,62 @@ async def merge(session: AsyncSession, principal: Principal, key: str, chunk_key
                        "accepted submission", details={"chunk_key": chunk_key})
     record = {"by": me, "at": _now().isoformat(), "artifact": artifact,
               "note": body.get("note"), "task_status": task["status"] if task else None,
-              "via_queue": status == "verified"}
+              "via_queue": status == "verified",
+              "delivered": await _delivered(session, principal, body, submission, artifact)}
     await session.execute(text(
         "UPDATE diagram_chunks SET state = 'merged', merge = CAST(:m AS jsonb), "
         "block_reason = NULL, queued_at = NULL, updated_at = NOW() WHERE id = :id"),
         {"m": json.dumps(record), "id": chunk["id"]})
     await _event(session, principal, diagram, "CHUNK_MERGED", chunk_key=chunk_key,
                  task_key=chunk["task_key"], merged_by=me, artifact=body.get("artifact"),
+                 delivered_docs=[doc["uri"] for doc in record["delivered"]["docs"]],
                  targets=diagram.get("watchers") or [])
     unblocked = await _release_waiting(session, principal, diagram,
                                        trigger={"upstream": chunk_key,
                                                 "merge_commit": record["artifact"]})
     await session.commit()
     return {"chunk_key": chunk_key, "state": "merged", "merge": record, "unblocked": unblocked}
+
+
+def _doc_key(uri: Any) -> str | None:
+    value = str(uri or "").strip()
+    return value[len("doc://"):].strip("/") or None if value.startswith("doc://") else None
+
+
+async def _delivered(session: AsyncSession, principal: Principal, body: dict[str, Any],
+                     submission: dict[str, Any], artifact: Any) -> dict[str, Any]:
+    """What a merged chunk hands the chunks after it: its documents, resolved and
+    pinned to their version now, and its files (the accepted submission's and any
+    listed in deliverables)."""
+    from app.services.collab import resolve_ref
+
+    given = body.get("deliverables") or {}
+    uris = [*(given.get("docs") or []), artifact, *(submission.get("docs") or [])]
+    docs, seen = [], set()
+    for uri in uris:
+        key = _doc_key(uri)
+        if not key or key in seen or len(docs) >= 20:
+            continue
+        seen.add(key)
+        document = await resolve_ref(session, principal.workspace.id, {"doc_key": key})
+        if document is None:
+            docs.append({"uri": f"doc://{key}", "missing": True})
+            continue
+        docs.append({"uri": f"doc://{document.doc_key}", "namespace": document.namespace,
+                     "doc_key": document.doc_key, "version": document.version,
+                     "content_hash": document.content_hash})
+    files: dict[str, dict[str, Any]] = {}
+    listed = [*(submission.get("files") or [] if submission.get("accepted") else []),
+              *(given.get("files") or [])]
+    for item in listed:
+        path = str((item.get("path") if isinstance(item, dict) else item) or "").strip()
+        digest = item.get("sha256") if isinstance(item, dict) else None
+        if path and len(files) < 200:
+            files[path] = {"path": path, "sha256": digest or files.get(path, {}).get("sha256")}
+    for item in submission.get("hashes") or []:  # recorded by submit when it stores contents
+        if item.get("path") in files and not files[item["path"]]["sha256"]:
+            files[item["path"]]["sha256"] = item.get("sha256")
+    return {"docs": docs, "files": list(files.values())}
 
 
 def _lineage(diagram: dict[str, Any], chunk: dict[str, Any]) -> str:
