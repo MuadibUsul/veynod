@@ -34,7 +34,7 @@ import { dirname, join, posix } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-export const VERSION = "0.4.0";
+export const VERSION = "0.5.0";
 const SEAL_INFO = Buffer.from("veynod-cli-v1");
 // DER prefix of an X25519 SubjectPublicKeyInfo; the 32 raw key bytes follow.
 const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
