@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useI18n } from "../i18n";
 import { MarkdownContent } from "./markdown";
@@ -16,7 +16,9 @@ import { pretty, relativeTime } from "../types";
 import {
   Empty,
   IconCheck,
+  IconChevron,
   IconDocuments,
+  IconLayers,
   IconLock,
   IconPlus,
   IconUnlock,
@@ -24,6 +26,8 @@ import {
   Modal,
   Spinner,
 } from "./ui";
+
+const RECENT_MS = 24 * 60 * 60 * 1000;
 
 function verificationTone(status: string): string {
   if (status === "VERIFIED") return "mint";
@@ -160,6 +164,49 @@ export function DocumentsView({
     }
     return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [visible]);
+
+  // The library opens on what just arrived; each section is a page of its own,
+  // so a hundred documents never sit open at once.
+  const recent = useMemo(() => {
+    const since = Date.now() - RECENT_MS;
+    return visible
+      .filter((doc) => new Date(doc.updated_at).getTime() >= since)
+      .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  }, [visible]);
+  const sections = useMemo(() => {
+    const counts: Record<string, number> =
+      review === "all" && Object.keys(namespaceCounts).length > 0
+        ? { ...namespaceCounts }
+        : Object.fromEntries(grouped.map(([namespace, docs]) => [namespace, docs.length]));
+    return Object.entries(counts).sort(([a], [b]) => a.localeCompare(b));
+  }, [grouped, namespaceCounts, review]);
+  const searching = query.trim().length > 0;
+  const listRef = useRef<HTMLElement>(null);
+  const openSection = (namespace: string) => {
+    onFiltersChange({ ...filters, namespace });
+    listRef.current?.scrollTo({ top: 0 });
+  };
+  const renderDoc = (doc: DocumentSummary, fresh = false) => (
+    <button
+      key={doc.id}
+      type="button"
+      className={`doc-item ${selected?.doc_key === doc.doc_key ? "active" : ""}`}
+      onClick={() => onSelect(doc.doc_key)}
+    >
+      <span className="doc-item-icon">
+        <IconDocuments size={15} />
+      </span>
+      <span className="doc-item-main">
+        <span className="doc-item-title" title={doc.title}>{doc.title}</span>
+        <span className="doc-item-key" title={doc.doc_key}>{doc.doc_key}</span>
+      </span>
+      <span className="doc-item-side">
+        {doc.tainted && <span className="taint-dot" title={t("Tainted provenance")} />}
+        {doc.locked_by_human && <IconLock size={12} />}
+        <span>{fresh ? relativeTime(doc.updated_at) : `v${doc.version}`}</span>
+      </span>
+    </button>
+  );
 
   async function save() {
     if (!selected) return;
@@ -357,7 +404,7 @@ export function DocumentsView({
 
   return (
     <div className="documents-layout">
-      <aside className="doc-list card">
+      <aside className="doc-list card" ref={listRef}>
         <div className="card-head compact">
           <div>
             <h2>{t("Library")}</h2>
@@ -496,35 +543,60 @@ export function DocumentsView({
             }
           />
         ) : (
-          grouped.map(([namespace, docs]) => (
-            <div key={namespace} className="doc-group">
-              <div className="doc-group-label">
-                <span>{namespace}</span>
-                <span>{review === "all" ? (namespaceCounts[namespace] ?? docs.length) : docs.length}</span>
+          searching ? (
+            grouped.map(([namespace, docs]) => (
+              <div key={namespace} className="doc-group">
+                <div className="doc-group-label">
+                  <span>{namespace}</span>
+                  <span>{docs.length}</span>
+                </div>
+                {docs.map((doc) => renderDoc(doc))}
               </div>
-              {docs.map((doc) => (
-                <button
-                  key={doc.id}
-                  type="button"
-                  className={`doc-item ${selected?.doc_key === doc.doc_key ? "active" : ""}`}
-                  onClick={() => onSelect(doc.doc_key)}
-                >
-                  <span className="doc-item-icon">
-                    <IconDocuments size={15} />
-                  </span>
-                  <span className="doc-item-main">
-                    <span className="doc-item-title" title={doc.title}>{doc.title}</span>
-                    <span className="doc-item-key" title={doc.doc_key}>{doc.doc_key}</span>
-                  </span>
-                  <span className="doc-item-side">
-                    {doc.tainted && <span className="taint-dot" title={t("Tainted provenance")} />}
-                    {doc.locked_by_human && <IconLock size={12} />}
-                    <span>v{doc.version}</span>
-                  </span>
-                </button>
-              ))}
+            ))
+          ) : filters.namespace ? (
+            <div className="doc-group">
+              <button type="button" className="doc-back" onClick={() => openSection("")}>
+                <span className="doc-back-arrow"><IconChevron size={14} /></span> {t("All sections")}
+              </button>
+              <div className="doc-group-label">
+                <span>{filters.namespace}</span>
+                <span>{namespaceCounts[filters.namespace] ?? visible.length}</span>
+              </div>
+              {visible.length === 0 ? (
+                <p className="doc-note">{t("Nothing in this section matches.")}</p>
+              ) : visible.map((doc) => renderDoc(doc))}
             </div>
-          ))
+          ) : (
+            <>
+              <div className="doc-group">
+                <div className="doc-group-label">
+                  <span>{t("Sections")}</span>
+                  <span>{sections.length}</span>
+                </div>
+                {sections.map(([namespace, count]) => (
+                  <button key={namespace} type="button" className="doc-item doc-section" onClick={() => openSection(namespace)}>
+                    <span className="doc-item-icon"><IconLayers size={15} /></span>
+                    <span className="doc-item-main">
+                      <span className="doc-item-title">{namespace}</span>
+                    </span>
+                    <span className="doc-item-side">
+                      <span>{count}</span>
+                      <IconChevron size={14} />
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <div className="doc-group">
+                <div className="doc-group-label">
+                  <span>{t("Recent")} · {t("last 24 hours")}</span>
+                  <span>{recent.length}</span>
+                </div>
+                {recent.length === 0 ? (
+                  <p className="doc-note">{t("Nothing stored in the last 24 hours.")}</p>
+                ) : recent.map((doc) => renderDoc(doc, true))}
+              </div>
+            </>
+          )
         )}
         <div className="list-footer">
           <span className="muted">

@@ -19,7 +19,7 @@ import { BudgetCircuits } from "./circuits";
 import { ProposalDiff } from "./proposal-diff";
 import { Empty, IconCheck, IconClose, IconPulse, Modal, Spinner } from "./ui";
 
-type Section = "proposals" | "policies" | "operations" | "access";
+export type GovernanceSection = "proposals" | "policies" | "operations" | "access";
 
 function statusTone(status: string): string {
   if (status === "APPLIED" || status === "SUCCEEDED" || status === "ACTIVE") return "mint";
@@ -29,6 +29,7 @@ function statusTone(status: string): string {
 }
 
 export function GovernanceView({
+  section,
   workspaceId,
   proposals,
   policies,
@@ -41,6 +42,7 @@ export function GovernanceView({
   onRefresh,
   notify,
 }: {
+  section: GovernanceSection;
   workspaceId: string;
   proposals: Proposal[];
   policies: PathPolicy[];
@@ -54,7 +56,6 @@ export function GovernanceView({
   notify: (message: string) => void;
 }) {
   const { t } = useI18n();
-  const [section, setSection] = useState<Section>("proposals");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reviewNote, setReviewNote] = useState("");
@@ -354,22 +355,10 @@ export function GovernanceView({
   }
   const broken = indexHealth ? indexHealth.repairable + indexHealth.failed_jobs : 0;
 
-  const sections: Array<{ id: Section; label: string; count?: number }> = [
-    { id: "proposals", label: t("Proposals"), count: pending.length },
-    { id: "policies", label: t("Policies"), count: policies.length },
-    { id: "operations", label: t("Operations"), count: webhooks.length + actions.length },
-    { id: "access", label: t("Access & budget"), count: users.length },
-  ];
-
   return (
     <section className="governance">
-      <div className="section-head">
-        <div>
-          <h2 className="section-title">{t("Governance")}</h2>
-          <p className="section-sub">
-            {t("Review proposals, gate write paths, sign webhooks, approve outbound actions and keep budgets observable.")}
-          </p>
-        </div>
+      {section === "operations" && (
+      <div className="section-head index-head">
         <div className="index-actions">
           <button
             type="button"
@@ -391,6 +380,7 @@ export function GovernanceView({
           )}
         </div>
       </div>
+      )}
 
       {error && (
         <div className="inline-error" role="alert">
@@ -400,22 +390,6 @@ export function GovernanceView({
           </button>
         </div>
       )}
-
-      <div className="governance-tabs" role="tablist" aria-label={t("Governance sections")}>
-        {sections.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            role="tab"
-            aria-selected={section === item.id}
-            className={`governance-tab ${section === item.id ? "active" : ""}`}
-            onClick={() => setSection(item.id)}
-          >
-            {item.label}
-            {typeof item.count === "number" && <span className="tab-count">{item.count}</span>}
-          </button>
-        ))}
-      </div>
 
       {section === "proposals" && (
         <div className="governance-panel">

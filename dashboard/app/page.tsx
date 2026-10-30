@@ -9,7 +9,7 @@ import { Blackboard } from "./components/blackboard";
 import { DiagramView } from "./components/diagram-view";
 import { LoopView } from "./components/loop-view";
 import { DocumentsView } from "./components/documents";
-import { GovernanceView } from "./components/governance";
+import { GovernanceView, type GovernanceSection } from "./components/governance";
 import { AgentConnect, GettingStarted, type OnboardingStepId } from "./components/onboarding";
 import { SupportAccessCard } from "./components/support-access";
 import { UpgradeCard } from "./components/upgrade";
@@ -138,11 +138,21 @@ type Tab =
   | "documents"
   | "agents"
   | "governance"
+  | "policies"
+  | "operations"
+  | "access"
   | "audit";
 // Four places: the diagram, the Loop (with its tasks, agents and situation),
 // the documents, and settings and records. Nothing else sits at the top.
+// Settings is one flat row: governance's four parts sit beside slots and history.
 const LOOP_SECTIONS: Tab[] = ["loop", "tasks", "agents", "situation"];
-const SETTINGS_SECTIONS: Tab[] = ["governance", "blackboard", "audit"];
+const SETTINGS_SECTIONS: Tab[] = ["governance", "policies", "operations", "access", "blackboard", "audit"];
+const GOVERNANCE_PART: Partial<Record<Tab, GovernanceSection>> = {
+  governance: "proposals",
+  policies: "policies",
+  operations: "operations",
+  access: "access",
+};
 
 export default function ConsolePage() {
   const { t, lang } = useI18n();
@@ -1220,12 +1230,15 @@ export default function ConsolePage() {
     { id: "situation", label: t("Situation") },
   ];
   const settingsSections: Section[] = [
+    { id: "governance", label: t("Proposals"), count: pendingProposals, alert: pendingProposals },
+    { id: "policies", label: t("Policies"), count: policies.length },
     {
-      id: "governance",
-      label: t("Approvals and rules"),
-      count: pendingProposals + actions.filter((item) => item.status === "PENDING_APPROVAL").length,
-      alert: pendingProposals,
+      id: "operations",
+      label: t("Operations"),
+      count: webhooks.length + actions.length,
+      alert: actions.filter((item) => item.status === "PENDING_APPROVAL").length,
     },
+    { id: "access", label: t("Access & budget"), count: humanUsers.length },
     { id: "blackboard", label: t("State slots"), count: slots.length },
     { id: "audit", label: t("History"), count: audit.total_batches ?? audit.batches.length },
   ];
@@ -1714,11 +1727,12 @@ export default function ConsolePage() {
                       openCreateSignal={mintSignal}
                     />
                   )}
-                  {tab === "governance" && sessionMode && sessionToken && (
+                  {tab === "access" && sessionMode && sessionToken && (
                     <SupportAccessCard apiBase={apiBase} sessionToken={sessionToken} />
                   )}
-                  {tab === "governance" && (
+                  {GOVERNANCE_PART[tab] && (
                     <GovernanceView
+                      section={GOVERNANCE_PART[tab] as GovernanceSection}
                       workspaceId={selectedWorkspace.id}
                       proposals={proposals}
                       policies={policies}
