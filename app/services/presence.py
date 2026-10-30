@@ -51,7 +51,7 @@ CHECK_EVERY_SECONDS = 5
 
 _STATE_SQL = """
 SELECT d.workspace_id, d.agent_id, d.principal_id, d.display_name, d.presence_state,
-       p.seen, p.live, p.transports,
+       p.seen, p.live, p.live_push, p.transports,
        w.id AS wake_id, w.active AS wake_active, w.consecutive_failures,
        w.failing_since, w.disabled_at
 FROM agent_directory d
@@ -59,6 +59,9 @@ LEFT JOIN LATERAL (
     SELECT max(seen_at) AS seen,
            count(*) FILTER (WHERE seen_at >= :cutoff
                             OR (transport = 'api' AND seen_at >= :api_cutoff)) AS live,
+           -- A stream or a loop heartbeat: something that sees a poke without being
+           -- called. Recent API calls alone are presence, not reachability.
+           count(*) FILTER (WHERE transport <> 'api' AND seen_at >= :cutoff) AS live_push,
            array_agg(DISTINCT transport) FILTER (
                WHERE seen_at >= :cutoff
                   OR (transport = 'api' AND seen_at >= :api_cutoff)) AS transports
@@ -93,13 +96,19 @@ def describe(row: dict[str, Any]) -> dict[str, Any]:
             "failing": int(row.get("consecutive_failures") or 0) > 0,
             "dead": row.get("disabled_at") is not None,
         }
+    pushable = int(row.get("live_push") or 0) > 0
+    # Wakeable means a poke starts something now: a live stream or heartbeat, or a
+    # wake channel that works. An agent seen only through recent calls is online
+    # but sees a poke only on its next call (WAKE_AND_DISPATCH E-17).
+    wake_ok = wake is not None and wake["active"] and not wake["failing"] and not wake["dead"]
     return {
         "state": state,
         "online": state == "online",
+        "active_via_api": state == "online" and not pushable,
         "connections": int(row.get("live") or 0),
         "transport": (sorted(row.get("transports") or []) or [None])[0],
         "last_seen_at": seen.isoformat() if seen else None,
-        "wakeable": state in ("online", "offline"),
+        "wakeable": pushable or wake_ok,
         "wake": wake,
         "heartbeat_every_s": TOUCH_EVERY_SECONDS,
         "offline_after_s": int(ONLINE_WINDOW.total_seconds()),
@@ -213,9 +222,11 @@ async def list_states(session: AsyncSession, principal: Principal) -> dict[str, 
     counts = {state: sum(1 for item in items if item["state"] == state) for state in STATES}
     # Blueprint L6: every agent re-handshakes with a wake channel (target 100 %).
     with_wake = sum(1 for item in items if item["wake"] is not None)
+    wakeable = sum(1 for item in items if item["wakeable"])
     return {"items": sorted(items, key=lambda item: item["agent_id"]), "counts": counts,
             "wake_coverage": {"agents": len(items), "with_wake_channel": with_wake,
-                              "rate": _rate(with_wake, len(items))}}
+                              "rate": _rate(with_wake, len(items)),
+                              "wakeable": wakeable, "wakeable_rate": _rate(wakeable, len(items))}}
 
 
 # ------------------------------------------------------------- observability

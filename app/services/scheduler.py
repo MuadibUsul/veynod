@@ -53,6 +53,11 @@ PAST_WORK = {TaskStatus.REVIEWING, TaskStatus.HANDOFF, TaskStatus.DONE,
              TaskStatus.ESCALATED_TO_HUMAN}
 MAX_ROUNDS = 3
 FAILS_PER_HOST = 2
+# Why a host lost a work placement, when it is the host's own doing.
+COUNTED_AGAINST_HOST = {"not_claimed", "reported_failed"}
+# One scheduling pass at a time, whatever the number of server processes.
+_LOCK_SQL = "SELECT pg_try_advisory_lock(hashtext('veynod_scheduler')::bigint)"
+_UNLOCK_SQL = "SELECT pg_advisory_unlock(hashtext('veynod_scheduler')::bigint)"
 # Reasons a task has no host, most specific last, in words for the owner.
 UNPLACED = {
     "no_host_online": "No runner is online.",
@@ -224,15 +229,21 @@ async def _reconcile(session: AsyncSession, workspace_id: Any,
             counts["failed"] += 1
             continue
         problem = _host_problem(host, now)
+        if problem is None and status == "offered" and placement.get("reported") == "failed":
+            # The runner said it will not take it: a full slot is the host being busy
+            # (not its fault), anything else is a failed start.
+            problem = ("host_busy" if (placement.get("report_note") or "") == "no_free_slot"
+                       else "reported_failed")
         if problem is None and status == "offered" and now - placement["created_at"] > timedelta(
                 seconds=settings.runner_claim_timeout_seconds):
             problem = "not_claimed"
         if problem:
             await _take_back(session, task, host, problem)
-            # Not taking it in time counts against the host; an outage does not.
-            await _end(session, placement, "failed" if problem == "not_claimed" else "moved",
-                       problem)
-            counts["failed" if problem == "not_claimed" else "moved"] += 1
+            # Not taking it, or failing to start it, counts against the host; an
+            # outage or a busy host does not.
+            counted = problem in COUNTED_AGAINST_HOST
+            await _end(session, placement, "failed" if counted else "moved", problem)
+            counts["failed" if counted else "moved"] += 1
             await append_event(
                 session, workspace_id=workspace_id, agent="scheduler",
                 event_type="TASK_UNPLACED",
@@ -473,8 +484,36 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
             "unplaced": unplaced, "stopped": gave_up, **counts, **steps, "rounds": rounds}
 
 
+async def run_all_locked() -> int | None:
+    """One pass for every workspace, by one process at a time; None when another
+    process is already scheduling."""
+    async with async_session_factory() as lock:
+        if not await lock.scalar(text(_LOCK_SQL)):
+            return None
+        try:
+            return await run_all()
+        finally:
+            await lock.execute(text(_UNLOCK_SQL))
+            await lock.commit()
+
+
+async def scheduler_loop() -> None:
+    """Scheduling has its own loop: a failing step elsewhere (the lease reaper
+    runs a dozen) must never stop tasks from being placed."""
+    import asyncio
+
+    while True:
+        try:
+            await run_all_locked()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # pragma: no cover - background resilience
+            logger.exception("scheduling pass failed")
+        await asyncio.sleep(settings.lease_reaper_interval_seconds)
+
+
 async def run_all() -> int:
-    """Reaper hook: one pass for every workspace with runner hosts."""
+    """One pass for every workspace with runner hosts."""
     async with async_session_factory() as session:
         workspaces = (await session.execute(text(
             "SELECT DISTINCT workspace_id FROM runner_hosts WHERE status <> 'revoked'"

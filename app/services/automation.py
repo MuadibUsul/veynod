@@ -159,7 +159,8 @@ def agent_rules(mode: str) -> dict[str, Any]:
         "words in your handoff brief; technical detail stays in the log",
         **({"done_needs_deploy": "a code task the deploy gate ships is DONE only after a "
             "deploy that carried it passed its smoke test; until then an approval leaves it "
-            "in HANDOFF and DEPLOY_VERIFIED says when it shipped"} if mode == "full" else {}),
+            "in HANDOFF and DEPLOY_VERIFIED says when it shipped"}
+           if mode == "full" and settings.deploy_evidence_required else {}),
     }
 
 
