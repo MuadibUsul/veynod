@@ -9,6 +9,12 @@
 3. The CLI polls with the device code, receives the sealed key once (the row's
    copy is cleared on pickup) and opens it locally.
 
+`npx veynod up` asks for every identity the computer needs in the same session
+(v3.64): its own agent first, then extras such as `<name>-review` (AUDITOR).
+The console lists the extras; each one the owner ticks is minted with the role
+the terminal asked for and sealed to the same key, and the poll returns them
+with the first.
+
 cli_sessions is operator-only under RLS, so every read and write here uses an
 unscoped session; the key itself is minted in the approver's tenant session.
 """
@@ -113,8 +119,8 @@ async def create_session(
         inserted = await session.scalar(
             text(
                 "INSERT INTO cli_sessions (device_code_hash, user_code, client_public_key, "
-                "client_label, client_kinds, expires_at) "
-                "VALUES (:h, :u, :k, :l, CAST(:c AS jsonb), :x) "
+                "client_label, client_kinds, identities, expires_at) "
+                "VALUES (:h, :u, :k, :l, CAST(:c AS jsonb), CAST(:i AS jsonb), :x) "
                 "ON CONFLICT (user_code) DO NOTHING RETURNING id"
             ),
             {
@@ -123,6 +129,7 @@ async def create_session(
                 "k": base64.b64encode(public_key).decode(),
                 "l": (request.client_label or "")[:64],
                 "c": json.dumps(sorted(set(request.clients))),
+                "i": json.dumps([item.model_dump() for item in request.identities]),
                 "x": expires_at,
             },
         )
@@ -179,6 +186,9 @@ def _public_view(row: Any) -> dict[str, Any]:
         "created_at": row["created_at"].isoformat(),
         "expires_at": row["expires_at"].isoformat(),
         "agent_signature": row["agent_signature"],
+        # What `veynod up` asks for: the first is the terminal's own agent, the
+        # rest are extras the owner can untick (one approval mints them all).
+        "identities": list(row["identities"] or []),
     }
 
 
@@ -231,16 +241,34 @@ async def approve(
     if row["expires_at"] <= _now():
         raise ApiError(410, "cli_session_expired",
                        "this code expired; run `npx veynod init` again")
+    wanted = list(row["identities"] or [])
+    for item in request.also:
+        if item.index >= len(wanted):
+            raise ApiError(422, "cli_identity_unknown",
+                           f"the terminal asked for no identity number {item.index}")
+    purpose = f"npx veynod init ({row['client_label'] or 'terminal'})"
+    public_key = base64.b64decode(row["client_public_key"])
     created = await mint_unique(
         scoped, principal.workspace, request.agent_signature, request.role_scope,
-        request.allowed_namespaces,
-        purpose=f"npx veynod init ({row['client_label'] or 'terminal'})",
+        request.allowed_namespaces, purpose=purpose,
     )
-    sealed = seal(created.api_key, base64.b64decode(row["client_public_key"]))
+    sealed = seal(created.api_key, public_key)
+    # Each ticked extra keeps the role the terminal asked for, so a -review
+    # identity can always review; the owner unticks it rather than changing it.
+    extras = []
+    for item in sorted(request.also, key=lambda entry: entry.index):
+        role = wanted[item.index]["role_scope"]
+        minted = await mint_unique(scoped, principal.workspace, item.agent_signature, role,
+                                   request.allowed_namespaces, purpose=purpose)
+        extras.append({"name": wanted[item.index]["name"],
+                       "agent_signature": minted.token.agent_signature, "role_scope": role,
+                       "token_id": str(minted.token.id),
+                       "sealed_key": seal(minted.api_key, public_key)})
     await unscoped.execute(
         text(
             "UPDATE cli_sessions SET status = 'approved', workspace_id = :w, user_id = :u, "
-            "agent_signature = :a, token_id = :t, sealed_key = :s, decided_at = NOW() "
+            "agent_signature = :a, token_id = :t, sealed_key = :s, "
+            "sealed_keys = CAST(:k AS jsonb), decided_at = NOW() "
             "WHERE id = :id"
         ),
         {
@@ -249,6 +277,7 @@ async def approve(
             "a": created.token.agent_signature,
             "t": uuid.UUID(str(created.token.id)),
             "s": sealed,
+            "k": json.dumps(extras) if extras else None,
             "id": row["id"],
         },
     )
@@ -260,6 +289,8 @@ async def approve(
     return {
         "status": "approved",
         "agent_signature": created.token.agent_signature,
+        "also": [{"agent_signature": item["agent_signature"], "role_scope": item["role_scope"]}
+                 for item in extras],
         "workspace": {"id": str(principal.workspace.id), "name": principal.workspace.name},
     }
 
@@ -314,9 +345,10 @@ async def poll(session: AsyncSession, device_code: str) -> dict[str, Any]:
         )
     ).mappings().one()
     sealed = row["sealed_key"]
+    extras = row["sealed_keys"] or []
     await session.execute(
         text("UPDATE cli_sessions SET status = 'consumed', sealed_key = NULL, "
-             "consumed_at = NOW() WHERE id = :id"),
+             "sealed_keys = NULL, consumed_at = NOW() WHERE id = :id"),
         {"id": row["id"]},
     )
     await session.commit()
@@ -327,6 +359,9 @@ async def poll(session: AsyncSession, device_code: str) -> dict[str, Any]:
         "status": "approved",
         "sealed_key": sealed,
         "agent_signature": row["agent_signature"],
+        "identities": [{"name": item["name"], "agent_signature": item["agent_signature"],
+                        "role_scope": item["role_scope"], "sealed_key": item["sealed_key"]}
+                       for item in extras],
         "workspace": {"id": str(workspace["id"]), "name": workspace["name"]},
         "mcp_path": "/mcp/" if settings.mcp_enabled else None,
         "rest_path": "/v1",

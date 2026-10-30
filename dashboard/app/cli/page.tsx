@@ -10,6 +10,8 @@ const SESSION_KEY = "agentgraph.session_token";
 const BASE_KEY = "agentgraph.api_base";
 const RETURN_KEY = "agentgraph.return_to";
 
+type CliIdentity = { name: string; role_scope: string; why?: string | null };
+
 type CliView = {
   user_code: string;
   status: "pending" | "approved" | "denied" | "consumed" | "expired";
@@ -18,11 +20,17 @@ type CliView = {
   created_at: string;
   expires_at: string;
   agent_signature: string | null;
+  identities?: CliIdentity[];
   workspace: { id: string; name: string };
   can_approve: boolean;
 };
 
-type Outcome = { kind: "approved"; agent: string; workspace: string } | { kind: "denied" };
+// An extra identity `npx veynod up` asked for, as the owner ticks and names it.
+type Extra = CliIdentity & { index: number; tick: boolean; agent: string };
+
+type Outcome =
+  | { kind: "approved"; agent: string; also: string[]; workspace: string }
+  | { kind: "denied" };
 
 const ROLES = ["EXECUTOR", "ANALYST", "SCOUT", "AUDITOR"] as const;
 
@@ -39,6 +47,7 @@ export default function CliApprovePage() {
   const [view, setView] = useState<CliView | null>(null);
   const [agent, setAgent] = useState("claude-code");
   const [role, setRole] = useState<(typeof ROLES)[number]>("EXECUTOR");
+  const [extras, setExtras] = useState<Extra[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -105,8 +114,16 @@ export default function CliApprovePage() {
         `/v1/auth/cli/sessions/${encodeURIComponent(formatCode(value))}`, {}, base, token,
       )) as CliView;
       setView(found);
-      const client = found.clients.find((item) => item !== "other");
-      setAgent(client === "cursor" ? "cursor" : client === "claude-desktop" ? "claude-desktop" : "claude-code");
+      const [own, ...rest] = found.identities ?? [];
+      if (own) {
+        // `veynod up` names the computer's agent and its role itself.
+        setAgent(own.name);
+        if ((ROLES as readonly string[]).includes(own.role_scope)) setRole(own.role_scope as typeof role);
+      } else {
+        const client = found.clients.find((item) => item !== "other");
+        setAgent(client === "cursor" ? "cursor" : client === "claude-desktop" ? "claude-desktop" : "claude-code");
+      }
+      setExtras(rest.map((item, offset) => ({ ...item, index: offset + 1, tick: true, agent: item.name })));
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
     }
@@ -122,13 +139,24 @@ export default function CliApprovePage() {
         {
           method: "POST",
           body: action === "approve"
-            ? JSON.stringify({ agent_signature: agent.trim() || "claude-code", role_scope: role })
+            ? JSON.stringify({
+                agent_signature: agent.trim() || "claude-code",
+                role_scope: role,
+                also: extras
+                  .filter((item) => item.tick)
+                  .map((item) => ({ index: item.index, agent_signature: item.agent.trim() || item.name })),
+              })
             : undefined,
         },
       );
       setOutcome(
         action === "approve"
-          ? { kind: "approved", agent: body.agent_signature, workspace: body.workspace?.name ?? "" }
+          ? {
+              kind: "approved",
+              agent: body.agent_signature,
+              also: (body.also ?? []).map((item: { agent_signature: string }) => item.agent_signature),
+              workspace: body.workspace?.name ?? "",
+            }
           : { kind: "denied" },
       );
     } catch (caught) {
@@ -190,7 +218,7 @@ export default function CliApprovePage() {
                 <h2>{t("Approved. Go back to your terminal.")}</h2>
                 <p>
                   {t("{agent} joins {workspace}. The terminal finishes the setup and calls get_orientation.", {
-                    agent: outcome.agent,
+                    agent: [outcome.agent, ...outcome.also].join(", "),
                     workspace: outcome.workspace,
                   })}
                 </p>
@@ -269,6 +297,41 @@ export default function CliApprovePage() {
                             ))}
                           </select>
                         </label>
+                        {extras.length > 0 && (
+                          <fieldset className="field cli-extras">
+                            <legend>{t("Also for this computer")}</legend>
+                            {extras.map((item) => (
+                              <div key={item.index} className="cli-extra">
+                                <label>
+                                  <input
+                                    type="checkbox"
+                                    checked={item.tick}
+                                    onChange={(event) => {
+                                      const tick = event.target.checked;
+                                      setExtras((all) => all.map((other) =>
+                                        other.index === item.index ? { ...other, tick } : other));
+                                    }}
+                                  />{" "}
+                                  <strong>{item.role_scope}</strong>
+                                  {item.why ? <small> · {item.why}</small> : null}
+                                </label>
+                                <input
+                                  aria-label={t("Agent name")}
+                                  value={item.agent}
+                                  disabled={!item.tick}
+                                  maxLength={100}
+                                  spellCheck={false}
+                                  onChange={(event) => {
+                                    const name = event.target.value;
+                                    setExtras((all) => all.map((other) =>
+                                      other.index === item.index ? { ...other, agent: name } : other));
+                                  }}
+                                />
+                              </div>
+                            ))}
+                            <small>{t("Each ticked identity gets its own key, sealed to the same terminal, with the role shown.")}</small>
+                          </fieldset>
+                        )}
                         {error && <div className="inline-error" role="alert">{error}</div>}
                         <button type="button" className="auth-submit" disabled={busy}
                           onClick={() => void decide("approve")}>

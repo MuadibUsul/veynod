@@ -159,3 +159,85 @@ async def test_one_hub_serves_both_identities_and_the_doctor_goes_green(client, 
         assert review["key_tail"] == reviewer["key"][-6:]
         # The hub let go of its locks when it stopped.
         assert not list((home / ".veynod").glob("hub-*.lock"))
+
+
+async def test_veynod_up_connects_both_identities_in_one_approval_then_the_loop_runs(
+        client, api_base_url):
+    """The release bar (D-3) without the computer: one `veynod up --run-tasks`, one
+    approval, the hub, the doctor green and one task DONE with nobody typing."""
+    import re
+
+    ws = await _workspace(client, "full")
+    name = f"box-{uuid.uuid4().hex[:6]}"
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        script = tmp_path / "step.py"
+        script.write_text(STEP_SCRIPT)
+        log = tmp_path / "log"
+        log.mkdir()
+        home = tmp_path / "home"
+        home.mkdir()
+        env = _env(home, log)
+        up = await asyncio.create_subprocess_exec(
+            "node", str(CLI), "up", "--run-tasks", "--yes", "--name", name, "--host", api_base_url,
+            "--client", "print", "--no-open", "--no-service", "--runtime", "custom",
+            "--exec", f'"{sys.executable}" "{script}"',
+            env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        hub = None
+        printed: list[str] = []
+        try:
+            code = None
+            while code is None:
+                line = (await asyncio.wait_for(up.stdout.readline(), 30)).decode()
+                assert line, "".join(printed)
+                printed.append(line)
+                found = re.search(r"Your code\s+([A-Z0-9]{4}-[A-Z0-9]{4})", line)
+                code = found.group(1) if found else None
+            assert "One approval in the console connects both" in "".join(printed), printed
+
+            view = (await client.get(f"/v1/auth/cli/sessions/{code}", headers=ws["owner"])).json()
+            assert [(item["name"], item["role_scope"]) for item in view["identities"]] == [
+                (name, "EXECUTOR"), (f"{name}-review", "AUDITOR")]
+            also = [{"index": 1, "agent_signature": f"{name}-review"}]
+            approved = await client.post(f"/v1/auth/cli/sessions/{code}/approve",
+                                         headers=ws["owner"],
+                                         json={"agent_signature": name, "also": also})
+            assert approved.status_code == 200, approved.text
+
+            # up saves the config and waits for the board; the hub is what it waits for.
+            config_file = home / ".veynod" / "config.json"
+            for _ in range(60):
+                if config_file.exists():
+                    break
+                await asyncio.sleep(0.5)
+            config = json.loads(config_file.read_text())
+            assert [(item["role"], item["agent_id"]) for item in config["identities"]] == [
+                ("computer", name), ("review", f"{name}-review")]
+            assert all((Path(item["key_file"]).stat().st_mode & 0o777) == 0o600
+                       for item in config["identities"])
+            hub = subprocess.Popen(["node", str(CLI), "hub"], env=env, stdout=subprocess.DEVNULL,
+                                   stderr=subprocess.PIPE, text=True)
+            rest, _ = await asyncio.wait_for(up.communicate(), 90)
+            output = "".join(printed) + rest.decode()
+            assert up.returncode == 0, output
+
+            key = await _task(client, ws, repo=None)
+            status = None
+            for _ in range(120):
+                status = (await _task_row(client, ws, key))["status"]
+                if status == "DONE":
+                    break
+                await asyncio.sleep(0.5)
+            assert status == "DONE", (status, output)
+            task = await _task_row(client, ws, key)
+            assert task["reviewed_by"].startswith(f"{name}-review"), task["reviewed_by"]
+        finally:
+            if up.returncode is None:
+                up.kill()
+                await up.wait()
+            if hub is not None:
+                hub.terminate()
+                try:
+                    hub.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    hub.kill()

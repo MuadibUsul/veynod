@@ -47,6 +47,7 @@ const dim = paint("2");
 const bold = paint("1");
 const green = paint("32");
 const red = paint("31");
+const yellow = paint("33");
 const print = (line = "") => process.stdout.write(`${line}\n`);
 
 // ------------------------------------------------------------------ crypto
@@ -320,6 +321,7 @@ export function parseArgs(argv) {
     yes: false,
     name: "",
     fresh: false,
+    service: true,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -352,6 +354,7 @@ export function parseArgs(argv) {
     else if (arg === "--yes" || arg === "-y") options.yes = true;
     else if (arg === "--name") options.name = value();
     else if (arg === "--fresh") options.fresh = true;
+    else if (arg === "--no-service") options.service = false;
     else if (!arg.startsWith("-") && !options.command) options.command = arg;
     else if (!arg.startsWith("-") && options.command === "service" && !options.subcommand) {
       options.subcommand = arg;
@@ -379,9 +382,11 @@ const HELP = `${bold("veynod")} ${VERSION}: put your coding agents on a Veynod b
 
 ${bold("Usage")}
   npx veynod up [--run-tasks] [--repo owner/name,...] [--runtime claude|codex|custom]
-                [--slots N] [--name NAME] [--client ...] [--host URL] [--yes] [--fresh] [--dry-run]
-      One command: connects this computer (one console approval per identity),
-      wires your MCP clients, installs the hub service and runs the doctor.
+                [--slots N] [--name NAME] [--client ...] [--host URL] [--yes] [--fresh]
+                [--no-service] [--dry-run]
+      One command: connects this computer (one console approval for all its
+      identities), wires your MCP clients, installs the hub service and runs the
+      doctor. --no-service leaves starting \`veynod hub\` to your own supervisor.
   veynod hub      The service up installs: every identity in ~/.veynod/config.json,
                   one stream each, as runners with --run-tasks, else as listeners.
   veynod doctor   What is missing on this computer and on the board, with the fix.
@@ -458,13 +463,28 @@ function openBrowser(url) {
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** The console's device flow: a code you approve, a key sealed to this terminal. */
-export async function connect(options, { clients = [], label = hostname(), out = () => {} } = {}) {
+/**
+ * The console's device flow. `identities` ({name, role_scope, why}) asks for
+ * every identity in one approval (servers from 3.64): the first is this
+ * terminal's own agent, the rest come back in `extra`, each with its own key.
+ * `legacy` is true when the server predates that and minted only one.
+ */
+export async function connect(options, { clients = [], label = hostname(), out = () => {}, identities = [] } = {}) {
   const { privateKey, publicRaw } = makeKeyPair();
-  const started = await call(options.host, "/v1/auth/cli/sessions", {
+  const body = {
     public_key: publicRaw.toString("base64"),
     client_label: String(label).slice(0, 64),
     clients: clients.map((item) => (item === "print" ? "other" : item)),
-  });
+  };
+  let started;
+  let legacy = false;
+  try {
+    started = await call(options.host, "/v1/auth/cli/sessions", identities.length ? { ...body, identities } : body);
+  } catch (error) {
+    if (!identities.length || error.status !== 422) throw error;
+    legacy = true;
+    started = await call(options.host, "/v1/auth/cli/sessions", body);
+  }
   const link = `${options.host}/dashboard/cli/?code=${encodeURIComponent(started.user_code)}`;
   out();
   out(`  Your code   ${bold(violet(started.user_code))}`);
@@ -496,8 +516,10 @@ export async function connect(options, { clients = [], label = hostname(), out =
   if (!approved) throw new Error("the code expired before it was approved; run the command again");
 
   const key = openSealed(approved.sealed_key, privateKey, publicRaw);
+  const extra = (approved.identities || []).map((item) => ({ name: item.name, agent_id: item.agent_signature,
+    role_scope: item.role_scope, key: openSealed(item.sealed_key, privateKey, publicRaw) }));
   const mcpUrl = new URL(approved.mcp_path || "/mcp/", options.host).href;
-  return { key, approved, mcpUrl };
+  return { key, approved, mcpUrl, extra, legacy };
 }
 
 /** Adds Veynod with this key to each MCP client; returns what was configured. */
@@ -1117,41 +1139,88 @@ async function up(options) {
   }
   const previous = loadConfig();
   const identities = [];
+  let missing = [];
   for (const wanted of plan.identities) {
     const kept = !options.fresh && previous?.host === options.host
       && previous.identities?.find((item) => item.role === wanted.role && existsSync(item.key_file));
     if (kept) {
       out(`  ${green("✓")} ${kept.agent_id} is already connected`);
       identities.push(kept);
-      continue;
+    } else {
+      missing.push(wanted);
     }
+  }
+  // One approval for every identity still missing; an older server mints one
+  // per code, so the rest are asked for again, one code each.
+  let legacy = false;
+  while (missing.length) {
+    const asked = legacy ? missing.slice(0, 1) : missing;
     out();
-    out(`  ${bold(wanted.label)}: ${wanted.why}.`);
-    out(`  In the console, approve it with role ${bold(wanted.wants_role)}.`);
-    const { key, approved, mcpUrl } = await connect(options, {
-      clients: wanted.role === "computer" ? clients : [], label: wanted.label, out });
-    const agentId = approved.agent_signature;
-    identities.push({ role: wanted.role, agent_id: agentId, key_file: storeKey(agentId, key),
-      workspace: approved.workspace?.name ?? null });
-    out(`  ${green("✓")} Approved: ${bold(agentId)} in ${bold(approved.workspace?.name ?? "the workspace")}`);
-    if (wanted.role === "computer") wireClients(clients, mcpUrl, key, out);
-    try {
-      await call(options.host, "/v1/agents/register", { agent_id: agentId,
-        capabilities: wanted.role === "review" ? ["review"] : [options.runtime] }, key);
-    } catch {
-      // already registered, or registration is not open to this token
+    for (const item of asked) out(`  ${bold(item.label)} (${item.wants_role}): ${item.why}.`);
+    if (asked.length > 1) out(`  One approval in the console connects ${asked.length === 2 ? "both" : "all of them"}.`);
+    else if (legacy) out(`  In the console, approve it with role ${bold(asked[0].wants_role)}.`);
+    const result = await connect(options, { clients: asked[0].role === "computer" ? clients : [],
+      label: asked[0].label, out,
+      identities: legacy ? [] : asked.map((item) => ({ name: item.label, role_scope: item.wants_role, why: item.why })) });
+    const got = [{ wanted: asked[0], agentId: result.approved.agent_signature, key: result.key }];
+    for (const item of result.extra) {
+      const wanted = asked.find((entry) => entry !== asked[0] && entry.label === item.name);
+      if (wanted) got.push({ wanted, agentId: item.agent_id, key: item.key });
+    }
+    for (const { wanted, agentId, key } of got) {
+      identities.push({ role: wanted.role, agent_id: agentId, key_file: storeKey(agentId, key),
+        workspace: result.approved.workspace?.name ?? null });
+      out(`  ${green("✓")} Approved: ${bold(agentId)} in ${bold(result.approved.workspace?.name ?? "the workspace")}`);
+      if (wanted.role === "computer") wireClients(clients, result.mcpUrl, key, out);
+      try {
+        await call(options.host, "/v1/agents/register", { agent_id: agentId,
+          capabilities: wanted.role === "review" ? ["review"] : [options.runtime] }, key);
+      } catch {
+        // already registered, or registration is not open to this token
+      }
+    }
+    const left = missing.filter((item) => !got.some((entry) => entry.wanted === item));
+    if (result.legacy || legacy) {
+      legacy = true;
+      missing = left;
+    } else {
+      // What the owner unticked stays unconnected; the doctor says what that costs.
+      for (const item of left) out(`  ${yellow("!")} ${item.label} was not approved`);
+      missing = [];
     }
   }
   saveConfig({ host: options.host, run_tasks: plan.run_tasks, runtime: options.runtime, exec: options.exec,
     slots: options.slots, repos: options.repos, identities });
   out();
-  const installed = applyServicePlan(service, "install") === 0;
+  let serviceInstalled;
+  if (options.service) {
+    const installed = applyServicePlan(service, "install") === 0;
+    serviceInstalled = () => installed && service.files.every((file) => existsSync(file.path));
+  } else {
+    out(`  ${dim("No service installed (--no-service): run `veynod hub` under your own supervisor.")}`);
+  }
   out();
   out(`  ${bold("Doctor")}`);
-  const checks = await doctor({ serviceInstalled: () => installed && service.files.every((file) => existsSync(file.path)) });
+  const checks = await settledDoctor(() => doctor({ serviceInstalled }), { doctorOk });
   printChecks(checks);
   out();
   return doctorOk(checks) ? 0 : 1;
+}
+
+/**
+ * The hub just started: give it time to say hello before the board's checks
+ * count. Only red board items are waited on; anything red on this computer is
+ * answered at once.
+ */
+export async function settledDoctor(run, { doctorOk, tries = 15, waitMs = 2_000 } = {}) {
+  let checks = await run();
+  for (let attempt = 1; attempt < tries && !doctorOk(checks); attempt += 1) {
+    const red = checks.filter((item) => !item.ok && item.required);
+    if (!red.every((item) => item.id.startsWith("board:"))) break;
+    await sleep(waitMs);
+    checks = await run();
+  }
+  return checks;
 }
 
 export async function main(argv = process.argv.slice(2)) {

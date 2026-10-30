@@ -788,6 +788,8 @@ const ZH: Record<string, string> = {
   "Approving…": "批准中…",
   "Approve this terminal": "批准这个终端",
   "This is not me: refuse": "不是我发起的：拒绝",
+  "Also for this computer": "这台电脑还需要",
+  "Each ticked identity gets its own key, sealed to the same terminal, with the role shown.": "每个勾选的身份都会获得一枚自己的密钥，同样加密封装给这个终端，角色如上所示。",
   "Activation": "激活率",
   "Signups whose agent called get_orientation within 24 h": "注册后 24 小时内有 Agent 调用了 get_orientation 的比例",
   "Week-2 retention": "第二周留存",

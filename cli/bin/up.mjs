@@ -29,6 +29,12 @@ export function configPath(home = homedir()) {
 
 const safeName = (value) => String(value).replace(/[^A-Za-z0-9_.-]+/g, "_").slice(0, 64) || "agent";
 
+export function agentName(value) {
+  const clean = String(value).toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-")
+    .replace(/^[^a-z]+/, "").slice(0, 33).replace(/-+$/, "");
+  return clean.length >= 3 ? clean : `computer${clean ? `-${clean}` : ""}`;
+}
+
 export function keyPath(agentId, home = homedir()) {
   return join(veynodDir(home), "keys", `${safeName(agentId)}.key`);
 }
@@ -71,7 +77,9 @@ export function readKey(identity) {
  * will check. `--dry-run` prints it; the tests read it.
  */
 export function upPlan(options, { home = homedir(), clients = [], name = hostname() } = {}) {
-  const base = safeName(options.name || name).toLowerCase();
+  // Names are agent ids too (a letter, then letters, digits and dashes, at most
+  // 40 long), with room for the `-review` suffix.
+  const base = agentName(options.name || name);
   const identities = [{ role: "computer", label: base, wants_role: "EXECUTOR",
     why: "this computer's agent: your MCP clients and the hub use it" }];
   if (options.runTasks) {
