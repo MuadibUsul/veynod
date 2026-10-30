@@ -7338,6 +7338,22 @@
        "body": [],
        "description": "",
        "method": "GET",
+       "parameters": [],
+       "path": "/v1/loop/overview",
+       "responses": [
+        "200"
+       ],
+       "summary": "The Loop's dashboard in one read: lanes as planned, needs you, the last day, agents and the timeline"
+      }
+     ],
+     "group": "loop"
+    },
+    {
+     "endpoints": [
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
        "parameters": [
         {
          "description": "",
