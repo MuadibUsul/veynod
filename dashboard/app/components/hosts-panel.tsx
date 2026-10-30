@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "../i18n";
 import type { ApiRequest } from "../types";
 import { relativeTime } from "../types";
+import { AgentFace } from "./agent-face";
 
 /*
  * The computers that run this workspace's agents. A computer is a
@@ -94,11 +95,14 @@ export function HostsPanel({
   notify,
   refreshKey,
   canManage,
+  waitingForQuota = 0,
 }: {
   request: ApiRequest;
   notify: (message: string) => void;
   refreshKey: number;
   canManage: boolean;
+  /** Tasks the Loop could not place because every fitting computer is out of quota. */
+  waitingForQuota?: number;
 }) {
   const { t } = useI18n();
   const [computers, setComputers] = useState<Computer[] | null>(null);
@@ -151,71 +155,91 @@ export function HostsPanel({
   }
 
   const online = computers.filter((computer) => computer.state === "online").length;
+  const free = computers.reduce((sum, computer) => sum + computer.free_slots, 0);
   return (
-    <section className="lin-list hosts-list-view" aria-label={t("Computers")}>
+    <section className="lin-list hosts-list-view" id="loop-computers" aria-label={t("Computers")}>
       <div className="lin-group">
         <i className={`lamp ${online ? "green" : ""}`} />
         {t("Computers")}
         <span className="lin-count">{online} / {computers.length} {t("online")}</span>
+        {computers.length > 0 && <span className="flow-aside">{t("{n} free seats", { n: free })}</span>}
       </div>
-      {computers.length === 0 ? (
-        <div className="lin-row quiet hosts-empty-row">
-          <span className="lin-title">
-            {t("No computer works for this workspace yet. On the computer that should do the work, run:")}
-          </span>
-          <code>{INSTALL}</code>
-        </div>
-      ) : (
-        computers.map((computer) => {
-          const left = quotaLeft(computer);
-          const runtimes = computer.runtimes.filter((runtime) => runtime.available)
-            .map((runtime) => runtimeName(runtime.id)).join(", ");
-          const paused = computer.seats.every((seat) => seat.status !== "active");
-          const stateText = computer.last_seen_at && computer.state !== "online"
-            ? `${t(STATE_LABEL[computer.state])} · ${relativeTime(computer.last_seen_at)}`
-            : t(STATE_LABEL[computer.state]);
-          return (
-            <div key={computer.computer_id} className={`lin-row host-row state-${computer.state}`}>
+      {computers.map((computer) => {
+        const left = quotaLeft(computer);
+        const runtimes = computer.runtimes.filter((runtime) => runtime.available).map((runtime) => runtimeName(runtime.id));
+        const paused = computer.seats.every((seat) => seat.status !== "active");
+        const stateText = computer.last_seen_at && computer.state !== "online"
+          ? `${t(STATE_LABEL[computer.state])} · ${relativeTime(computer.last_seen_at)}`
+          : t(STATE_LABEL[computer.state]);
+        return (
+          <div key={computer.computer_id} className={`station state-${computer.state}`}>
+            <div className="station-top">
               <i className={`lamp ${lamp(computer.state)}`} />
-              <span className="lin-name" title={computer.name}>{computer.name}</span>
-              <span className="lin-title">
-                {computer.running.length ? `${t("Working on")} ${computer.running.join(", ")}`
-                  : computer.state === "online" ? t("Idle") : stateText}
-              </span>
-              {canManage && (
-                <span className="lin-actions">
-                  {!paused ? (
-                    <button type="button" className="button ghost small" disabled={busy !== null}
-                      onClick={() => void act(computer, "pause")}>{t("Pause")}</button>
-                  ) : (
-                    <button type="button" className="button ghost small" disabled={busy !== null}
-                      onClick={() => void act(computer, "resume")}>{t("Resume")}</button>
-                  )}
-                  <button type="button" className="button ghost small danger" disabled={busy !== null}
-                    onClick={() => void act(computer, "revoke")}>{t("Take off the Loop")}</button>
-                </span>
-              )}
-              {/* Second line: the seats, then what the machine is. */}
-              <span className="host-sub">
-                <span className="host-seats" aria-label={t("Seats")}>
-                  {computer.seats.map((seat) => (
-                    <span key={seat.host_id} className={`host-seat state-${seat.state}`}
-                      title={`${seat.agent_id ?? seat.host_id} · ${t(STATE_LABEL[seat.state])}`}>
-                      <i className={`lamp ${seat.running.length ? "amber" : lamp(seat.state)}`} />
-                      {t(SEAT_LABEL[seat.seat])}
-                    </span>
-                  ))}
-                </span>
-                <span className="host-facts">
-                  {OS_LABEL[computer.os] ?? computer.os} · {computer.arch}{runtimes ? ` · ${runtimes}` : ""}
-                  {" · "}{t("Free slots")} {computer.free_slots}/{computer.max_concurrency}
-                  {" · "}{t("Quota left")} {left === null ? "—" : `${left}%`}
-                </span>
+              <b title={computer.name}>{computer.name}</b>
+              <span className="station-facts">
+                {OS_LABEL[computer.os] ?? computer.os} · {computer.arch}{runtimes.length ? ` · ${runtimes.join(", ")}` : ""}
+                {computer.state === "online" ? "" : ` · ${stateText}`}
               </span>
             </div>
-          );
-        })
-      )}
+            <div className="station-seats">
+              {computer.seats.map((seat) => {
+                const busy = seat.running.length > 0;
+                return (
+                  <div key={seat.host_id} className={`station-seat${busy ? " busy" : ""}`}
+                    title={`${seat.agent_id ?? seat.host_id} · ${t(STATE_LABEL[seat.state])}`}>
+                    {busy ? (
+                      <>
+                        <AgentFace id={seat.agent_id ?? seat.host_id} role={seat.seat === "review" ? "AUDITOR" : "EXECUTOR"} size={26} />
+                        <span>
+                          <b>{runtimes[0] ?? t(SEAT_LABEL[seat.seat])}</b>
+                          <small>{seat.running.join(", ")}</small>
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span>{seat.state === "online" ? t("Empty") : t(STATE_LABEL[seat.state])}</span>
+                        <small>{t(SEAT_LABEL[seat.seat])}</small>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {left !== null && (
+              <div className="station-quota">
+                <span>{t("Quota left")}</span>
+                <span className={`station-bar${left < 10 ? " low" : ""}`}><i style={{ width: `${Math.max(2, left)}%` }} /></span>
+                <span>{left}%</span>
+              </div>
+            )}
+            {left === 0 && waitingForQuota > 0 && (
+              <p className="station-note">
+                {t("Out of quota: {n} tasks wait and start on their own when it resets.", { n: waitingForQuota })}
+              </p>
+            )}
+            {canManage && (
+              <div className="station-actions">
+                {!paused ? (
+                  <button type="button" className="button ghost small" disabled={busy !== null}
+                    onClick={() => void act(computer, "pause")}>{t("Pause")}</button>
+                ) : (
+                  <button type="button" className="button ghost small" disabled={busy !== null}
+                    onClick={() => void act(computer, "resume")}>{t("Resume")}</button>
+                )}
+                <button type="button" className="button ghost small danger" disabled={busy !== null}
+                  onClick={() => void act(computer, "revoke")}>{t("Take off the Loop")}</button>
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <div className={`lin-row quiet station-connect${computers.length ? "" : " empty"}`}>
+        <span className="lin-title">
+          {computers.length ? t("Connect a computer:")
+            : t("No computer works for this workspace yet. On the computer that should do the work, run:")}
+        </span>
+        <code>{INSTALL}</code>
+      </div>
     </section>
   );
 }

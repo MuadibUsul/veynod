@@ -182,6 +182,8 @@ export default function ConsolePage() {
     sort: "updated_desc",
   });
   const [agents, setAgents] = useState<AgentToken[]>([]);
+  // The Loop page opens a diagram (and a chunk on it) here.
+  const [diagramFocus, setDiagramFocus] = useState<{ diagram: string; chunk?: string; at: number } | null>(null);
   // A computer's keys are its seats, listed with the computer, not as agents.
   const [computerKeys, setComputerKeys] = useState(0);
   const [directory, setDirectory] = useState<DirectoryEntry[]>([]);
@@ -1642,10 +1644,14 @@ export default function ConsolePage() {
                   {tab === "diagram" && (
                     <DiagramView
                       workspaceId={selectedWorkspace.id}
+                      apiBase={apiBase}
+                      credential={sessionMode ? sessionToken : adminToken}
                       request={api}
                       sessionMode={sessionMode}
                       notify={setNotice}
                       onOpenTask={(key) => void openTaskByKey(key)}
+                      onOpenLoop={() => setTab("loop")}
+                      focus={diagramFocus}
                     />
                   )}
                   {tab === "loop" && (
@@ -1658,7 +1664,12 @@ export default function ConsolePage() {
                       notify={setNotice}
                       waitingReview={approvals.length}
                       onOpenTasks={() => setTab("tasks")}
+                      onOpenTask={(key) => void openTaskByKey(key)}
                       onOpenSituation={() => setTab("situation")}
+                      onOpenDiagram={(diagram, chunk) => {
+                        setDiagramFocus({ diagram, chunk, at: Date.now() });
+                        setTab("diagram");
+                      }}
                     />
                   )}
                   {tab === "blackboard" && (

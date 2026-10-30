@@ -5,13 +5,22 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import { useI18n } from "../i18n";
 import type { ApiRequest } from "../types";
 import { relativeTime } from "../types";
+import { AgentFace } from "./agent-face";
+import { STATE_LABEL, waited, type FlowItem, type Lane, type Overview } from "./flow-view";
 import { Spinner } from "./ui";
+import { useWorkspaceStream } from "./use-workspace-stream";
 
 /*
  * The diagram is the one thing a person decides (spec-diagram-dispatch v3):
  * which chunks exist, how they depend on each other, and which changes go in.
  * Everything a person does to a diagram happens on this page; agents do the
  * rest from the same record.
+ *
+ * It is also where the work is seen happening (v3.24): the live layer draws on
+ * each chunk its one state and how long it has been in it, who works on it and
+ * on which computer, what it still waits for, and along each edge what an
+ * upstream chunk delivered. The plan layer shows the contracts instead. "All
+ * diagrams" lists every plan, including work not drawn as a diagram yet.
  */
 
 type DiagramSummary = {
@@ -41,7 +50,42 @@ type Chunk = {
   review_reject_count: number;
   origin: string;
   increment_of: string | null;
+  merge?: {
+    at?: string;
+    by?: string;
+    delivered?: { docs?: { uri?: string; doc_key?: string; version?: number }[]; files?: { path: string }[] } | null;
+  } | null;
 };
+
+type Layer = "live" | "plan";
+
+// Why the Loop could not give a chunk's task to a computer, short.
+const UNPLACED_SHORT: Record<string, string> = {
+  no_host_online: "No computer is online",
+  no_host_for_role: "No computer takes this kind of task",
+  no_host_for_namespace: "No computer may work here",
+  no_host_with_capabilities: "No computer has the skills",
+  no_host_for_repo: "No computer reaches its repository",
+  no_host_with_runtime: "No computer has Claude Code or Codex ready",
+  every_host_failed: "Every computer already failed it",
+  hosts_out_of_quota: "Computers are out of quota",
+  no_reviewer_host: "No computer can review it",
+};
+
+/** What an upstream chunk handed over, named briefly for its edges. */
+function deliveredLabel(chunk: Chunk): string | null {
+  const delivered = chunk.merge?.delivered;
+  if (!delivered) return null;
+  const names = [
+    ...(delivered.files ?? []).map((file) => file.path.split("/").pop() ?? file.path),
+    ...(delivered.docs ?? []).map((doc) => {
+      const name = doc.doc_key ?? doc.uri?.replace(/^doc:\/\//, "") ?? "";
+      return name.split("/").pop() || name;
+    }).filter(Boolean),
+  ];
+  if (!names.length) return null;
+  return names.length > 2 ? `${names.slice(0, 2).join(" · ")} +${names.length - 2}` : names.join(" · ");
+}
 
 type ChangeRow = {
   change_key: string;
@@ -161,22 +205,35 @@ function place(columns: Chunk[][]): { nodes: Placed[]; width: number; height: nu
   return { nodes, width: columns.length * (NODE_W + COL_GAP) - COL_GAP, height: span };
 }
 
+function layerKey(workspaceId: string) {
+  return `veynod.diagram.layer.${workspaceId}`;
+}
+
 function storageKey(workspaceId: string) {
   return `veynod.diagram.${workspaceId}`;
 }
 
 export function DiagramView({
   workspaceId,
+  apiBase,
+  credential,
   request,
   sessionMode,
   notify,
   onOpenTask,
+  onOpenLoop,
+  focus = null,
 }: {
   workspaceId: string;
+  apiBase: string;
+  credential: string;
   request: ApiRequest;
   sessionMode: boolean;
   notify: (message: string) => void;
   onOpenTask: (taskKey: string) => void;
+  onOpenLoop: () => void;
+  /** Open this diagram (and chunk), e.g. from the Loop page; `at` makes a repeat count. */
+  focus?: { diagram: string; chunk?: string; at: number } | null;
 }) {
   const { t } = useI18n();
   const [list, setList] = useState<DiagramSummary[] | null>(null);
@@ -188,6 +245,17 @@ export function DiagramView({
   const [openChange, setOpenChange] = useState<ChangeDetail | null>(null);
   const [note, setNote] = useState("");
   const [panel, setPanel] = useState<Panel>(null);
+  const [overview, setOverview] = useState<Overview | null>(null);
+  const [unplaced, setUnplaced] = useState<Map<string, string>>(new Map());
+  const [portfolio, setPortfolio] = useState(false);
+  const [layer, setLayer] = useState<Layer>(() => {
+    try {
+      return window.localStorage.getItem(layerKey(workspaceId)) === "plan" ? "plan" : "live";
+    } catch {
+      return "live";
+    }
+  });
+  const pendingChunk = useRef<string | null>(null);
   const [requestText, setRequestText] = useState("");
   const [requestTarget, setRequestTarget] = useState("");
 
@@ -224,10 +292,65 @@ export function DiagramView({
     }
   }, [request]);
 
+  // Who works on each chunk, where and since when, from the Loop's one read.
+  const loadLive = useCallback(async () => {
+    try {
+      setOverview(await request<Overview>("/v1/loop/overview"));
+    } catch {
+      // the plan still shows; the live layer fills in on the next event
+    }
+    try {
+      const placements = await request<{ needs_you: { task_key: string | null; reason: string }[] }>(
+        "/v1/runner/placements?open_only=true",
+      );
+      setUnplaced(new Map(placements.needs_you.filter((item) => item.task_key)
+        .map((item) => [item.task_key as string, item.reason])));
+    } catch {
+      setUnplaced(new Map());
+    }
+  }, [request]);
+
   useEffect(() => {
     if (!sessionMode) return;
     void loadList();
-  }, [loadList, sessionMode]);
+    void loadLive();
+  }, [loadList, loadLive, sessionMode]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(layerKey(workspaceId), layer);
+    } catch {
+      // per-viewer convenience only
+    }
+  }, [layer, workspaceId]);
+
+  // Opened from elsewhere (the Loop page): show that diagram, then that chunk.
+  useEffect(() => {
+    if (!focus) return;
+    setPortfolio(false);
+    pendingChunk.current = focus.chunk ?? null;
+    setSelected(focus.diagram);
+  }, [focus]);
+
+  // Changes arrive on the workspace stream; a burst is one reload.
+  const reload = useRef<number | undefined>(undefined);
+  const onStream = useCallback((event: { event_type?: string; type?: string | null; table?: string }) => {
+    const kind = event.event_type || event.type || "";
+    if (!/^(CHUNK_|DIAGRAM_|TASK_|SUBGRAPH_|HOST_|PLACEMENT_|DEPLOY_)/.test(kind) && event.table !== "collab_tasks") return;
+    window.clearTimeout(reload.current);
+    reload.current = window.setTimeout(() => {
+      if (selected) void loadDetail(selected);
+      void loadLive();
+    }, 800);
+  }, [selected, loadDetail, loadLive]);
+  useEffect(() => () => window.clearTimeout(reload.current), []);
+  const live = useWorkspaceStream({
+    apiBase,
+    credential,
+    path: "/v1/stream?tables=collab_tasks,timeline_streams",
+    onEvent: onStream,
+    enabled: sessionMode,
+  });
 
   useEffect(() => {
     if (!selected) {
@@ -239,11 +362,14 @@ export function DiagramView({
     } catch {
       // A private window keeps no memory; the first diagram is shown next time.
     }
-    setOpenChunk(null);
+    const wanted = pendingChunk.current;
+    pendingChunk.current = null;
+    setOpenChunk(wanted);
     setOpenChange(null);
-    setPanel(null);
+    setPanel(wanted ? "chunk" : null);
     void loadDetail(selected);
-    const timer = window.setInterval(() => void loadDetail(selected), 15000);
+    // The stream keeps it current; this only covers a dropped stream.
+    const timer = window.setInterval(() => void loadDetail(selected), 60000);
     return () => window.clearInterval(timer);
   }, [selected, loadDetail, workspaceId]);
 
@@ -336,6 +462,11 @@ export function DiagramView({
   const chunk = visibleChunks.find((item) => item.chunk_key === openChunk) ?? null;
   const pending = detail?.pending_changes ?? [];
   const history = detail?.recent_changes ?? [];
+  const lane = overview?.lanes.find((item) => item.lane_id === `diagram:${detail?.diagram_key}`);
+  const liveByChunk = useMemo(
+    () => new Map((lane?.items ?? []).map((item) => [item.key, item])),
+    [lane],
+  );
 
   function openPanel(next: Panel) {
     setPanel((current) => (current === next ? null : next));
@@ -391,6 +522,9 @@ export function DiagramView({
           {t("A diagram splits the project into chunks with clear contracts and order. Ask your planning agent to draft one; it appears here for you to confirm.")}
         </p>
         {error && <div className="inline-error">{error}</div>}
+        {overview && overview.lanes.length > 0 && (
+          <Portfolio diagrams={[]} lanes={overview.lanes} onOpenDiagram={() => undefined} onOpenLoop={onOpenLoop} />
+        )}
       </section>
     );
   }
@@ -401,6 +535,9 @@ export function DiagramView({
         <InfiniteCanvas
           key={detail.diagram_key}
           columns={columns}
+          layer={layer}
+          live={liveByChunk}
+          unplaced={unplaced}
           selected={openChunk}
           onSelect={(key) => {
             setOpenChunk(key);
@@ -412,6 +549,10 @@ export function DiagramView({
       )}
 
       <div className="dgx-float dgx-top-left">
+        <button type="button" className={`dgx-pill${portfolio ? " on" : ""}`} aria-pressed={portfolio}
+          onClick={() => setPortfolio((value) => !value)}>
+          {t("All diagrams")}
+        </button>
         {list.length > 1 ? (
           <select
             className="dgx-switch"
@@ -432,6 +573,14 @@ export function DiagramView({
             <span className="dgx-meta">
               v{detail.version}
               {total > 0 && <> · {done}/{total}</>}
+            </span>
+            <span className="dgx-layers" role="group" aria-label={t("Layer")}>
+              <button type="button" aria-pressed={layer === "live"} onClick={() => setLayer("live")}>
+                <i className={`lamp ${live ? "cyan" : ""}`} />{t("Live")}
+              </button>
+              <button type="button" aria-pressed={layer === "plan"} onClick={() => setLayer("plan")}>
+                {t("Plan")}
+              </button>
             </span>
             {(detail.description || detail.self_check?.risk) && (
               <button type="button" className="dgx-icon" aria-label={t("About this diagram")}
@@ -490,6 +639,20 @@ export function DiagramView({
 
       {error && <div className="dgx-error" role="alert">{error}</div>}
 
+      {portfolio && overview && (
+        <div className="dgx-portfolio-wrap" role="dialog" aria-label={t("All diagrams")}>
+          <Portfolio
+            diagrams={list}
+            lanes={overview.lanes}
+            onOpenDiagram={(key) => {
+              setPortfolio(false);
+              setSelected(key);
+            }}
+            onOpenLoop={onOpenLoop}
+          />
+        </div>
+      )}
+
       {detail && panel && (
         <aside className="dgx-panel" aria-live="polite">
           <button type="button" className="dgx-close" aria-label={t("Close")}
@@ -508,7 +671,9 @@ export function DiagramView({
           )}
 
           {panel === "chunk" && chunk && (
-            <ChunkPanel chunk={chunk} onOpenTask={onOpenTask} onAsk={() => ask(chunk.chunk_key)} />
+            <ChunkPanel chunk={chunk} live={liveByChunk.get(chunk.chunk_key)}
+              unplacedReason={chunk.task_key ? unplaced.get(chunk.task_key) : undefined}
+              onOpenTask={onOpenTask} onAsk={() => ask(chunk.chunk_key)} />
           )}
 
           {panel === "decide" && (
@@ -636,11 +801,17 @@ function titlesOf(keys: string[] | undefined, chunks: Chunk[]): string {
  */
 function InfiniteCanvas({
   columns,
+  layer,
+  live,
+  unplaced,
   selected,
   onSelect,
   onAsk,
 }: {
   columns: Chunk[][];
+  layer: Layer;
+  live: Map<string, FlowItem>;
+  unplaced: Map<string, string>;
   selected: string | null;
   onSelect: (key: string | null) => void;
   onAsk: (target: string | null) => void;
@@ -781,30 +952,71 @@ function InfiniteCanvas({
             const y2 = node.y + NODE_H / 2;
             const bend = Math.max(32, (x2 - x1) / 2);
             const lit = selected !== null && (selected === dep || selected === node.chunk.chunk_key);
+            // An edge carries what was handed over once the upstream chunk merged.
+            const handed = from.chunk.status === "merged";
             return (
               <path key={`${dep}->${node.chunk.chunk_key}`}
                 d={`M${x1},${y1} C${x1 + bend},${y1} ${x2 - bend},${y2} ${x2},${y2}`}
-                className={`${statusOf(node.chunk).tone === "risk" ? "risk" : ""}${lit ? " lit" : ""}`} />
+                className={`${statusOf(node.chunk).tone === "risk" ? "risk" : ""}${lit ? " lit" : ""}${handed ? " handed" : ""}`} />
             );
           }))}
         </svg>
+        {layer === "live" && layout.nodes.map((node) => {
+          // One label per upstream chunk, just right of it: what its edges carry.
+          const label = node.chunk.status === "merged" ? deliveredLabel(node.chunk) : null;
+          if (!label || !layout.nodes.some((other) => other.chunk.depends_on.includes(node.chunk.chunk_key))) return null;
+          return (
+            <span key={`delivered-${node.chunk.chunk_key}`} className="dgx-delivered"
+              style={{ left: node.x + NODE_W + 6, top: node.y + NODE_H / 2 + 6 }}>
+              {label}
+            </span>
+          );
+        })}
         {layout.nodes.map(({ chunk, x, y }) => {
           const status = statusOf(chunk);
+          const now = layer === "live" ? live.get(chunk.chunk_key) : undefined;
+          const reason = chunk.task_key ? unplaced.get(chunk.task_key) : undefined;
+          const criteria = Array.isArray(chunk.done_criteria) ? chunk.done_criteria.length : 0;
           return (
             <button
               key={chunk.chunk_key}
               type="button"
-              className={`dgx-node tone-${status.tone}${selected === chunk.chunk_key ? " selected" : ""}`}
+              className={`dgx-node tone-${status.tone}${now ? ` live st-${now.state}` : ""}${selected === chunk.chunk_key ? " selected" : ""}`}
               style={{ left: x, top: y, width: NODE_W, height: NODE_H }}
               aria-pressed={selected === chunk.chunk_key}
               onClick={() => onSelect(selected === chunk.chunk_key ? null : chunk.chunk_key)}
               onDoubleClick={() => onAsk(chunk.chunk_key)}
             >
               <span className="dg-chunk-top">
+                <span className="dg-key">{chunk.chunk_key}</span>
                 {chunk.layer === "interface" && <span className="dg-tag">{t("Contract")}</span>}
-                <span className={`dg-status tone-${status.tone}`}>{t(status.label)}</span>
+                {now ? (
+                  <span className="dg-state-chip">
+                    {t(STATE_LABEL[now.state])}
+                    {!["done", "not_ready"].includes(now.state) && now.since ? ` · ${waited(now.since, t)}` : ""}
+                  </span>
+                ) : (
+                  <span className={`dg-status tone-${status.tone}`}>{t(status.label)}</span>
+                )}
               </span>
               <strong>{chunk.title}</strong>
+              {layer === "plan" ? (
+                <span className="dg-chunk-foot">
+                  {chunk.scope ? chunk.scope : t("No scope written")}
+                  {criteria ? ` · ${t("{n} done criteria", { n: criteria })}` : ""}
+                </span>
+              ) : now?.holder ? (
+                <span className="dg-chunk-foot">
+                  <AgentFace id={now.holder} size={16} />
+                  {now.holder}{now.where ? ` · ${now.where}` : ""}
+                </span>
+              ) : now?.state === "not_ready" && now.waiting_on?.length ? (
+                <span className="dg-chunk-foot">{t("waits for {list}", { list: now.waiting_on.join(", ") })}</span>
+              ) : reason ? (
+                <span className="dg-chunk-foot warn">⚠ {t(UNPLACED_SHORT[reason] ?? reason)}</span>
+              ) : now?.state === "done" && chunk.merge?.by ? (
+                <span className="dg-chunk-foot">{t("merged by {who}", { who: chunk.merge.by })}</span>
+              ) : null}
             </button>
           );
         })}
@@ -826,10 +1038,14 @@ function InfiniteCanvas({
 
 function ChunkPanel({
   chunk,
+  live,
+  unplacedReason,
   onOpenTask,
   onAsk,
 }: {
   chunk: Chunk;
+  live?: FlowItem;
+  unplacedReason?: string;
   onOpenTask: (taskKey: string) => void;
   onAsk: () => void;
 }) {
@@ -842,7 +1058,40 @@ function ChunkPanel({
   return (
     <div className="dgx-section">
       <h3>{chunk.title}</h3>
-      <span className={`dg-status tone-${status.tone}`}>{t(status.label)}</span>
+      {!live && <span className={`dg-status tone-${status.tone}`}>{t(status.label)}</span>}
+      {live && (
+        <dl className="dg-facts dg-now">
+          <dt>{t("Now")}</dt>
+          <dd>
+            {t(STATE_LABEL[live.state])}
+            {!["done", "not_ready"].includes(live.state) && live.since ? ` · ${waited(live.since, t)}` : ""}
+          </dd>
+          {live.holder && (
+            <>
+              <dt>{t("Who")}</dt>
+              <dd className="dg-who"><AgentFace id={live.holder} size={18} />{live.holder}{live.where ? ` · ${live.where}` : ""}</dd>
+            </>
+          )}
+          {live.state === "not_ready" && live.waiting_on && live.waiting_on.length > 0 && (
+            <>
+              <dt>{t("Waits for")}</dt>
+              <dd>{live.waiting_on.join(", ")}</dd>
+            </>
+          )}
+          {unplacedReason && (
+            <>
+              <dt>{t("Why it has not started")}</dt>
+              <dd className="warn">{t(UNPLACED_SHORT[unplacedReason] ?? unplacedReason)}</dd>
+            </>
+          )}
+          {deliveredLabel(chunk) && (
+            <>
+              <dt>{t("Handed over")}</dt>
+              <dd>{deliveredLabel(chunk)}</dd>
+            </>
+          )}
+        </dl>
+      )}
       {chunk.scope && <p className="dgx-text">{chunk.scope}</p>}
       {chunk.block_reason && (
         <div className={`dg-note${status.tone === "risk" ? " risk" : ""}`}>{chunk.block_reason}</div>
@@ -874,5 +1123,70 @@ function ChunkPanel({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * Every plan in one place: the diagrams, then work that is planned but not
+ * drawn as a diagram yet (a task with subtasks, a family of tasks, the inbox).
+ */
+function Portfolio({
+  diagrams,
+  lanes,
+  onOpenDiagram,
+  onOpenLoop,
+}: {
+  diagrams: DiagramSummary[];
+  lanes: Lane[];
+  onOpenDiagram: (key: string) => void;
+  onOpenLoop: () => void;
+}) {
+  const { t } = useI18n();
+  const byDiagram = new Map(lanes.filter((lane) => lane.kind === "diagram").map((lane) => [lane.key, lane]));
+  const others = lanes.filter((lane) => lane.kind !== "diagram");
+  const card = (lane: Lane | undefined) => {
+    if (!lane) return null;
+    const states = (Object.keys(lane.counts) as FlowItem["state"][]).filter((state) => lane.counts[state]);
+    return (
+      <>
+        <span className="flow-stack" aria-hidden="true">
+          {states.map((state) => <i key={state} className={`st-${state}`} style={{ flexGrow: lane.counts[state] }} />)}
+        </span>
+        <small>
+          {t("{done} of {total} done", { done: lane.counts.done, total: lane.total })}
+          {lane.stuck ? ` · ${t(STATE_LABEL[lane.stuck.state])} ${waited(lane.stuck.since, t)}: ${lane.stuck.title}` : ""}
+        </small>
+      </>
+    );
+  };
+  return (
+    <section className="dgx-portfolio">
+      <h3>{t("Diagrams")}</h3>
+      <div className="dgx-cards">
+        {diagrams.map((item) => (
+          <button key={item.diagram_key} type="button" className="dgx-card" onClick={() => onOpenDiagram(item.diagram_key)}>
+            <b>{item.title}</b>
+            <span className="dgx-meta">{t(DIAGRAM_STATUS[item.status])} · v{item.version}</span>
+            {card(byDiagram.get(item.diagram_key))}
+          </button>
+        ))}
+      </div>
+      {others.length > 0 && (
+        <>
+          <h3>{t("Planned, not drawn as a diagram yet")}</h3>
+          <div className="dgx-cards">
+            {others.map((lane) => (
+              <button key={lane.lane_id} type="button" className="dgx-card virtual" onClick={onOpenLoop}>
+                <b>{lane.kind === "inbox" ? t("Inbox") : lane.title ?? lane.key}</b>
+                <span className="dgx-meta">
+                  {t(lane.kind === "umbrella" ? "Task with subtasks" : lane.kind === "family" ? "Family of tasks" : "Tasks outside a plan")}
+                </span>
+                {card(lane)}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
   );
 }

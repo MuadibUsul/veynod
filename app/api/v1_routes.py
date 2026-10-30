@@ -1496,6 +1496,18 @@ async def runner_heartbeat(
     return await runners.heartbeat(session, principal, body.model_dump(exclude_none=True))
 
 
+@router.get("/loop/overview",
+            summary="The Loop's dashboard in one read: lanes as planned, needs you, the last day, "
+                    "agents and the timeline")
+async def loop_overview(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import flow
+
+    return await flow.overview(session, principal)
+
+
 @router.get("/runner/hosts", summary="The computers that run this workspace's agents")
 async def list_hosts(
     include_revoked: bool = Query(default=False),
