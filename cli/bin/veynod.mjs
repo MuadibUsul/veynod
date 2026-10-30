@@ -1207,16 +1207,19 @@ async function up(options) {
   return doctorOk(checks) ? 0 : 1;
 }
 
+// The board checks a hub's hello turns green; nothing else is worth waiting for.
+const AFTER_HELLO = new Set(["board:hosts", "board:builder", "board:reviewer"]);
+
 /**
  * The hub just started: give it time to say hello before the board's checks
- * count. Only red board items are waited on; anything red on this computer is
- * answered at once.
+ * count. Only the checks its hello answers are waited on; anything else red
+ * (on this computer, or automation on the board) is answered at once.
  */
 export async function settledDoctor(run, { doctorOk, tries = 15, waitMs = 2_000 } = {}) {
   let checks = await run();
   for (let attempt = 1; attempt < tries && !doctorOk(checks); attempt += 1) {
     const red = checks.filter((item) => !item.ok && item.required);
-    if (!red.every((item) => item.id.startsWith("board:"))) break;
+    if (!red.every((item) => AFTER_HELLO.has(item.id))) break;
     await sleep(waitMs);
     checks = await run();
   }

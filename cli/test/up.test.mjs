@@ -177,4 +177,8 @@ test("up waits for the new hub's hello, never for what this computer lacks", asy
     { doctorOk, waitMs: 1 });
   assert.equal(calls, 1, "a missing runtime is reported at once");
   assert.equal(doctorOk(local), false);
+
+  calls = 0;
+  await settledDoctor(async () => { calls += 1; return [red("board:automation")]; }, { doctorOk, waitMs: 1 });
+  assert.equal(calls, 1, "no hello turns automation on");
 });
