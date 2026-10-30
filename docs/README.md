@@ -20,7 +20,7 @@ is the repository source of truth.
 | --- | --- |
 | [v3-requirements](v3-requirements.md) | Original v3 requirement set |
 | [MCP_CONNECTION_LIFECYCLE](MCP_CONNECTION_LIFECYCLE.md) | Proposed: stable MCP connections, credential rotation, TTL and cleanup |
-| [WAKE_AND_DISPATCH](WAKE_AND_DISPATCH.md) | Proposed: reach channels that wake connected agents, wake policy, task dispatch with accept deadlines |
+| [WAKE_AND_DISPATCH](WAKE_AND_DISPATCH.md) | Proposed (v2): real-time wake through a local hub on OAR, dispatch to named agents, and the Loop in production; prior art survey |
 | [HUMAN_DOCUMENT_LIBRARY_UX](HUMAN_DOCUMENT_LIBRARY_UX.md) | Proposed: search-first human document library and reading view |
 | [SEO_TECHNICAL_PLAN](SEO_TECHNICAL_PLAN.md) | Implemented (Phase 0): English-first technical SEO, HTML/JSON content negotiation, legacy-domain removal |
 
