@@ -146,6 +146,8 @@ def task_summary(task: CollabTask) -> TaskSummary:
         human_feedback=task.human_feedback,
         review_feedback=task.review_feedback,
         reviewed_by=task.reviewed_by,
+        awaiting_deploy=True if status == "HANDOFF" and isinstance(brief.get("approval"), dict)
+        and brief["approval"].get("awaiting_deploy") else None,
         ping_pong_count=task.ping_pong_count,
         retry_count=task.ping_pong_count,
         max_retries=task.max_retries,

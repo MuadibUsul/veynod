@@ -1058,6 +1058,9 @@ class TaskSummary(BaseModel):
     human_feedback: str | None = None
     review_feedback: str | None = None
     reviewed_by: str | None = None
+    awaiting_deploy: bool | None = Field(
+        default=None, description="true: approved, waiting in HANDOFF for a verified deploy "
+                                  "before DONE (not sent back)")
     ping_pong_count: int
     retry_count: int = Field(
         default=0, description="Alias of ping_pong_count (spec §4.2 retry_count)")
@@ -1593,6 +1596,10 @@ class ContinuationRequest(StrictModel):
     handoff_to: str | None = Field(default=None, max_length=160)
     brief: dict[str, Any] | None = Field(
         default=None, description="handoff=true: the L1 brief (summary etc.)")
+    erratum: str | None = Field(
+        default=None, min_length=1, max_length=2_000,
+        description="After your handoff, while the task is in review: an append-only "
+                    "correction to your brief, shown with it (the pack is not rewritten)")
 
     @field_validator("state")
     @classmethod

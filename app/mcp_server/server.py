@@ -1341,10 +1341,12 @@ async def list_tasks(
     task_key: Annotated[str | None, Field(max_length=2_000)] = None,
     limit: Annotated[int, Field(ge=1, le=500)] = 50,
     detail: Literal["summary", "standard", "full"] = "summary",
+    diagram_key: Annotated[str | None, Field(max_length=64)] = None,
 ) -> dict[str, Any]:
     """List tasks. claimable_by_me=true: what you may claim now (role, assignee,
     capabilities); assignee="me": tasks assigned to you; parent: a task's children;
-    task_key: comma-separated task keys or ids. status is a comma-separated list.
+    task_key: comma-separated task keys or ids; diagram_key: that diagram's chunk
+    tasks (combine with claimable_by_me). status is a comma-separated list.
     This mirrors REST GET /v1/tasks.
     detail=summary (default): key, title, status, priority, namespace, version,
     updated_at, role and holder; standard/full: every field.
@@ -1363,6 +1365,7 @@ async def list_tasks(
                 # so task_key used to return the whole board here too.
                 task_keys=[item.strip() for item in (task_key or "").split(",")
                            if item.strip()],
+                diagram_key=diagram_key,
             )
         except ApiError as exc:
             raise _api_error(exc) from exc
@@ -1385,12 +1388,15 @@ async def write_continuation(
     handoff: bool = False,
     handoff_to: str | None = None,
     brief: dict[str, Any] | None = None,
+    erratum: str | None = None,
 ) -> dict[str, Any]:
     """Write the task's continuation pack so the next holder starts where you stopped.
 
     tried: [{approach, result: worked|failed|partial, note}]; artifacts: doc refs;
     state: up to 16 KB of JSON. The next claim returns it first. handoff=true
     also hands the task off (status HANDOFF). Write one before every handoff.
+    erratum: after your handoff, while the task is in review, append a correction
+    to your brief (only that; the pack is not rewritten).
     This mirrors REST POST /v1/tasks/{task_key}/continuation.
     """
     async with async_session_factory() as session:
@@ -1400,7 +1406,7 @@ async def write_continuation(
                 done=done or [], tried=tried or [], avoid=avoid or [],
                 next_steps=next_steps or [], open_questions=open_questions or [],
                 artifacts=artifacts or [], state=state or {}, handoff=handoff,
-                handoff_to=handoff_to, brief=brief,
+                handoff_to=handoff_to, brief=brief, erratum=erratum,
             )
             result = await task_service.write_continuation(session, principal, task_key, body)
         except ValidationError as exc:
@@ -2096,6 +2102,7 @@ _DIAGRAM_ACTIONS = {
     "queue": ("queue", True, False, False),
     "queue_check": ("queue_check", True, True, True),
     "merge": ("merge", True, True, True),
+    "repoint": ("repoint", True, True, True),
     "propose": ("propose", True, False, True),
     "increment": ("request_increment", True, False, True),
     "decide": ("decide", True, False, True),
@@ -2113,12 +2120,15 @@ async def diagram(action: str, diagram_key: str | None = None, chunk_key: str | 
     """Diagrams and chunked dispatch (spec-diagram-dispatch v3), one tool.
 
     action: list | get | create | edit | dispatch | submit | ci | review |
-    triptych | queue | queue_check | merge | propose | increment | decide |
-    signal | escalate | usage | replay. args is the body of the matching
-    REST call (POST /v1/diagrams/...): create {diagram_key, title, chunks,
-    watchers}; submit {files, commit, diff}; ci {results: {compile, lint,
-    test}}; review {result, semantic, inconsistent_pane, evidence};
-    queue_check {result, evidence}; propose {summary, patch}; increment
+    triptych | queue | queue_check | merge | repoint | propose | increment |
+    decide | signal | escalate | usage | replay. args is the body of the
+    matching REST call (POST /v1/diagrams/...): create {diagram_key, title,
+    chunks, watchers}; submit {files, commit, diff, self_check: [{cmd,
+    exit_code, output}]} (no CI step when the chunk names no commands); ci {results: {compile,
+    lint, test}}; review {result, semantic, inconsistent_pane, evidence};
+    queue_check {result, evidence}; merge {artifact (a commit or doc://; not
+    needed after an accepted submission), note}; repoint {task_key} (the DONE
+    task of this chunk that did the work); propose {summary, patch}; increment
     {request_text, target_chunk, chunk}; decide {decision} (with change_key);
     signal {reason}; escalate {mode: upgrade|spec}; usage {tokens}. Confirming,
     freezing, revoking and budgets are people's decisions (console or REST)."""

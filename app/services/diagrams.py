@@ -38,10 +38,12 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import Principal, can
+from app.auth import Principal, can, ensure_namespace
+from app.config import get_settings
 from app.errors import ApiError, Forbidden, NotFound
 from app.services.common import append_event
 
+settings = get_settings()
 LAYERS = ("interface", "implementation")
 IN_FLIGHT = ("dispatched", "in_progress", "awaiting_gate", "awaiting_ci", "awaiting_review",
              "ready_to_merge", "queued", "verified", "merged")
@@ -187,6 +189,43 @@ def _require_contract_first(chunks: list[dict[str, Any]]) -> None:
                        details={"implementation_roots": roots})
 
 
+# A done criterion only a person can settle ("owner confirms at M1"): MANUAL on the task.
+_PERSON_DECIDES = re.compile(
+    r"\b(owner|person|people|human|approv\w*|confirm\w*|sign[- ]?off)\b"
+    r"|确认|验收|批准|审批|人工|拍板", re.IGNORECASE)
+
+
+def acceptance_kind(criterion: str) -> str:
+    return "MANUAL" if _PERSON_DECIDES.search(criterion or "") else "AUTO"
+
+
+def confirm_warnings(diagram: dict[str, Any], chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """What the person confirming should know: criteria only a person can settle,
+    automatic ones with no command to check them, and an unanswered self-check."""
+    warnings: list[dict[str, Any]] = []
+    risk = self_check_risk(diagram.get("self_check") or {})
+    if risk["missing"]:
+        warnings.append({"kind": "self_check", "missing": risk["missing"], "risk": risk["risk"],
+                         "detail": "self-check not answered yes: " + ", ".join(risk["missing"])})
+    for chunk in chunks:
+        if chunk["state"] == "retired":
+            continue
+        kinds = [(criterion, acceptance_kind(criterion)) for criterion in chunk["done_criteria"]]
+        manual = [criterion for criterion, kind in kinds if kind == "MANUAL"]
+        if manual:
+            warnings.append({"kind": "manual_criteria", "chunk_key": chunk["chunk_key"],
+                             "criteria": manual,
+                             "detail": "a person settles these; the chunk's task marks them "
+                                       "MANUAL"})
+        unchecked = [criterion for criterion, kind in kinds if kind == "AUTO"]
+        if unchecked and not _needs_ci(chunk):
+            warnings.append({"kind": "auto_without_commands", "chunk_key": chunk["chunk_key"],
+                             "criteria": unchecked,
+                             "detail": "no command checks these: add commands, or the "
+                                       "reviewer checks them by hand"})
+    return warnings
+
+
 def self_check_risk(self_check: dict[str, Any]) -> dict[str, Any]:
     """M-A-07: big, stable, machine-checkable, long; two or more 'no' is a risk (warn only)."""
     missing = [item for item in SELF_CHECK if self_check.get(item) is not True]
@@ -231,6 +270,22 @@ async def _tasks(session: AsyncSession, principal: Principal,
     return {row["task_key"]: dict(row) for row in rows}
 
 
+def _needs_ci(chunk: dict[str, Any]) -> bool:
+    """M-19 asks for a sandbox run where the chunk names what to run; a chunk with no
+    commands (a design, a document) goes from its submission straight to review."""
+    commands = chunk.get("commands") or {}
+    return any(commands.get(stage) for stage in STAGES)
+
+
+def _ci_hold(chunk: dict[str, Any], submission: dict[str, Any]) -> str | None:
+    """What CI still holds the current submission at: awaiting_ci, rework, or nothing.
+    A run recorded for this commit always counts, even where none was required."""
+    ci = chunk.get("ci") or {}
+    if ci.get("commit") == submission.get("commit"):
+        return None if ci.get("green") else "rework"
+    return "awaiting_ci" if _needs_ci(chunk) else None
+
+
 def status_of(chunk: dict[str, Any], task: dict[str, Any] | None) -> str:
     """The status readers see: the chunk's own record, read through its task."""
     state = chunk["state"]
@@ -243,11 +298,9 @@ def status_of(chunk: dict[str, Any], task: dict[str, Any] | None) -> str:
     if submission:  # the automation path (M-17, M-19, M-20)
         if state == "rework" or not submission.get("accepted"):
             return "rework"
-        ci = chunk.get("ci") or {}
-        if ci.get("commit") != submission.get("commit"):
-            return "awaiting_ci"
-        if not ci.get("green"):
-            return "rework"
+        hold = _ci_hold(chunk, submission)
+        if hold:
+            return hold
         if gate.get("submission_at") != submission.get("at"):
             return "awaiting_review"
         if gate.get("result") != "pass":
@@ -458,9 +511,11 @@ async def confirm(session: AsyncSession, principal: Principal, key: str) -> dict
         "updated_at = NOW() WHERE id = :id RETURNING *"),
         {"by": _me(principal), "id": diagram["id"]})).mappings().one())
     await _write_document(session, principal, diagram, chunks)
-    await _event(session, principal, diagram, "DIAGRAM_CONFIRMED", version=diagram["version"])
+    warnings = confirm_warnings(diagram, chunks)
+    await _event(session, principal, diagram, "DIAGRAM_CONFIRMED", version=diagram["version"],
+                 warnings=[item["kind"] for item in warnings])
     await session.commit()
-    return await view(session, principal, key)
+    return {**await view(session, principal, key), "confirm_warnings": warnings}
 
 
 async def freeze(session: AsyncSession, principal: Principal, key: str,
@@ -529,16 +584,27 @@ async def dispatch(session: AsyncSession, principal: Principal, key: str,
     return result
 
 
+# What the graph itself blocks on. A merge re-checks these; a chunk blocked by its
+# circuit breaker or token budget waits for a person instead (M-22, M-24).
+GRAPH_BLOCKS = ("dependency", "file_lock")
+
+
+def _waiting_on(chunk: dict[str, Any], chunks: dict[str, dict[str, Any]]) -> tuple[list[str], str]:
+    """The dependencies not merged yet, and the reason in words, from current states."""
+    waiting = [dep for dep in chunk["depends_on"]
+               if chunks.get(dep, {}).get("state") != "merged"]
+    return waiting, "waiting on " + ", ".join(
+        f"{dep} ({chunks[dep]['state'] if dep in chunks else 'missing'})" for dep in waiting)
+
+
 async def _dispatch_one(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
                         chunk: dict[str, Any], chunks: dict[str, dict[str, Any]],
                         upgrade: dict[str, Any] | None = None) -> dict[str, Any]:
-    waiting = [dep for dep in chunk["depends_on"]
-               if chunks.get(dep, {}).get("state") != "merged"]
+    waiting, waiting_reason = _waiting_on(chunk, chunks)
     kind, reason, detail = None, None, {}
     if waiting:
         kind = "dependency"
-        reason = "waiting on " + ", ".join(
-            f"{dep} ({chunks[dep]['state'] if dep in chunks else 'missing'})" for dep in waiting)
+        reason = waiting_reason
         detail = {"waiting_on": waiting}
     else:
         locks = await _lock_conflicts(session, principal, chunk)
@@ -601,12 +667,36 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
     description with its acceptance, its direct upstream interfaces, and its
     write scope. No diagram document, no repository, no upstream implementation,
     no other chunk; what was injected and from where is kept on the chunk."""
-    from app.schemas import AcceptanceItem, TaskCreateRequest
+    from app.schemas import AcceptanceItem, DocRef, TaskCreateRequest
     from app.services.tasks import _create_task_core
 
-    upstream = {dep: {"icd": chunks[dep]["icd"], "layer": chunks[dep]["layer"],
-                      "read_only_interfaces": chunks[dep]["read_only_interfaces"]}
-                for dep in chunk["depends_on"] if dep in chunks}
+    upstream: dict[str, dict[str, Any]] = {}
+    context_docs: list[DocRef] = []
+    unreadable: list[str] = []
+    for dep in chunk["depends_on"]:
+        if dep not in chunks:
+            continue
+        up = chunks[dep]
+        upstream[dep] = {"icd": up["icd"], "layer": up["layer"],
+                         "read_only_interfaces": up["read_only_interfaces"]}
+        delivered = (up.get("merge") or {}).get("delivered") or {}
+        if up["layer"] != "interface" or not delivered:
+            continue  # M-16: an implementation upstream hands over its contract only
+        # An interface chunk's deliverables are the interface: hand them over, pinned.
+        upstream[dep]["files"] = delivered.get("files") or []
+        upstream[dep]["docs"] = []
+        for doc in delivered.get("docs") or []:
+            if doc.get("missing"):
+                continue
+            try:
+                ensure_namespace(principal, doc["namespace"])
+            except ApiError:
+                unreadable.append(doc["uri"])
+                continue
+            upstream[dep]["docs"].append(doc["uri"])
+            if len(context_docs) < 20:
+                context_docs.append(DocRef(namespace=doc["namespace"], doc_key=doc["doc_key"],
+                                           version=doc["version"]))
     task_key = f"DG-{diagram['diagram_key']}-{chunk['chunk_key']}"[:128]
     taken = await session.scalar(text(
         "SELECT count(*) FROM collab_tasks WHERE workspace_id = :ws AND task_key LIKE :k"),
@@ -626,10 +716,13 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
         repo=diagram.get("repo"),
         # Chunks are implementation work, whoever dispatches them.
         assigned_role="EXECUTOR",
-        acceptance=[AcceptanceItem(id=f"DC-{index + 1}", kind="AUTO", text=criterion[:2_000])
+        acceptance=[AcceptanceItem(id=f"DC-{index + 1}", kind=acceptance_kind(criterion),
+                                   text=criterion[:2_000])
                     for index, criterion in enumerate(chunk["done_criteria"][:50])],
         done_definition="All done criteria pass, the gate passes, and someone other than "
                         "the implementer merges (spec M-09/M-10).",
+        context_docs=context_docs,
+        allow_missing_context=True,
         input_context={
             "diagram": {"key": diagram["diagram_key"], "version": diagram["version"],
                         "baseline": (diagram.get("baseline") or {}).get("version")},
@@ -643,6 +736,7 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
             "escalation": upgrade,
             "submit_with": f"POST /v1/diagrams/{diagram['diagram_key']}/chunks/"
                            f"{chunk['chunk_key']}/submit",
+            "next_steps": _next_steps(diagram, chunk),
         },
     )
     task = await _create_task_core(session, principal, request, agent=_me(principal),
@@ -652,13 +746,41 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
         "description_and_acceptance": {"source": f"chunk {chunk['chunk_key']}",
                                        "acceptance": len(chunk["done_criteria"])},
         "upstream_interfaces": {dep: {"source": f"chunk {dep} at baseline {baseline}",
-                                      "files": upstream[dep]["read_only_interfaces"]}
+                                      "files": [*upstream[dep]["read_only_interfaces"],
+                                                *(item["path"] for item in
+                                                  upstream[dep].get("files") or [])],
+                                      "docs": upstream[dep].get("docs") or []}
                                 for dep in upstream},
+        "unreadable_upstream_docs": unreadable,
         "write_scope": chunk["allowed_write_paths"],
         "not_injected": ["repository", "upstream implementation", "other chunks",
                          "diagram document"],
     }
     return task.task_key, context_slice
+
+
+def _next_steps(diagram: dict[str, Any], chunk: dict[str, Any]) -> list[str]:
+    """How a chunk finishes, in order, with the calls (the task and the chunk each
+    have a lifecycle; this is the one path through both)."""
+    key, chunk_key = diagram["diagram_key"], chunk["chunk_key"]
+    base = f"/v1/diagrams/{key}/chunks/{chunk_key}"
+    commands = ", ".join(f"{stage}: {cmd}" for stage, cmd in (chunk["commands"] or {}).items()
+                         if cmd)
+    return [
+        "1. Claim this task; delivered upstream documents arrive in its context.",
+        f'2. Submit: diagram(action="submit", diagram_key="{key}", chunk_key="{chunk_key}", '
+        'args={"files": [{"path", "content"}] or paths with "commit", "self_check": '
+        f'[{{"cmd", "exit_code", "output"}}]}}) (REST POST {base}/submit). Only '
+        f"{', '.join(chunk['allowed_write_paths']) or 'the allowed paths'} may change.",
+        f"3. CI: someone else runs {commands}." if _needs_ci(chunk)
+        else "3. CI: none, this chunk names no commands; the submission goes to review.",
+        '4. Review and gate: someone else (diagram action="review"); a rejection names the '
+        "pane that disagrees and comes back to you.",
+        '5. Merge: someone else (diagram action="merge"); it unblocks the chunks after this '
+        "one and hands them what you delivered.",
+        '6. After submitting, hand this task off: agent_handoff_task(next_status="REVIEWING", '
+        "brief=...).",
+    ]
 
 
 # ------------------------------------------------------------------ gate and merge
@@ -759,7 +881,7 @@ def _semantic_review(chunk: dict[str, Any], body: dict[str, Any], result: str) -
     if not submission.get("accepted"):
         raise ApiError(409, "submission_rejected", "the latest submission broke its write "
                        "scope and never reached review (spec M-17)")
-    if ci.get("commit") != submission.get("commit") or not ci.get("green"):
+    if _ci_hold(chunk, submission):
         raise ApiError(409, "ci_not_green", "review starts only on a green sandbox run for "
                        "the current submission (spec M-19)",
                        details={"ci": {"commit": ci.get("commit"), "green": ci.get("green")},
@@ -812,10 +934,17 @@ async def submit(session: AsyncSession, principal: Principal, key: str, chunk_ke
     """M-17: the implementer's submission (changed files, commit, diff). A file
     outside the write scope vetoes it at once: back to the implementer with the
     list, and no reviewer is ever woken (zero review cost)."""
-    files = [str(item) for item in body.get("files") or []]
+    files, contents, refs = _submitted_files(body.get("files"))
     commit = str(body.get("commit") or "").strip()
+    if not commit and (contents or refs):
+        # No repository needed: the files' own digest names the submission.
+        digest = hashlib.sha256(json.dumps(sorted(
+            [(path, hashlib.sha256(text_.encode()).hexdigest()) for path, text_ in contents.items()]
+            + [(path, ref) for path, ref in refs.items()])).encode()).hexdigest()
+        commit = f"content:{digest[:16]}"
     if not files or not commit:
-        raise ApiError(422, "validation_error", "a submission lists its changed files and commit")
+        raise ApiError(422, "validation_error", "a submission lists its changed files and commit "
+                       "(or carries the files' contents)")
     diagram, chunk, task = await _chunk_with_task(session, principal, key, chunk_key)
     if chunk["state"] not in ("dispatched", "rework"):
         raise ApiError(409, "invalid_transition", f"chunk '{chunk_key}' is {chunk['state']}")
@@ -823,8 +952,13 @@ async def submit(session: AsyncSession, principal: Principal, key: str, chunk_ke
     if not principal.is_human and _me(principal) not in implementers:
         raise Forbidden("only the chunk's implementer submits it")
     violations = _outside_scope(chunk, diagram, files)
+    # Out-of-scope work is never stored: the veto costs nothing (M-17).
+    stored = [] if violations else await _store_files(session, principal, diagram, chunk_key,
+                                                      commit, contents, refs)
     record = {"files": files, "commit": commit, "branch": body.get("branch"),
+              "hashes": stored, "docs": [item["doc"] for item in stored],
               "diff": (body.get("diff") or "")[:200_000], "diff_url": body.get("diff_url"),
+              "self_check": _self_check(body.get("self_check")),
               "by": _me(principal), "at": _now().isoformat(), "accepted": not violations,
               "violations": violations}
     await session.execute(text(
@@ -842,8 +976,102 @@ async def submit(session: AsyncSession, principal: Principal, key: str, chunk_ke
                      task_key=chunk["task_key"], commit=commit, files=len(files))
     await session.commit()
     return {"chunk_key": chunk_key, "accepted": not violations, "violations": violations,
-            "status": "rework" if violations else "awaiting_ci",
+            "commit": commit, "stored": stored,
+            "status": "rework" if violations else (
+                "awaiting_ci" if _needs_ci(chunk) else "awaiting_review"),
             "commands": chunk["commands"]}
+
+
+_STORED_PATH = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$")
+MAX_STORED_FILES = 50
+
+
+def _submitted_files(raw: Any) -> tuple[list[str], dict[str, str], dict[str, str]]:
+    """Paths, as before, or {path, content} / {path, doc} for a diagram with no
+    repository: the platform keeps the files and their hashes itself."""
+    paths: list[str] = []
+    contents: dict[str, str] = {}
+    refs: dict[str, str] = {}
+    for item in raw or []:
+        if isinstance(item, dict):
+            path = str(item.get("path") or "").strip()
+            if not path:
+                raise ApiError(422, "validation_error", "each file names its path")
+            if "content" in item:
+                content = item["content"]
+                if not _STORED_PATH.fullmatch(path):
+                    raise ApiError(422, "validation_error", f"{path}: a stored file has a "
+                                   "plain relative path (letters, digits, _ . - and /)")
+                if not isinstance(content, str) or not content:
+                    raise ApiError(422, "validation_error", f"{path}: content is non-empty text")
+                if len(content.encode()) > settings.max_document_content_bytes:
+                    raise ApiError(422, "validation_error", f"{path}: larger than "
+                                   f"{settings.max_document_content_bytes} bytes")
+                contents[path] = content
+            elif item.get("doc"):
+                refs[path] = str(item["doc"])
+        else:
+            path = str(item).strip()
+        if path and path not in paths:
+            paths.append(path)
+    if len(contents) + len(refs) > MAX_STORED_FILES:
+        raise ApiError(422, "validation_error", f"at most {MAX_STORED_FILES} files with content")
+    return paths, contents, refs
+
+
+async def _store_files(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
+                       chunk_key: str, commit: str, contents: dict[str, str],
+                       refs: dict[str, str]) -> list[dict[str, Any]]:
+    """Keep each submitted file as a versioned document, byte for byte, beside the
+    diagram's own document; a {path, doc} file points at one that exists already."""
+    from app.schemas import DocumentUpsertRequest
+    from app.services.collab import resolve_ref
+    from app.services.documents import upsert_document
+
+    stored = []
+    for path, ref in refs.items():
+        document = await resolve_ref(session, principal.workspace.id,
+                                     {"doc_key": _doc_key(ref) or ref})
+        if document is None:
+            raise ApiError(422, "validation_error", f"{path}: document {ref} not found")
+        stored.append({"path": path, "sha256": document.content_hash,
+                       "doc": f"doc://{document.doc_key}", "version": document.version})
+    for path, content in contents.items():
+        doc_key = f"{diagram['doc_key']}/{chunk_key}/{path}"
+        current = await session.scalar(text(
+            "SELECT version FROM shared_documents WHERE workspace_id = :ws AND doc_key = :k"),
+            {"ws": principal.workspace.id, "k": doc_key})
+        digest = hashlib.sha256(content.encode()).hexdigest()
+        result = await upsert_document(session, principal, doc_key, DocumentUpsertRequest(
+            title=f"{diagram['diagram_key']} · {chunk_key} · {path}"[:256], content=content,
+            expected_version=int(current or 0), namespace=diagram["namespace"],
+            frontmatter={"kind": "diagram_file", "diagram_key": diagram["diagram_key"],
+                         "chunk_key": chunk_key, "path": path, "commit": commit,
+                         "sha256": digest}), commit=False, raw_content=True)
+        stored.append({"path": path, "sha256": digest, "doc": f"doc://{doc_key}",
+                       "version": result.document.version})
+    return stored
+
+
+def _self_check(raw: Any) -> list[dict[str, Any]]:
+    """The checks the implementer ran, for the reviewer to see (never a substitute for
+    the sandbox where the chunk names commands)."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or len(raw) > 10:
+        raise ApiError(422, "validation_error", "self_check is a list of at most 10 "
+                       "{cmd, exit_code, output}")
+    checks = []
+    for item in raw:
+        if not isinstance(item, dict) or not str(item.get("cmd") or "").strip():
+            raise ApiError(422, "validation_error", "each self_check names its cmd")
+        try:
+            code = int(item.get("exit_code", 0))
+        except (TypeError, ValueError):
+            raise ApiError(422, "validation_error", "exit_code is a number") from None
+        checks.append({"cmd": str(item["cmd"])[:500], "exit_code": code,
+                       "output": str(item.get("output") or "")[:4_000]})
+    return checks
 
 
 async def record_ci(session: AsyncSession, principal: Principal, key: str, chunk_key: str,
@@ -920,10 +1148,12 @@ async def triptych(session: AsyncSession, principal: Principal, key: str,
                  "baseline_version": (diagram.get("baseline") or {}).get("version"),
                  "review_rules": list(DEFAULT_RULES) + list(chunk["semantic_rules"])},
         "middle": {"commit": submission.get("commit"), "files": submission.get("files"),
+                   "stored": submission.get("hashes") or [],
                    "diff": submission.get("diff"), "diff_url": submission.get("diff_url"),
                    "accepted": submission.get("accepted")},
         "right": {"commit": ci.get("commit"), "green": ci.get("green"),
-                  "stages": ci.get("stages")},
+                  "stages": ci.get("stages"), "ci_required": _needs_ci(chunk),
+                  "self_check": submission.get("self_check") or []},
     }
 
 
@@ -1277,16 +1507,25 @@ async def merge(session: AsyncSession, principal: Principal, key: str, chunk_key
     if me in await _implementers(session, principal, task, chunk["task_key"]):
         raise ApiError(403, "merge_by_implementer", "the implementer cannot merge their own "
                        "chunk (spec M-10)", details={"merger": me})
-    record = {"by": me, "at": _now().isoformat(),
-              "artifact": body.get("artifact") or (chunk.get("queue_check") or {}).get("commit"),
+    submission = chunk.get("submission") or {}
+    artifact = (body.get("artifact") or (chunk.get("queue_check") or {}).get("commit")
+                or (submission.get("commit") if submission.get("accepted") else None))
+    if not artifact:
+        # Downstream chunks start from what this one delivered: never merge nothing.
+        raise ApiError(409, "merge_without_deliverable", "a merge records what the chunk "
+                       "delivered: pass artifact (a commit or a doc:// link), or merge an "
+                       "accepted submission", details={"chunk_key": chunk_key})
+    record = {"by": me, "at": _now().isoformat(), "artifact": artifact,
               "note": body.get("note"), "task_status": task["status"] if task else None,
-              "via_queue": status == "verified"}
+              "via_queue": status == "verified",
+              "delivered": await _delivered(session, principal, body, submission, artifact)}
     await session.execute(text(
         "UPDATE diagram_chunks SET state = 'merged', merge = CAST(:m AS jsonb), "
         "block_reason = NULL, queued_at = NULL, updated_at = NOW() WHERE id = :id"),
         {"m": json.dumps(record), "id": chunk["id"]})
     await _event(session, principal, diagram, "CHUNK_MERGED", chunk_key=chunk_key,
                  task_key=chunk["task_key"], merged_by=me, artifact=body.get("artifact"),
+                 delivered_docs=[doc["uri"] for doc in record["delivered"]["docs"]],
                  targets=diagram.get("watchers") or [])
     unblocked = await _release_waiting(session, principal, diagram,
                                        trigger={"upstream": chunk_key,
@@ -1295,25 +1534,114 @@ async def merge(session: AsyncSession, principal: Principal, key: str, chunk_key
     return {"chunk_key": chunk_key, "state": "merged", "merge": record, "unblocked": unblocked}
 
 
+def _doc_key(uri: Any) -> str | None:
+    value = str(uri or "").strip()
+    return value[len("doc://"):].strip("/") or None if value.startswith("doc://") else None
+
+
+async def _delivered(session: AsyncSession, principal: Principal, body: dict[str, Any],
+                     submission: dict[str, Any], artifact: Any) -> dict[str, Any]:
+    """What a merged chunk hands the chunks after it: its documents, resolved and
+    pinned to their version now, and its files (the accepted submission's and any
+    listed in deliverables)."""
+    from app.services.collab import resolve_ref
+
+    given = body.get("deliverables") or {}
+    uris = [*(given.get("docs") or []), artifact, *(submission.get("docs") or [])]
+    docs, seen = [], set()
+    for uri in uris:
+        key = _doc_key(uri)
+        if not key or key in seen or len(docs) >= 20:
+            continue
+        seen.add(key)
+        document = await resolve_ref(session, principal.workspace.id, {"doc_key": key})
+        if document is None:
+            docs.append({"uri": f"doc://{key}", "missing": True})
+            continue
+        docs.append({"uri": f"doc://{document.doc_key}", "namespace": document.namespace,
+                     "doc_key": document.doc_key, "version": document.version,
+                     "content_hash": document.content_hash})
+    files: dict[str, dict[str, Any]] = {}
+    listed = [*(submission.get("files") or [] if submission.get("accepted") else []),
+              *(given.get("files") or [])]
+    for item in listed:
+        path = str((item.get("path") if isinstance(item, dict) else item) or "").strip()
+        digest = item.get("sha256") if isinstance(item, dict) else None
+        if path and len(files) < 200:
+            files[path] = {"path": path, "sha256": digest or files.get(path, {}).get("sha256")}
+    for item in submission.get("hashes") or []:  # recorded by submit when it stores contents
+        if item.get("path") in files and not files[item["path"]]["sha256"]:
+            files[item["path"]]["sha256"] = item.get("sha256")
+    return {"docs": docs, "files": list(files.values())}
+
+
+def _lineage(diagram: dict[str, Any], chunk: dict[str, Any]) -> str:
+    """The task key a chunk is dispatched under; re-dispatches add -2, -3..."""
+    return f"DG-{diagram['diagram_key']}-{chunk['chunk_key']}"[:128]
+
+
+async def _lineage_tasks(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
+                         chunk: dict[str, Any]) -> list[dict[str, Any]]:
+    lineage = _lineage(diagram, chunk)
+    rows = (await session.execute(text(
+        "SELECT task_key, status::text AS status, updated_at FROM collab_tasks "
+        "WHERE workspace_id = :ws AND (task_key = :k OR task_key ~ :pattern) "
+        "ORDER BY updated_at DESC"),
+        {"ws": principal.workspace.id, "k": lineage,
+         "pattern": "^" + re.escape(lineage) + r"-[0-9]+$"})).mappings().all()
+    return [dict(row) for row in rows]
+
+
+async def repoint(session: AsyncSession, principal: Principal, key: str, chunk_key: str,
+                  body: dict[str, Any]) -> dict[str, Any]:
+    """M-08: point a chunk at the board task that actually did its work, e.g. after a
+    duplicate dispatch was withdrawn. Only a task of the chunk's own lineage, and a
+    DONE one for a merged chunk."""
+    if not _may_steer(principal):
+        raise Forbidden("people, super admins and planners re-point a chunk")
+    task_key = str(body.get("task_key") or "").strip()
+    if not task_key:
+        raise ApiError(422, "validation_error", "task_key is required")
+    diagram, chunk, _ = await _chunk_with_task(session, principal, key, chunk_key)
+    lineage = {row["task_key"]: row for row in
+               await _lineage_tasks(session, principal, diagram, chunk)}
+    if task_key not in lineage:
+        raise ApiError(422, "not_chunk_lineage", f"'{task_key}' is not a task of chunk "
+                       f"'{chunk_key}'", details={"lineage": sorted(lineage)})
+    if chunk["state"] == "merged" and lineage[task_key]["status"] != "DONE":
+        raise ApiError(409, "task_not_done", "a merged chunk points at a DONE task",
+                       details={"status": lineage[task_key]["status"]})
+    previous = chunk["task_key"]
+    await session.execute(text(
+        "UPDATE diagram_chunks SET task_key = :t, updated_at = NOW() WHERE id = :id"),
+        {"t": task_key, "id": chunk["id"]})
+    await _event(session, principal, diagram, "CHUNK_REPOINTED", chunk_key=chunk_key,
+                 task_key=task_key, previous=previous, note=body.get("note"))
+    await session.commit()
+    return {"chunk_key": chunk_key, "task_key": task_key, "previous": previous}
+
+
 async def _release_waiting(session: AsyncSession, principal: Principal,
                            diagram: dict[str, Any],
                            trigger: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     chunks = {chunk["chunk_key"]: chunk for chunk in await _chunks(session, diagram["id"])}
     released = []
     for chunk in chunks.values():
-        if chunk["state"] != "blocked":
+        # Every graph block is re-checked, so a chunk still waiting on others names only
+        # those; circuit and budget blocks are a person's to lift.
+        if chunk["state"] != "blocked" or chunk["block_kind"] not in (*GRAPH_BLOCKS, None):
             continue
-        if all(chunks.get(dep, {}).get("state") == "merged" for dep in chunk["depends_on"]):
-            outcome = await _dispatch_one(session, principal, diagram, chunk, chunks)
-            if outcome["state"] == "dispatched":
-                # M-14 / M-26: unlocked by the graph, no one re-dispatches; watchers hear it.
-                # M-26: the minimum to pull and start: upstream, its merge commit, the
-                # baseline, the downstream chunk and its task. Never the code itself.
-                await _event(session, principal, diagram, "CHUNK_UNBLOCKED",
-                             chunk_key=chunk["chunk_key"], task_key=outcome.get("task_key"),
-                             baseline=(diagram.get("baseline") or {}).get("version"),
-                             **(trigger or {}), targets=diagram.get("watchers") or [])
-                released.append(outcome)
+        outcome = await _dispatch_one(session, principal, diagram, chunk, chunks)
+        chunk["state"] = outcome["state"]  # later chunks read the graph as it is now
+        if outcome["state"] == "dispatched":
+            # M-14 / M-26: unlocked by the graph, no one re-dispatches; watchers hear it.
+            # M-26: the minimum to pull and start: upstream, its merge commit, the
+            # baseline, the downstream chunk and its task. Never the code itself.
+            await _event(session, principal, diagram, "CHUNK_UNBLOCKED",
+                         chunk_key=chunk["chunk_key"], task_key=outcome.get("task_key"),
+                         baseline=(diagram.get("baseline") or {}).get("version"),
+                         **(trigger or {}), targets=diagram.get("watchers") or [])
+            released.append(outcome)
     return released
 
 
@@ -1619,6 +1947,22 @@ async def _change(session: AsyncSession, diagram: dict[str, Any], change_key: st
     return dict(row)
 
 
+async def _mismatch_fix(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
+                        chunk: dict[str, Any]) -> dict[str, Any]:
+    """How to clear a board mismatch: re-point to the lineage task that did the work."""
+    done = [row["task_key"] for row in await _lineage_tasks(session, principal, diagram, chunk)
+            if row["status"] == "DONE" and row["task_key"] != chunk["task_key"]]
+    call = (f'diagram(action="repoint", diagram_key="{diagram["diagram_key"]}", '
+            f'chunk_key="{chunk["chunk_key"]}", args={{"task_key": "<task_key>"}})')
+    if done:
+        return {"action": "repoint", "task_key": done[0],
+                "text": f"{done[0]} is DONE for this chunk: re-point the chunk to it.",
+                "call": call.replace("<task_key>", done[0])}
+    return {"action": "repoint", "task_key": None,
+            "text": "No DONE task of this chunk's lineage: re-dispatch it, or re-point it "
+                    "once its work is DONE.", "call": call}
+
+
 def _public_submission(submission: dict[str, Any] | None) -> dict[str, Any] | None:
     if not submission:
         return None
@@ -1646,17 +1990,26 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
     diagram = await _diagram(session, principal, key)
     chunks = await _chunks(session, diagram["id"])
     tasks = await _tasks(session, principal, [c["task_key"] for c in chunks if c["task_key"]])
+    by_key = {chunk["chunk_key"]: chunk for chunk in chunks}
     items, distribution, blocked, mismatches, warnings = [], {}, [], [], []
     ready = []
     for chunk in chunks:
+        if chunk["state"] == "blocked" and chunk["block_kind"] == "dependency":
+            # Read from the graph as it is now, never a reason saved earlier.
+            waiting, reason = _waiting_on(chunk, by_key)
+            if waiting:
+                chunk = {**chunk, "block_reason": reason}
         task = tasks.get(chunk["task_key"]) if chunk["task_key"] else None
         status = status_of(chunk, task)
+        problem = None
         if chunk["task_key"] and task is None:
+            problem = "the dispatched task is gone from the board"
+        elif status == "merged" and task and task["status"] in ("FAILED", "CANCELLED"):
+            problem = f"merged, but its task is {task['status']}"
+        if problem:
             mismatches.append({"chunk_key": chunk["chunk_key"], "task_key": chunk["task_key"],
-                               "problem": "the dispatched task is gone from the board"})
-        if status == "merged" and task and task["status"] in ("FAILED", "CANCELLED"):
-            mismatches.append({"chunk_key": chunk["chunk_key"], "task_key": chunk["task_key"],
-                               "problem": f"merged, but its task is {task['status']}"})
+                               "problem": problem,
+                               "fix": await _mismatch_fix(session, principal, diagram, chunk)})
         if status != "retired":
             distribution[status] = distribution.get(status, 0) + 1
         if status in ("blocked", "blocked_by_spec"):

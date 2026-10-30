@@ -87,6 +87,7 @@ do not edit by hand. Every error body is
 | `lease_renew_too_early` | 409 | `fix_request` | `fix_request_then_resend` | Renew only in the last 300 seconds of the lease. |
 | `locate_required` | 409 | `fix_request` | `fix_request_then_resend` | Run locate_personal_data first. |
 | `log_document_append_only` | 409 | `fix_request` | `append_entries` | Use append_entries instead. |
+| `merge_without_deliverable` | 409 | `fix_request` | `fix_request_then_resend` | Pass artifact (a commit or doc:// link), or merge an accepted submission. |
 | `no_active_generation` | 409 | `fix_request` | `fix_request_then_resend` | Pick an identity that has a token. |
 | `not_a_log_document` | 409 | `fix_request` | `fix_request_then_resend` | Write with upsert_shared_doc instead. |
 | `parts_incomplete` | 409 | `fix_request` | `fix_request_then_resend` | Upload the missing parts first. |
@@ -97,6 +98,7 @@ do not edit by hand. Every error body is
 | `runner_hello_required` | 409 | `fix_request` | `fix_request_then_resend` | Call POST /v1/runner/hello with this host, then retry. |
 | `still_draft` | 409 | `fix_request` | `fix_request_then_resend` | Edit the draft directly (details.edit_with). |
 | `task_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another task_key. |
+| `task_not_done` | 409 | `fix_request` | `fix_request_then_resend` | Re-point a merged chunk to a DONE task. |
 | `tenant_has_children` | 409 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
 | `terminal_state_immutable` | 409 | `fix_request` | `fix_request_then_resend` | The task is DONE or FAILED; create a new task instead. |
 | `upload_incomplete` | 409 | `fix_request` | `fix_request_then_resend` | Upload the remaining parts first. |
@@ -140,6 +142,7 @@ do not edit by hand. Every error body is
 | `limit_too_large` | 422 | `fix_request` | `fix_request_then_resend` | Lower limit to the documented maximum. |
 | `namespace_not_registered` | 422 | `fix_request` | `register_namespace` | Call register_namespace, then resend. |
 | `namespace_protected` | 422 | `fix_request` | `fix_request_then_resend` | default and reserved namespaces stay. |
+| `not_chunk_lineage` | 422 | `fix_request` | `fix_request_then_resend` | Name a task of this chunk (DG-<diagram>-<chunk>[-n]); details list them. |
 | `notice_template_incomplete` | 422 | `fix_request` | `fix_request_then_resend` | Fill details.missing fields. |
 | `offset_not_supported` | 422 | `fix_request` | `fix_request_then_resend` | Use cursor pagination. |
 | `policy_loosening_not_allowed` | 422 | `fix_request` | `fix_request_then_resend` | Use a value no looser than the ancestor's. |

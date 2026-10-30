@@ -329,13 +329,196 @@ async def test_contract_first_and_topology_unlock(client):
     await client.post(f"/v1/diagrams/{key}/chunks/schema/gate", headers=reviewer["headers"],
                       json={"result": "pass"})
     merged = (await client.post(f"/v1/diagrams/{key}/chunks/schema/merge", headers=ws["person"],
-                                json={})).json()
+                                json={"artifact": "commit schema1"})).json()
     # Both implementations are dispatched by the graph itself, nobody re-dispatches.
     assert sorted(item["chunk_key"] for item in merged["unblocked"]) == ["reader", "writer"]
     inbox = (await client.get("/v1/inbox", headers=watcher["headers"])).json()["items"]
     kinds = [item.get("kind") or item.get("type") for item in inbox]
     assert sum(1 for kind in kinds if "chunk_unblocked" in str(kind)) == 2, kinds
     assert any("chunk_merged" in str(kind) for kind in kinds), kinds
+
+
+async def _sql(query: str, *args):
+    conn = await asyncpg.connect(os.environ["TEST_DATABASE_URL"].replace(
+        "postgresql+asyncpg://", "postgresql://", 1))
+    try:
+        return await conn.fetch(query, *args)
+    finally:
+        await conn.close()
+
+
+async def test_block_reasons_are_current_and_merges_leave_circuits_alone(client):
+    """DX-5: a merge re-checks every graph block, so a chunk still waiting names only
+    what it still waits on, in the view and stored; a circuit-broken chunk is a
+    person's to lift, never re-dispatched by an unrelated merge."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    executor = await _agent(client, ws)
+    reviewer = await _agent(client, ws, "AUDITOR")
+    chunks = [_chunk("a", layer="interface"), _chunk("b", layer="interface"),
+              _chunk("c", deps=["a", "b"]), _chunk("d", deps=["a"])]
+    key, _ = await _frozen(client, ws, architect, chunks)
+    dispatched = {}
+    for chunk_key in ("a", "b", "c", "d"):
+        dispatched[chunk_key] = (await client.post(
+            f"/v1/diagrams/{key}/chunks/{chunk_key}/dispatch", headers=architect["headers"])).json()
+    assert dispatched["c"]["block_reason"] == "waiting on a (dispatched), b (dispatched)"
+
+    # d is past a's merge in the plan; break its circuit as three rejections would.
+    await _sql("UPDATE diagram_chunks SET block_kind = 'circuit', block_reason = 'trust 20' "
+               "WHERE chunk_key = 'd' AND diagram_id = (SELECT id FROM diagrams "
+               "WHERE diagram_key = $1)", key)
+
+    await _deliver(client, executor, dispatched["a"]["task_key"])
+    gated = await client.post(f"/v1/diagrams/{key}/chunks/a/gate", headers=reviewer["headers"],
+                              json={"result": "pass"})
+    assert gated.status_code == 200, gated.text
+    merged = await client.post(f"/v1/diagrams/{key}/chunks/a/merge", headers=ws["person"],
+                               json={"artifact": "commit a1"})
+    assert merged.status_code == 200, merged.text
+    assert merged.json()["unblocked"] == []
+
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    by_key = {chunk["chunk_key"]: chunk for chunk in shown["chunks"]}
+    assert by_key["c"]["block_reason"] == "waiting on b (dispatched)"
+    assert {item["chunk_key"]: item["reason"] for item in shown["progress"]["blocked"]}["c"] == (
+        "waiting on b (dispatched)")
+    stored = await _sql("SELECT chunk_key, state, block_kind, block_reason, task_key FROM "
+                        "diagram_chunks WHERE diagram_id = (SELECT id FROM diagrams WHERE "
+                        "diagram_key = $1) ORDER BY chunk_key", key)
+    rows = {row["chunk_key"]: row for row in stored}
+    assert rows["c"]["block_reason"] == "waiting on b (dispatched)"
+    # The circuit-broken chunk stays blocked, with no new task.
+    assert (rows["d"]["state"], rows["d"]["block_kind"], rows["d"]["task_key"]) == (
+        "blocked", "circuit", None)
+
+
+async def test_merge_needs_a_record_and_a_chunk_can_be_repointed(client):
+    """DX-2: nothing merges without a record of what it delivered; a chunk whose
+    duplicate dispatch failed is re-pointed to its DONE task, with a fix hint first."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    executor = await _agent(client, ws)
+    reviewer = await _agent(client, ws, "AUDITOR")
+    key, _ = await _frozen(client, ws, architect, [_chunk("p0", layer="interface")])
+    first = (await client.post(f"/v1/diagrams/{key}/chunks/p0/dispatch",
+                               headers=architect["headers"])).json()
+    await _deliver(client, executor, first["task_key"])
+    # The work is reviewed DONE on the board, then gated.
+    done = await client.post(f"/v1/tasks/{first['task_key']}/review", headers=ws["person"],
+                             json={"decision": "approve", "feedback": "ok"})
+    assert done.status_code == 200, done.text
+    await client.post(f"/v1/diagrams/{key}/chunks/p0/gate", headers=reviewer["headers"],
+                      json={"result": "pass"})
+    bare = await client.post(f"/v1/diagrams/{key}/chunks/p0/merge", headers=ws["person"],
+                             json={})
+    assert bare.status_code == 409, bare.text
+    assert bare.json()["error"]["code"] == "merge_without_deliverable"
+
+    # A duplicate dispatch is made and fails: the personal-website P0 case.
+    duplicate = f"{first['task_key']}-2"
+    made = await client.post("/v1/tasks", headers=ws["person"], json={
+        "task_key": duplicate, "title": "duplicate", "assigned_role": "EXECUTOR",
+        "namespace": "default"})
+    assert made.status_code == 201, made.text
+    await _sql("UPDATE collab_tasks SET status = 'FAILED' WHERE task_key = $1 "
+               "AND workspace_id = $2::uuid", duplicate, ws["id"])
+    merged = await client.post(f"/v1/diagrams/{key}/chunks/p0/merge", headers=ws["person"],
+                               json={"artifact": "doc://artifact/p0/delivery"})
+    assert merged.status_code == 200, merged.text
+    await _sql("UPDATE diagram_chunks SET task_key = $1 WHERE chunk_key = 'p0' AND "
+               "diagram_id = (SELECT id FROM diagrams WHERE diagram_key = $2)", duplicate, key)
+
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    [mismatch] = shown["board_consistency"]["mismatches"]
+    assert mismatch["problem"] == "merged, but its task is FAILED"
+    assert mismatch["fix"]["task_key"] == first["task_key"]
+    assert 'action="repoint"' in mismatch["fix"]["call"]
+
+    by_executor = await client.post(f"/v1/diagrams/{key}/chunks/p0/repoint",
+                                    headers=executor["headers"],
+                                    json={"task_key": first["task_key"]})
+    assert by_executor.status_code == 403
+    stranger = await client.post(f"/v1/diagrams/{key}/chunks/p0/repoint", headers=ws["person"],
+                                 json={"task_key": "some-other-task"})
+    assert stranger.json()["error"]["code"] == "not_chunk_lineage"
+    assert sorted(stranger.json()["error"]["details"]["lineage"]) == sorted(
+        [first["task_key"], duplicate])
+    not_done = await client.post(f"/v1/diagrams/{key}/chunks/p0/repoint", headers=ws["person"],
+                                 json={"task_key": duplicate})
+    assert not_done.json()["error"]["code"] == "task_not_done"
+    fixed = await client.post(f"/v1/diagrams/{key}/chunks/p0/repoint",
+                              headers=architect["headers"],
+                              json={"task_key": first["task_key"]})
+    assert fixed.status_code == 200, fixed.text
+    assert fixed.json() == {"chunk_key": "p0", "task_key": first["task_key"],
+                            "previous": duplicate}
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    assert shown["board_consistency"]["ok"] is True
+
+
+async def test_downstream_claims_carry_what_interface_chunks_delivered(client):
+    """DX-1: a merged interface chunk hands its delivered documents (pinned) and files
+    to the chunks after it; an implementation chunk hands over nothing (M-16)."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    executor = await _agent(client, ws)
+    reviewer = await _agent(client, ws, "AUDITOR")
+    suffix = uuid.uuid4().hex[:6]
+    contract_doc, core_doc = f"artifact/api-{suffix}/contract", f"artifact/core-{suffix}/notes"
+    for doc_key, content in ((contract_doc, "tokens: --color-accent"), (core_doc, "core code")):
+        stored = await client.put(f"/v1/documents/{doc_key}", headers=ws["key"],
+                                  json={"content": content, "expected_version": 0})
+        assert stored.status_code in (200, 201), stored.text
+    key, _ = await _frozen(client, ws, architect, [
+        _chunk("api", layer="interface"), _chunk("core", deps=["api"]),
+        _chunk("ui", deps=["core"])])
+    api = (await client.post(f"/v1/diagrams/{key}/chunks/api/dispatch",
+                             headers=architect["headers"])).json()
+    for later in ("core", "ui"):
+        await client.post(f"/v1/diagrams/{key}/chunks/{later}/dispatch",
+                          headers=architect["headers"])
+    await _deliver(client, executor, api["task_key"])
+    await client.post(f"/v1/diagrams/{key}/chunks/api/gate", headers=reviewer["headers"],
+                      json={"result": "pass"})
+    merged = await client.post(f"/v1/diagrams/{key}/chunks/api/merge", headers=ws["person"], json={
+        "artifact": "commit api1",
+        "deliverables": {"docs": [f"doc://{contract_doc}", "doc://artifact/none/missing"],
+                         "files": [{"path": "src/api.py", "sha256": "ab" * 32}]}})
+    assert merged.status_code == 200, merged.text
+    delivered = merged.json()["merge"]["delivered"]
+    assert delivered["files"] == [{"path": "src/api.py", "sha256": "ab" * 32}]
+    assert delivered["docs"][0]["doc_key"] == contract_doc and delivered["docs"][0]["version"] == 1
+    assert delivered["docs"][1] == {"uri": "doc://artifact/none/missing", "missing": True}
+    [core] = merged.json()["unblocked"]
+
+    # The contract changes after the merge: the downstream claim still reads what was merged.
+    await client.put(f"/v1/documents/{contract_doc}", headers=ws["key"],
+                     json={"content": "tokens: changed later", "expected_version": 1})
+    task = (await client.get(f"/v1/tasks/{core['task_key']}", headers=ws["key"])).json()
+    assert task["input_context"]["upstream_interfaces"]["api"]["docs"] == [f"doc://{contract_doc}"]
+    assert task["input_context"]["upstream_interfaces"]["api"]["files"] == delivered["files"]
+    claimed = await client.post(f"/v1/tasks/{core['task_key']}/claim", headers=executor["headers"],
+                                json={})
+    assert claimed.status_code == 200, claimed.text
+    [context] = [item for item in claimed.json()["context"] if not item.get("is_continuation")]
+    assert context["doc_ref"]["doc_key"] == contract_doc and context["version"] == 1
+    assert context["content"] == "tokens: --color-accent"
+
+    # core is implementation: its deliverables never reach ui (M-16).
+    handed = await client.post(f"/v1/tasks/{core['task_key']}/handoff", headers=executor["headers"],
+                               json={"next_status": "REVIEWING", "brief": BRIEF,
+                                     "lease_epoch": claimed.json()["task"]["lease_epoch"]})
+    assert handed.status_code == 200, handed.text
+    await client.post(f"/v1/diagrams/{key}/chunks/core/gate", headers=reviewer["headers"],
+                      json={"result": "pass"})
+    merged = await client.post(f"/v1/diagrams/{key}/chunks/core/merge", headers=ws["person"],
+                               json={"artifact": f"doc://{core_doc}"})
+    assert merged.status_code == 200, merged.text
+    [ui] = merged.json()["unblocked"]
+    task = (await client.get(f"/v1/tasks/{ui['task_key']}", headers=ws["key"])).json()
+    assert "docs" not in task["input_context"]["upstream_interfaces"]["core"]
+    assert task["context_docs"] == []
 
 
 async def test_context_slice_write_scope_and_file_locks(client):
@@ -361,7 +544,8 @@ async def test_context_slice_write_scope_and_file_locks(client):
     await client.post(f"/v1/diagrams/{key}/chunks/contract/gate", headers=reviewer["headers"],
                       json={"result": "pass"})
     released = (await client.post(f"/v1/diagrams/{key}/chunks/contract/merge",
-                                  headers=ws["person"], json={})).json()["unblocked"]
+                                  headers=ws["person"],
+                                  json={"artifact": "commit contract1"})).json()["unblocked"]
     by_key = {item["chunk_key"]: item for item in released}
     assert set(by_key) == {"a", "b"}, released
     # a and b go out; c wants src/*.py, which overlaps both: blocked on the lock, naming it.
@@ -522,7 +706,7 @@ async def _with_contract(client, ws, architect, chunks, key=None):
     await client.post(f"/v1/diagrams/{key}/chunks/contract/gate", headers=gatekeeper["headers"],
                       json={"result": "pass"})
     merged = (await client.post(f"/v1/diagrams/{key}/chunks/contract/merge",
-                                headers=ws["person"], json={})).json()
+                                headers=ws["person"], json={"artifact": "commit contract1"})).json()
     return key, {item["chunk_key"]: item for item in merged["unblocked"]}
 
 
@@ -540,6 +724,204 @@ async def _submit_green(client, key, chunk_key, executor, ci, commit):
                               json={"results": {"compile": {"exit_code": 0},
                                                 "test": {"exit_code": 0}}})
     assert green.json()["review_woken"] is True, green.text
+
+
+async def test_a_chunk_without_commands_goes_from_submission_to_review(client):
+    """DX-4: no commands, no CI step; the implementer's own checks travel with the
+    submission. A chunk that names commands still waits for a green sandbox run."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    executor = await _agent(client, ws)
+    reviewer = await _agent(client, ws, "AUDITOR")
+    key, _ = await _frozen(client, ws, architect, [
+        _chunk("design", layer="interface"),
+        _chunk("build", layer="interface", commands={"compile": "tsc --noEmit",
+                                                     "test": "pytest -q"})])
+    for chunk_key in ("design", "build"):
+        made = (await client.post(f"/v1/diagrams/{key}/chunks/{chunk_key}/dispatch",
+                                  headers=architect["headers"])).json()
+        claimed = await client.post(f"/v1/tasks/{made['task_key']}/claim",
+                                    headers=executor["headers"], json={})
+        assert claimed.status_code == 200, claimed.text
+
+    bad = await client.post(f"/v1/diagrams/{key}/chunks/design/submit",
+                            headers=executor["headers"],
+                            json={"commit": "d1", "files": ["src/design.py"],
+                                  "self_check": [{"cmd": "node check.js", "exit_code": "x"}]})
+    assert bad.status_code == 422, bad.text
+    check = {"cmd": "node check.js design.html", "exit_code": 0, "output": "7/7 blocks"}
+    submitted = await client.post(f"/v1/diagrams/{key}/chunks/design/submit",
+                                  headers=executor["headers"],
+                                  json={"commit": "d1", "files": ["src/design.py"],
+                                        "self_check": [check]})
+    assert submitted.json()["status"] == "awaiting_review", submitted.text
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    design = {chunk["chunk_key"]: chunk for chunk in shown["chunks"]}["design"]
+    assert design["status"] == "awaiting_review"
+    assert design["submission"]["self_check"] == [check]
+    panes = (await client.get(f"/v1/diagrams/{key}/chunks/design/triptych",
+                              headers=reviewer["headers"])).json()
+    assert panes["right"]["ci_required"] is False and panes["right"]["self_check"] == [check]
+    reviewed = await client.post(f"/v1/diagrams/{key}/chunks/design/gate",
+                                 headers=reviewer["headers"],
+                                 json={"result": "pass", "semantic": _rules()})
+    assert reviewed.status_code == 200, reviewed.text
+    assert reviewed.json()["status"] == "queued"
+
+    built = await client.post(f"/v1/diagrams/{key}/chunks/build/submit",
+                              headers=executor["headers"],
+                              json={"commit": "b1", "files": ["src/build.py"]})
+    assert built.json()["status"] == "awaiting_ci", built.text
+    early = await client.post(f"/v1/diagrams/{key}/chunks/build/gate",
+                              headers=reviewer["headers"],
+                              json={"result": "pass", "semantic": _rules()})
+    assert early.status_code == 409 and early.json()["error"]["code"] == "ci_not_green"
+
+
+async def test_a_diagram_without_a_repo_keeps_submitted_files_and_hands_them_on(client):
+    """DX-3: files submitted with their content are kept byte for byte, with their
+    sha256, beside the diagram; out-of-scope files are vetoed and never stored; the
+    merge hands the kept file to the next chunk (with DX-1, DX-2 and DX-4)."""
+    import hashlib
+
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    executor = await _agent(client, ws)
+    reviewer = await _agent(client, ws, "AUDITOR")
+    key, view = await _frozen(client, ws, architect, [
+        _chunk("design", layer="interface", allowed_write_paths=["design.html"]),
+        _chunk("page", deps=["design"], allowed_write_paths=["index.html"])])
+    design = (await client.post(f"/v1/diagrams/{key}/chunks/design/dispatch",
+                                headers=architect["headers"])).json()
+    await client.post(f"/v1/diagrams/{key}/chunks/page/dispatch", headers=architect["headers"])
+    claimed = await client.post(f"/v1/tasks/{design['task_key']}/claim",
+                                headers=executor["headers"], json={})
+    assert claimed.status_code == 200, claimed.text
+
+    html = ("<!doctype html>\n<html><body><h1>Name</h1>\n"
+            "<table><tr><td>B1</td><td>nav</td></tr></table>\n</body></html>\n")
+    stray = await client.post(f"/v1/diagrams/{key}/chunks/design/submit",
+                              headers=executor["headers"],
+                              json={"files": [{"path": "other.html", "content": html}]})
+    assert stray.json()["accepted"] is False and stray.json()["stored"] == []
+    doc_base = f"diagrams/{key}/design"
+    def encoded(doc_key: str) -> str:
+        return "/v1/documents/" + doc_key.replace("/", "%2F")
+
+    missing = await client.get(encoded(f"{doc_base}/other.html"), headers=ws["key"],
+                               params={"include_unverified": "true"})
+    assert missing.status_code == 404, missing.text
+
+    submitted = await client.post(f"/v1/diagrams/{key}/chunks/design/submit",
+                                  headers=executor["headers"],
+                                  json={"files": [{"path": "design.html", "content": html}]})
+    assert submitted.status_code == 200, submitted.text
+    body = submitted.json()
+    digest = hashlib.sha256(html.encode()).hexdigest()
+    assert body["accepted"] is True and body["status"] == "awaiting_review"
+    assert body["commit"].startswith("content:")
+    assert body["stored"] == [{"path": "design.html", "sha256": digest,
+                               "doc": f"doc://{doc_base}/design.html", "version": 1}]
+    kept = await client.get(encoded(f"{doc_base}/design.html"), headers=ws["key"],
+                            params={"include_unverified": "true"})
+    assert kept.status_code == 200, kept.text
+    assert kept.json()["content"] == html and kept.json()["content_hash"] == digest
+
+    reviewed = await client.post(f"/v1/diagrams/{key}/chunks/design/gate",
+                                 headers=reviewer["headers"],
+                                 json={"result": "pass", "semantic": _rules()})
+    assert reviewed.json()["status"] == "queued", reviewed.text
+    verified = await client.post(f"/v1/diagrams/{key}/chunks/design/queue-check",
+                                 headers=reviewer["headers"], json={"result": "pass"})
+    assert verified.json()["status"] == "verified", verified.text
+    merged = await client.post(f"/v1/diagrams/{key}/chunks/design/merge", headers=ws["person"],
+                               json={})
+    assert merged.status_code == 200, merged.text
+    assert merged.json()["merge"]["artifact"] == body["commit"]
+    assert merged.json()["merge"]["delivered"]["files"] == [{"path": "design.html",
+                                                             "sha256": digest}]
+    [page] = merged.json()["unblocked"]
+    claimed = await client.post(f"/v1/tasks/{page['task_key']}/claim",
+                                headers=executor["headers"], json={})
+    [context] = [item for item in claimed.json()["context"] if not item.get("is_continuation")]
+    assert context["doc_ref"]["doc_key"] == f"{doc_base}/design.html"
+    assert context["content"] == html
+
+
+def test_acceptance_kinds():
+    """DX-6: a criterion only a person can settle is MANUAL."""
+    from app.services.diagrams import acceptance_kind
+
+    for manual in ("owner 在 M1 确认通过", "The owner approves the copy", "人工验收",
+                   "Signed off by a person"):
+        assert acceptance_kind(manual) == "MANUAL", manual
+    for auto in ("设计稿覆盖全部 7 个页面区块", "pytest tests/test_api.py", "LCP <= 2.5s"):
+        assert acceptance_kind(auto) == "AUTO", auto
+
+
+async def test_confirm_names_manual_and_unchecked_criteria(client):
+    """DX-6: confirming shows what a person settles, what nothing checks, and an
+    unanswered self-check; the dispatched task carries the right kinds."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    key = f"dx6-{uuid.uuid4().hex[:6]}"
+    design = _chunk("design", layer="interface")
+    design["done_criteria"] = ["设计稿覆盖全部 7 个页面区块", "owner 在 M1 确认通过"]
+    built = _chunk("build", layer="interface", commands={"test": "pytest -q"})
+    made = await client.post("/v1/diagrams", headers=architect["headers"], json={
+        "diagram_key": key, "title": "site", "chunks": [design, built],
+        "self_check": {"big": True}})
+    assert made.status_code == 201, made.text
+    confirmed = await client.post(f"/v1/diagrams/{key}/confirm", headers=ws["person"])
+    assert confirmed.status_code == 200, confirmed.text
+    warnings = confirmed.json()["confirm_warnings"]
+    by_kind = {(item["kind"], item.get("chunk_key")): item for item in warnings}
+    assert by_kind[("self_check", None)]["missing"] == ["stable", "machine_checkable", "long"]
+    assert by_kind[("manual_criteria", "design")]["criteria"] == ["owner 在 M1 确认通过"]
+    assert by_kind[("auto_without_commands", "design")]["criteria"] == [
+        "设计稿覆盖全部 7 个页面区块"]
+    assert ("auto_without_commands", "build") not in by_kind
+
+    await client.post(f"/v1/diagrams/{key}/freeze", headers=ws["person"], json={})
+    dispatched = (await client.post(f"/v1/diagrams/{key}/chunks/design/dispatch",
+                                    headers=architect["headers"])).json()
+    task = (await client.get(f"/v1/tasks/{dispatched['task_key']}", headers=ws["key"])).json()
+    assert [(item["id"], item["kind"]) for item in task["acceptance"]] == [
+        ("DC-1", "AUTO"), ("DC-2", "MANUAL")]
+
+
+async def test_chunk_tasks_are_found_by_diagram_and_say_how_they_finish(client):
+    """DX-8: ?diagram_key= lists one diagram's chunk tasks; each carries next_steps
+    with the calls, and a chunk with no commands is told it has no CI step."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    executor = await _agent(client, ws)
+    first, _ = await _frozen(client, ws, architect, [
+        _chunk("design", layer="interface", allowed_write_paths=["design.html"]),
+        _chunk("api", layer="interface", commands={"test": "pytest -q"})])
+    other, _ = await _frozen(client, ws, architect, [_chunk("x", layer="interface")])
+    made = {}
+    for key, chunk_key in ((first, "design"), (first, "api"), (other, "x")):
+        made[chunk_key] = (await client.post(f"/v1/diagrams/{key}/chunks/{chunk_key}/dispatch",
+                                             headers=architect["headers"])).json()["task_key"]
+    listed = (await client.get("/v1/tasks", headers=executor["headers"],
+                               params={"diagram_key": first, "claimable_by_me": "true"})).json()
+    assert sorted(item["task_key"] for item in listed["items"]) == sorted(
+        [made["design"], made["api"]])
+
+    design = (await client.get(f"/v1/tasks/{made['design']}", headers=ws["key"])).json()
+    steps = design["input_context"]["next_steps"]
+    assert f'diagram(action="submit", diagram_key="{first}", chunk_key="design"' in steps[1]
+    assert "design.html" in steps[1]
+    assert steps[2].startswith("3. CI: none")
+    api = (await client.get(f"/v1/tasks/{made['api']}", headers=ws["key"])).json()
+    assert api["input_context"]["next_steps"][2] == "3. CI: someone else runs test: pytest -q."
+
+    import inspect
+
+    from app.mcp_server import server as mcp_server
+
+    assert "diagram_key" in inspect.signature(mcp_server.list_tasks).parameters
 
 
 async def test_serial_merge_queue(client):

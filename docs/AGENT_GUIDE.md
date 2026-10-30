@@ -338,6 +338,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `lease_renew_too_early` | 409 | `fix_request` |
 | `locate_required` | 409 | `fix_request` |
 | `log_document_append_only` | 409 | `fix_request` |
+| `merge_without_deliverable` | 409 | `fix_request` |
 | `no_active_generation` | 409 | `fix_request` |
 | `not_a_log_document` | 409 | `fix_request` |
 | `parts_incomplete` | 409 | `fix_request` |
@@ -348,6 +349,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `runner_hello_required` | 409 | `fix_request` |
 | `still_draft` | 409 | `fix_request` |
 | `task_exists` | 409 | `fix_request` |
+| `task_not_done` | 409 | `fix_request` |
 | `tenant_has_children` | 409 | `fix_request` |
 | `terminal_state_immutable` | 409 | `fix_request` |
 | `upload_incomplete` | 409 | `fix_request` |
@@ -391,6 +393,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `limit_too_large` | 422 | `fix_request` |
 | `namespace_not_registered` | 422 | `fix_request` |
 | `namespace_protected` | 422 | `fix_request` |
+| `not_chunk_lineage` | 422 | `fix_request` |
 | `notice_template_incomplete` | 422 | `fix_request` |
 | `offset_not_supported` | 422 | `fix_request` |
 | `policy_loosening_not_allowed` | 422 | `fix_request` |

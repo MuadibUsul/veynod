@@ -443,6 +443,8 @@ async def list_tasks(
                                   description="claimable now by the caller (role, assignee)"),
     task_key: str | None = Query(default=None, max_length=2_000,
                                  description="Comma-separated task keys or ids"),
+    diagram_key: str | None = Query(default=None, max_length=64,
+                                    description="the chunk tasks of this diagram"),
     detail: Literal["summary", "standard", "full"] = Query(
         default="full", description="summary: short task cards (the MCP default)"),
     principal: Principal = Depends(get_principal),
@@ -461,6 +463,7 @@ async def list_tasks(
         kind=kind,
         claimable_by_me=claimable_by_me,
         task_keys=[item.strip() for item in (task_key or "").split(",") if item.strip()],
+        diagram_key=diagram_key,
     )
     if detail == "full":
         return result
@@ -1921,6 +1924,20 @@ async def merge_chunk(
     from app.services import diagrams
 
     return await diagrams.merge(session, principal, diagram_key, chunk_key, body or {})
+
+
+@router.post("/diagrams/{diagram_key}/chunks/{chunk_key}/repoint",
+             summary="Point a chunk at the task of its own that did the work")
+async def repoint_chunk(
+    diagram_key: str,
+    chunk_key: str,
+    body: dict,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.repoint(session, principal, diagram_key, chunk_key, body)
 
 
 @router.post("/diagrams/{diagram_key}/changes", status_code=201,
