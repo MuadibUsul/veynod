@@ -1264,10 +1264,13 @@ async def upsert_document(
     actor: str | None = None,
     batch_id: uuid.UUID | None = None,
     commit: bool = True,
+    raw_content: bool = False,
 ) -> DocumentMutationResponse:
     agent = actor or effective_agent(principal, request.agent)
     batch = batch_id or request.session_batch_id or uuid.uuid4()
-    content, normalized_html = normalize_notion_content(request.content)
+    # A submitted file is kept byte for byte (an HTML file is not a Notion export).
+    content, normalized_html = ((request.content, False) if raw_content
+                                else normalize_notion_content(request.content))
     ensure_content_size(content)
     absent: set[str] = set()
     try:

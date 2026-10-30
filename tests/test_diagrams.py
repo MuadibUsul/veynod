@@ -778,6 +778,76 @@ async def test_a_chunk_without_commands_goes_from_submission_to_review(client):
     assert early.status_code == 409 and early.json()["error"]["code"] == "ci_not_green"
 
 
+async def test_a_diagram_without_a_repo_keeps_submitted_files_and_hands_them_on(client):
+    """DX-3: files submitted with their content are kept byte for byte, with their
+    sha256, beside the diagram; out-of-scope files are vetoed and never stored; the
+    merge hands the kept file to the next chunk (with DX-1, DX-2 and DX-4)."""
+    import hashlib
+
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    executor = await _agent(client, ws)
+    reviewer = await _agent(client, ws, "AUDITOR")
+    key, view = await _frozen(client, ws, architect, [
+        _chunk("design", layer="interface", allowed_write_paths=["design.html"]),
+        _chunk("page", deps=["design"], allowed_write_paths=["index.html"])])
+    design = (await client.post(f"/v1/diagrams/{key}/chunks/design/dispatch",
+                                headers=architect["headers"])).json()
+    await client.post(f"/v1/diagrams/{key}/chunks/page/dispatch", headers=architect["headers"])
+    claimed = await client.post(f"/v1/tasks/{design['task_key']}/claim",
+                                headers=executor["headers"], json={})
+    assert claimed.status_code == 200, claimed.text
+
+    html = ("<!doctype html>\n<html><body><h1>Name</h1>\n"
+            "<table><tr><td>B1</td><td>nav</td></tr></table>\n</body></html>\n")
+    stray = await client.post(f"/v1/diagrams/{key}/chunks/design/submit",
+                              headers=executor["headers"],
+                              json={"files": [{"path": "other.html", "content": html}]})
+    assert stray.json()["accepted"] is False and stray.json()["stored"] == []
+    doc_base = f"diagrams/{key}/design"
+    def encoded(doc_key: str) -> str:
+        return "/v1/documents/" + doc_key.replace("/", "%2F")
+
+    missing = await client.get(encoded(f"{doc_base}/other.html"), headers=ws["key"],
+                               params={"include_unverified": "true"})
+    assert missing.status_code == 404, missing.text
+
+    submitted = await client.post(f"/v1/diagrams/{key}/chunks/design/submit",
+                                  headers=executor["headers"],
+                                  json={"files": [{"path": "design.html", "content": html}]})
+    assert submitted.status_code == 200, submitted.text
+    body = submitted.json()
+    digest = hashlib.sha256(html.encode()).hexdigest()
+    assert body["accepted"] is True and body["status"] == "awaiting_review"
+    assert body["commit"].startswith("content:")
+    assert body["stored"] == [{"path": "design.html", "sha256": digest,
+                               "doc": f"doc://{doc_base}/design.html", "version": 1}]
+    kept = await client.get(encoded(f"{doc_base}/design.html"), headers=ws["key"],
+                            params={"include_unverified": "true"})
+    assert kept.status_code == 200, kept.text
+    assert kept.json()["content"] == html and kept.json()["content_hash"] == digest
+
+    reviewed = await client.post(f"/v1/diagrams/{key}/chunks/design/gate",
+                                 headers=reviewer["headers"],
+                                 json={"result": "pass", "semantic": _rules()})
+    assert reviewed.json()["status"] == "queued", reviewed.text
+    verified = await client.post(f"/v1/diagrams/{key}/chunks/design/queue-check",
+                                 headers=reviewer["headers"], json={"result": "pass"})
+    assert verified.json()["status"] == "verified", verified.text
+    merged = await client.post(f"/v1/diagrams/{key}/chunks/design/merge", headers=ws["person"],
+                               json={})
+    assert merged.status_code == 200, merged.text
+    assert merged.json()["merge"]["artifact"] == body["commit"]
+    assert merged.json()["merge"]["delivered"]["files"] == [{"path": "design.html",
+                                                             "sha256": digest}]
+    [page] = merged.json()["unblocked"]
+    claimed = await client.post(f"/v1/tasks/{page['task_key']}/claim",
+                                headers=executor["headers"], json={})
+    [context] = [item for item in claimed.json()["context"] if not item.get("is_continuation")]
+    assert context["doc_ref"]["doc_key"] == f"{doc_base}/design.html"
+    assert context["content"] == html
+
+
 async def test_serial_merge_queue(client):
     """A-11 / A-14: approval queues; the controller verifies the head; one at a time."""
     ws = await _workspace(client)

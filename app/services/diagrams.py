@@ -39,9 +39,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Principal, can, ensure_namespace
+from app.config import get_settings
 from app.errors import ApiError, Forbidden, NotFound
 from app.services.common import append_event
 
+settings = get_settings()
 LAYERS = ("interface", "implementation")
 IN_FLIGHT = ("dispatched", "in_progress", "awaiting_gate", "awaiting_ci", "awaiting_review",
              "ready_to_merge", "queued", "verified", "merged")
@@ -867,10 +869,17 @@ async def submit(session: AsyncSession, principal: Principal, key: str, chunk_ke
     """M-17: the implementer's submission (changed files, commit, diff). A file
     outside the write scope vetoes it at once: back to the implementer with the
     list, and no reviewer is ever woken (zero review cost)."""
-    files = [str(item) for item in body.get("files") or []]
+    files, contents, refs = _submitted_files(body.get("files"))
     commit = str(body.get("commit") or "").strip()
+    if not commit and (contents or refs):
+        # No repository needed: the files' own digest names the submission.
+        digest = hashlib.sha256(json.dumps(sorted(
+            [(path, hashlib.sha256(text_.encode()).hexdigest()) for path, text_ in contents.items()]
+            + [(path, ref) for path, ref in refs.items()])).encode()).hexdigest()
+        commit = f"content:{digest[:16]}"
     if not files or not commit:
-        raise ApiError(422, "validation_error", "a submission lists its changed files and commit")
+        raise ApiError(422, "validation_error", "a submission lists its changed files and commit "
+                       "(or carries the files' contents)")
     diagram, chunk, task = await _chunk_with_task(session, principal, key, chunk_key)
     if chunk["state"] not in ("dispatched", "rework"):
         raise ApiError(409, "invalid_transition", f"chunk '{chunk_key}' is {chunk['state']}")
@@ -878,7 +887,11 @@ async def submit(session: AsyncSession, principal: Principal, key: str, chunk_ke
     if not principal.is_human and _me(principal) not in implementers:
         raise Forbidden("only the chunk's implementer submits it")
     violations = _outside_scope(chunk, diagram, files)
+    # Out-of-scope work is never stored: the veto costs nothing (M-17).
+    stored = [] if violations else await _store_files(session, principal, diagram, chunk_key,
+                                                      commit, contents, refs)
     record = {"files": files, "commit": commit, "branch": body.get("branch"),
+              "hashes": stored, "docs": [item["doc"] for item in stored],
               "diff": (body.get("diff") or "")[:200_000], "diff_url": body.get("diff_url"),
               "self_check": _self_check(body.get("self_check")),
               "by": _me(principal), "at": _now().isoformat(), "accepted": not violations,
@@ -898,9 +911,81 @@ async def submit(session: AsyncSession, principal: Principal, key: str, chunk_ke
                      task_key=chunk["task_key"], commit=commit, files=len(files))
     await session.commit()
     return {"chunk_key": chunk_key, "accepted": not violations, "violations": violations,
+            "commit": commit, "stored": stored,
             "status": "rework" if violations else (
                 "awaiting_ci" if _needs_ci(chunk) else "awaiting_review"),
             "commands": chunk["commands"]}
+
+
+_STORED_PATH = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*(/[A-Za-z0-9_][A-Za-z0-9_.-]*)*$")
+MAX_STORED_FILES = 50
+
+
+def _submitted_files(raw: Any) -> tuple[list[str], dict[str, str], dict[str, str]]:
+    """Paths, as before, or {path, content} / {path, doc} for a diagram with no
+    repository: the platform keeps the files and their hashes itself."""
+    paths: list[str] = []
+    contents: dict[str, str] = {}
+    refs: dict[str, str] = {}
+    for item in raw or []:
+        if isinstance(item, dict):
+            path = str(item.get("path") or "").strip()
+            if not path:
+                raise ApiError(422, "validation_error", "each file names its path")
+            if "content" in item:
+                content = item["content"]
+                if not _STORED_PATH.fullmatch(path):
+                    raise ApiError(422, "validation_error", f"{path}: a stored file has a "
+                                   "plain relative path (letters, digits, _ . - and /)")
+                if not isinstance(content, str) or not content:
+                    raise ApiError(422, "validation_error", f"{path}: content is non-empty text")
+                if len(content.encode()) > settings.max_document_content_bytes:
+                    raise ApiError(422, "validation_error", f"{path}: larger than "
+                                   f"{settings.max_document_content_bytes} bytes")
+                contents[path] = content
+            elif item.get("doc"):
+                refs[path] = str(item["doc"])
+        else:
+            path = str(item).strip()
+        if path and path not in paths:
+            paths.append(path)
+    if len(contents) + len(refs) > MAX_STORED_FILES:
+        raise ApiError(422, "validation_error", f"at most {MAX_STORED_FILES} files with content")
+    return paths, contents, refs
+
+
+async def _store_files(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
+                       chunk_key: str, commit: str, contents: dict[str, str],
+                       refs: dict[str, str]) -> list[dict[str, Any]]:
+    """Keep each submitted file as a versioned document, byte for byte, beside the
+    diagram's own document; a {path, doc} file points at one that exists already."""
+    from app.schemas import DocumentUpsertRequest
+    from app.services.collab import resolve_ref
+    from app.services.documents import upsert_document
+
+    stored = []
+    for path, ref in refs.items():
+        document = await resolve_ref(session, principal.workspace.id,
+                                     {"doc_key": _doc_key(ref) or ref})
+        if document is None:
+            raise ApiError(422, "validation_error", f"{path}: document {ref} not found")
+        stored.append({"path": path, "sha256": document.content_hash,
+                       "doc": f"doc://{document.doc_key}", "version": document.version})
+    for path, content in contents.items():
+        doc_key = f"{diagram['doc_key']}/{chunk_key}/{path}"
+        current = await session.scalar(text(
+            "SELECT version FROM shared_documents WHERE workspace_id = :ws AND doc_key = :k"),
+            {"ws": principal.workspace.id, "k": doc_key})
+        digest = hashlib.sha256(content.encode()).hexdigest()
+        result = await upsert_document(session, principal, doc_key, DocumentUpsertRequest(
+            title=f"{diagram['diagram_key']} · {chunk_key} · {path}"[:256], content=content,
+            expected_version=int(current or 0), namespace=diagram["namespace"],
+            frontmatter={"kind": "diagram_file", "diagram_key": diagram["diagram_key"],
+                         "chunk_key": chunk_key, "path": path, "commit": commit,
+                         "sha256": digest}), commit=False, raw_content=True)
+        stored.append({"path": path, "sha256": digest, "doc": f"doc://{doc_key}",
+                       "version": result.document.version})
+    return stored
 
 
 def _self_check(raw: Any) -> list[dict[str, Any]]:
@@ -998,6 +1083,7 @@ async def triptych(session: AsyncSession, principal: Principal, key: str,
                  "baseline_version": (diagram.get("baseline") or {}).get("version"),
                  "review_rules": list(DEFAULT_RULES) + list(chunk["semantic_rules"])},
         "middle": {"commit": submission.get("commit"), "files": submission.get("files"),
+                   "stored": submission.get("hashes") or [],
                    "diff": submission.get("diff"), "diff_url": submission.get("diff_url"),
                    "accepted": submission.get("accepted")},
         "right": {"commit": ci.get("commit"), "green": ci.get("green"),
