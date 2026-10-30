@@ -497,6 +497,29 @@ async def edit_draft(session: AsyncSession, principal: Principal, key: str,
     return await view(session, principal, key)
 
 
+async def set_policy(session: AsyncSession, principal: Principal, key: str,
+                     mode: str | None) -> dict[str, Any]:
+    """A person sets how far the Loop may go on this diagram (v3.66); None follows
+    the workspace. Agents read it with the diagram."""
+    from app.services import automation
+
+    _require_person(principal, "setting a diagram's rules")
+    if mode is not None and mode not in automation.MODES:
+        raise ApiError(422, "validation_error", "mode is manual, semi, full or null",
+                       details={"field": "mode"})
+    diagram = await _diagram(session, principal, key, lock=True)
+    policy = {k: v for k, v in dict(diagram.get("policy") or {}).items() if k != "mode"}
+    if mode is not None:
+        policy["mode"] = mode
+    diagram = dict((await session.execute(text(
+        "UPDATE diagrams SET policy = CAST(:p AS jsonb), updated_at = NOW() WHERE id = :id "
+        "RETURNING *"), {"p": json.dumps(policy), "id": diagram["id"]})).mappings().one())
+    await _event(session, principal, diagram, "DIAGRAM_POLICY_SET", mode=mode)
+    await session.commit()
+    return {"diagram_key": key, "policy": policy,
+            "mode": await automation.mode_for_diagram(session, principal.workspace.id, diagram)}
+
+
 async def confirm(session: AsyncSession, principal: Principal, key: str) -> dict[str, Any]:
     _require_person(principal, "confirming a diagram")
     diagram = await _diagram(session, principal, key, lock=True)
@@ -539,7 +562,7 @@ async def freeze(session: AsyncSession, principal: Principal, key: str,
                  baseline=baseline)
     from app.services import automation
 
-    if await automation.current_mode(session, principal.workspace.id) == "full":
+    if await automation.mode_for_diagram(session, principal.workspace.id, diagram) == "full":
         # Full automation: the first chunks go out with the freeze; the rest
         # follow their upstream merges (M-14), so nobody dispatches by hand.
         by_key = {chunk["chunk_key"]: chunk for chunk in chunks}
@@ -1987,6 +2010,8 @@ async def change_view(session: AsyncSession, principal: Principal, key: str,
 async def view(session: AsyncSession, principal: Principal, key: str) -> dict[str, Any]:
     """The diagram and its command view (M-08): status distribution, blocked list,
     merge queue, inconsistencies with the task board, and the self-check."""
+    from app.services import automation
+
     diagram = await _diagram(session, principal, key)
     chunks = await _chunks(session, diagram["id"])
     tasks = await _tasks(session, principal, [c["task_key"] for c in chunks if c["task_key"]])
@@ -2068,6 +2093,8 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
         "diagram_key": diagram["diagram_key"], "title": diagram["title"],
         "namespace": diagram["namespace"], "description": diagram["description"],
         "repo": diagram.get("repo"),
+        "policy": diagram.get("policy") or {},
+        "mode": await automation.mode_for_diagram(session, principal.workspace.id, diagram),
         "status": diagram["status"], "version": diagram["version"],
         "watchers": diagram["watchers"],
         "baseline": diagram["baseline"], "document": f"doc://{diagram['doc_key']}",
@@ -2093,14 +2120,19 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
 
 
 async def list_diagrams(session: AsyncSession, principal: Principal) -> dict[str, Any]:
+    from app.services import automation
+
     rows = (await session.execute(text(
-        "SELECT diagram_key, title, namespace, status, version, updated_at FROM diagrams "
+        "SELECT diagram_key, title, namespace, status, version, updated_at, policy FROM diagrams "
         "WHERE workspace_id = :ws ORDER BY updated_at DESC LIMIT 200"),
         {"ws": principal.workspace.id})).mappings().all()
     visible = [dict(row) for row in rows if principal.is_commander
                or "*" in principal.allowed_namespaces
                or row["namespace"] in principal.allowed_namespaces]
-    return {"items": [{**row, "updated_at": _iso(row["updated_at"])} for row in visible]}
+    workspace_mode = await automation.current_mode(session, principal.workspace.id)
+    return {"items": [{**row, "policy": row["policy"] or {},
+                       "mode": (row["policy"] or {}).get("mode") or workspace_mode,
+                       "updated_at": _iso(row["updated_at"])} for row in visible]}
 
 
 async def replay(session: AsyncSession, principal: Principal, key: str,

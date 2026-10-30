@@ -1022,7 +1022,8 @@ async def handoff_task(
     )
     if (brief is not None and "owner_report" not in brief and not principal.is_human
             and request.next_status in ("REVIEWING", "HANDOFF")
-            and await automation.current_mode(session, principal.workspace.id) == "full"):
+            and await automation.mode_for_task(session, principal.workspace.id, task.task_key)
+            == "full"):
         add_warning("owner_report_missing",
                     "full automation: add owner_report {what_changed, how_to_try, "
                     "not_yet_done} in plain words; it is what the owner reads",
@@ -1210,7 +1211,7 @@ async def _deploy_evidence_for_done(
         return None
     if not task.repo or not deploy_gate.governs(principal.workspace.id):
         return None
-    if await automation.current_mode(session, principal.workspace.id) != "full":
+    if await automation.mode_for_task(session, principal.workspace.id, task.task_key) != "full":
         return None
     return await deploy_gate.deploy_evidence(task.task_key) or False
 
@@ -1352,8 +1353,8 @@ async def review_task(
             task.human_feedback = request.feedback
             task.status = TaskStatus.READY
             event_type = "HUMAN_REJECTED"
-        elif task.ping_pong_count >= task.max_retries and await automation.current_mode(
-                session, principal.workspace.id) == "full":
+        elif task.ping_pong_count >= task.max_retries and await automation.mode_for_task(
+                session, principal.workspace.id, task.task_key) == "full":
             # Full automation (Loop A-04): the next executor takes over; nobody
             # is asked a technical question.
             task.status = TaskStatus.HANDOFF

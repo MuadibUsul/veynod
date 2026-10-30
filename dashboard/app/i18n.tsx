@@ -1458,6 +1458,14 @@ const ZH: Record<string, string> = {
   "{done} of {total} done": "完成 {done}/{total}",
   // The Loop as the engine's dashboard, the diagram live (v3.24)
   "Open it": "打开",
+  // The Loop as the engine's dashboard, the diagram live (v3.24)
+  "How far the Loop may go on this diagram": "这张图上 Loop 能自己走多远",
+  "Automation for this diagram": "这张图的自动化",
+  "Automation: as the workspace": "自动化：跟随工作区",
+  "Automation: ask me every step": "自动化：每步问我",
+  "Automation: small calls automatically": "自动化：小事自动",
+  "Automation: do it all": "自动化：全做完",
+  "Saved. The Loop follows it from the next step.": "已保存，Loop 从下一步开始照这个走。",
 };
 
 const EN: Record<string, string> = {};

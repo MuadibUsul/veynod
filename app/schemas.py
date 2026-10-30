@@ -3021,3 +3021,10 @@ class SupportAccessRequest(StrictModel):
     note: str = Field(default="", max_length=500)
     allow_write: bool = False
 
+
+
+class DiagramPolicyRequest(StrictModel):
+    """A diagram's own rules (v3.66): how far the Loop may go on it."""
+
+    mode: Literal["manual", "semi", "full"] | None = Field(
+        default=None, description="null follows the workspace's automation mode")
