@@ -1,6 +1,6 @@
 # Wake, Dispatch and the Loop in Production
 
-**Status:** Proposed (v2, replaces v1 of the same day)
+**Status:** Direction accepted by the owner (2026-10-30); details proposed (v3)
 **Date:** 2026-10-30
 **Scope:** real-time wake of connected agents; reliable dispatch of a task to
 a named agent; getting the full-managed Loop (hosts, placement, claim,
@@ -14,7 +14,10 @@ scheduler and placements, leases, the `veynod` CLI (`listen`, `runner`,
   computers and an empty placement history. If computers joined today, the
   runner would still start Claude Code with whatever Veynod key `init` wrote,
   not its own (§8.1, blockers B-1 to B-9). Fixing that is the cheapest,
-  highest-value step, so it comes first (§14).
+  highest-value step, so it comes first (§15).
+- **One surface.** A single `npx veynod up` connects a computer, wires its MCP
+  clients and hooks, installs one hub service and runs the doctor, so one
+  user action sets up wake, dispatch and the Loop (§14).
 - **OAR (`@botiverse/oar`) becomes the local execution and wake layer.** It is
   already a dependency. One OAR session can do all of the following:
   - resume a native conversation;
@@ -24,11 +27,11 @@ scheduler and placements, leases, the `veynod` CLI (`listen`, `runner`,
   - read quota.
 
   Veynod uses a small part of this today (§5).
-- **One local hub per agent key per computer.** It replaces `listen` and
-  `runner` and keeps their command names. It holds the single inbox stream a
-  token may have, drives OAR sessions, and fans out to a Claude Code channel
-  bridge and hooks over a local socket. It also keeps leases alive and reports
-  receipts to the server (§6.2).
+- **One local hub per computer.** It replaces `listen` and `runner` and keeps
+  their command names. It holds the computer's agent keys, and for each key
+  the single inbox stream a token may have. It drives OAR sessions and fans out
+  to a Claude Code channel bridge and hooks over a local socket. It also keeps
+  leases alive and reports receipts to the server (§6.2).
 - **The server decides when, how often and in what order to wake.**
   - Only work-relevant kinds wake an agent, and wakes are coalesced and capped.
   - Channels are tried in a fixed order, the wake prompt carries pointers
@@ -50,6 +53,14 @@ scheduler and placements, leases, the `veynod` CLI (`listen`, `runner`,
 
   Adopt OAR and Claude Code channels as they are. Add A2A as an interop
   channel, not as the internal protocol (§13).
+
+### Decisions recorded (owner, 2026-10-30)
+
+| # | Decision |
+|---|---|
+| D-1 | **No Windows/desktop client.** The `desktop/` path is frozen: no further development. It stays in the repository unchanged and is not part of the supported setup. The hub takes over its sidecar role (OAR wake queue, stream). If a tray app returns later, it is only a view over the hub's local socket, with no stream or wake logic of its own. |
+| D-2 | **Direction:** `veynod up` + the hub are Phase 0–1 (§14, §15). |
+| D-3 | **Release bar:** one computer is green on the doctor, and one task is completed unattended: READY → claimed → handed off → reviewed by a second identity → DONE, with no one typing. |
 
 ## 1. What the code and the live workspace show
 
@@ -243,13 +254,17 @@ There are three layers, each owning one question:
 ### 6.2 The hub (`veynod hub`, aliases `listen` / `runner`)
 
 **Process model.**
-- One hub per (Veynod host, agent key) per computer. A lock file
-  `~/.veynod/hub-<agent_id>.lock` (pid + start time) keeps a second hub on the
-  same key from running; it exits with a clear message.
+- One hub process per computer, installed by `veynod up` (§14). It serves
+  every agent key in `~/.veynod/keys/` (normally the computer's identity, plus
+  a reviewer identity when the computer runs tasks), with one upstream stream
+  per key.
+- A lock file per key, `~/.veynod/hub-<agent_id>.lock` (pid + start time),
+  keeps a second process on the same key from running. It exits with a clear
+  message.
 - `veynod listen` = hub with the default adapters. `veynod runner` = hub with
   the `runner` adapter on.
-- `veynod service install [--runner]` installs the hub (systemd user unit /
-  LaunchAgent / hidden Windows logon task, as today).
+- The hub runs as one service: a systemd user unit, a LaunchAgent, or a hidden
+  Windows logon task, as `veynod service install` does today.
 
 **Connections.**
 - **Upstream:** one `GET /v1/inbox/stream?client=hub&adapters=oar,channel,hook,runner`.
@@ -570,20 +585,26 @@ On expiry, `fallback` applies, bounded by the automation mode:
 | H2 reviewer | `runner-review` | AUDITOR, or EXECUTOR + `review` | Review and merge steps (never builds the same task) |
 | H3 supervisor (optional) | `runner-super` | SUPER_ADMIN, or `supervisor` | Supervisor rounds (agenda, move, withdraw) |
 
-H1 to H3 can be **three hubs on one computer** (three keys, three host rows).
-Steps:
+H1 and H2 (and H3) run as **one hub process on one computer**, holding two
+(or three) keys. That means two or three host rows, one per key. With
+`veynod up` (§14) the bring-up is:
 
-1. Mint three agent tokens: More → Agents (roles above). Register each with
-   `register_agent` (capabilities).
-2. On the computer (Node 24, Claude Code or Codex signed in, `gh` signed in for PRs):
-   `veynod service install --runner --key-file ~/.veynod/build.key --runtime claude --repo MuadibUsul/veynod --slots 1`,
-   then the same for `review.key` and `super.key`.
-3. Confirm the automation mode is `full` (it is, live).
-4. `loop(action="doctor")` must be all green.
-5. Drill: create one small repo task and one repo-less task. Watch
-   placed → accepted → claimed → PR/handoff → review on H2 → done/merged.
-   Then `kill -9` H1 mid-task and watch it re-placed after
-   `runner_offline_reassign_seconds`.
+1. On the computer (Node 24; Claude Code or Codex signed in; `gh` signed in
+   for PRs):
+   `npx veynod up --run-tasks --repo MuadibUsul/veynod`.
+   You approve the device code once in the console. That approval mints the
+   computer's EXECUTOR key and its `-review` AUDITOR key.
+2. Confirm the automation mode is `full` (it is, live).
+3. The doctor that `up` runs at the end, and `loop(action="doctor")`, must
+   both be all green.
+4. Drill (release bar D-3): create one small repo task and one repo-less
+   task, and watch each go
+   placed → accepted → claimed → PR/handoff → review by the `-review` identity → DONE.
+   Then `kill -9` the hub mid-task and watch the service restart it and the
+   task continue, or be re-placed after `runner_offline_reassign_seconds`.
+
+A supervisor key (H3) is optional: `veynod up --supervisor` mints one when
+you approve a SUPER_ADMIN key.
 
 ### 8.4 Placement lifecycle
 
@@ -638,7 +659,7 @@ waits). Additions:
 | F-22 | Channel silently dropped (not enabled, org policy) | No `accepted` within 120 s | Ladder → hook/OAR/webhook; doctor shows "channel unconfirmed" | `::test_ladder_moves_on` |
 | F-23 | Cloud routine over 30/h | Cap before calling; 429 `Retry-After` | `capped`, next batch later | `::test_template_caps` |
 | F-24 | Token expiry or revocation of a runner key | 401 on heartbeat | Hub stops and exits non-zero (service restarts and fails loudly); host revoked → leases freed (exists) | `test_runners::test_revoke` |
-| F-25 | Desktop wake fails 3 times | Receipt `failed` upstream | Server ladder moves on; **no duplicate task is created** (remove `serverFallback`) | `sidecar test` |
+| F-25 | Desktop wake fails 3 times (creates a duplicate task) | — | **Not fixed: the desktop path is frozen (D-1).** The supported path is the hub, which reports failed wakes upstream and never creates tasks | — |
 
 ## 10. Data model (migration `v3_64_reach_dispatch.sql`)
 
@@ -781,9 +802,11 @@ webhook rules are back-filled as `kind='webhook'` channels.
 | `cli/bin/hub/runner.mjs` (from `runner.mjs`) | Placements → accept → worktree/scratch → OAR session; busy reports |
 | `cli/bin/channel.mjs` (new) | Dependency-free stdio MCP channel (`claude/channel`, protocol 2025-11-25); connects to the hub socket |
 | `cli/bin/hook.mjs` (new) | `stop`, `session-start`, `idle`, `session-end`; hub socket first, REST with a 2 s timeout; fail-open |
-| `cli/bin/veynod.mjs` | `hub` command; `listen`/`runner` as aliases; `init --hooks --channel`; `message` frames; `service install` for the hub |
+| `cli/bin/up.mjs` (new) | `veynod up` (§14): connect, detect, mint, wire clients and hooks, install the hub service, doctor |
+| `cli/bin/doctor.mjs` (new) | Local checks plus `GET /v1/runner/doctor`; green/red lines with the fix for each |
+| `cli/bin/veynod.mjs` | `up`, `hub`, `doctor` commands; `init`/`listen`/`runner`/`service install` kept as aliases; `message` frames |
 | `cli/package.json` | `engines` stays ≥ 18.17 for `init`; the hub checks Node ≥ 24 for OAR and explains the fallback |
-| `desktop/sidecar/*`, `desktop/src-tauri/src/main.rs` | Phase 4: spawn `veynod hub`; until then use `wake.prompt`, every wake kind, per-agent runtime/cwd; remove `serverFallback` (F-25) |
+| `desktop/` | **Frozen (D-1): no changes.** Not part of the supported setup |
 | `dashboard/app/components/agents.tsx`, `hosts-panel.tsx`, `loop-view.tsx`, `task-board.tsx` | Channels + Test wake; doctor; "Dispatch to…"; dispatch status and receipts |
 
 ## 13. Prior art: reuse vs reinvent
@@ -813,20 +836,146 @@ already give.** Veynod's own value is above them:
 - placement policy and the ladder;
 - receipts you can trust.
 
-## 14. Phased plan
+## 14. One surface: `veynod up`
 
-The order changes from v1 because the Loop is cheapest to unblock, and it
-proves the hub that wake and dispatch then use.
+The pieces of §5–§8 are one product, so you install and connect them once.
+
+### 14.1 What you do
+
+**Connecting a computer** takes one command:
+
+```bash
+npx veynod up            # interactive: asks one question
+npx veynod up --run-tasks --repo owner/name --yes   # unattended (VPS)
+```
+
+The console's "Connect a computer" button shows the same command. The only
+other path is **cloud and bot agents**, which run nothing on your computers
+(Claude Code routines, Cursor Cloud Agents, Grok Bot-style webhooks). They use
+a "Connect a cloud agent" form that stores a server-held reach channel (§6.4).
+
+### 14.2 What `up` does
+
+1. **Connect.** Device code, which you approve in the console. This is the
+   existing `cli_sessions` flow, sealed to the terminal's X25519 key. `up`
+   sends a `client_instance_id` from `~/.veynod/config.json`, so running it
+   again rotates the existing key instead of minting `cursor-2`
+   (`MCP_CONNECTION_LIFECYCLE` steps 1–2).
+2. **Detect.** Through OAR: the installed runtimes (Claude Code, Codex,
+   Cursor, Grok, …), their models and quota; Node, `git`, `gh`; and which MCP
+   clients are configured. Without Node 24 it prints the one-line fix and
+   continues on the CLI fallback.
+3. **Ask one question:** "Let this computer run board tasks unattended?
+   (y/N)". The default is **no** on a laptop; `--run-tasks` and `--yes` answer
+   it for a VPS.
+4. **Mint identities in the same approval.**
+   - Always: the computer's identity, `<name>` (EXECUTOR, capabilities = the
+     runtimes found).
+   - With `--run-tasks`: also `<name>-review` (AUDITOR), so the Loop can review
+     on this computer (release bar D-3).
+   - With `--supervisor`: also a SUPER_ADMIN key, which you must tick
+     explicitly.
+
+   Each key is sealed separately and stored in `~/.veynod/keys/<agent_id>.key`
+   (0600).
+5. **Wire clients.** Claude Code, Cursor and Claude Desktop get the computer
+   identity's key, the same key the hub uses. Claude Code also gets the hooks
+   (`veynod hook stop`, `veynod hook session-start`, `veynod hook idle`,
+   `veynod hook session-end`). The channel stays off unless you pass
+   `--channel`.
+6. **Register.** One `register_agent` per identity (with reach), and one
+   `POST /v1/runner/hello` per key when tasks are allowed (`repos`, `slots`,
+   `capabilities_report`).
+7. **Install one hub service**, with every key, adapters and profile from
+   `~/.veynod/config.json`.
+8. **Run the doctor** (local checks plus `GET /v1/runner/doctor`). It prints
+   one line per check, green or red, with the fix. `up` exits non-zero while
+   anything required is red.
+
+Running `up` again is idempotent: it rotates keys in place, keeps the
+service, and re-runs the doctor. `veynod down` revokes this computer's keys
+(console-approved), removes the service and unwires the clients.
+
+### 14.3 What merges, what stays optional
+
+| Today | After |
+|---|---|
+| `init`, `listen`, `runner`, `service install`, `register_agent`, `set_wake_url`, runner `hello` | `veynod up` + the hub. Old commands become aliases that print the `up` equivalent |
+| Desktop sidecar wake daemon | The hub (desktop frozen, D-1) |
+| `veynod channel`, `veynod hook …` | Internal: Claude Code calls them, you never type them |
+| One key per MCP client configuration | One key per computer identity |
+| Console: Agents tab, Computers panel, wake coverage | One "Computers & agents" page with "Connect a computer", "Connect a cloud agent" and the doctor |
+
+**Optional:**
+- The Claude Code channel (`--channel`; research preview).
+- The supervisor key (`--supervisor`).
+- The `container` sandbox profile (`--profile container`).
+- Cloud and bot agents (console form).
+- A future tray view over the hub (only as a view, D-1).
+
+### 14.4 Files on the computer
+
+```
+~/.veynod/
+  config.json          host, client_instance_id, identities, run_tasks, repos, slots, profile, adapters
+  keys/<agent_id>.key  one per identity, 0600
+  hub-<agent_id>.lock  one per key
+  hub-<agent_id>.sock  local socket (named pipe on Windows)
+  hub-<agent_id>.json  cursor, sessions, pending wakes
+  runner/              worktree cache, scratch dirs
+  logs/hub.log
+```
+
+### 14.5 Server changes `up` needs
+
+- **`POST /v1/auth/cli/sessions`** takes `client_instance_id`, `run_tasks`,
+  `supervisor` and the runtimes found. The approval page shows the
+  identities to be minted and lets you untick any. **Approval** mints each
+  and stores one sealed copy per identity. **Poll** returns them all once.
+  This is one migration on `cli_sessions`: a `sealed_keys JSONB` column
+  replaces the single `sealed_key` for new sessions.
+- **Reconnect** rotates in place (same `agent_id`, new secret, short grace),
+  as in `MCP_CONNECTION_LIFECYCLE` §6.2.
+- **`GET /v1/runner/doctor`** (§8.2 S-9).
+- **MVP fallback:** without the session change, `up` runs the device flow
+  once per identity. That means two codes for you to approve, and the
+  approval page says why.
+
+### 14.6 Trade-offs
+
+| Trade-off | Choice |
+|---|---|
+| Unattended runs on your own machine skip permission prompts (OAR default) | `--run-tasks` is a real consent step; default no on laptops; the `worktree` profile and the pre-push guard apply |
+| Your interactive sessions and the hub share the computer identity | Simpler (either can take "this computer's" tasks); the audit tells them apart by session name `veynod:<agent>:<task>` and the hub's lease keeper |
+| Review on one computer is weaker than on two | Accepted for the release bar (a second identity reviews); a second computer stays the stronger setup; your sampled reviews remain |
+| Node 24 for OAR | `up` checks and prints the fix; a single-file binary can come later |
+| One process holds several keys | Per-key lock, 0600 key files, service restart, console revoke and `veynod down` |
+
+### 14.7 Release bar (D-3)
+
+On one computer:
+- `npx veynod up --run-tasks` ends with the doctor all green;
+- one task goes READY → claimed (as the computer identity) → handoff →
+  review by `<name>-review` → DONE, with no one typing.
+
+The event trail and doctor output are attached to board task
+`up-hub-p1-release-drill`.
+
+## 15. Phased plan
+
+The order changes from v1: Phase 0–1 is `veynod up` + the hub (D-2). The
+Loop is the cheapest thing to unblock, and running it proves the hub that
+wake and dispatch then use. Board tasks: `up-hub-p01` and its subtasks.
 
 | Phase | Scope | PRs (each `[skip ci]` only for docs) | Exit criteria |
 |---|---|---|---|
-| **0 — truth and bugs** (2–3 days, no schema) | E-17/E-18 presence + gating; E-20 message frames; E-21 desktop prompt and no `serverFallback`; S-1 pinned MCP (OAR + CLI fallback flags); S-3 scratch dir; S-7 scheduler loop with lock and per-workspace `try`; `done_needs_deploy` fix | 5–6 small PRs | CI green; `test_loop_production::test_runner_cli_e2e_custom_runtime` passes; one real Claude Code placement on a staging workspace claims as the host's agent |
-| **1 — Loop running in production** (~1 week) | Migration v3_64 (placement parts); accept + `started` + `claim_within`; lease keeper; upstream receipts; `host_busy`; S-8 pinned host placements; S-9 doctor + S-10 hello report; NOTIFY nudge; runbook §8.3 executed on your computer or VPS | 4–5 PRs + ops | Doctor green; drills D-1 and D-5 pass; 5 real tasks go READY → DONE/HANDOFF with no one typing; median time to claim < 60 s |
-| **2 — wake** (~1–1.5 weeks) | Hub (lock, socket, router, OAR adapter, resume); `veynod channel` + hooks; `init --hooks --channel`; `wake.py` (shadow → enforce); reach registry + back-fill; templates `claude_routine`, `cursor_cloud`; Test wake; console channels | 5–6 PRs | Drills D-2, D-3, D-4 pass; `wake_coverage` ≥ 80% of active agents; no `capped` storms in shadow week |
+| **0 — truth and bugs** (2–3 days, no schema) | CLI (`up-hub-p0-cli`): S-1 pinned MCP (OAR + CLI fallback flags); a placement still open before work; S-3 scratch dir; E-20 message frames; immediate busy report; lease keeper. Server (`up-hub-p0-server`): E-17/E-18 presence + gating; S-7 scheduler loop with lock and per-workspace `try`; `host_busy`; `done_needs_deploy` fix. Desktop frozen (`up-hub-p0-freeze-desktop`) | 4–6 small PRs | Tests green; `test_loop_production::test_runner_cli_e2e_custom_runtime` passes |
+| **1 — `veynod up` + hub** (~1–1.5 weeks, `up-hub-p1-up-hub`) | `up` (§14), multi-key hub (lock, stream per key, local socket, OAR adapter, runner adapter, lease keeper, receipts), hooks, local + server doctor; migration v3_64 placement parts (accept, `started`, `claim_within`); `cli_sessions.sealed_keys`; S-8 pinned host placements; S-10 hello report; NOTIFY nudge | 5–7 PRs | **Release bar D-3** on one computer (`up-hub-p1-release-drill`) |
+| **2 — wake** (~1–1.5 weeks) | `veynod channel`; `wake.py` (shadow → enforce); reach registry + back-fill; templates `claude_routine`, `cursor_cloud`; "Connect a cloud agent"; Test wake | 4–5 PRs | Drills D-2, D-3, D-4 pass; `wake_coverage` ≥ 80% of active agents; no `capped` storms in shadow week |
 | **3 — dispatch** (~1 week) | `dispatch.py`; API/MCP; `pin`; fallback ladder by mode; M-14 interplay; console "Dispatch to…"; pre-commit file-lock guard | 3–4 PRs | `test_dispatch.py` green; drill D-6 passes |
-| **4 — interop and polish** | Desktop on hub (runner-1 A-04); `a2a` and `ntfy` channels; Agent Cards; channel permission relay; MCP connection lifecycle; poke/message unification | As needed | — |
+| **4 — interop and polish** | `a2a` and `ntfy` channels; Agent Cards; channel permission relay; rest of MCP connection lifecycle; poke/message unification | As needed | — |
 
-## 15. MVP acceptance tests
+## 16. MVP acceptance tests
 
 **Automated (CI, real API server from `tests/conftest.py`, real CLI processes):**
 
@@ -844,19 +993,21 @@ proves the hub that wake and dispatch then use.
 | `cli/test/hub.test.mjs` | Single instance per key; one upstream stream with socket fan-out to a channel and a hook client; `message` frames routed; receipts batched upstream; OAR `scriptedRuntime` idle → `prompted`, busy → `queued`/`steered`; `in_use` → fresh session |
 | `cli/test/channel.test.mjs` | `initialize` advertises `experimental["claude/channel"]`; a hub item becomes `notifications/claude/channel {content, meta}`; protocol version accepted by Claude Code |
 | `cli/test/hook.test.mjs` | Stop: blocks with `wake.prompt` when items are pending, at most 3 per session, never when `stop_hook_active`, fails open within 3 s; SessionStart: `additionalContext` |
+| `cli/test/up.test.mjs` | `up --dry-run` prints exactly the files, keys, client changes and service plan; the default is no unattended runs without `--run-tasks`; a second run rotates keys instead of adding identities; `down` reverses every step |
+| `tests/test_cli_sessions.py::test_one_approval_mints_identities` | One approval mints the computer identity and `-review` key, seals each, returns them once; unticked identities are not minted; reconnect with the same `client_instance_id` rotates |
 
 **Live drills (`scripts/loop_drill.py`, on your workspace, results in the doctor history):**
 
 | Drill | Pass |
 |---|---|
-| D-1 Loop | 3 hubs on one computer; one repo task and one repo-less task reach DONE/HANDOFF with review on the other host; no one types |
+| D-1 Loop (release bar D-3) | `npx veynod up --run-tasks` on one computer, doctor green; one repo task and one repo-less task reach DONE with review by the `-review` identity; no one types |
 | D-2 Named dispatch to an open Claude Code session (channel) | `<channel>` event < 5 s; claim < 60 s |
 | D-3 Webhook agent (`grok-dou`) | One signed POST per batch; none for `task.done` |
 | D-4 Cloud Claude Code (routine) | One fire per batch; session URL in the receipt; ≤ 30/h |
 | D-5 Kill the builder hub mid-task | Re-placed on another host after the offline window plus one pass; one PR, no duplicate |
 | D-6 Dispatch with no answer | Rewake, then `dispatch.unaccepted` to you; nothing silent |
 
-## 16. Risks
+## 17. Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -867,23 +1018,26 @@ proves the hub that wake and dispatch then use.
 | Third-party secrets on the server | Owner-set, encrypted, write-only, audited; prefer hub-local channels |
 | Two controllers on one native session | Hub lock per session id; OAR `in_use`; registered hook sessions win |
 | Presence change confuses the console | Additive fields first; `state` values unchanged |
-| More moving parts on your computer | One hub process per key, installed as a service; doctor lists exactly what's missing |
+| More moving parts on your computer | One hub process and one service, set up by `up`; the doctor lists exactly what's missing |
 
-## 17. Decisions to confirm
+## 18. Decisions
 
-1. **Phase order:** Loop first, then wake, then dispatch (this doc), or v1's
-   order (wake first).
-2. **Hub topology:** three hubs (builder, reviewer, supervisor) on one
-   computer is acceptable for production review independence. Otherwise a
-   second computer is required.
-3. **Default sandbox profile** for runner hubs: `worktree` (OAR YOLO inside a
-   dedicated user/VM) or `container`.
-4. Whether Veynod may store third-party tokens (Claude routine, Cursor) for
+**Decided (owner, 2026-10-30):** D-1 desktop frozen; D-2 `veynod up` + hub
+as Phase 0–1; D-3 the release bar (§0). This settles v2's open questions on
+phase order (Loop and hub first) and topology (one computer, with a second
+identity reviewing).
+
+**Still open:**
+
+1. **Default sandbox profile** for unattended runs: `worktree` (OAR YOLO
+   inside a dedicated user/VM) or `container`.
+2. **`--run-tasks` default on laptops:** no (proposed), or yes.
+3. Whether Veynod may store third-party tokens (Claude routine, Cursor) for
    templates.
-5. Wake defaults: kinds (§6.5.1), caps (20/agent/h spawning, 200/workspace/h),
-   coalescing (30 s for spawning, 0 for live).
-6. Dispatch defaults: `accept_by` (120 s live / 600 s spawning / 60 s host),
+4. Wake defaults: kinds (§6.5.1), caps (20/agent/h spawning,
+   200/workspace/h), coalescing (30 s for spawning, 0 for live).
+5. Dispatch defaults: `accept_by` (120 s live / 600 s spawning / 60 s host),
    `claim_within` 300 s, `pin` (`hard` for named agents, `soft` for roles),
    fallback by mode (§7.3).
-7. Whether to adopt ntfy (self-hosted or ntfy.sh) for your phone wake-ups
+6. Whether to adopt ntfy (self-hosted or ntfy.sh) for your phone wake-ups
    and simple bots.
