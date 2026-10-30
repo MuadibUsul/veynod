@@ -2179,6 +2179,9 @@ class AgentTokenListResponse(BaseModel):
     human_issued: int = 0
     delegated_active: int = 0
     delegated_total: int = 0
+    # Keys of computers (they said runner hello), left out of items unless
+    # include_computers: they are managed with their computer.
+    computer_keys: int = 0
 
 
 class AuditDiffOut(BaseModel):

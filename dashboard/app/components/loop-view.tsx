@@ -10,9 +10,10 @@ import { HostsPanel } from "./hosts-panel";
 import { LiveBoard, type BoardEvent } from "./live-board";
 
 /*
- * How the agent loop is doing, second only to the diagram. One strip says
- * what needs a person (if anything), then the live board shows the agents at
- * work. Everything else lives under "More".
+ * How the agent loop is doing, second only to the diagram. Three lists side
+ * by side say what needs a person (if anything), how the loop runs and which
+ * computers work for it; then the live board shows the agents at work.
+ * Everything else lives under "More".
  */
 
 type Alert = {
@@ -158,7 +159,7 @@ export function LoopView({
 
   return (
     <div className="loop">
-      <div className="loop-pair" role="group" aria-label={t("Loop status")}>
+      <div className="loop-pair loop-trio" role="group" aria-label={t("Loop status")}>
       <section className="lin-list">
         <div className="lin-group">
           <i className={`lamp ${needs ? "red" : "green"}`} />
@@ -219,11 +220,11 @@ export function LoopView({
           {round && <span className="lin-meta">{relativeTime(round.ended_at ?? round.created_at)}</span>}
         </div>
       </section>
+
+      <HostsPanel request={request} notify={notify} refreshKey={hostsKey} canManage={sessionMode} />
       </div>
 
       {editingMode && sessionMode && <AutomationModeCard request={request} notify={notify} />}
-
-      <HostsPanel request={request} notify={notify} refreshKey={hostsKey} canManage={sessionMode} />
 
       <LiveBoard
         apiBase={apiBase}

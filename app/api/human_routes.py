@@ -133,10 +133,12 @@ async def delete_human_namespace(
 async def list_agent_tokens(
     issued_by: Literal["human", "agent", "all"] = Query(default="human"),
     parent: str | None = Query(default=None, max_length=40),
+    include_computers: bool = Query(default=False),
     principal: Principal = Depends(get_human_writer),
     session: AsyncSession = Depends(get_db),
 ) -> AgentTokenListResponse:
-    return await services.list_agent_tokens(session, principal.workspace, issued_by, parent)
+    return await services.list_agent_tokens(session, principal.workspace, issued_by, parent,
+                                            include_computers)
 
 
 @router.get(

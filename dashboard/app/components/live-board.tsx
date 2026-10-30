@@ -75,13 +75,20 @@ type Avatar = {
   activity: "working" | "idle" | "offline";
   working_on: string[];
   names?: string[];
+  // Set when this identity is a seat of a computer (its own key or its reviewer).
+  computer_id?: string | null;
+  seat?: "work" | "review" | null;
 };
+
+// A computer is a workstation; its keys are seats, not agents (v3.24).
+type Computer = { computer_id: string; name: string; state: string };
 
 type Snapshot = {
   cursor: number;
   columns: Record<Column, LiveCard[]>;
   archived: number;
   agents: Avatar[];
+  computers?: Computer[];
 };
 
 type StreamEvent = {
@@ -171,6 +178,7 @@ export function LiveBoard({
 
   const [cards, setCards] = useState<Record<string, LiveCard>>({});
   const [agents, setAgents] = useState<Record<string, Avatar>>({});
+  const [computers, setComputers] = useState<Computer[]>([]);
   const [archived, setArchived] = useState(0);
   const [live, setLive] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -252,6 +260,7 @@ export function LiveBoard({
     seenRef.current = new Set();
     setCards(next);
     setAgents(people);
+    setComputers(snap.computers ?? []);
     setArchived(snap.archived);
     setError(null);
   }, [authed, boardPath]);
@@ -516,10 +525,14 @@ export function LiveBoard({
     }
   };
 
+  // A computer's seat is counted only while someone works there: an empty
+  // seat is a free workstation, not an idle or sleeping agent.
   const counts = Object.values(agents).reduce(
-    (sum, avatar) => ({ ...sum, [avatar.activity]: (sum[avatar.activity] ?? 0) + 1 }),
+    (sum, avatar) => avatar.computer_id && avatar.activity !== "working"
+      ? sum : ({ ...sum, [avatar.activity]: (sum[avatar.activity] ?? 0) + 1 }),
     {} as Record<string, number>,
   );
+  const computersOnline = computers.filter((computer) => computer.state === "online").length;
 
   return (
     <div className="tab-stack live-board">
@@ -534,6 +547,9 @@ export function LiveBoard({
             <span className="count-chip">{t("Working")} {counts.working ?? 0}</span>
             <span className="count-chip">{t("Idle")} {counts.idle ?? 0}</span>
             <span className="count-chip">{t("Offline")} {counts.offline ?? 0}</span>
+            {computers.length > 0 && (
+              <span className="count-chip">{t("Computers")} {computersOnline}/{computers.length}</span>
+            )}
             <button type="button" className="button ghost small" onClick={toggleMotion} aria-pressed={motion}>
               {motion ? t("Animations on") : t("Animations off")}
             </button>
@@ -547,7 +563,7 @@ export function LiveBoard({
       </section>
 
       <Colony
-        agents={Object.values(agents)}
+        agents={Object.values(agents).filter((avatar) => !avatar.computer_id || avatar.activity === "working")}
         cards={Object.values(cards)}
         pulses={pulses}
         motion={motion}

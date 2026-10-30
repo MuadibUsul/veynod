@@ -772,6 +772,7 @@ async def list_agent_tokens(
     workspace: Workspace,
     issued_by: str = "human",
     parent: str | None = None,
+    include_computers: bool = False,
 ) -> AgentTokenListResponse:
     """Tokens of a workspace; by default only the ones people issued.
 
@@ -780,6 +781,10 @@ async def list_agent_tokens(
     default view keeps console-issued tokens (depth 1) and reports, per token,
     how many tokens were delegated beneath it. ``issued_by="agent"`` (optionally
     with ``parent``, a canonical id) lists the delegated ones; ``"all"`` both.
+
+    A computer's keys (those that said runner hello) are left out unless
+    ``include_computers``: a computer is where agents work, managed under
+    Computers, not an agent; ``computer_keys`` says how many were left out.
     """
     query = select(AgentToken).where(AgentToken.workspace_id == workspace.id)
     if issued_by == "human":
@@ -817,6 +822,15 @@ async def list_agent_tokens(
             {"w": workspace.id},
         )
     ).mappings().one()
+    computer_keys = set((await session.execute(
+        text("SELECT token_id FROM runner_hosts WHERE workspace_id = :w"),
+        {"w": workspace.id})).scalars().all())
+    if not include_computers:
+        kept = [token for token in tokens if token.canonical_id not in computer_keys]
+        left_out = len(tokens) - len(kept)
+        tokens = kept
+    else:
+        left_out = 0
     items = []
     for token in tokens:
         out = agent_token_out(token)
@@ -830,6 +844,7 @@ async def list_agent_tokens(
         human_issued=int(totals["human"]),
         delegated_active=int(totals["delegated_active"]),
         delegated_total=int(totals["delegated_total"]),
+        computer_keys=left_out,
     )
 
 

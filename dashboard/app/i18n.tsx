@@ -39,9 +39,7 @@ const ZH: Record<string, string> = {
   "Computer paused.": "已暂停这台电脑。",
   "Computer working again.": "这台电脑恢复干活了。",
   "Computer removed from the Loop.": "已把这台电脑移出 Loop。",
-  "Take this computer off the Loop? Its key stops working and its tasks go to other computers.": "把这台电脑移出 Loop？它的密钥会立即失效，手上的任务转给其他电脑。",
   "Pause this computer? It gets no new work and its tasks move to other computers.": "暂停这台电脑？它不再接新活，手上的任务转给其他电脑。",
-  "No computer runs agents for this workspace yet. Issue a runner key under More, Agents, then on the computer that should do the work run:": "还没有电脑为这个工作区跑 agent。先在「更多 → Agents」签发一个执行端密钥，再在要干活的电脑上运行：",
   "Any VPS, Mac, Linux box or Raspberry Pi with Claude Code or Codex installed will do.": "任何装了 Claude Code 或 Codex 的 VPS、Mac、Linux 或树莓派都可以。",
   "No runner is online": "没有在线的执行端",
   "No runner can take this kind of task": "没有能做这类任务的执行端",
@@ -1353,6 +1351,13 @@ const ZH: Record<string, string> = {
   "Asleep": "睡着了",
   "Workbench": "工作台",
   "Back": "回来了",
+  // Computers are workstations, not agents (v3.24)
+  "Works": "执行",
+  "Reviews": "审核",
+  "Seats": "座位",
+  "{count} keys belong to computers and are not listed here: a computer is where agents work, not an agent. Manage them with the computer under Loop, Computers.": "另有 {count} 把钥匙属于电脑，不在这里列出：电脑是 Agent 干活的工位，不是 Agent。到「Loop › 执行端电脑」里随电脑一起管理。",
+  "No computer works for this workspace yet. On the computer that should do the work, run:": "还没有电脑为这个工作区干活。在要干活的电脑上运行：",
+  "Take this computer off the Loop? Its keys stop working and its tasks go to other computers.": "把这台电脑移出 Loop？它的钥匙会立即失效，手上的任务转给其他电脑。",
 };
 
 const EN: Record<string, string> = {};
