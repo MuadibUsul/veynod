@@ -257,6 +257,8 @@ REGISTRY: dict[str, ErrorSpec] = {
     "cli_session_consumed": _spec(410, ABANDON, "The key was collected once; start a new setup."),
     "cli_code_unavailable": _spec(503, RETRY_BACKOFF, "Back off and retry."),
     "invalid_device_code": _spec(404, ABANDON, "Start a new setup with `npx veynod init`."),
+    "cli_identity_unknown": _spec(
+        422, FIX_REQUEST, "Tick only identities the terminal asked for (index 1 or 2)."),
     "invalid_public_key": _spec(422, FIX_REQUEST, "Send a base64 X25519 public key (32 bytes)."),
     "ambiguous_artifact": _spec(
         422, FIX_REQUEST, "Provide artifact_text or artifact_uri, not both."

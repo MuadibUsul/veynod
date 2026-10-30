@@ -112,6 +112,7 @@ do not edit by hand. Every error body is
 | `budget_exceeds_parent` | 422 | `fix_request` | `fix_request_then_resend` | Lower the budget per details. |
 | `checksum_mismatch` | 422 | `fix_request` | `fix_request_then_resend` | Download the export again, then import. |
 | `chunk_incomplete` | 422 | `fix_request` | `fix_request_then_resend` | Give every chunk in details.chunks an icd and done_criteria and known dependencies. |
+| `cli_identity_unknown` | 422 | `fix_request` | `fix_request_then_resend` | Tick only identities the terminal asked for (index 1 or 2). |
 | `context_doc_not_found` | 422 | `fix_request` | `fix_request_then_resend` | Fix the context pointers per details. |
 | `continuation_required` | 422 | `fix_request` | `fix_request_then_resend` | Attach a continuation pack. |
 | `contract_first` | 422 | `fix_request` | `fix_request_then_resend` | Make the chunks in details.implementation_roots depend on an interface chunk. |
