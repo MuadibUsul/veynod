@@ -641,7 +641,7 @@ async function listen(options) {
   }
 }
 
-async function follow(options, say) {
+export async function follow(options, say = () => {}) {
   const statePath = cursorFile(options.host, options.key);
   let lastSeq = loadCursor(statePath);
   let delay = 1000;
@@ -666,7 +666,9 @@ async function follow(options, say) {
         buffer = rest;
         for (const event of events) {
           if (event.event === "closed") throw new Error(`server closed the stream: ${event.data}`);
-          if (event.event !== "poke") continue;
+          // Pokes and direct messages both reach the hook; "message" frames carry the
+          // conversation pointer in poke.message.
+          if (event.event !== "poke" && event.event !== "message") continue;
           const poke = JSON.parse(event.data);
           const seq = Number(event.id || poke.event_seq);
           if (lastSeq && seq <= lastSeq) continue; // seen before a reconnect

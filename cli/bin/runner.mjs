@@ -21,6 +21,11 @@ import { arch as osArch, homedir, hostname, platform } from "node:os";
 import { join } from "node:path";
 
 export const RUNNER_HEARTBEAT_MS = 30_000;
+// Leases are at least 60 s and heartbeat at a third of their TTL; renewing every
+// two minutes keeps a default (900 s) lease alive with room to spare.
+export const LEASE_KEEP_MS = 120_000;
+// Placements a host may still work on; any other status means it moved on.
+const OPEN_PLACEMENT = new Set(["offered", "claimed"]);
 const WAKE_ATTEMPTS = 3;
 const RUNTIME_IDS = ["claude", "codex"];
 const PLACEMENT = /\bplc_[0-9A-Z]{10,}\b/;
@@ -180,26 +185,53 @@ function spawnRun(command, args, { cwd, env, shell = false, signal }) {
   });
 }
 
-/** One way to run a prompt in a directory; resolves when the agent's turn ends. */
-export function adapterFor(runtime, { exec = "", importer = (spec) => import(spec) } = {}) {
+/**
+ * The only MCP server a runner session gets: Veynod with the runner's own key.
+ * The session must claim as the host's agent (the placement assigns the task to
+ * it), so whatever Veynod key `init` wrote into the user's configuration must
+ * not be the one it uses.
+ */
+export function veynodMcpServer({ host, key }) {
+  return { name: "veynod", type: "http", url: `${host.replace(/\/$/, "")}/mcp/`,
+    headers: { Authorization: `Bearer ${key}` } };
+}
+
+/** The same server in Claude Code's --mcp-config file format. */
+export function claudeMcpConfig(pin) {
+  const { name, type, url, headers } = veynodMcpServer(pin);
+  return { mcpServers: { [name]: { type, url, headers } } };
+}
+
+/**
+ * One way to run a prompt in a directory; resolves when the agent's turn ends.
+ * `pin` ({host, key}) pins the session's MCP to Veynod with that key: through OAR
+ * with `mcpServers` and `userConfiguration: "exclude"`, through Claude Code's CLI
+ * with `--mcp-config <file> --strict-mcp-config` and an explicit permission mode
+ * (nobody answers a prompt in an unattended run). Codex's CLI has no verified
+ * equivalent, so a Codex run without OAR is reported as not pinned.
+ */
+export function adapterFor(runtime, { exec = "", importer = (spec) => import(spec), spawner = spawnRun,
+  permissionMode = "bypassPermissions" } = {}) {
   if (runtime === "custom") {
     if (!exec) throw new Error("--runtime custom needs --exec CMD");
     return {
       id: "custom",
-      run: ({ cwd, prompt, env }) => spawnRun(exec, [], { cwd, shell: true, env: { ...env, VEYNOD_PROMPT: prompt } }),
+      run: ({ cwd, prompt, env }) => spawner(exec, [], { cwd, shell: true, env: { ...env, VEYNOD_PROMPT: prompt } }),
     };
   }
   if (!RUNTIME_IDS.includes(runtime)) throw new Error(`unknown runtime ${runtime} (claude, codex or custom)`);
   return {
     id: runtime,
-    async run({ cwd, prompt, env }) {
+    async run({ cwd, prompt, env, pin, configDir }) {
       const oar = await oarRuntime(runtime, importer);
       if (oar) {
         try {
           const { promptAndWait } = await importer("@botiverse/oar/observe");
           const installation = await oar.installation();
           if (installation?.kind === "available") {
-            const session = await oar.session(installation, { cwd, env });
+            const options = { cwd, env };
+            if (pin) Object.assign(options, { mcpServers: [veynodMcpServer(pin)], userConfiguration: "exclude" });
+            const session = await oar.session(installation, options);
             try {
               const result = await promptAndWait(session, prompt);
               if (result.kind === "rejected") return { ok: false, reason: result.reason };
@@ -212,10 +244,28 @@ export function adapterFor(runtime, { exec = "", importer = (spec) => import(spe
           return { ok: false, reason: error instanceof Error ? error.message : String(error) };
         }
       }
-      const args = runtime === "claude" ? ["-p", prompt] : ["exec", prompt];
-      return spawnRun(runtime, args, { cwd, env });
+      if (runtime !== "claude") return spawner(runtime, ["exec", prompt], { cwd, env });
+      const args = ["-p", prompt, "--permission-mode", permissionMode];
+      let file = null;
+      if (pin) {
+        mkdirSync(configDir, { recursive: true, mode: 0o700 });
+        file = join(configDir, `mcp-${process.pid}-${Date.now()}.json`);
+        writeFileSync(file, JSON.stringify(claudeMcpConfig(pin)), { mode: 0o600 });
+        args.push("--mcp-config", file, "--strict-mcp-config");
+      }
+      try {
+        return await spawner("claude", args, { cwd, env });
+      } finally {
+        if (file) rmSync(file, { force: true });
+      }
     },
   };
+}
+
+/** Whether a run on this adapter claims as the runner's own agent. */
+export async function pinsIdentity(runtime, { importer = (spec) => import(spec) } = {}) {
+  if (runtime === "custom" || runtime === "claude") return true;
+  return Boolean(await oarRuntime(runtime, importer));
 }
 
 // ------------------------------------------------------------------ worktrees
@@ -394,13 +444,18 @@ export async function runRunner(options, {
   say = () => {},
   fetchImpl = fetch,
   importer = (spec) => import(spec),
+  spawner,
   every = RUNNER_HEARTBEAT_MS,
+  leaseEvery = LEASE_KEEP_MS,
   sleepMs = 2_000,
   stateDir = process.env.VEYNOD_STATE_DIR || join(homedir(), ".veynod"),
 } = {}) {
   const slots = Math.max(1, Number(options.slots) || 1);
   const repos = options.repos || [];
-  const adapter = adapterFor(options.runtime || "claude", { exec: options.exec, importer });
+  const adapter = adapterFor(options.runtime || "claude", { exec: options.exec, importer,
+    ...(spawner ? { spawner } : {}), ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}) });
+  const pin = { host: options.host, key: options.key };
+  const configDir = join(stateDir, "run");
   const worktrees = new Worktrees({
     root: join(stateDir, "runner"),
     repos,
@@ -414,8 +469,13 @@ export async function runRunner(options, {
   let runtimes = options.runtime === "custom"
     ? [{ id: "custom", available: true, via: "exec" }]
     : await inventory({ importer });
+  const mcpPinning = await pinsIdentity(adapter.id, { importer });
+  if (!mcpPinning) say(`warning: ${adapter.id} without OAR cannot pin Veynod's MCP to this runner's key; install OAR (Node 24+)`);
   const hello = await callApi(fetchImpl, options.host, options.key, "/v1/runner/hello", {
-    method: "POST", body: { host: hostReport({ runtimes, slots, repos, version }) },
+    // Inside `host`: the request schema is strict, and servers that do not read the
+    // report yet drop unknown host fields instead of refusing the hello.
+    method: "POST", body: { host: { ...hostReport({ runtimes, slots, repos, version }),
+      capabilities_report: { mcp_pinning: mcpPinning, runtime: adapter.id } } },
   });
   say(`runner ${hello.host_id} (${hello.agent_id ?? "unnamed"}) ready: ${slots} slot(s), ${runtimes.filter((item) => item.available).map((item) => item.id).join(", ") || "no runtime"}`);
 
@@ -438,18 +498,51 @@ export async function runRunner(options, {
   const timer = setInterval(() => void beat(), every);
   timer.unref?.();
 
+  const report = async (placementId, outcome, note) => {
+    try {
+      await callApi(fetchImpl, options.host, options.key,
+        `/v1/runner/placements/${encodeURIComponent(placementId)}/report`, {
+          method: "POST", body: { outcome, ...(note ? { note: String(note).slice(0, 500) } : {}) },
+        });
+    } catch (error) {
+      if (error.status !== 404) say(`report ${placementId}: ${error.message}`);
+    }
+  };
+
+  /**
+   * Keeps the task's lease alive while the runtime works on it (the model is not
+   * trusted to renew its own lease during a long tool run). Before the session
+   * claims, and after it hands off, the renew is refused; that is expected.
+   */
+  const keepLease = (taskKey) => {
+    const renew = () => callApi(fetchImpl, options.host, options.key,
+      `/v1/tasks/${encodeURIComponent(taskKey)}/renew`, { method: "POST", body: {} }).catch(() => {});
+    const timer = setInterval(() => void renew(), leaseEvery);
+    timer.unref?.();
+    return () => clearInterval(timer);
+  };
+
   async function work({ taskKey, placementId, step, diagramKey, chunkKey }) {
     const slot = taskKey ?? placementId;
-    receipt({ task_key: taskKey, placement_id: placementId, step, stage: "accepted" });
     let repo = null;
     let tree = null;
+    let scratch = null;
+    let stopLease = () => {};
     let result = { ok: false, reason: "not run" };
     try {
+      // A replayed or late poke can name a placement the platform already moved on.
+      const placement = await callApi(fetchImpl, options.host, options.key,
+        `/v1/runner/placements/${encodeURIComponent(placementId)}`);
+      if (!OPEN_PLACEMENT.has(placement.status)) {
+        receipt({ task_key: taskKey, placement_id: placementId, step, stage: "skipped",
+          reason: `placement is ${placement.status ?? "unknown"}` });
+        say(`${slot} (${step}): skipped, placement is ${placement.status ?? "unknown"}`);
+        return;
+      }
+      receipt({ task_key: taskKey, placement_id: placementId, step, stage: "accepted" });
       let agenda = [];
       if (step === "supervise") {
-        const detail = await callApi(fetchImpl, options.host, options.key,
-          `/v1/runner/placements/${encodeURIComponent(placementId)}`);
-        agenda = detail.detail?.agenda ?? [];
+        agenda = placement.detail?.agenda ?? [];
       } else {
         const task = await callApi(fetchImpl, options.host, options.key, `/v1/tasks/${encodeURIComponent(taskKey)}`);
         repo = task.repo || null;
@@ -458,14 +551,22 @@ export async function runRunner(options, {
         if (repo) tree = worktrees.prepare(treeKey, repo, new Set([...running.keys()].map(repoSlug)));
         if (tree) tree.key = treeKey;
       }
-      const cwd = tree?.dir ?? options.cwd ?? process.cwd();
+      // Work without a repository gets an empty directory of its own, never the
+      // service's working directory.
+      if (!tree) {
+        scratch = join(stateDir, "runner", "scratch", repoSlug(`${step}-${slot}`));
+        rmSync(scratch, { recursive: true, force: true });
+        mkdirSync(scratch, { recursive: true });
+      }
+      const cwd = tree?.dir ?? scratch;
       const prompt = promptFor({ taskKey, placementId, branch: tree?.branch, host: options.host,
         step, diagramKey, chunkKey, agenda });
       const env = { VEYNOD_KEY: options.key, VEYNOD_HOST: options.host, VEYNOD_TASK_KEY: taskKey ?? "",
         VEYNOD_PLACEMENT_ID: placementId, VEYNOD_STEP: step };
+      if (step === "work" && taskKey) stopLease = keepLease(taskKey);
       for (let attempt = 1; attempt <= WAKE_ATTEMPTS; attempt += 1) {
         receipt({ task_key: taskKey, placement_id: placementId, step, stage: "started", attempt, runtime: adapter.id });
-        result = await adapter.run({ cwd, prompt, env });
+        result = await adapter.run({ cwd, prompt, env, pin, configDir });
         if (result.ok) break;
         if (attempt < WAKE_ATTEMPTS) await sleep(Math.min(30_000, sleepMs * attempt));
       }
@@ -476,6 +577,7 @@ export async function runRunner(options, {
       receipt({ task_key: taskKey, placement_id: placementId, step, stage: "failed", reason: result.reason });
       say(`${slot} (${step}): ${error.message}`);
     } finally {
+      stopLease();
       if (tree) {
         try {
           worktrees.remove(tree.key, repo);
@@ -483,18 +585,12 @@ export async function runRunner(options, {
           // cleaned on the next makeRoom
         }
       }
-      // Tell the platform how the step ended, so a failure moves on at once.
-      try {
-        await callApi(fetchImpl, options.host, options.key,
-          `/v1/runner/placements/${encodeURIComponent(placementId)}/report`, {
-            method: "POST", body: { outcome: result.ok ? "finished" : "failed", ...(result.reason ? { note: String(result.reason).slice(0, 500) } : {}) },
-          });
-      } catch (error) {
-        if (error.status !== 404) say(`report ${placementId}: ${error.message}`);
-      }
+      if (scratch) rmSync(scratch, { recursive: true, force: true });
       running.delete(slot);
       void beat();
     }
+    // Tell the platform how the step ended, so a failure moves on at once.
+    await report(placementId, result.ok ? "finished" : "failed", result.reason);
   }
 
   try {
@@ -508,7 +604,10 @@ export async function runRunner(options, {
         const slot = placed.taskKey ?? placed.placementId;
         receipt({ task_key: placed.taskKey, placement_id: placed.placementId, step: placed.step, stage: "delivered" });
         if (running.size >= slots || running.has(slot)) {
+          // Say so at once: the platform places it elsewhere instead of waiting
+          // for the claim to time out on this computer.
           receipt({ task_key: placed.taskKey, placement_id: placed.placementId, step: placed.step, stage: "failed", reason: "no free slot" });
+          await report(placed.placementId, "failed", "no_free_slot");
           return 0;
         }
         running.set(slot, work(placed));
