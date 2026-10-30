@@ -848,6 +848,48 @@ async def test_a_diagram_without_a_repo_keeps_submitted_files_and_hands_them_on(
     assert context["content"] == html
 
 
+def test_acceptance_kinds():
+    """DX-6: a criterion only a person can settle is MANUAL."""
+    from app.services.diagrams import acceptance_kind
+
+    for manual in ("owner 在 M1 确认通过", "The owner approves the copy", "人工验收",
+                   "Signed off by a person"):
+        assert acceptance_kind(manual) == "MANUAL", manual
+    for auto in ("设计稿覆盖全部 7 个页面区块", "pytest tests/test_api.py", "LCP <= 2.5s"):
+        assert acceptance_kind(auto) == "AUTO", auto
+
+
+async def test_confirm_names_manual_and_unchecked_criteria(client):
+    """DX-6: confirming shows what a person settles, what nothing checks, and an
+    unanswered self-check; the dispatched task carries the right kinds."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    key = f"dx6-{uuid.uuid4().hex[:6]}"
+    design = _chunk("design", layer="interface")
+    design["done_criteria"] = ["设计稿覆盖全部 7 个页面区块", "owner 在 M1 确认通过"]
+    built = _chunk("build", layer="interface", commands={"test": "pytest -q"})
+    made = await client.post("/v1/diagrams", headers=architect["headers"], json={
+        "diagram_key": key, "title": "site", "chunks": [design, built],
+        "self_check": {"big": True}})
+    assert made.status_code == 201, made.text
+    confirmed = await client.post(f"/v1/diagrams/{key}/confirm", headers=ws["person"])
+    assert confirmed.status_code == 200, confirmed.text
+    warnings = confirmed.json()["confirm_warnings"]
+    by_kind = {(item["kind"], item.get("chunk_key")): item for item in warnings}
+    assert by_kind[("self_check", None)]["missing"] == ["stable", "machine_checkable", "long"]
+    assert by_kind[("manual_criteria", "design")]["criteria"] == ["owner 在 M1 确认通过"]
+    assert by_kind[("auto_without_commands", "design")]["criteria"] == [
+        "设计稿覆盖全部 7 个页面区块"]
+    assert ("auto_without_commands", "build") not in by_kind
+
+    await client.post(f"/v1/diagrams/{key}/freeze", headers=ws["person"], json={})
+    dispatched = (await client.post(f"/v1/diagrams/{key}/chunks/design/dispatch",
+                                    headers=architect["headers"])).json()
+    task = (await client.get(f"/v1/tasks/{dispatched['task_key']}", headers=ws["key"])).json()
+    assert [(item["id"], item["kind"]) for item in task["acceptance"]] == [
+        ("DC-1", "AUTO"), ("DC-2", "MANUAL")]
+
+
 async def test_serial_merge_queue(client):
     """A-11 / A-14: approval queues; the controller verifies the head; one at a time."""
     ws = await _workspace(client)

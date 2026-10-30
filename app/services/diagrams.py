@@ -189,6 +189,43 @@ def _require_contract_first(chunks: list[dict[str, Any]]) -> None:
                        details={"implementation_roots": roots})
 
 
+# A done criterion only a person can settle ("owner confirms at M1"): MANUAL on the task.
+_PERSON_DECIDES = re.compile(
+    r"\b(owner|person|people|human|approv\w*|confirm\w*|sign[- ]?off)\b"
+    r"|确认|验收|批准|审批|人工|拍板", re.IGNORECASE)
+
+
+def acceptance_kind(criterion: str) -> str:
+    return "MANUAL" if _PERSON_DECIDES.search(criterion or "") else "AUTO"
+
+
+def confirm_warnings(diagram: dict[str, Any], chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """What the person confirming should know: criteria only a person can settle,
+    automatic ones with no command to check them, and an unanswered self-check."""
+    warnings: list[dict[str, Any]] = []
+    risk = self_check_risk(diagram.get("self_check") or {})
+    if risk["missing"]:
+        warnings.append({"kind": "self_check", "missing": risk["missing"], "risk": risk["risk"],
+                         "detail": "self-check not answered yes: " + ", ".join(risk["missing"])})
+    for chunk in chunks:
+        if chunk["state"] == "retired":
+            continue
+        kinds = [(criterion, acceptance_kind(criterion)) for criterion in chunk["done_criteria"]]
+        manual = [criterion for criterion, kind in kinds if kind == "MANUAL"]
+        if manual:
+            warnings.append({"kind": "manual_criteria", "chunk_key": chunk["chunk_key"],
+                             "criteria": manual,
+                             "detail": "a person settles these; the chunk's task marks them "
+                                       "MANUAL"})
+        unchecked = [criterion for criterion, kind in kinds if kind == "AUTO"]
+        if unchecked and not _needs_ci(chunk):
+            warnings.append({"kind": "auto_without_commands", "chunk_key": chunk["chunk_key"],
+                             "criteria": unchecked,
+                             "detail": "no command checks these: add commands, or the "
+                                       "reviewer checks them by hand"})
+    return warnings
+
+
 def self_check_risk(self_check: dict[str, Any]) -> dict[str, Any]:
     """M-A-07: big, stable, machine-checkable, long; two or more 'no' is a risk (warn only)."""
     missing = [item for item in SELF_CHECK if self_check.get(item) is not True]
@@ -474,9 +511,11 @@ async def confirm(session: AsyncSession, principal: Principal, key: str) -> dict
         "updated_at = NOW() WHERE id = :id RETURNING *"),
         {"by": _me(principal), "id": diagram["id"]})).mappings().one())
     await _write_document(session, principal, diagram, chunks)
-    await _event(session, principal, diagram, "DIAGRAM_CONFIRMED", version=diagram["version"])
+    warnings = confirm_warnings(diagram, chunks)
+    await _event(session, principal, diagram, "DIAGRAM_CONFIRMED", version=diagram["version"],
+                 warnings=[item["kind"] for item in warnings])
     await session.commit()
-    return await view(session, principal, key)
+    return {**await view(session, principal, key), "confirm_warnings": warnings}
 
 
 async def freeze(session: AsyncSession, principal: Principal, key: str,
@@ -677,7 +716,8 @@ async def _create_task(session: AsyncSession, principal: Principal, diagram: dic
         repo=diagram.get("repo"),
         # Chunks are implementation work, whoever dispatches them.
         assigned_role="EXECUTOR",
-        acceptance=[AcceptanceItem(id=f"DC-{index + 1}", kind="AUTO", text=criterion[:2_000])
+        acceptance=[AcceptanceItem(id=f"DC-{index + 1}", kind=acceptance_kind(criterion),
+                                   text=criterion[:2_000])
                     for index, criterion in enumerate(chunk["done_criteria"][:50])],
         done_definition="All done criteria pass, the gate passes, and someone other than "
                         "the implementer merges (spec M-09/M-10).",
