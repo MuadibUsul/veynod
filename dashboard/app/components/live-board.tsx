@@ -18,6 +18,9 @@ const RESOLVED_LIMIT = 10; // M-03
 const TICK_MS = 1000; // M-07: events within one second are shown together
 const MERGE_ABOVE = 5; // M-07: more than this in one tick → one merged notice
 const FLIGHT_MS = 900;
+// A parcel is carried a little slower than a dot is thrown.
+const HANDOFF_MS = 1300;
+const flightMs = (kind: Kind) => (kind === "handoff" ? HANDOFF_MS : FLIGHT_MS);
 const MOTION_KEY = "veynod.liveboard.motion";
 const SEEN_MEMORY = 5000;
 const RESUME_BEHIND = 200;
@@ -261,7 +264,7 @@ export function LiveBoard({
     if (!from || !to) return;
     const id = `${kind}-${fromKey}-${toKey}-${Math.random().toString(36).slice(2, 8)}`;
     setFlights((items) => [...items, { id, kind, from, to }]);
-    window.setTimeout(() => setFlights((items) => items.filter((item) => item.id !== id)), FLIGHT_MS + 50);
+    window.setTimeout(() => setFlights((items) => items.filter((item) => item.id !== id)), flightMs(kind) + 50);
   }, []);
 
   const pulse = useCallback((key: string, kind: Kind) => {
@@ -617,15 +620,29 @@ function FlightDot({ flight }: { flight: Flight }) {
     const fromY = flight.from.top + flight.from.height / 2;
     const toX = flight.to.left + flight.to.width / 2;
     const toY = flight.to.top + flight.to.height / 2;
+    // Things are carried in an arc, not slid: a parcel is lifted, then set down.
+    const lift = Math.min(80, 24 + Math.hypot(toX - fromX, toY - fromY) / 6);
     node.animate(
       [
-        { transform: `translate(${fromX}px, ${fromY}px) scale(1)`, opacity: 1 },
-        { transform: `translate(${toX}px, ${toY}px) scale(0.6)`, opacity: 0.2 },
+        { transform: `translate(${fromX}px, ${fromY}px) scale(.7)`, opacity: 0 },
+        { transform: `translate(${fromX}px, ${fromY - 12}px) scale(1)`, opacity: 1, offset: 0.12 },
+        { transform: `translate(${(fromX + toX) / 2}px, ${Math.min(fromY, toY) - lift}px) scale(1.05)`, opacity: 1, offset: 0.55 },
+        { transform: `translate(${toX}px, ${toY}px) scale(.85)`, opacity: 0 },
       ],
-      { duration: FLIGHT_MS, easing: "cubic-bezier(.2,.7,.2,1)", fill: "forwards" },
+      { duration: flightMs(flight.kind), easing: "cubic-bezier(.3,.6,.3,1)", fill: "forwards" },
     );
   }, [flight]);
-  return <span ref={ref} className={`live-flight kind-${flight.kind}`} aria-hidden="true" />;
+  return (
+    <span ref={ref} className={`live-flight kind-${flight.kind}`} aria-hidden="true">
+      {flight.kind === "handoff" && (
+        <svg viewBox="0 0 20 20" width="20" height="20">
+          <rect x="2" y="6" width="16" height="12" rx="2" fill="#c9a26b" />
+          <rect x="1" y="4" width="18" height="4" rx="1.5" fill="#dcb67e" />
+          <rect x="9" y="4" width="2" height="14" fill="#00c2ff" />
+        </svg>
+      )}
+    </span>
+  );
 }
 
 function ArchivePanel({

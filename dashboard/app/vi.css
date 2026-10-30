@@ -400,10 +400,86 @@ body::before {
   font-family: var(--ds-font-mono);
 }
 
+.doc-group {
+  margin-bottom: 8px;
+}
+
+.doc-group-label {
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 10px;
+  font-size: 12px;
+  color: var(--ds-text-muted);
+}
+
+/* Documents read as a Linear list: one row each (title over key), no cards. */
+.doc-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  height: auto;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  transition: background 120ms ease;
+}
+
+.doc-item:hover {
+  background: var(--ds-surface-panel-hover, rgba(255, 255, 255, 0.04));
+}
+
 .doc-item.active {
   background: var(--ds-surface-raised);
-  box-shadow: inset 2px 0 0 var(--il-accent), inset -1px 0 0 var(--ds-border-default),
-    inset 0 1px 0 var(--ds-border-default), inset 0 -1px 0 var(--ds-border-default);
+  box-shadow: none;
+}
+
+.doc-item-icon {
+  flex: none;
+  color: var(--ds-text-muted);
+  display: inline-flex;
+}
+
+.doc-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.doc-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ds-text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.doc-item-key {
+  font-family: var(--ds-font-mono);
+  font-size: 11px;
+  color: var(--ds-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.doc-item-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--ds-font-mono);
+  font-size: 11px;
+  color: var(--ds-text-muted);
 }
 
 /* Reading, not scanning: a measured column, roomy lines. */
@@ -1327,3 +1403,153 @@ button.lin-row:hover {
   background: #0b0f14;
 }
 .critter.mode-asleep { opacity: 0.6; }
+
+/* Things carried across the space. */
+.live-flight {
+  position: fixed;
+  left: -6px;
+  top: -6px;
+  z-index: 60;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #00c2ff;
+  pointer-events: none;
+}
+
+.live-flight.kind-handoff {
+  left: -10px;
+  top: -10px;
+  width: 20px;
+  height: 20px;
+  border-radius: 0;
+  background: none;
+  filter: drop-shadow(0 4px 6px rgba(0, 0, 0, 0.5));
+}
+
+.live-flight.kind-message { width: 8px; height: 8px; left: -4px; top: -4px; background: #f2f4f7; }
+.live-flight.kind-complete { background: #47cd89; }
+.live-flight.kind-claim,
+.live-flight.kind-publish { background: #00c2ff; }
+
+/* A finished card lands on the shelf with a small green pop. */
+.colony-card.pulse-complete {
+  border-color: rgba(71, 205, 137, 0.8);
+  box-shadow: 0 0 0 3px rgba(71, 205, 137, 0.18);
+  animation: colony-land 700ms var(--ds-ease) 900ms both;
+}
+
+.colony-card.pulse-handoff {
+  border-color: rgba(201, 162, 107, 0.8);
+}
+
+@keyframes colony-land {
+  0% { scale: 1; }
+  40% { scale: 1.08; }
+  100% { scale: 1; }
+}
+
+/* History as a list: one row per batch. */
+.batch-grid {
+  display: block;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: 12px;
+  background: var(--ds-surface-subtle);
+  overflow: hidden;
+}
+
+.batch-card {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 16px;
+  min-height: 44px;
+  padding: 6px 16px;
+  border: 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.batch-card:last-child {
+  border-bottom: 0;
+}
+
+.batch-card:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.batch-top {
+  flex: 0 0 300px;
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+}
+
+.batch-agent {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.batch-count {
+  flex: 0 0 auto;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--ds-text-secondary);
+}
+
+.batch-card .namespace-chips {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+.batch-foot {
+  flex: none;
+  justify-content: flex-end;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ds-text-muted);
+  font-size: 12px;
+}
+
+.batch-foot .button.ghost.small {
+  border-color: transparent;
+  background: transparent;
+}
+
+.support-card .button.primary,
+.support-card .button.full {
+  width: auto;
+  justify-self: start;
+}
+
+.governance-tabs,
+.subtabs {
+  border-bottom: 1px solid var(--ds-border-subtle);
+}
+
+.diff-row summary {
+  grid-template-columns: 72px minmax(0, 1fr) 96px minmax(0, 220px) 88px;
+  gap: 12px;
+  font-size: 12px;
+  min-height: 32px;
+}
+
+.diff-row summary > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-row summary .diff-time {
+  text-align: right;
+  color: var(--ds-text-muted);
+}
+
+.diff-row {
+  border-top-color: rgba(255, 255, 255, 0.04);
+}
