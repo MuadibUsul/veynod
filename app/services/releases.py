@@ -29,6 +29,23 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.23.0",
+        "date": "2026-10-30",
+        "summary": "One command sets up a computer: `npx veynod up` brings up the hub "
+        "that wakes agents, dispatches work and runs the Loop.",
+        "highlights": [
+            "`veynod up` is the single surface for a computer: it runs the hub, "
+            "registers the host and keeps the Loop moving; `veynod doctor` says what "
+            "the host is missing.",
+            "One approval connects every identity that computer needs (schema 3.64), "
+            "so a hub no longer needs a token per role.",
+            "The runner hello keeps its capabilities report and the doctor names "
+            "unpinned hosts (schema 3.65).",
+            "`up` waits only for the board checks its hello can turn green, so a "
+            "first run does not stall on checks that belong to a human.",
+        ],
+    },
+    {
         "version": "3.22.4",
         "date": "2026-10-29",
         "summary": "The claimed Glama listing is part of the public brand graph.",
