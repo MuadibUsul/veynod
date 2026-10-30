@@ -10040,6 +10040,12 @@
          "name": "brief",
          "required": false,
          "type": "object | null"
+        },
+        {
+         "description": "After your handoff, while the task is in review: an append-only correction to your brief, shown with it (the pack is not rewritten)",
+         "name": "erratum",
+         "required": false,
+         "type": "string | null"
         }
        ],
        "description": "",

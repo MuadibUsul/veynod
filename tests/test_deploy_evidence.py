@@ -147,6 +147,27 @@ async def test_full_automation_waits_for_a_verified_deploy_before_done(board):
                          "WHERE t.task_key = $1", key)
     assert [row["verdict"] for row in verdict] == ["APPROVE"]  # the gate's G-03 sees it
 
+    # DX-7: the task itself says it was approved and waits for its deploy (HANDOFF alone
+    # read as work sent back), and the handoff's author can append a correction.
+    http = board["http"]
+    card = (await http.get(f"/v1/tasks/{key}", headers=board["key"])).json()
+    assert card["status"] == "HANDOFF" and card["awaiting_deploy"] is True
+    assert card["handoff_brief"]["approval"]["awaiting_deploy"] is True
+    listed = (await http.get("/v1/tasks", headers=board["key"],
+                             params={"task_key": key})).json()["items"]
+    assert listed[0]["awaiting_deploy"] is True
+    not_author = await http.post(f"/v1/tasks/{key}/continuation", headers=board["key"],
+                                 json={"erratum": "not mine to correct"})
+    assert not_author.status_code == 403, not_author.text
+    note = "Correction: P1-P5 are not blocked by P0's failed duplicate."
+    fixed = await http.post(f"/v1/tasks/{key}/continuation", headers=board["agent"],
+                            json={"erratum": note})
+    assert fixed.status_code == 200, fixed.text
+    card = (await http.get(f"/v1/tasks/{key}", headers=board["key"])).json()
+    assert [item["text"] for item in card["handoff_brief"]["errata"]] == [note]
+    assert card["handoff_brief"]["summary"] == BRIEF["summary"]  # never rewritten
+    assert card["awaiting_deploy"] is True
+
     # A deploy whose smoke test failed (rolled back) is not evidence.
     await _deploy(board, [key], smoke_ok=False)
     await _resubmit(board, key)
@@ -167,6 +188,7 @@ async def test_full_automation_waits_for_a_verified_deploy_before_done(board):
     assert done["task"]["status"] == "DONE"
     assert done["deploy_evidence"]["run_id"] == run_id
     assert done.get("awaiting_deploy") is None
+    assert done["task"].get("awaiting_deploy") is None
 
 
 async def test_tasks_that_ship_nothing_and_other_modes_are_unchanged(board):

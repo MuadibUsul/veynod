@@ -1288,6 +1288,11 @@ async def review_task(
                     # in HANDOFF; DEPLOY_VERIFIED tells its people when it shipped.
                     next_status = "HANDOFF"
                     awaiting_deploy = True
+                    # Shown on the task itself, so approved work waiting for its deploy
+                    # never reads as work sent back.
+                    task.handoff_brief = {**(task.handoff_brief or {}), "approval": {
+                        "by": principal.agent_signature, "at": utcnow().isoformat(),
+                        "awaiting_deploy": True}}
         task.status = TaskStatus(next_status)
         if human_decision:
             task.human_feedback = request.feedback
@@ -1804,6 +1809,33 @@ async def claim_orphan_tasks(session: AsyncSession, principal: Principal,
 # ------------------------------------------------ collaboration (PRD R2.1)
 
 
+async def _append_erratum(session: AsyncSession, principal: Principal, task: CollabTask,
+                          agent: str, text_: str) -> dict[str, Any]:
+    """The author of the last handoff corrects it while it is reviewed: appended to
+    the brief, never rewriting it, so the reviewer sees both."""
+    if task.status not in (TaskStatus.REVIEWING, TaskStatus.HANDOFF) or (
+            not principal.is_human and task.handed_off_by != agent):
+        raise Forbidden("only the author of the last handoff adds an erratum, while the "
+                        "task is in review")
+    brief = dict(task.handoff_brief or {})
+    errata = list(brief.get("errata") or [])
+    if len(errata) >= 20:
+        raise ApiError(422, "validation_error", "at most 20 errata per handoff")
+    entry = {"by": agent, "at": utcnow().isoformat(), "text": text_}
+    brief["errata"] = [*errata, entry]
+    task.handoff_brief = brief
+    task.version += 1
+    task.updated_at = utcnow()
+    await append_event(
+        session, workspace_id=principal.workspace.id, agent=agent, event_type="TASK_ERRATUM",
+        payload={"task_key": task.task_key, "id": task.canonical_id, "erratum": entry,
+                 "targets": [f"agent:{task.reviewed_by}"] if task.reviewed_by else []},
+        namespace=task.namespace)
+    await session.commit()
+    return {"erratum": entry, "errata": brief["errata"],
+            "task": task_out(task).model_dump(mode="json")}
+
+
 async def write_continuation(
     session: AsyncSession, principal: Principal, task_key: str, request: Any
 ) -> dict[str, Any]:
@@ -1812,6 +1844,8 @@ async def write_continuation(
     agent = effective_agent(principal, None)
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
     ensure_namespace(principal, task.namespace, write=True)
+    if request.erratum:
+        return await _append_erratum(session, principal, task, agent, request.erratum)
     data = request.model_dump(mode="json")
     pointer = await collab.write_continuation(session, principal, task, agent, data)
     task.version += 1

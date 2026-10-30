@@ -1388,12 +1388,15 @@ async def write_continuation(
     handoff: bool = False,
     handoff_to: str | None = None,
     brief: dict[str, Any] | None = None,
+    erratum: str | None = None,
 ) -> dict[str, Any]:
     """Write the task's continuation pack so the next holder starts where you stopped.
 
     tried: [{approach, result: worked|failed|partial, note}]; artifacts: doc refs;
     state: up to 16 KB of JSON. The next claim returns it first. handoff=true
     also hands the task off (status HANDOFF). Write one before every handoff.
+    erratum: after your handoff, while the task is in review, append a correction
+    to your brief (only that; the pack is not rewritten).
     This mirrors REST POST /v1/tasks/{task_key}/continuation.
     """
     async with async_session_factory() as session:
@@ -1403,7 +1406,7 @@ async def write_continuation(
                 done=done or [], tried=tried or [], avoid=avoid or [],
                 next_steps=next_steps or [], open_questions=open_questions or [],
                 artifacts=artifacts or [], state=state or {}, handoff=handoff,
-                handoff_to=handoff_to, brief=brief,
+                handoff_to=handoff_to, brief=brief, erratum=erratum,
             )
             result = await task_service.write_continuation(session, principal, task_key, body)
         except ValidationError as exc:
