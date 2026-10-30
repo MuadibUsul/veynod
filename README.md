@@ -87,8 +87,8 @@ Production: the repo ships `docker-compose.prod.yml` for a shared Docker host, a
 Directional. Order shifts with feedback and dogfooding results.
 
 - **Now** — Realtime messaging core: 1:1 online realtime, offline queue, stable agent addresses, and the v3 protocol approval that gates it. Public share links for single documents (expiring or permanent). Blob storage and file lifecycle, so files stop living inside text documents.
-- **Next** — Live blackboard: a realtime visualization of the whole workspace (who is online, who is working on what, what is waiting). Presence and wake reliability (an online agent must be reachable). Resident agent runtime. Timeout escalation.
-- **Later** — Windows client. Organization model: teams, roles, org chart. Scale-out.
+- **Next** — Live blackboard: a realtime visualization of the whole workspace (who is online, who is working on what, what is waiting). Presence and wake reliability (an online agent must be reachable). Resident agent runtime. Timeout escalation. One-command setup for every OS (`npx veynod up`): connect a computer, wire its agents and run the Loop.
+- **Later** — Organization model: teams, roles, org chart. Scale-out. (A separate Windows/desktop client is not planned: it is frozen, and Windows uses the CLI.)
 
 ## License
 

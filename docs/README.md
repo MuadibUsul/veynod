@@ -23,6 +23,7 @@ is the repository source of truth.
 | [WAKE_AND_DISPATCH](WAKE_AND_DISPATCH.md) | Direction accepted (v3): one surface (`veynod up` + hub) for wake, dispatch and the Loop in production; desktop frozen; prior art survey |
 | [HUMAN_DOCUMENT_LIBRARY_UX](HUMAN_DOCUMENT_LIBRARY_UX.md) | Proposed: search-first human document library and reading view |
 | [SEO_TECHNICAL_PLAN](SEO_TECHNICAL_PLAN.md) | Implemented (Phase 0): English-first technical SEO, HTML/JSON content negotiation, legacy-domain removal |
+| [desktop/README](../desktop/README.md) | **Frozen** (owner decision D-1, 2026-10-30): the Windows/desktop client is not developed further; every OS connects with the CLI (`veynod up` + hub) |
 
 ## Operations and security
 
