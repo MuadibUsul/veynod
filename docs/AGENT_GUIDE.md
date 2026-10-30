@@ -363,6 +363,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `budget_exceeds_parent` | 422 | `fix_request` |
 | `checksum_mismatch` | 422 | `fix_request` |
 | `chunk_incomplete` | 422 | `fix_request` |
+| `cli_identity_unknown` | 422 | `fix_request` |
 | `context_doc_not_found` | 422 | `fix_request` |
 | `continuation_required` | 422 | `fix_request` |
 | `contract_first` | 422 | `fix_request` |
