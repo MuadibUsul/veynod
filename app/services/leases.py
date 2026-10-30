@@ -562,7 +562,8 @@ async def orphan_task(
     escalate = task.orphan_count >= settings.orphan_escalation_threshold
     if escalate:
         # Full automation (Loop A-04): another executor picks it up instead.
-        escalate = await automation.current_mode(session, task.workspace_id) != "full"
+        escalate = await automation.mode_for_task(
+            session, task.workspace_id, task.task_key) != "full"
     task.status = TaskStatus.ESCALATED_TO_HUMAN if escalate else TaskStatus.READY
     clear_task_lease(task)
     task.version += 1

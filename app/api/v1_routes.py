@@ -1750,6 +1750,19 @@ async def edit_diagram(
     return await diagrams.edit_draft(session, principal, diagram_key, body)
 
 
+@router.post("/diagrams/{diagram_key}/policy",
+             summary="A person sets the diagram's own rules (automation mode)")
+async def set_diagram_policy(
+    diagram_key: str,
+    body: q_schemas.DiagramPolicyRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import diagrams
+
+    return await diagrams.set_policy(session, principal, diagram_key, body.mode)
+
+
 @router.post("/diagrams/{diagram_key}/confirm", summary="A person confirms the diagram")
 async def confirm_diagram(
     diagram_key: str,

@@ -111,6 +111,8 @@ type DiagramDetail = {
   warnings: Array<{ chunk_key?: string; kind: string; detail: string }>;
   pending_changes: ChangeRow[];
   recent_changes?: ChangeRow[];
+  policy?: { mode?: string };
+  mode?: string;
 };
 
 type ChangeDetail = ChangeRow & {
@@ -582,6 +584,17 @@ export function DiagramView({
                 {t("Plan")}
               </button>
             </span>
+            <select className="dgx-mode" aria-label={t("Automation for this diagram")}
+              title={t("How far the Loop may go on this diagram")}
+              value={detail.policy?.mode ?? ""} disabled={busy !== null}
+              onChange={(event) => void act("policy",
+                `/v1/diagrams/${encodeURIComponent(detail.diagram_key)}/policy`,
+                { mode: event.target.value || null }, "Saved. The Loop follows it from the next step.")}>
+              <option value="">{t("Automation: as the workspace")}</option>
+              <option value="manual">{t("Automation: ask me every step")}</option>
+              <option value="semi">{t("Automation: small calls automatically")}</option>
+              <option value="full">{t("Automation: do it all")}</option>
+            </select>
             {(detail.description || detail.self_check?.risk) && (
               <button type="button" className="dgx-icon" aria-label={t("About this diagram")}
                 aria-pressed={panel === "about"} onClick={() => openPanel("about")}>i</button>

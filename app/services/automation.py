@@ -168,6 +168,27 @@ async def current_mode(session: AsyncSession, workspace_id: uuid.UUID) -> str:
     return (await get_mode(session, workspace_id))["mode"]
 
 
+async def mode_for_task(session: AsyncSession, workspace_id: uuid.UUID,
+                        task_key: str | None) -> str:
+    """The mode a task runs under: its diagram's, when it is a chunk task of a
+    diagram that sets one (v3.66), else the workspace's."""
+    if task_key:
+        mode = await session.scalar(text(
+            "SELECT d.policy->>'mode' FROM diagram_chunks c JOIN diagrams d ON d.id = c.diagram_id "
+            "WHERE c.workspace_id = :ws AND c.task_key = :key LIMIT 1"),
+            {"ws": workspace_id, "key": task_key})
+        if mode in MODES:
+            return mode
+    return await current_mode(session, workspace_id)
+
+
+async def mode_for_diagram(session: AsyncSession, workspace_id: uuid.UUID,
+                           diagram: dict[str, Any]) -> str:
+    """A diagram's own mode, else the workspace's."""
+    mode = (diagram.get("policy") or {}).get("mode")
+    return mode if mode in MODES else await current_mode(session, workspace_id)
+
+
 async def screen_escalation(
     session: AsyncSession,
     principal: Principal,

@@ -1263,3 +1263,58 @@ async def test_diagram_mcp_tool(client):
     dispatched = await call(architect["headers"], action="dispatch", diagram_key=key,
                             chunk_key="api")
     assert '"dispatched"' in dispatched["content"][0]["text"]
+
+
+async def test_a_diagram_sets_how_far_the_loop_may_go(client):
+    """v3.66: a diagram's own automation mode overrides the workspace's for its chunks."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    turned = await client.put("/v1/human/automation", headers=ws["person"], json={
+        "mode": "full", "auto_deploy_allowed": False, "reason": "run on its own"})
+    assert turned.status_code == 200, turned.text
+
+    async def drawn(key: str) -> None:
+        made = await client.post("/v1/diagrams", headers=architect["headers"], json={
+            "diagram_key": key, "title": key, "namespace": "default",
+            "chunks": [_chunk("a", "interface")],
+            "self_check": {"big": True, "stable": True, "machine_checkable": True, "long": True}})
+        assert made.status_code == 201, made.text
+        assert (await client.post(f"/v1/diagrams/{key}/confirm", headers=ws["person"])
+                ).status_code == 200
+
+    careful, eager = f"careful-{uuid.uuid4().hex[:5]}", f"eager-{uuid.uuid4().hex[:5]}"
+    await drawn(careful)
+    await drawn(eager)
+
+    # People set it; agents read it.
+    refused = await client.post(f"/v1/diagrams/{careful}/policy", headers=architect["headers"],
+                                json={"mode": "manual"})
+    assert refused.status_code == 403, refused.text
+    bad = await client.post(f"/v1/diagrams/{careful}/policy", headers=ws["person"],
+                            json={"mode": "sometimes"})
+    assert bad.status_code == 422, bad.text
+    set_mode = await client.post(f"/v1/diagrams/{careful}/policy", headers=ws["person"],
+                                 json={"mode": "manual"})
+    assert set_mode.status_code == 200, set_mode.text
+    assert set_mode.json()["policy"] == {"mode": "manual"}
+    seen = (await client.get(f"/v1/diagrams/{careful}", headers=architect["headers"])).json()
+    assert seen["policy"] == {"mode": "manual"} and seen["mode"] == "manual"
+    listed = (await client.get("/v1/diagrams", headers=architect["headers"])).json()["items"]
+    assert {item["diagram_key"]: item["mode"] for item in listed
+            if item["diagram_key"] in (careful, eager)} == {careful: "manual", eager: "full"}
+
+    # Freezing under full automation hands out the first chunks, unless the
+    # diagram asks for every step.
+    for key in (careful, eager):
+        frozen = await client.post(f"/v1/diagrams/{key}/freeze", headers=ws["person"], json={})
+        assert frozen.status_code == 200, frozen.text
+    states = {}
+    for key in (careful, eager):
+        chunk = (await client.get(f"/v1/diagrams/{key}", headers=ws["person"])).json()["chunks"][0]
+        states[key] = chunk["state"]
+    assert states == {careful: "pending", eager: "dispatched"}
+
+    # Back to the workspace's mode.
+    cleared = await client.post(f"/v1/diagrams/{careful}/policy", headers=ws["person"],
+                                json={"mode": None})
+    assert cleared.status_code == 200 and cleared.json()["policy"] == {}

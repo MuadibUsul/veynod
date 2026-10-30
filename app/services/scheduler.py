@@ -412,9 +412,12 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
         ).order_by(CollabTask.priority.desc(), CollabTask.created_at)
         .limit(100).with_for_update(skip_locked=True))).scalars().all()
     placed = suggested = unplaced = gave_up = 0
+    workspace_mode = mode
     for task in tasks:
         if await _held(session, task):
             continue
+        # A chunk task follows its diagram's own mode when the diagram sets one.
+        mode = await automation.mode_for_task(session, workspace_id, task.task_key)
         failures, rounds = await _work_failures(session, task)
         if rounds >= MAX_ROUNDS and mode == "full":
             before = task_snapshot(task)
@@ -475,12 +478,13 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
             continue
         await _offer_work(session, task, host, now)
         placed += 1
-    steps = await _place_steps(session, workspace_id, online, load, mode, now) \
-        if mode == "full" else {}
+    steps = await _place_steps(session, workspace_id, online, load, workspace_mode, now) \
+        if workspace_mode == "full" else {}
     rounds = await _supervise(session, workspace_id, hosts, online, now) \
-        if mode == "full" else 0
+        if workspace_mode == "full" else 0
     await session.commit()
-    return {"mode": mode, "hosts": len(online), "placed": placed, "suggested": suggested,
+    return {"mode": workspace_mode, "hosts": len(online), "placed": placed,
+            "suggested": suggested,
             "unplaced": unplaced, "stopped": gave_up, **counts, **steps, "rounds": rounds}
 
 

@@ -93,7 +93,10 @@ it: `POST /v1/runner/placements/{id}/report {outcome: finished|failed}`. A
 failure, a finish that changed nothing, or 30 minutes without progress
 moves the step to another computer. For a chunk, approve the task before
 you call the gate. Under full automation freezing a diagram dispatches its
-first chunks, and a diagram's `repo` is passed on to its chunk tasks.
+first chunks, and a diagram's `repo` is passed on to its chunk tasks. A
+diagram may set its own automation mode (`policy.mode`; `mode` on the
+diagram is the one in force); its chunk tasks follow it instead of the
+workspace's. Only people set it.
 The MCP tool `loop` covers all of this: `agenda`, `placements`, `placement`,
 `report`, `hosts`, `schedule_now`, and for people, super admins and
 supervisor computers `move` (put a task or step on another computer, named
