@@ -94,6 +94,15 @@ def _clean_runtimes(given: Any) -> list[dict[str, Any]]:
     return runtimes
 
 
+def _clean_report(given: Any) -> dict[str, Any] | None:
+    """The runner's own account of how it runs sessions; anything else is dropped."""
+    if not isinstance(given, dict):
+        return None
+    pinning = given.get("mcp_pinning")
+    return {"mcp_pinning": pinning if isinstance(pinning, bool) else None,
+            "runtime": _clean_str(given.get("runtime"), 32)}
+
+
 def _clean_host(given: Any) -> dict[str, Any]:
     if not isinstance(given, dict):
         raise ApiError(422, "validation_error", "host must be an object",
@@ -120,6 +129,7 @@ def _clean_host(given: Any) -> dict[str, Any]:
         "runtimes": _clean_runtimes(given.get("runtimes")),
         "max_concurrency": max(1, min(64, concurrency)),
         "repos": list(dict.fromkeys(repos)),
+        "capabilities_report": _clean_report(given.get("capabilities_report")),
     }
 
 
@@ -147,6 +157,8 @@ def host_out(row: dict[str, Any], now: datetime | None = None) -> dict[str, Any]
         "running": running,
         "free_slots": max(0, row["max_concurrency"] - len(running)),
         "repos": list(row["repos"] or []),
+        # None: a runner too old to say whether its sessions use its own key.
+        "capabilities_report": row.get("capabilities_report"),
         "status": row["status"],
         "state": _state(row, now),
         "last_seen_at": row["last_seen_at"].isoformat() if row["last_seen_at"] else None,
@@ -178,18 +190,22 @@ async def hello(session: AsyncSession, principal: Principal,
         raise Forbidden("this host was revoked; ask the owner for a new runner token")
     row = (await session.execute(text(
         "INSERT INTO runner_hosts (workspace_id, token_id, agent_id, os, arch, hostname_digest, "
-        "runner_version, runtimes, max_concurrency, repos) VALUES (:ws, :t, :agent, :os, :arch, "
-        ":digest, :version, CAST(:runtimes AS jsonb), :conc, CAST(:repos AS text[])) "
+        "runner_version, runtimes, max_concurrency, repos, capabilities_report) "
+        "VALUES (:ws, :t, :agent, :os, :arch, :digest, :version, CAST(:runtimes AS jsonb), "
+        ":conc, CAST(:repos AS text[]), CAST(:report AS jsonb)) "
         "ON CONFLICT (workspace_id, token_id) DO UPDATE SET agent_id = EXCLUDED.agent_id, "
         "os = EXCLUDED.os, arch = EXCLUDED.arch, hostname_digest = EXCLUDED.hostname_digest, "
         "runner_version = EXCLUDED.runner_version, runtimes = EXCLUDED.runtimes, "
         "max_concurrency = EXCLUDED.max_concurrency, repos = EXCLUDED.repos, "
+        "capabilities_report = EXCLUDED.capabilities_report, "
         "last_seen_at = NOW(), updated_at = NOW() RETURNING *, (xmax = 0) AS created"),
         {"ws": principal.workspace.id, "t": principal.token_cid,
          "agent": principal.agent_id, "os": host["os"], "arch": host["arch"],
          "digest": host["hostname_digest"], "version": host["runner_version"],
          "runtimes": json.dumps(host["runtimes"]), "conc": host["max_concurrency"],
-         "repos": host["repos"]})).mappings().one()
+         "repos": host["repos"],
+         "report": (json.dumps(host["capabilities_report"])
+                    if host["capabilities_report"] is not None else None)})).mappings().one()
     if row["created"]:
         await append_event(
             session, workspace_id=principal.workspace.id, agent="runners",

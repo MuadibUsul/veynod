@@ -68,6 +68,33 @@ async def test_the_board_doctor_names_what_is_missing_until_the_loop_can_run(cli
     assert "doctor" in mcp_server._LOOP_ACTIONS
 
 
+async def test_a_host_that_cannot_pin_its_sessions_is_named_by_the_doctor(client):
+    ws = await _workspace(client, "full")
+    agent = await _agent(client, ws, f"codex-{uuid.uuid4().hex[:4]}", "EXECUTOR")
+
+    async def hello(report):
+        said = await client.post("/v1/runner/hello", headers=agent["headers"], json={"host": {
+            "os": "linux", "arch": "x64", "max_concurrency": 1, "repos": [],
+            "runtimes": [{"id": "codex", "available": True}], "capabilities_report": report}})
+        assert said.status_code == 200, said.text
+        hosts = (await client.get("/v1/runner/hosts", headers=ws["owner"])).json()["items"]
+        return next(host for host in hosts if host["agent_id"] == agent["agent_id"])
+
+    async def pinning() -> dict:
+        board = await client.get("/v1/runner/doctor", headers=ws["owner"])
+        return _checks(board.json())["pinning"]
+
+    host = await hello({"mcp_pinning": False, "runtime": "codex", "secret": "agt_x"})
+    assert host["capabilities_report"] == {"mcp_pinning": False, "runtime": "codex"}
+    red = await pinning()
+    assert red["ok"] is False and red["required"] is False
+    assert agent["agent_id"] in red["text"] and "Node 24" in red["fix"]
+
+    await hello({"mcp_pinning": True, "runtime": "oar:codex"})
+    green = await pinning()
+    assert green["ok"] is True and green["fix"] is None
+
+
 def _home(tmp: Path, host: str, builder: dict, reviewer: dict, script: Path) -> Path:
     """What `veynod up --run-tasks` leaves on a computer: one config, one key file each."""
     home = tmp / "home"

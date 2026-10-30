@@ -933,6 +933,14 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
           else "No online computer can review, so built work waits in review.",
           "Approve the `-review` identity when `veynod up --run-tasks` asks, or connect an "
           "AUDITOR computer.")
+    unpinned = sorted(host["agent_id"] or host["host_id"] for host in online
+                      if (host.get("capabilities_report") or {}).get("mcp_pinning") is False)
+    check("pinning", not unpinned, False,
+          "Every online computer starts its sessions with its own key." if not unpinned
+          else f"{', '.join(unpinned[:5])} start(s) sessions without their own key, so "
+               "claims there are refused (not_assignee).",
+          "Install Node 24 so OAR runs the runtime, or use the claude runtime "
+          "(`npx veynod up --run-tasks --runtime claude`).")
     check("supervisor", bool(supervisors), False,
           "A supervisor computer looks after the Loop." if supervisors
           else "No supervisor computer: stuck work is listed for you instead.",

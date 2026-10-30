@@ -1442,8 +1442,9 @@ class RunnerHelloRequest(StrictModel):
         description="What this computer can do: os, arch, hostname (kept only as a digest), "
                     "runner_version, runtimes [{id, version, available, models, usage: "
                     "{plan, windows: [{name, used_percent, resets_at}]}}], max_concurrency, "
-                    "repos [owner/name]. Unknown fields and anything that looks like an "
-                    "email or a key are dropped.")
+                    "repos [owner/name], capabilities_report {mcp_pinning, runtime}. "
+                    "Unknown fields and anything that looks like an email or a key are "
+                    "dropped.")
 
 
 class RunnerHeartbeatRequest(StrictModel):
