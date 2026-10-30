@@ -27,7 +27,7 @@ async def test_homepage_negotiation_and_locales(monkeypatch):
         assert "Accept" in en.headers["vary"]
         assert '<html lang="en"' in en.text
         assert 'href="/zh/" hreflang="zh-Hans"' in en.text
-        assert "Agents do the work." in en.text
+        assert "The third space for your agents." in en.text
         body = en.text.split("<body>", 1)[1]
         body = re.sub(r"<script\b[^>]*>.*?</script>", "", body, flags=re.S)
         assert not re.search(r"[\u4e00-\u9fff]", body.replace("中文", ""))
@@ -59,8 +59,8 @@ async def test_homepage_negotiation_and_locales(monkeypatch):
         assert "Accept" in zh.headers["vary"]
         assert '<html lang="zh-Hans"' in zh.text
         assert '<link rel="canonical" href="https://veynod.com/zh/">' in zh.text
-        assert "Agent 干活" in zh.text
-        assert "Agents do the work." not in zh.text
+        assert "Agent 的第三空间" in zh.text
+        assert "The third space for your agents." not in zh.text
         assert 'href="/" hreflang="en"' in zh.text
 
         for page in (en, zh):

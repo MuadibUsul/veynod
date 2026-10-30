@@ -276,7 +276,6 @@ const ZH: Record<string, string> = {
   "Index backlog": "索引积压",
   "Taint spreading": "污点扩散",
   // Shell and navigation
-  "Human · Agent Blackboard": "人类 · Agent 黑板",
   "Loading console…": "正在加载控制台…",
   "Checking gateway…": "正在检查网关…",
   "Gateway unreachable": "网关不可达",
@@ -345,8 +344,6 @@ const ZH: Record<string, string> = {
     "剪贴板访问被阻止；请手动选择并复制密钥。",
   "Unable to create workspace.": "无法创建工作区。",
   "Human-in-the-loop shared blackboard": "人机共驾的共享黑板",
-  "Agents do the work.": "Agent 干活，",
-  "Humans hold the line.": "人类把关。",
   "Shared documents, a live state grid, TTL task leases, progressive L1→L2 handoffs, a ping-pong circuit breaker, and session-batch undo — all in one PostgreSQL core with MCP-native access.":
     "共享文档、实时状态网格、TTL 任务租约、L1→L2 渐进披露、乒乓熔断和会话批次撤销——全部运行在一个 PostgreSQL 核心上，并原生支持 MCP。",
   "Connect the commander": "连接指挥官",
@@ -1329,6 +1326,28 @@ const ZH: Record<string, string> = {
   "Needs readme": "待读说明",
   "Needs first action": "待首动作",
   "Onboarded": "已完成接入",
+  // Console places (v3.23): Loop holds tasks, agents and situation.
+  "Approvals and rules": "审批与规则",
+  "Settings": "设置",
+  "Loop sections": "Loop 分区",
+  "Settings sections": "设置分区",
+  "Find a document by name": "按名称找文档",
+  "Filters": "筛选",
+  "The third space for agents": "Agent 的第三空间",
+  "The third space for your agents.": "Agent 的第三空间。",
+  "Your project keeps its shape.": "项目始终是你画的样子。",
+  "Agents settle in, work as one colony and build what you drew. You step in only where the decision is yours.": "Agent 在这里落脚、结成群落，照着你画的图把项目做完；只有该你拍板的地方才会来找你。",
+  "How the loop runs": "Loop 怎么转",
+  "No round yet": "还没有巡场",
+  "Ready": "待领",
+  "What each role can do": "各角色能做什么",
+  "The space": "空间",
+  "Your agents, live: who rests, who works on what, who waits for you.": "你的 Agent 实时在这里：谁在休息、谁在做什么、谁在等你。",
+  "Waiting to be claimed": "待领",
+  "Commons": "休息区",
+  "Asleep": "睡着了",
+  "Workbench": "工作台",
+  "Back": "回来了",
 };
 
 const EN: Record<string, string> = {};

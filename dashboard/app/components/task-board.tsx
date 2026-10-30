@@ -13,18 +13,19 @@ import {
   IconPlus,
   IconX,
   Modal,
-  RolePill,
   Spinner,
   StatusPill,
 } from "./ui";
 import { MarkdownContent } from "./markdown";
 
-const COLUMNS: Array<{ title: string; detail: string; statuses: string[]; tone: string }> = [
-  { title: "Backlog / Ready", detail: "TODO · READY", statuses: ["TODO", "READY"], tone: "slate" },
-  { title: "In progress", detail: "IN_PROGRESS · REVIEWING · HANDOFF", statuses: ["IN_PROGRESS", "REVIEWING", "HANDOFF"], tone: "sky" },
-  { title: "Human gate", detail: "AWAITING_HUMAN · ESCALATED · WAITING_HUMAN", statuses: ["AWAITING_HUMAN", "ESCALATED_TO_HUMAN", "WAITING_HUMAN"], tone: "amber" },
-  // CANCELLED and WAITING_HUMAN had no column, so those tasks silently vanished.
-  { title: "Closed", detail: "DONE · FAILED · CANCELLED", statuses: ["DONE", "FAILED", "CANCELLED"], tone: "mint" },
+// Tasks read as one list, grouped by what they need: people first.
+const GROUPS: Array<{ title: string; statuses: string[]; lamp: string; always?: boolean }> = [
+  { title: "Needs you", statuses: ["AWAITING_HUMAN", "ESCALATED_TO_HUMAN", "WAITING_HUMAN"], lamp: "red" },
+  { title: "In review", statuses: ["REVIEWING", "HANDOFF"], lamp: "cyan" },
+  { title: "In progress", statuses: ["IN_PROGRESS"], lamp: "amber", always: true },
+  { title: "Ready", statuses: ["TODO", "READY"], lamp: "", always: true },
+  // CANCELLED and WAITING_HUMAN once had no column, so those tasks silently vanished.
+  { title: "Closed", statuses: ["DONE", "FAILED", "CANCELLED"], lamp: "green" },
 ];
 
 const NOISE_KEY = "veynod.board.hide_noise";
@@ -74,10 +75,7 @@ export function TaskBoard({
     <div className="tab-stack">
       <div className="board-toolbar">
         <div>
-          <h2 className="section-title">{t("Task board")}</h2>
-          <p className="section-sub">
-            {t("Claims are lease-based. Rejections increment the ping-pong counter and escalate automatically at the threshold.")}
-          </p>
+          <h2 className="section-title">{t("Tasks")}</h2>
         </div>
         <div className="row-actions">
           {hidden > 0 && (
@@ -114,73 +112,57 @@ export function TaskBoard({
           }
         />
       )}
-      <div className="kanban">
-        {COLUMNS.map((column) => {
-          const items = tasks.filter((task) => column.statuses.includes(task.status));
+      <section className="lin-list" aria-label={t("Tasks")}>
+        {GROUPS.map((group) => {
+          const items = tasks.filter((task) => group.statuses.includes(task.status));
+          if (items.length === 0 && !group.always) return null;
           return (
-            <div className="kanban-column" key={column.title}>
-              <div className="kanban-head">
-                <span className={`kanban-dot tone-${column.tone}`} />
-                <span>{t(column.title)}</span>
-                <span className="kanban-count">{items.length}</span>
+            <div key={group.title} role="group" aria-label={t(group.title)}>
+              <div className="lin-group">
+                <i className={`lamp ${group.lamp}`} />
+                {t(group.title)}
+                <span className="lin-count">{items.length}</span>
               </div>
-              <div className="kanban-sub">
-                {column.statuses.map((status) => t(status)).join(" · ")}
-              </div>
-              <div className="kanban-list">
-                {items.length === 0 ? (
-                  <div className="kanban-empty">{t("No tasks")}</div>
-                ) : (
-                  items.map((task) => (
-                    <button
-                      key={task.id}
-                      type="button"
-                      className={`kanban-card task-status-${task.status}`}
-                      onClick={() => onOpen(task)}
-                    >
-                      <div className="kanban-card-top">
-                        <span className="mono muted" title={task.task_key}>{task.task_key}</span>
-                        <span className="priority-chip">
-                          {task.priority > 0 ? `P${task.priority}` : t("Normal")}
-                        </span>
-                      </div>
-                      <div className="kanban-title" title={task.title}>{task.title}</div>
-                      {task.handoff_summary && (
-                        <div className="kanban-brief">{task.handoff_summary}</div>
-                      )}
-                      <div className="kanban-meta">
-                        <RolePill role={task.assigned_role} />
-                        <StatusPill status={task.status} />
-                        {task.tainted && <span className="pill rose" title={t("Task input references tainted content")}>{t("Tainted")}</span>}
-                        {unregistered(task) && (
-                          <span className="pill amber" title={t("{who} is not in the agent directory: it may never see this task", { who: directoryDisplayName(directory, task.assignee) })}>
-                            {t("Assignee not registered")}
-                          </span>
-                        )}
-                        {task.ping_pong_count > 0 && (
-                          <span className="pp-chip" title={t("Review ping-pong count")}>
-                            {task.ping_pong_count}/{task.max_retries}
-                          </span>
-                        )}
-                      </div>
-                      <div className="kanban-foot">
-                        <span>
-                          {task.claimed_by
-                            ? `${directoryDisplayName(directory, task.claimed_by)} · ${task.lease_active ? t("lease live") : t("lease expired")}`
-                            : task.status === "READY"
-                              ? t("unclaimed")
-                              : `v${task.version}`}
-                        </span>
-                        <span>{relativeTime(task.updated_at)}</span>
-                      </div>
-                    </button>
-                  ))
-                )}
-              </div>
+              {items.length === 0 && (
+                <div className="lin-row quiet"><span className="lin-title">{t("No tasks")}</span></div>
+              )}
+              {items.map((task) => (
+                <button
+                  key={task.id}
+                  type="button"
+                  className={`lin-row task-row task-status-${task.status}`}
+                  onClick={() => onOpen(task)}
+                >
+                  <i className={`lamp ${group.lamp}`} />
+                  <span className="lin-key" title={task.task_key}>{task.task_key}</span>
+                  <span className="lin-title" title={task.title}>{task.title}</span>
+                  <span className="lin-pills">
+                    {task.priority > 0 && <span className="priority-chip">P{task.priority}</span>}
+                    <StatusPill status={task.status} />
+                    {task.tainted && <span className="pill rose" title={t("Task input references tainted content")}>{t("Tainted")}</span>}
+                    {unregistered(task) && (
+                      <span className="pill amber" title={t("{who} is not in the agent directory: it may never see this task", { who: directoryDisplayName(directory, task.assignee) })}>
+                        {t("Assignee not registered")}
+                      </span>
+                    )}
+                    {task.ping_pong_count > 0 && (
+                      <span className="pp-chip" title={t("Review ping-pong count")}>
+                        {task.ping_pong_count}/{task.max_retries}
+                      </span>
+                    )}
+                  </span>
+                  <span className="lin-meta">
+                    {task.claimed_by
+                      ? directoryDisplayName(directory, task.claimed_by)
+                      : task.status === "READY" ? t("unclaimed") : ""}
+                  </span>
+                  <span className="lin-meta lin-time">{relativeTime(task.updated_at)}</span>
+                </button>
+              ))}
             </div>
           );
         })}
-      </div>
+      </section>
     </div>
   );
 }

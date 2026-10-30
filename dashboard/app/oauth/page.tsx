@@ -134,7 +134,7 @@ export default function OAuthConsentPage() {
           <span className="auth-brand-mark"><BrandMark size={34} /></span>
           <span>
             <strong>Veynod<span className="accent">.</span></strong>
-            <small>{t("Human · Agent Blackboard")}</small>
+            <small>{t("The third space for agents")}</small>
           </span>
         </a>
         <div className="auth-header-actions">

@@ -478,17 +478,20 @@ export function AgentsView({
 
   return (
     <div className="tab-stack">
-      <div className="role-grid">
-        {ROLES.map((item) => (
-          <div className="role-card" key={item.role}>
-            <div className="role-card-head">
-              <RolePill role={item.role} />
-              {item.role === "SCOUT" && <IconLock size={13} />}
+      <details className="role-help">
+        <summary>{t("What each role can do")}</summary>
+        <div className="role-grid">
+          {ROLES.map((item) => (
+            <div className="role-card" key={item.role}>
+              <div className="role-card-head">
+                <RolePill role={item.role} />
+                {item.role === "SCOUT" && <IconLock size={13} />}
+              </div>
+              <p>{t(item.text)}</p>
             </div>
-            <p>{t(item.text)}</p>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      </details>
 
       <section className="card">
         <div className="card-head">

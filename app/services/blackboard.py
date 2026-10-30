@@ -43,7 +43,12 @@ MAX_OPEN_CARDS = 500
 
 _CARD_COLUMNS = (
     "task_key, title, status, priority, namespace, kind, claimed_by, lease_owner, "
-    "assignee, handed_off_by, created_by, version, parent_task_key, updated_at, created_at"
+    "assignee, handed_off_by, created_by, version, parent_task_key, updated_at, created_at, "
+    # A task waiting for a person has no holder; who asked is the last actor.
+    "CASE WHEN status IN ('AWAITING_HUMAN', 'ESCALATED_TO_HUMAN', 'WAITING_HUMAN') THEN "
+    "(SELECT a.agent_signature FROM state_audit_diffs a WHERE a.workspace_id = "
+    "collab_tasks.workspace_id AND a.target_table = 'collab_tasks' AND a.target_record_id = "
+    "collab_tasks.id ORDER BY a.created_at DESC LIMIT 1) END AS asked_by"
 )
 
 
@@ -129,6 +134,7 @@ def _card(row: dict[str, Any], agents: _Agents) -> dict[str, Any]:
         "assignee": row["assignee"],
         "created_by": row["created_by"],
         "created_by_agent": agents.resolve(row["created_by"]),
+        "asked_by_agent": agents.resolve(row.get("asked_by")),
         "updated_at": _iso(row["updated_at"]),
         "created_at": _iso(row["created_at"]),
     }

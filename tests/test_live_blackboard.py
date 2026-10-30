@@ -416,3 +416,31 @@ async def test_a_card_goes_to_the_agent_whose_current_name_matches(client, admin
     board = await _board(client, admin_headers, workspace)
     assert key in _avatar(board, worker_id)["working_on"]
     assert key not in _avatar(board, other_id)["working_on"]
+
+
+async def test_a_card_waiting_on_a_person_names_the_agent_that_asked(client, admin_headers,
+                                                                     workspace):
+    """An escalated card has no holder; the board says which agent asked."""
+    worker, _, worker_id = await _agent(client, admin_headers, workspace)
+    key = f"bb-{uuid.uuid4().hex[:6]}"
+    made = await client.post("/v1/tasks", headers=workspace["headers"], json={
+        "task_key": key, "title": "needs a decision", "assigned_role": "EXECUTOR"})
+    assert made.status_code == 201, made.text
+    claimed = await client.post(f"/v1/tasks/{key}/claim", headers=worker, json={})
+    assert claimed.status_code == 200, claimed.text
+    escalated = await client.post(f"/v1/tasks/{key}/escalate", headers=worker,
+                                  json={"reason": "which payment provider?"})
+    assert escalated.status_code == 200, escalated.text
+
+    board = await _board(client, admin_headers, workspace)
+    cards = [card for column in board["columns"].values() for card in column]
+    card = next(card for card in cards if card["task_key"] == key)
+    assert card["asked_by_agent"] == worker_id
+
+    other = f"bb-{uuid.uuid4().hex[:6]}"
+    made = await client.post("/v1/tasks", headers=workspace["headers"], json={
+        "task_key": other, "title": "still open", "assigned_role": "EXECUTOR"})
+    assert made.status_code == 201, made.text
+    board = await _board(client, admin_headers, workspace)
+    cards = [card for column in board["columns"].values() for card in column]
+    assert next(card for card in cards if card["task_key"] == other)["asked_by_agent"] is None
