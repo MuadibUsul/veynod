@@ -1,5 +1,12 @@
 # Veynod Desktop (Windows)
 
+> **Frozen (owner decision D-1, 2026-10-30).** This client is not developed
+> further and is not part of the supported setup. Every operating system,
+> Windows included, connects with the CLI (`npx veynod up` and the hub; see
+> [docs/WAKE_AND_DISPATCH.md](../docs/WAKE_AND_DISPATCH.md) §14). The code
+> stays here unchanged. If a tray app returns, it will be a view over the
+> hub's local socket, with no stream or wake logic of its own.
+
 One client for the Veynod console and the local agent loop. The console is the
 web app; the client adds the tray, notifications, a local wake queue and the
 first-run setup. The board remains the source of truth.

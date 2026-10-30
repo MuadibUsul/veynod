@@ -2014,7 +2014,7 @@ async def list_hosts(host: str | None = None, include_revoked: bool = False) -> 
 
 
 _LOOP_ACTIONS = ("agenda", "placements", "placement", "report", "move", "withdraw",
-                 "schedule_now", "hosts")
+                 "schedule_now", "hosts", "doctor")
 
 
 @mcp.tool(name="loop")
@@ -2039,6 +2039,7 @@ async def loop(action: str, placement_id: str | None = None, host_id: str | None
       moved (placement_id); ends a supervise round. Reviews and merges are moved.
     - schedule_now: run a scheduling pass now (people and commanders).
     - hosts: the computers, as list_hosts.
+    - doctor: what the Loop needs and what is missing, each with the fix.
     agenda, move and withdraw are for people, super admins and supervisor
     computers (SUPER_ADMIN token or the supervisor capability)."""
     from app.services import runners, scheduler
@@ -2072,6 +2073,8 @@ async def loop(action: str, placement_id: str | None = None, host_id: str | None
                 result = await scheduler.withdraw(session, principal, placement_id, note)
             elif action == "schedule_now":
                 result = await scheduler.schedule_now(session, principal)
+            elif action == "doctor":
+                result = await scheduler.doctor(session, principal)
             else:
                 result = await runners.list_hosts(session, principal)
         except ApiError as exc:

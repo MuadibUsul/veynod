@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { Worktrees, adapterFor, inventory, placementOf, promptFor, runRunner } from "../bin/runner.mjs";
+import { Worktrees, adapterFor, claudeMcpConfig, inventory, pinsIdentity, placementOf, promptFor, runRunner,
+  veynodMcpServer } from "../bin/runner.mjs";
 import { parseArgs, servicePlan } from "../bin/veynod.mjs";
 
 const git = (args, cwd) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -185,6 +186,8 @@ test("end to end: hello, a placed task runs in its worktree, heartbeats report i
         res.end(JSON.stringify({ host_id: "hst_1" }));
       } else if (req.url.endsWith("/report")) {
         res.end(JSON.stringify({ status: "offered" }));
+      } else if (req.url === "/v1/runner/placements/plc_01M630S0A35N82N1TFY7XGSQ88") {
+        res.end(JSON.stringify({ placement_id: "plc_01M630S0A35N82N1TFY7XGSQ88", status: "offered" }));
       } else if (req.url === "/v1/tasks/fix-login") {
         res.end(JSON.stringify({ task_key: "fix-login", repo: "acme/site" }));
       } else {
@@ -239,7 +242,7 @@ test("a supervise round reads its agenda, runs, and reports a failure", async ()
       res.setHeader("Content-Type", "application/json");
       if (req.url === "/v1/runner/hello") res.end(JSON.stringify({ host_id: "hst_2", agent_id: "boss" }));
       else if (req.url === "/v1/runner/placements/plc_01M630S0A35N82N1TFY7XGSQ99") {
-        res.end(JSON.stringify({ detail: { agenda: [{ kind: "stopped", task_key: "t7" }] } }));
+        res.end(JSON.stringify({ status: "offered", detail: { agenda: [{ kind: "stopped", task_key: "t7" }] } }));
       } else res.end("{}");
     });
   });
@@ -260,4 +263,148 @@ test("a supervise round reads its agenda, runs, and reports a failure", async ()
   const report = calls.find((call) => call.path.endsWith("/report"));
   assert.equal(report.body.outcome, "failed");
   assert.match(report.body.note, /exited 3/);
+});
+
+// ------------------------------------------------------------------ phase 0 (up-hub-p0-cli)
+
+const noOar = async (spec) => { throw new Error(`no ${spec}`); };
+
+/** A fake Veynod for runRunner: answers hello, heartbeats, placements, tasks and renews. */
+async function fakeVeynod({ placements = {}, tasks = {} } = {}) {
+  const calls = [];
+  const server = createServer((req, res) => {
+    let body = "";
+    req.on("data", (chunk) => { body += chunk; });
+    req.on("end", () => {
+      calls.push({ method: req.method, path: req.url, body: body ? JSON.parse(body) : null });
+      res.setHeader("Content-Type", "application/json");
+      const placement = /^\/v1\/runner\/placements\/(plc_[0-9A-Z]+)$/.exec(req.url);
+      const task = /^\/v1\/tasks\/([^/]+)$/.exec(req.url);
+      if (req.url === "/v1/runner/hello") res.end(JSON.stringify({ host_id: "hst_9", agent_id: "box" }));
+      else if (placement) res.end(JSON.stringify({ placement_id: placement[1], status: placements[placement[1]] ?? "offered" }));
+      else if (task && req.method === "GET") res.end(JSON.stringify({ task_key: task[1], repo: tasks[task[1]] ?? null }));
+      else res.end("{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return { calls, host: `http://127.0.0.1:${server.address().port}`, close: () => server.close() };
+}
+
+const PLC_A = "plc_01M630S0A35N82N1TFY7XGSQAA";
+const PLC_B = "plc_01M630S0A35N82N1TFY7XGSQBB";
+
+test("claude without OAR runs with Veynod's MCP pinned to the runner key and a permission mode", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "veynod-pin-"));
+  let seen = null;
+  const spawner = async (command, args) => {
+    const file = args[args.indexOf("--mcp-config") + 1];
+    seen = { command, args, config: JSON.parse(readFileSync(file, "utf8")), file };
+    return { ok: true };
+  };
+  const adapter = adapterFor("claude", { importer: noOar, spawner });
+  const result = await adapter.run({ cwd: dir, prompt: "do it", env: {}, pin: { host: "https://veynod.example/", key: "ag_box" },
+    configDir: join(dir, "run") });
+  assert.equal(result.ok, true);
+  assert.equal(seen.command, "claude");
+  assert.deepEqual(seen.args.slice(0, 4), ["-p", "do it", "--permission-mode", "bypassPermissions"]);
+  assert.ok(seen.args.includes("--strict-mcp-config"));
+  assert.deepEqual(seen.config, claudeMcpConfig({ host: "https://veynod.example", key: "ag_box" }));
+  assert.equal(seen.config.mcpServers.veynod.url, "https://veynod.example/mcp/");
+  assert.equal(seen.config.mcpServers.veynod.headers.Authorization, "Bearer ag_box");
+  assert.equal(existsSync(seen.file), false, "the config file with the key is removed after the run");
+});
+
+test("OAR sessions get only Veynod's MCP, with the runner key", async () => {
+  let options = null;
+  const importer = async (spec) => {
+    if (spec === "@botiverse/oar/runtimes/claude") {
+      return { claudeRuntime: {
+        installation: async () => ({ kind: "available" }),
+        session: async (_installation, opts) => { options = opts; return { dispose: async () => {} }; },
+      } };
+    }
+    if (spec === "@botiverse/oar/observe") return { promptAndWait: async () => ({ kind: "ended" }) };
+    throw new Error(spec);
+  };
+  const adapter = adapterFor("claude", { importer });
+  const result = await adapter.run({ cwd: "/tmp", prompt: "p", env: { A: "1" }, pin: { host: "https://h", key: "ag_k" } });
+  assert.equal(result.ok, true);
+  assert.deepEqual(options.mcpServers, [veynodMcpServer({ host: "https://h", key: "ag_k" })]);
+  assert.equal(options.userConfiguration, "exclude");
+  assert.deepEqual(options.env, { A: "1" });
+});
+
+test("codex without OAR is reported as not pinned", async () => {
+  assert.equal(await pinsIdentity("claude", { importer: noOar }), true);
+  assert.equal(await pinsIdentity("custom", { importer: noOar }), true);
+  assert.equal(await pinsIdentity("codex", { importer: noOar }), false);
+  const withOar = async (spec) => (spec.endsWith("/codex") ? { codexRuntime: {} } : noOar(spec));
+  assert.equal(await pinsIdentity("codex", { importer: withOar }), true);
+});
+
+test("a placement the platform moved on is not worked and not reported", async () => {
+  const state = mkdtempSync(join(tmpdir(), "veynod-state-"));
+  const fake = await fakeVeynod({ placements: { [PLC_A]: "moved" } });
+  const marker = join(state, "ran.txt");
+  const exec = `node -e "require('fs').writeFileSync('${marker}', 'x')"`;
+  const follow = async (options) => {
+    await options.onPoke({ kind: "task.placed", task_key: "old", note: `placement ${PLC_A}` });
+    return 0;
+  };
+  await runRunner({ host: fake.host, key: "ag_box", runtime: "custom", exec, slots: 1 },
+    { follow, version: "t", every: 1000, stateDir: state, sleepMs: 0 });
+  fake.close();
+  assert.equal(existsSync(marker), false);
+  assert.equal(fake.calls.filter((call) => call.path.endsWith("/report")).length, 0);
+  const stages = readFileSync(join(state, "runner-receipts.jsonl"), "utf8").trim().split("\n")
+    .map((line) => JSON.parse(line).stage);
+  assert.deepEqual(stages, ["delivered", "skipped"]);
+});
+
+test("work without a repository runs in its own scratch directory, removed afterwards", async () => {
+  const state = mkdtempSync(join(tmpdir(), "veynod-state-"));
+  const fake = await fakeVeynod();
+  const out = join(state, "cwd.txt");
+  const exec = `node -e "require('fs').writeFileSync('${out}', process.cwd())"`;
+  const follow = async (options) => {
+    await options.onPoke({ kind: "task.placed", task_key: "write-spec", note: `placement ${PLC_A}` });
+    return 0;
+  };
+  await runRunner({ host: fake.host, key: "ag_box", runtime: "custom", exec, slots: 1 },
+    { follow, version: "t", every: 1000, stateDir: state, sleepMs: 0 });
+  fake.close();
+  const cwd = readFileSync(out, "utf8");
+  assert.ok(cwd.startsWith(join(state, "runner", "scratch")), cwd);
+  assert.equal(existsSync(cwd), false);
+  assert.deepEqual(fake.calls.filter((call) => call.path.endsWith("/report")).map((call) => call.body), [{ outcome: "finished" }]);
+});
+
+test("a full slot is reported at once, and the lease is kept alive while the runtime works", async () => {
+  const state = mkdtempSync(join(tmpdir(), "veynod-state-"));
+  const fake = await fakeVeynod();
+  const exec = 'node -e "setTimeout(() => {}, 400)"';
+  const follow = async (options) => {
+    await options.onPoke({ kind: "task.placed", task_key: "long-job", note: `placement ${PLC_A}` });
+    await options.onPoke({ kind: "task.placed", task_key: "second", note: `placement ${PLC_B}` });
+    return 0;
+  };
+  await runRunner({ host: fake.host, key: "ag_box", runtime: "custom", exec, slots: 1 },
+    { follow, version: "t", every: 1000, leaseEvery: 50, stateDir: state, sleepMs: 0 });
+  fake.close();
+  const busy = fake.calls.find((call) => call.path === `/v1/runner/placements/${PLC_B}/report`);
+  assert.deepEqual(busy.body, { outcome: "failed", note: "no_free_slot" });
+  const renews = fake.calls.filter((call) => call.method === "POST" && call.path === "/v1/tasks/long-job/renew");
+  assert.ok(renews.length >= 2, `renewed ${renews.length} times`);
+  assert.equal(fake.calls.filter((call) => call.path === "/v1/tasks/second/renew").length, 0);
+});
+
+test("hello says whether the runner pins its MCP identity", async () => {
+  const state = mkdtempSync(join(tmpdir(), "veynod-state-"));
+  const fake = await fakeVeynod();
+  await runRunner({ host: fake.host, key: "ag_box", runtime: "custom", exec: "true", slots: 1 },
+    { follow: async () => 0, version: "t", every: 1000, stateDir: state });
+  fake.close();
+  const hello = fake.calls.find((call) => call.path === "/v1/runner/hello");
+  assert.deepEqual(hello.body.host.capabilities_report, { mcp_pinning: true, runtime: "custom" });
+  assert.deepEqual(Object.keys(hello.body), ["host"], "nothing outside host: the hello schema is strict");
 });

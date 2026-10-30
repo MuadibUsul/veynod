@@ -53,6 +53,11 @@ PAST_WORK = {TaskStatus.REVIEWING, TaskStatus.HANDOFF, TaskStatus.DONE,
              TaskStatus.ESCALATED_TO_HUMAN}
 MAX_ROUNDS = 3
 FAILS_PER_HOST = 2
+# Why a host lost a work placement, when it is the host's own doing.
+COUNTED_AGAINST_HOST = {"not_claimed", "reported_failed"}
+# One scheduling pass at a time, whatever the number of server processes.
+_LOCK_SQL = "SELECT pg_try_advisory_lock(hashtext('veynod_scheduler')::bigint)"
+_UNLOCK_SQL = "SELECT pg_advisory_unlock(hashtext('veynod_scheduler')::bigint)"
 # Reasons a task has no host, most specific last, in words for the owner.
 UNPLACED = {
     "no_host_online": "No runner is online.",
@@ -224,15 +229,21 @@ async def _reconcile(session: AsyncSession, workspace_id: Any,
             counts["failed"] += 1
             continue
         problem = _host_problem(host, now)
+        if problem is None and status == "offered" and placement.get("reported") == "failed":
+            # The runner said it will not take it: a full slot is the host being busy
+            # (not its fault), anything else is a failed start.
+            problem = ("host_busy" if (placement.get("report_note") or "") == "no_free_slot"
+                       else "reported_failed")
         if problem is None and status == "offered" and now - placement["created_at"] > timedelta(
                 seconds=settings.runner_claim_timeout_seconds):
             problem = "not_claimed"
         if problem:
             await _take_back(session, task, host, problem)
-            # Not taking it in time counts against the host; an outage does not.
-            await _end(session, placement, "failed" if problem == "not_claimed" else "moved",
-                       problem)
-            counts["failed" if problem == "not_claimed" else "moved"] += 1
+            # Not taking it, or failing to start it, counts against the host; an
+            # outage or a busy host does not.
+            counted = problem in COUNTED_AGAINST_HOST
+            await _end(session, placement, "failed" if counted else "moved", problem)
+            counts["failed" if counted else "moved"] += 1
             await append_event(
                 session, workspace_id=workspace_id, agent="scheduler",
                 event_type="TASK_UNPLACED",
@@ -473,8 +484,36 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
             "unplaced": unplaced, "stopped": gave_up, **counts, **steps, "rounds": rounds}
 
 
+async def run_all_locked() -> int | None:
+    """One pass for every workspace, by one process at a time; None when another
+    process is already scheduling."""
+    async with async_session_factory() as lock:
+        if not await lock.scalar(text(_LOCK_SQL)):
+            return None
+        try:
+            return await run_all()
+        finally:
+            await lock.execute(text(_UNLOCK_SQL))
+            await lock.commit()
+
+
+async def scheduler_loop() -> None:
+    """Scheduling has its own loop: a failing step elsewhere (the lease reaper
+    runs a dozen) must never stop tasks from being placed."""
+    import asyncio
+
+    while True:
+        try:
+            await run_all_locked()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # pragma: no cover - background resilience
+            logger.exception("scheduling pass failed")
+        await asyncio.sleep(settings.lease_reaper_interval_seconds)
+
+
 async def run_all() -> int:
-    """Reaper hook: one pass for every workspace with runner hosts."""
+    """One pass for every workspace with runner hosts."""
     async with async_session_factory() as session:
         workspaces = (await session.execute(text(
             "SELECT DISTINCT workspace_id FROM runner_hosts WHERE status <> 'revoked'"
@@ -852,6 +891,81 @@ async def _supervise(session: AsyncSession, workspace_id: Any, hosts: list[dict[
                  "details": {"delivery_kind": "task.placed", "priority": 1,
                              "note": _step_note(placement_id, "supervise", None)}})
     return 1
+
+
+# ------------------------------------------------------------------ doctor
+
+
+async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
+    """What the Loop needs and what is missing, one check per line in words the
+    owner can act on (WAKE_AND_DISPATCH S-9). It answers with no hosts at all,
+    which is exactly when it is needed."""
+    workspace_id = principal.workspace.id
+    now = _now()
+    mode = await automation.current_mode(session, workspace_id)
+    hosts = [host for host in await _hosts(session, workspace_id) if host["status"] != "revoked"]
+    online = _online(hosts, now)
+    ready = [host for host in online
+             if (quota_used(host) or 0) < settings.runner_quota_exhausted_percent]
+    builders = [host for host in ready if host["role_scope"] == "EXECUTOR"]
+    reviewers = [host for host in ready if _reviewer(host)]
+    supervisors = [host for host in ready if _supervisor(host)]
+    checks: list[dict[str, Any]] = []
+
+    def check(check_id: str, ok: bool, required: bool, text: str, fix: str | None) -> None:
+        checks.append({"id": check_id, "ok": ok, "required": required, "text": text,
+                       "fix": None if ok else fix})
+
+    check("automation", mode == "full", True,
+          f"Automation is {mode}." + (" The Loop assigns work." if mode == "full"
+                                     else " The Loop only suggests computers."),
+          "Set automation to full in Governance so the Loop assigns work.")
+    check("hosts", bool(online), True,
+          f"{len(online)} of {len(hosts)} computer(s) online." if hosts
+          else "No computer is connected.",
+          "Run `npx veynod up --run-tasks` on a computer.")
+    check("builder", bool(builders), True,
+          f"{len(builders)} computer(s) can build (EXECUTOR) with quota left." if builders
+          else "No online computer can build tasks.",
+          "Connect a computer with `npx veynod up --run-tasks`.")
+    check("reviewer", bool(reviewers), True,
+          f"{len(reviewers)} computer(s) can review." if reviewers
+          else "No online computer can review, so built work waits in review.",
+          "Approve the `-review` identity when `veynod up --run-tasks` asks, or connect an "
+          "AUDITOR computer.")
+    unpinned = sorted(host["agent_id"] or host["host_id"] for host in online
+                      if (host.get("capabilities_report") or {}).get("mcp_pinning") is False)
+    check("pinning", not unpinned, False,
+          "Every online computer starts its sessions with its own key." if not unpinned
+          else f"{', '.join(unpinned[:5])} start(s) sessions without their own key, so "
+               "claims there are refused (not_assignee).",
+          "Install Node 24 so OAR runs the runtime, or use the claude runtime "
+          "(`npx veynod up --run-tasks --runtime claude`).")
+    check("supervisor", bool(supervisors), False,
+          "A supervisor computer looks after the Loop." if supervisors
+          else "No supervisor computer: stuck work is listed for you instead.",
+          "Optional: `npx veynod up --supervisor` on one computer.")
+    waiting = (await session.execute(select(CollabTask).where(
+        CollabTask.workspace_id == workspace_id, CollabTask.status == TaskStatus.READY,
+        CollabTask.assignee.is_(None), CollabTask.claimed_by.is_(None),
+        (CollabTask.kind.is_(None)) | (CollabTask.kind == "work")).limit(500))).scalars().all()
+    reach = {repo.lower() for host in builders for repo in host["repos"] or []}
+    uncovered = sorted({task.repo for task in waiting
+                        if task.repo and task.repo.lower() not in reach})
+    check("repos", not uncovered, False,
+          "Every waiting task's repository is on an online computer." if not uncovered
+          else f"No online computer works on {', '.join(uncovered[:5])}.",
+          "Add the repository with `npx veynod up --run-tasks --repo owner/name`.")
+    needs_you = (await session.execute(text(
+        "SELECT count(*) FROM runner_placements WHERE workspace_id = :ws AND status = 'unplaced' "
+        "AND reason <> ALL(CAST(:quiet AS text[]))"),
+        {"ws": workspace_id, "quiet": sorted(SELF_RESOLVING)})).scalar_one()
+    check("needs_you", not needs_you, False,
+          "Nothing waits for you on the Loop." if not needs_you
+          else f"{needs_you} task(s) or step(s) have no computer; the Loop page says why.",
+          "Open the Loop page (Needs you).")
+    return {"ok": all(item["ok"] or not item["required"] for item in checks), "mode": mode,
+            "ready_tasks": len(waiting), "checks": checks}
 
 
 # ------------------------------------------------------------------ reading

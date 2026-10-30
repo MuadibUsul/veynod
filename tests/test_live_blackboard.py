@@ -368,7 +368,8 @@ async def test_stuck_task_alert_and_wake_coverage(client, admin_headers, workspa
     assert found["subject"]["ref"] == key
 
     coverage = (await client.get("/v1/presence", headers=owner)).json()["wake_coverage"]
-    assert coverage == {"agents": 1, "with_wake_channel": 0, "rate": 0.0}
+    assert coverage == {"agents": 1, "with_wake_channel": 0, "rate": 0.0,
+                        "wakeable": 0, "wakeable_rate": 0.0}
     await client.put("/v1/agents/me/wake", headers=agent, json={"url": "https://example.com/w"})
     coverage = (await client.get("/v1/presence", headers=owner)).json()["wake_coverage"]
     assert coverage["rate"] == 1.0, agent_id

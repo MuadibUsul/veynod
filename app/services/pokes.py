@@ -123,12 +123,16 @@ async def presence_for_tokens(session: AsyncSession, workspace_id: Any,
 
 
 async def online_refs(session: AsyncSession, workspace_id: Any) -> set[str]:
-    """agent:<id> / agent:<prn> / labels of every agent with a live stream."""
+    """agent:<id> / agent:<prn> / labels of every agent with a live stream.
+
+    Only a stream counts: it is what a poke is pushed over. A loop heartbeat
+    without a stream must not hold back the agent's wake webhook."""
     rows = (await session.execute(text(
         "SELECT p.agent_ref, d.agent_id, d.principal_id, t.agent_signature "
         "FROM agent_presence p LEFT JOIN agent_directory d ON p.token_id = ANY(d.token_ids) "
         "LEFT JOIN agent_tokens t ON t.canonical_id = p.token_id "
-        "WHERE p.workspace_id = :ws AND p.seen_at >= :cutoff AND p.transport <> 'api'"),
+        "WHERE p.workspace_id = :ws AND p.seen_at >= :cutoff "
+        "AND p.transport NOT IN ('api', 'heartbeat')"),
         {"ws": workspace_id, "cutoff": _now() - ONLINE_WINDOW})).mappings().all()
     refs: set[str] = set()
     for row in rows:

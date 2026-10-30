@@ -232,3 +232,29 @@ test("arguments: service subcommand, key file, no heartbeat, dry run", () => {
   assert.equal(options.heartbeat, false);
   assert.equal(options.dryRun, true);
 });
+
+test("listen hands direct messages to the hook, not only pokes", async () => {
+  const { follow } = await import("../bin/veynod.mjs");
+  const server = createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/event-stream" });
+    res.write("event: connected\ndata: {}\n\n");
+    res.write('id: 41\nevent: message\ndata: {"event_seq":41,"kind":"message.sent","message":{"conv_key":"dm_1","sender":"agent:a"}}\n\n');
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const previous = process.env.VEYNOD_STATE_DIR;
+  process.env.VEYNOD_STATE_DIR = mkdtempSync(join(tmpdir(), "veynod-follow-"));
+  const got = [];
+  try {
+    const code = await follow({ host: `http://127.0.0.1:${server.address().port}`, key: "agt_x", once: true,
+      onPoke: async (poke) => { got.push(poke); } });
+    assert.equal(code, 0);
+  } finally {
+    server.close();
+    server.closeAllConnections?.();
+    if (previous === undefined) delete process.env.VEYNOD_STATE_DIR;
+    else process.env.VEYNOD_STATE_DIR = previous;
+  }
+  assert.equal(got.length, 1);
+  assert.equal(got[0].kind, "message.sent");
+  assert.equal(got[0].message.conv_key, "dm_1");
+});

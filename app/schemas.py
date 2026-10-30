@@ -1442,8 +1442,9 @@ class RunnerHelloRequest(StrictModel):
         description="What this computer can do: os, arch, hostname (kept only as a digest), "
                     "runner_version, runtimes [{id, version, available, models, usage: "
                     "{plan, windows: [{name, used_percent, resets_at}]}}], max_concurrency, "
-                    "repos [owner/name]. Unknown fields and anything that looks like an "
-                    "email or a key are dropped.")
+                    "repos [owner/name], capabilities_report {mcp_pinning, runtime}. "
+                    "Unknown fields and anything that looks like an email or a key are "
+                    "dropped.")
 
 
 class RunnerHeartbeatRequest(StrictModel):
@@ -2944,22 +2945,60 @@ class ProductEventRequest(StrictModel):
     plan: str | None = Field(default=None, max_length=32)
 
 
+class CliIdentityRequest(StrictModel):
+    """An identity the terminal asks for; the first is its own agent, the rest extras."""
+
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+    role_scope: Literal["COMMANDER", "SCOUT", "ANALYST", "AUDITOR", "EXECUTOR"] = "EXECUTOR"
+    why: str | None = Field(default=None, max_length=200)
+
+
 class CliSessionCreateRequest(StrictModel):
     public_key: str = Field(min_length=40, max_length=64,
                             description="The CLI's X25519 public key, base64 (32 bytes)")
     client_label: str | None = Field(default=None, max_length=64)
     clients: list[Literal["claude-code", "cursor", "claude-desktop", "other"]] = Field(
         default_factory=list, max_length=4)
+    identities: list[CliIdentityRequest] = Field(
+        default_factory=list, max_length=3,
+        description="What `veynod up` asks for: the computer's agent first, then extras "
+                    "such as its -review AUDITOR. One approval mints every ticked one.")
+
+    @field_validator("identities")
+    @classmethod
+    def _distinct_names(cls, value: list[CliIdentityRequest]) -> list[CliIdentityRequest]:
+        names = [item.name.lower() for item in value]
+        if len(names) != len(set(names)):
+            raise ValueError("identity names must differ")
+        return value
 
 
 class CliSessionPollRequest(StrictModel):
     device_code: str = Field(min_length=20, max_length=128)
 
 
+class CliIdentityApproval(StrictModel):
+    """A ticked extra identity: its place in the terminal's list and the name to give it."""
+
+    index: int = Field(ge=1, le=2)
+    agent_signature: str = Field(min_length=1, max_length=100)
+
+
 class CliSessionApproveRequest(StrictModel):
     agent_signature: str = Field(default="claude-code", min_length=1, max_length=100)
     role_scope: RoleName = "EXECUTOR"
     allowed_namespaces: list[str] = Field(default_factory=lambda: ["*"])
+    also: list[CliIdentityApproval] = Field(
+        default_factory=list, max_length=2,
+        description="The extra identities the terminal asked for that the owner ticked; "
+                    "each keeps the role the terminal asked for.")
+
+    @field_validator("also")
+    @classmethod
+    def _distinct_indexes(cls, value: list[CliIdentityApproval]) -> list[CliIdentityApproval]:
+        if len({item.index for item in value}) != len(value):
+            raise ValueError("each extra identity is ticked once")
+        return value
 
     @field_validator("allowed_namespaces")
     @classmethod

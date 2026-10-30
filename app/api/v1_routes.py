@@ -1531,6 +1531,17 @@ async def list_placements(
                                       open_only=open_only, step=step, limit=limit)
 
 
+@router.get("/runner/doctor",
+            summary="What the Loop needs and what is missing, in plain words with the fix")
+async def runner_doctor(
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import scheduler
+
+    return await scheduler.doctor(session, principal)
+
+
 @router.get("/runner/placements/{placement_id}",
             summary="One placement with its detail; a supervise round carries its agenda")
 async def get_placement(
