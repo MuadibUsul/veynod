@@ -64,7 +64,7 @@ async def board(api_base_url) -> AsyncIterator[dict]:
         assert minted.status_code == 201, minted.text
     env = {"DEPLOY_GATE_WEBHOOK_SECRET": "secret", "DEPLOY_GATE_RUNNER_TOKEN":
            "gate-runner-token", "DEPLOY_GATE_REPO": REPO, "DEPLOY_GATE_BRANCH": "main",
-           "DEPLOY_GATE_BOARD_WORKSPACE_ID": wid}
+           "DEPLOY_GATE_BOARD_WORKSPACE_ID": wid, "DEPLOY_EVIDENCE_REQUIRED": "true"}
     async with run_server(env, ".server-deploy-evidence.log") as base_url:
         async with httpx.AsyncClient(base_url=base_url, timeout=60) as http:
             login = await http.post("/v1/auth/login",
@@ -177,3 +177,17 @@ async def test_tasks_that_ship_nothing_and_other_modes_are_unchanged(board):
     await _mode(board, "semi")
     code = await _submitted(board, repo=REPO)
     assert (await _approve(board, code))["task"]["status"] == "DONE"
+
+
+async def test_deploy_evidence_is_off_unless_enabled(monkeypatch):
+    """A merged pull request finishes a task; shipping is a roadmap item."""
+    from app.config import get_settings
+    from app.services.tasks import _deploy_evidence_for_done
+
+    monkeypatch.setattr(get_settings(), "deploy_evidence_required", False)
+
+    class _Task:
+        repo = REPO
+        task_key = "chore-deploy-gate-out-of-task-path"
+
+    assert await _deploy_evidence_for_done(None, None, _Task()) is None

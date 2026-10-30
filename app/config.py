@@ -263,6 +263,11 @@ class Settings(BaseSettings):
     # The workspace whose board holds the tasks a merged PR names (G-03); its
     # owner's automatic-deploy switch also gates automatic deploys (Loop R-02).
     deploy_gate_board_workspace_id: str | None = None
+    # Loop A-03 (3.18) held an agent's DONE until a deploy carrying the task
+    # passed G-05. Deferred on 2026-10-29: the deploy gate is off the task path,
+    # a task is done when its pull request merges, and shipping is a roadmap
+    # item. Turn this on only when the gate ships for real again.
+    deploy_evidence_required: bool = False
 
     # ---------------------------------------------------------------- quota
     free_max_documents: int = 5_000
