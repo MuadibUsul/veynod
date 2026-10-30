@@ -1,6 +1,7 @@
 # Wake, Dispatch and the Loop in Production
 
-**Status:** Direction accepted by the owner (2026-10-30); details proposed (v3)
+**Status:** Direction accepted by the owner (2026-10-30); Phase 0 and the core
+of Phase 1 built on branch `claude/eager-shannon-iy6zoa` (§15.1); the rest proposed (v3.1)
 **Date:** 2026-10-30
 **Scope:** real-time wake of connected agents; reliable dispatch of a task to
 a named agent; getting the full-managed Loop (hosts, placement, claim,
@@ -661,7 +662,12 @@ waits). Additions:
 | F-24 | Token expiry or revocation of a runner key | 401 on heartbeat | Hub stops and exits non-zero (service restarts and fails loudly); host revoked → leases freed (exists) | `test_runners::test_revoke` |
 | F-25 | Desktop wake fails 3 times (creates a duplicate task) | — | **Not fixed: the desktop path is frozen (D-1).** The supported path is the hub, which reports failed wakes upstream and never creates tasks | — |
 
-## 10. Data model (migration `v3_64_reach_dispatch.sql`)
+## 10. Data model (migration `v3_66_reach_dispatch.sql`)
+
+Phase 1 already shipped two small migrations: `v3_64_cli_identities.sql`
+(`cli_sessions.identities`, `sealed_keys`, §14.5) and `v3_65_host_report.sql`
+(`runner_hosts.capabilities_report`, S-10). The rest of this section is still
+one migration, now numbered 3.66.
 
 ```sql
 -- Reach channels: one row per way to reach an agent.
@@ -928,12 +934,19 @@ service, and re-runs the doctor. `veynod down` revokes this computer's keys
 
 ### 14.5 Server changes `up` needs
 
-- **`POST /v1/auth/cli/sessions`** takes `client_instance_id`, `run_tasks`,
-  `supervisor` and the runtimes found. The approval page shows the
-  identities to be minted and lets you untick any. **Approval** mints each
-  and stores one sealed copy per identity. **Poll** returns them all once.
-  This is one migration on `cli_sessions`: a `sealed_keys JSONB` column
-  replaces the single `sealed_key` for new sessions.
+- **`POST /v1/auth/cli/sessions`** takes `identities`: what the terminal
+  wants, each `{name, role_scope, why}`, the computer's own agent first
+  (built: v3.64). This replaces the `run_tasks` / `supervisor` flags first
+  proposed here: the terminal names what it needs, so the server needs no
+  rule per flag. SUPER_ADMIN cannot be asked for this way (the supervisor key
+  stays a separate, explicit step) and names must differ. The approval page
+  prefills the first identity's name and role and lists the extras, each with
+  a tick box and an editable name. **Approval** (`also: [{index,
+  agent_signature}]`) mints each ticked extra with the role the terminal asked
+  for, sealed to the same terminal key, in `sealed_keys`. **Poll** returns
+  them all once (`identities`) and clears the sealed copies. The first
+  identity keeps the existing `sealed_key`, so `npx veynod init` is unchanged.
+  `client_instance_id` (rotation) is not built yet (§15.1).
 - **Reconnect** rotates in place (same `agent_id`, new secret, short grace),
   as in `MCP_CONNECTION_LIFECYCLE` §6.2.
 - **`GET /v1/runner/doctor`** (§8.2 S-9).
@@ -970,10 +983,53 @@ wake and dispatch then use. Board tasks: `up-hub-p01` and its subtasks.
 | Phase | Scope | PRs (each `[skip ci]` only for docs) | Exit criteria |
 |---|---|---|---|
 | **0 — truth and bugs** (2–3 days, no schema) | CLI (`up-hub-p0-cli`): S-1 pinned MCP (OAR + CLI fallback flags); a placement still open before work; S-3 scratch dir; E-20 message frames; immediate busy report; lease keeper. Server (`up-hub-p0-server`): E-17/E-18 presence + gating; S-7 scheduler loop with lock and per-workspace `try`; `host_busy`; `done_needs_deploy` fix. Desktop frozen (`up-hub-p0-freeze-desktop`) | 4–6 small PRs | Tests green; `test_loop_production::test_runner_cli_e2e_custom_runtime` passes |
-| **1 — `veynod up` + hub** (~1–1.5 weeks, `up-hub-p1-up-hub`) | `up` (§14), multi-key hub (lock, stream per key, local socket, OAR adapter, runner adapter, lease keeper, receipts), hooks, local + server doctor; migration v3_64 placement parts (accept, `started`, `claim_within`); `cli_sessions.sealed_keys`; S-8 pinned host placements; S-10 hello report; NOTIFY nudge | 5–7 PRs | **Release bar D-3** on one computer (`up-hub-p1-release-drill`) |
+| **1 — `veynod up` + hub** (~1–1.5 weeks, `up-hub-p1-up-hub`) | `up` (§14), multi-key hub (lock, stream per key, OAR adapter, runner adapter, lease keeper, receipts), local + server doctor; `cli_sessions.sealed_keys`; S-10 hello report. Moved out (§15.1): hooks, local socket, NOTIFY nudge and the placement parts of the migration (accept, `started`, `claim_within`) go to Phase 2; S-8 pinned host placements to Phase 3 | 5–7 PRs | **Release bar D-3** on one computer (`up-hub-p1-release-drill`) |
 | **2 — wake** (~1–1.5 weeks) | `veynod channel`; `wake.py` (shadow → enforce); reach registry + back-fill; templates `claude_routine`, `cursor_cloud`; "Connect a cloud agent"; Test wake | 4–5 PRs | Drills D-2, D-3, D-4 pass; `wake_coverage` ≥ 80% of active agents; no `capped` storms in shadow week |
 | **3 — dispatch** (~1 week) | `dispatch.py`; API/MCP; `pin`; fallback ladder by mode; M-14 interplay; console "Dispatch to…"; pre-commit file-lock guard | 3–4 PRs | `test_dispatch.py` green; drill D-6 passes |
 | **4 — interop and polish** | `a2a` and `ntfy` channels; Agent Cards; channel permission relay; rest of MCP connection lifecycle; poke/message unification | As needed | — |
+
+### 15.1 Status (2026-10-30)
+
+Built and tested on `claude/eager-shannon-iy6zoa`, not yet deployed or
+published:
+
+| Item | Commit | Test |
+|---|---|---|
+| Phase 0 CLI: pinned MCP (OAR + `--mcp-config --strict-mcp-config`), open-placement check before work, scratch dir, `message` frames, busy report, lease keeper | `7d7eb72` | `cli/test/runner.test.mjs`; `tests/test_loop_production.py` |
+| Phase 0 server: `wakeable` / `active_via_api`, heartbeat no longer holds back the wake, `host_busy`, scheduler loop with advisory lock, `done_needs_deploy` only with deploy evidence | `8554a6a`, `2480a63` | `tests/test_phase0_server.py` |
+| `veynod up` / `hub` / `doctor`, `GET /v1/runner/doctor`, `loop(action="doctor")` | `50e222d` | `cli/test/up.test.mjs`; `tests/test_phase1_up_hub.py` |
+| One approval for every identity (v3.64), `--no-service`, `up` waits for the hub's hello, names that are valid agent ids | `1f03f30` | `tests/test_cli_sessions.py`; `tests/test_phase1_up_hub.py::test_veynod_up_connects_both_identities_in_one_approval_then_the_loop_runs` |
+| S-10 `capabilities_report` (v3.65); doctor `pinning` warning | `fa6a83e` | `tests/test_phase1_up_hub.py::test_a_host_that_cannot_pin_its_sessions_is_named_by_the_doctor` |
+
+The last integration test is the release bar without the computer. It runs
+the real `veynod up --run-tasks` (one approval, made over the API), then the
+real `veynod hub`; `up` exits 0 on a green doctor; and a task reaches DONE,
+reviewed by the `-review` identity, with nobody typing. It uses the custom
+runtime, not Claude Code.
+
+**Moved out of Phase 1, with the reason:**
+- **Claude Code hooks** (`veynod hook stop|session-start`) → Phase 2. On a
+  computer that runs tasks, the hub's runner and an open Claude Code session
+  share the computer identity's key and inbox. A Stop hook that surfaces
+  assigned work would invite the open session to claim what the runner was
+  placed. The hooks need the wake policy's kinds filter and the hub socket
+  (which session owns what), and both are Phase 2.
+- **Local socket**, **NOTIFY nudge** → Phase 2. The socket is only needed by
+  hooks and the channel. The scheduler's 15 s pass is fast enough for the
+  release bar.
+- **Placement accept / `started` / `claim_within`** → Phase 2, with the rest
+  of migration 3.66. The runner already re-reads its placement before work
+  (Phase 0), which closes most of the stale-offer window.
+- **S-8 pinned host placements** → Phase 3, with dispatch.
+- **Key rotation on re-run (`client_instance_id`)** and **`veynod down`**:
+  board task `up-hub-p1-followups`. Today `up` keeps identities whose key
+  files exist, and `--fresh` mints new ones.
+
+**Before the drill (`up-hub-p1-release-drill`) on your computer:**
+1. Deploy the server (schema 3.65) and add a release-notes entry.
+2. Publish the CLI (sync `open-source-repo/bin`).
+3. Set automation to full.
+4. Run `npx veynod up --run-tasks --repo owner/name` and approve the one code.
 
 ## 16. MVP acceptance tests
 
