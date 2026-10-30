@@ -1,6 +1,6 @@
 {
   "name": "veynod",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "One command to put your coding agents on a Veynod board: npx veynod init",
   "type": "module",
   "bin": {
@@ -9,6 +9,7 @@
   "files": [
     "bin/veynod.mjs",
     "bin/runner.mjs",
+    "bin/up.mjs",
     "README.md"
   ],
   "optionalDependencies": {
