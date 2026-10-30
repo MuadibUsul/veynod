@@ -529,16 +529,27 @@ async def dispatch(session: AsyncSession, principal: Principal, key: str,
     return result
 
 
+# What the graph itself blocks on. A merge re-checks these; a chunk blocked by its
+# circuit breaker or token budget waits for a person instead (M-22, M-24).
+GRAPH_BLOCKS = ("dependency", "file_lock")
+
+
+def _waiting_on(chunk: dict[str, Any], chunks: dict[str, dict[str, Any]]) -> tuple[list[str], str]:
+    """The dependencies not merged yet, and the reason in words, from current states."""
+    waiting = [dep for dep in chunk["depends_on"]
+               if chunks.get(dep, {}).get("state") != "merged"]
+    return waiting, "waiting on " + ", ".join(
+        f"{dep} ({chunks[dep]['state'] if dep in chunks else 'missing'})" for dep in waiting)
+
+
 async def _dispatch_one(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
                         chunk: dict[str, Any], chunks: dict[str, dict[str, Any]],
                         upgrade: dict[str, Any] | None = None) -> dict[str, Any]:
-    waiting = [dep for dep in chunk["depends_on"]
-               if chunks.get(dep, {}).get("state") != "merged"]
+    waiting, waiting_reason = _waiting_on(chunk, chunks)
     kind, reason, detail = None, None, {}
     if waiting:
         kind = "dependency"
-        reason = "waiting on " + ", ".join(
-            f"{dep} ({chunks[dep]['state'] if dep in chunks else 'missing'})" for dep in waiting)
+        reason = waiting_reason
         detail = {"waiting_on": waiting}
     else:
         locks = await _lock_conflicts(session, principal, chunk)
@@ -1301,19 +1312,21 @@ async def _release_waiting(session: AsyncSession, principal: Principal,
     chunks = {chunk["chunk_key"]: chunk for chunk in await _chunks(session, diagram["id"])}
     released = []
     for chunk in chunks.values():
-        if chunk["state"] != "blocked":
+        # Every graph block is re-checked, so a chunk still waiting on others names only
+        # those; circuit and budget blocks are a person's to lift.
+        if chunk["state"] != "blocked" or chunk["block_kind"] not in (*GRAPH_BLOCKS, None):
             continue
-        if all(chunks.get(dep, {}).get("state") == "merged" for dep in chunk["depends_on"]):
-            outcome = await _dispatch_one(session, principal, diagram, chunk, chunks)
-            if outcome["state"] == "dispatched":
-                # M-14 / M-26: unlocked by the graph, no one re-dispatches; watchers hear it.
-                # M-26: the minimum to pull and start: upstream, its merge commit, the
-                # baseline, the downstream chunk and its task. Never the code itself.
-                await _event(session, principal, diagram, "CHUNK_UNBLOCKED",
-                             chunk_key=chunk["chunk_key"], task_key=outcome.get("task_key"),
-                             baseline=(diagram.get("baseline") or {}).get("version"),
-                             **(trigger or {}), targets=diagram.get("watchers") or [])
-                released.append(outcome)
+        outcome = await _dispatch_one(session, principal, diagram, chunk, chunks)
+        chunk["state"] = outcome["state"]  # later chunks read the graph as it is now
+        if outcome["state"] == "dispatched":
+            # M-14 / M-26: unlocked by the graph, no one re-dispatches; watchers hear it.
+            # M-26: the minimum to pull and start: upstream, its merge commit, the
+            # baseline, the downstream chunk and its task. Never the code itself.
+            await _event(session, principal, diagram, "CHUNK_UNBLOCKED",
+                         chunk_key=chunk["chunk_key"], task_key=outcome.get("task_key"),
+                         baseline=(diagram.get("baseline") or {}).get("version"),
+                         **(trigger or {}), targets=diagram.get("watchers") or [])
+            released.append(outcome)
     return released
 
 
@@ -1646,9 +1659,15 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
     diagram = await _diagram(session, principal, key)
     chunks = await _chunks(session, diagram["id"])
     tasks = await _tasks(session, principal, [c["task_key"] for c in chunks if c["task_key"]])
+    by_key = {chunk["chunk_key"]: chunk for chunk in chunks}
     items, distribution, blocked, mismatches, warnings = [], {}, [], [], []
     ready = []
     for chunk in chunks:
+        if chunk["state"] == "blocked" and chunk["block_kind"] == "dependency":
+            # Read from the graph as it is now, never a reason saved earlier.
+            waiting, reason = _waiting_on(chunk, by_key)
+            if waiting:
+                chunk = {**chunk, "block_reason": reason}
         task = tasks.get(chunk["task_key"]) if chunk["task_key"] else None
         status = status_of(chunk, task)
         if chunk["task_key"] and task is None:

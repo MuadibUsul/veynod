@@ -338,6 +338,61 @@ async def test_contract_first_and_topology_unlock(client):
     assert any("chunk_merged" in str(kind) for kind in kinds), kinds
 
 
+async def _sql(query: str, *args):
+    conn = await asyncpg.connect(os.environ["TEST_DATABASE_URL"].replace(
+        "postgresql+asyncpg://", "postgresql://", 1))
+    try:
+        return await conn.fetch(query, *args)
+    finally:
+        await conn.close()
+
+
+async def test_block_reasons_are_current_and_merges_leave_circuits_alone(client):
+    """DX-5: a merge re-checks every graph block, so a chunk still waiting names only
+    what it still waits on, in the view and stored; a circuit-broken chunk is a
+    person's to lift, never re-dispatched by an unrelated merge."""
+    ws = await _workspace(client)
+    architect = await _agent(client, ws, "ANALYST")
+    executor = await _agent(client, ws)
+    reviewer = await _agent(client, ws, "AUDITOR")
+    chunks = [_chunk("a", layer="interface"), _chunk("b", layer="interface"),
+              _chunk("c", deps=["a", "b"]), _chunk("d", deps=["a"])]
+    key, _ = await _frozen(client, ws, architect, chunks)
+    dispatched = {}
+    for chunk_key in ("a", "b", "c", "d"):
+        dispatched[chunk_key] = (await client.post(
+            f"/v1/diagrams/{key}/chunks/{chunk_key}/dispatch", headers=architect["headers"])).json()
+    assert dispatched["c"]["block_reason"] == "waiting on a (dispatched), b (dispatched)"
+
+    # d is past a's merge in the plan; break its circuit as three rejections would.
+    await _sql("UPDATE diagram_chunks SET block_kind = 'circuit', block_reason = 'trust 20' "
+               "WHERE chunk_key = 'd' AND diagram_id = (SELECT id FROM diagrams "
+               "WHERE diagram_key = $1)", key)
+
+    await _deliver(client, executor, dispatched["a"]["task_key"])
+    gated = await client.post(f"/v1/diagrams/{key}/chunks/a/gate", headers=reviewer["headers"],
+                              json={"result": "pass"})
+    assert gated.status_code == 200, gated.text
+    merged = await client.post(f"/v1/diagrams/{key}/chunks/a/merge", headers=ws["person"],
+                               json={"artifact": "commit a1"})
+    assert merged.status_code == 200, merged.text
+    assert merged.json()["unblocked"] == []
+
+    shown = (await client.get(f"/v1/diagrams/{key}", headers=ws["key"])).json()
+    by_key = {chunk["chunk_key"]: chunk for chunk in shown["chunks"]}
+    assert by_key["c"]["block_reason"] == "waiting on b (dispatched)"
+    assert {item["chunk_key"]: item["reason"] for item in shown["progress"]["blocked"]}["c"] == (
+        "waiting on b (dispatched)")
+    stored = await _sql("SELECT chunk_key, state, block_kind, block_reason, task_key FROM "
+                        "diagram_chunks WHERE diagram_id = (SELECT id FROM diagrams WHERE "
+                        "diagram_key = $1) ORDER BY chunk_key", key)
+    rows = {row["chunk_key"]: row for row in stored}
+    assert rows["c"]["block_reason"] == "waiting on b (dispatched)"
+    # The circuit-broken chunk stays blocked, with no new task.
+    assert (rows["d"]["state"], rows["d"]["block_kind"], rows["d"]["task_key"]) == (
+        "blocked", "circuit", None)
+
+
 async def test_context_slice_write_scope_and_file_locks(client):
     """A-09."""
     ws = await _workspace(client)
