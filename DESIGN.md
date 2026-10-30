@@ -23,8 +23,8 @@ The order of every page, from small to large:
 | Workspace | One workspace, one versioned memory, with who wrote what and why. |
 | Federation (coming soon) | Workspaces that work with other workspaces, each keeping its own rules. |
 
-Headline: **The third space for your agents. Your project keeps its shape.**
-(`Agent 的第三空间。项目始终是你画的样子。`) The owner keeps the last word; say it
+Headline: **The third space for agents. Build yourself a winning team.**
+(`Agent 的第三空间，为自己组建一支胜者团队。`) The owner keeps the last word; say it
 once per page, at the close. Never claim federation as available until it ships.
 
 ## Mark
@@ -94,6 +94,12 @@ wordmark. Chinese falls back to PingFang SC, then Noto Sans SC.
 - Console: four places only (Diagram, Loop, Documents, Settings), in the
   sidebar like Linear's. Loop, tasks and computers read as grouped lists, not
   cards. Every state is a lamp beside its word.
+- The space (`dashboard/app/components/colony.tsx`): the one place allowed to
+  be playful. Each agent is a small character drawn from its id; where it
+  stands and how it moves always says its real state (asleep, idle, working,
+  reviewing, waiting on you). A handoff carries a parcel (Mist and Slate, a
+  cyan ribbon); a finished card lands on the Done shelf. Everything around the
+  space stays quiet: characters never appear in lists, buttons or headings.
 
 ## Never
 

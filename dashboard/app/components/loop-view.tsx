@@ -135,6 +135,10 @@ export function LoopView({
   }, [load]);
 
   const needs = alerts.length + waitingReview + unplaced.length;
+  // One row per kind of problem, not one per task: the same words seven times
+  // hide the one row that differs.
+  const unplacedGroups = groupBy(unplaced, (item) => item.reason || item.note);
+  const alertGroups = groupBy(alerts, (alert) => alert.rule);
 
   // Hosts and placements follow the board's own event stream, not a timer.
   const [hostsKey, setHostsKey] = useState(0);
@@ -154,7 +158,8 @@ export function LoopView({
 
   return (
     <div className="loop">
-      <section className="lin-list" aria-label={t("Loop status")}>
+      <div className="loop-pair" role="group" aria-label={t("Loop status")}>
+      <section className="lin-list">
         <div className="lin-group">
           <i className={`lamp ${needs ? "red" : "green"}`} />
           {t("Needs you")}
@@ -170,22 +175,28 @@ export function LoopView({
             <span className="lin-meta">{t("Tasks")}</span>
           </button>
         )}
-        {unplaced.map((item) => (
-          <button key={item.placement_id} type="button" className="lin-row" onClick={onOpenTasks}>
+        {unplacedGroups.map(([reason, items]) => (
+          <button key={`unplaced-${reason}`} type="button" className="lin-row" onClick={onOpenTasks}
+            title={items.map((item) => item.task_key).filter(Boolean).join("\n")}>
             <i className="lamp amber" />
-            <span className="lin-title">{t(UNPLACED_LABEL[item.reason] ?? item.note)}</span>
-            {item.task_key && <span className="lin-key">{item.task_key}</span>}
+            <span className="lin-title">{t(UNPLACED_LABEL[items[0].reason] ?? items[0].note)}</span>
+            {items.length > 1 && <span className="lin-count">{items.length}</span>}
+            <span className="lin-key">{sample(items.map((item) => item.task_key ?? ""))}</span>
           </button>
         ))}
-        {alerts.map((alert) => (
-          <button key={alert.alert_id} type="button" className="lin-row" onClick={onOpenSituation}>
+        {alertGroups.map(([rule, items]) => (
+          <button key={`alert-${rule}`} type="button" className="lin-row" onClick={onOpenSituation}
+            title={items.map((alert) => alert.subject.ref).join("\n")}>
             <i className="lamp red" />
-            <span className="lin-title">{t(RULE_LABEL[alert.rule] ?? alert.rule)}</span>
-            <span className="lin-key">{alert.subject.ref}</span>
-            <span className="lin-meta">{relativeTime(alert.last_seen)}</span>
+            <span className="lin-title">{t(RULE_LABEL[rule] ?? rule)}</span>
+            {items.length > 1 && <span className="lin-count">{items.length}</span>}
+            <span className="lin-key">{sample(items.map((alert) => alert.subject.ref))}</span>
+            <span className="lin-meta">{relativeTime(latest(items.map((alert) => alert.last_seen)))}</span>
           </button>
         ))}
+      </section>
 
+      <section className="lin-list">
         <div className="lin-group">
           <i className="lamp cyan" />
           {t("How the loop runs")}
@@ -208,6 +219,7 @@ export function LoopView({
           {round && <span className="lin-meta">{relativeTime(round.ended_at ?? round.created_at)}</span>}
         </div>
       </section>
+      </div>
 
       {editingMode && sessionMode && <AutomationModeCard request={request} notify={notify} />}
 
@@ -222,4 +234,22 @@ export function LoopView({
       />
     </div>
   );
+}
+
+function groupBy<T>(items: T[], key: (item: T) => string): Array<[string, T[]]> {
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const k = key(item);
+    groups.set(k, [...(groups.get(k) ?? []), item]);
+  }
+  return [...groups.entries()];
+}
+
+/** The first key; the count beside it says how many more. */
+function sample(keys: string[]): string {
+  return keys.find(Boolean) ?? "";
+}
+
+function latest(times: string[]): string {
+  return times.reduce((a, b) => (b > a ? b : a), times[0]);
 }

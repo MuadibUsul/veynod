@@ -1553,3 +1553,199 @@ button.lin-row:hover {
 .diff-row {
   border-top-color: rgba(255, 255, 255, 0.04);
 }
+
+/* Everything important fits in one look: a measured column, not the whole screen.
+   The diagram canvas keeps the full width (.canvas-mode). */
+.content {
+  max-width: 1120px;
+}
+
+/* What needs you, and how the loop runs, side by side. */
+.loop-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 16px;
+  align-items: start;
+  margin-bottom: 20px;
+}
+
+.loop-pair > .lin-list {
+  margin-bottom: 0;
+}
+
+.loop-pair .lin-label {
+  width: 72px;
+}
+
+@media (max-width: 900px) {
+  .loop-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.loop-pair .lin-key {
+  width: auto;
+  max-width: 160px;
+}
+
+/* Library: recent first, then sections you step into. */
+.doc-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin: 0 0 4px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ds-text-secondary);
+  font-size: 12px;
+}
+
+.doc-back:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ds-text-primary);
+}
+
+.doc-back-arrow {
+  display: inline-flex;
+  transform: rotate(180deg);
+}
+
+.doc-note {
+  margin: 0;
+  padding: 6px 10px 10px;
+  color: var(--ds-text-muted);
+  font-size: 12px;
+}
+
+.doc-item.doc-section {
+  min-height: 36px;
+}
+
+/* Titles read whole: the list gets room, the preview keeps the rest. */
+@media (min-width: 1101px) {
+  .documents-layout {
+    grid-template-columns: 360px minmax(0, 1fr);
+  }
+}
+
+/* Phones: the sidebar becomes a slim header (brand, the four places in one row,
+   the workspaces as chips); help and server status wait for a wider screen. */
+@media (max-width: 900px) {
+  .shell {
+    display: block;
+  }
+
+  .sidebar,
+  .sidebar[hidden] {
+    position: static;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 12px;
+    width: auto;
+    height: auto;
+    min-height: 0;
+    padding: 12px 16px;
+    border-right: 0;
+    border-bottom: 1px solid var(--ds-border-subtle);
+  }
+
+  .sidebar .brand {
+    flex: 1 0 auto;
+    margin: 0;
+    padding: 0;
+  }
+
+  .sidebar .side-nav {
+    order: 3;
+    flex: 1 0 100%;
+    display: flex;
+    flex-direction: row;
+    gap: 4px;
+    overflow-x: auto;
+  }
+
+  .sidebar .side-link {
+    flex: 1 0 auto;
+    justify-content: center;
+    width: auto;
+  }
+
+  .sidebar .sidebar-head,
+  .sidebar .server-chip,
+  .sidebar .sidebar-help,
+  .sidebar .list-hint {
+    display: none;
+  }
+
+  .sidebar .workspace-list {
+    order: 4;
+    flex: 1 0 100%;
+    flex-direction: row;
+    max-height: none;
+    overflow-x: auto;
+  }
+
+  .sidebar .workspace-item {
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+
+  .sidebar .session-card {
+    order: 2;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+  }
+
+  .sidebar .session-card .session-card-head {
+    display: none;
+  }
+
+  .sidebar .session-card .button.full {
+    width: auto;
+    height: 30px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+
+  .topbar {
+    position: static;
+    flex-wrap: wrap;
+    height: auto;
+    gap: 8px;
+    padding: 10px 16px;
+  }
+
+  .topbar .sidebar-toggle {
+    display: none;
+  }
+
+  .topbar-actions {
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 6px;
+  }
+
+  .content {
+    padding: 16px 16px 48px;
+  }
+
+  .more-nav {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .more-nav .more-link {
+    flex: none;
+  }
+}

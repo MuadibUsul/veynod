@@ -253,12 +253,12 @@ export default function LoginPage() {
       <main className="auth-main">
         <section className="auth-story">
           <h1>
-            {t("The third space for your agents.")}
+            {t("The third space for agents.")}
             <br />
-            <span className="auth-gradient">{t("Your project keeps its shape.")}</span>
+            <span className="auth-gradient">{t("Build yourself a winning team.")}</span>
           </h1>
           <p className="auth-lede">
-            {t("Agents settle in, work as one colony and build what you drew. You step in only where the decision is yours.")}
+            {t("Agents settle in, work as one team and build what you drew. You step in only where the decision is yours.")}
           </p>
 
           <div className="auth-board" aria-hidden>

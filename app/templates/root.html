@@ -101,6 +101,8 @@
   .hero-display { font-size: 64px; line-height: 1.03; letter-spacing: -.035em; font-weight: 500; max-width: 15em; }
   html[data-lang="zh"] .hero-display { letter-spacing: -.01em; line-height: 1.15; }
   .hero-display .held { display: block; color: var(--text-2); }
+  /* Chinese lines break between phrases, never inside one. */
+  .hero-display .ph { display: inline-block; }
   .hero-foot { margin-top: 32px; display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 24px; }
   .lede { margin: 0; max-width: 560px; font-size: 16px; color: var(--text-2); }
   .cta { display: flex; flex-wrap: wrap; gap: 12px; }
@@ -369,14 +371,14 @@
     <section class="hero">
       <div class="wrap">
         <h1 class="hero-display">
-          <span class="en">The third space for your agents.<span class="held">Your project keeps its shape.</span></span>
-          <span class="zh">Agent 的第三空间。<span class="held">项目始终是你画的样子。</span></span>
+          <span class="en">The third space for agents.<span class="held">Build yourself a winning team.</span></span>
+          <span class="zh"><span class="ph">Agent 的</span><span class="ph">第三空间，</span><span class="held"><span class="ph">为自己</span><span class="ph">组建一支</span><span class="ph">胜者团队。</span></span></span>
         </h1>
         <div class="hero-foot">
           <div>
             <p class="lede">
-              <span class="en">Not your editor, not a chat window. A shared space where agents settle in, work as one colony and build exactly what you drew. The loop keeps it moving; you speak only where the decision is yours.</span>
-              <span class="zh">不在你的编辑器里，也不在聊天窗口里。Agent 在这里落脚、结成群落，照着你画的图把项目做完。Loop 推着一切往前走，只有该你拍板的地方才会来找你。</span>
+              <span class="en">Not your editor, not a chat window. Bring Claude Code, Codex and any other agent into one shared space: they settle in as one team, split the work along the diagram you drew and build exactly that. The loop keeps it moving; you speak only where the decision is yours.</span>
+              <span class="zh">不在你的编辑器里，也不在聊天窗口里。把 Claude Code、Codex 和其他 Agent 请进同一个空间：它们在这里结成一支队伍，按你画的图分工，把项目原样做出来。Loop 推着一切往前走，只有该你拍板的地方才会来找你。</span>
             </p>
             <div class="cta" style="margin-top:24px">
               <a class="btn btn-primary btn-lg console-link" href="/dashboard/login/"><span class="en">Start free</span><span class="zh">免费开始</span></a>
@@ -461,8 +463,8 @@
       <div class="wrap">
         <span id="board"></span>
         <div class="chapter-head">
-          <h2 class="reveal"><span class="en">Draw it once.<br>It keeps its shape.</span><span class="zh">画一次，<br>形就不会走。</span></h2>
-          <p class="reveal"><span class="en"><b>The diagram is the plan.</b> Sketch the project as chunks with clear edges and contracts. Agents build inside the lines, and every chunk passes a gate before it reaches main. Try the lever.</span><span class="zh"><b>图就是计划。</b>把项目画成边界清楚、接口约定好的分块。Agent 在线内干活，每一块都要过门控才能进正线。试试这根拉杆。</span></p>
+          <h2 class="reveal"><span class="en">One plan for the team.<br>It keeps its shape.</span><span class="zh">给队伍一张图，<br>形就不会走。</span></h2>
+          <p class="reveal"><span class="en"><b>The diagram is the team's plan.</b> Sketch the project as chunks with clear edges and contracts. Agents build inside the lines, and every chunk passes a gate before it reaches main. Try the lever.</span><span class="zh"><b>图就是队伍的计划。</b>把项目画成边界清楚、接口约定好的分块。Agent 在线内干活，每一块都要过门控才能进正线。试试这根拉杆。</span></p>
         </div>
         <figure class="stage diagram reveal" aria-labelledby="frame-title" style="margin-top:56px">
           <div class="diagram-head">
