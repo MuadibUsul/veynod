@@ -1004,6 +1004,31 @@ button.lin-row:hover {
   color: var(--ds-text-secondary);
 }
 
+/* A computer's seats: its own key, and the reviewer beside it. */
+.host-seats {
+  display: inline-flex;
+  gap: 6px;
+  flex: none;
+}
+
+.host-seat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: 999px;
+  color: var(--ds-text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.host-seat .lamp {
+  width: 6px;
+  height: 6px;
+}
+
 .board-toolbar {
   margin-bottom: 12px;
   align-items: center;
@@ -1586,6 +1611,57 @@ button.lin-row:hover {
 .loop-pair .lin-key {
   width: auto;
   max-width: 160px;
+}
+
+/* Needs you, how the loop runs and the computers, side by side. */
+.loop-trio {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.loop-trio .lin-key {
+  max-width: 120px;
+}
+
+.loop-trio .lin-name {
+  width: auto;
+  max-width: 150px;
+}
+
+@media (max-width: 1200px) {
+  .loop-trio {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .loop-trio {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* A computer in a narrow column: name, state and actions, then its seats and facts. */
+.lin-row.host-row {
+  display: grid;
+  grid-template-columns: 8px minmax(0, max-content) minmax(0, 1fr) auto;
+  column-gap: 10px;
+  row-gap: 6px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.host-sub {
+  grid-column: 2 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+}
+
+.host-facts {
+  min-width: 0;
+  color: var(--ds-text-muted);
+  font-size: 12px;
 }
 
 /* Library: recent first, then sections you step into. */

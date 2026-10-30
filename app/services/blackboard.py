@@ -30,7 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Principal
 from app.errors import ApiError
-from app.services import presence
+from app.services import presence, runners
 
 TODO = ("TODO", "READY", "HANDOFF")
 IN_PROGRESS = ("IN_PROGRESS", "REVIEWING", "AWAITING_HUMAN", "ESCALATED_TO_HUMAN",
@@ -193,10 +193,17 @@ async def snapshot(session: AsyncSession, principal: Principal, *,
     for card in columns["in_progress"]:
         if card["status"] == "IN_PROGRESS" and card["holder_agent"]:
             working.setdefault(card["holder_agent"], []).append(card["task_key"])
+    # A computer is a workstation, not an agent: its keys are seats there, and
+    # whoever works with one (the runtime it starts, or you on that machine)
+    # is drawn at that computer.
+    machines = await runners.computers(session, principal.workspace.id)
+    seat_of = {seat["agent_id"]: (machine["computer_id"], seat["seat"])
+               for machine in machines for seat in machine["seats"] if seat["agent_id"]}
     avatars = []
     for entry in agents.entries:
         info = states.get(entry["principal_id"]) or {"state": "unwakeable", "online": False}
         tasks = working.get(entry["agent_id"], [])
+        computer_id, seat = seat_of.get(entry["agent_id"], (None, None))
         avatars.append({
             "agent_id": entry["agent_id"],
             "display_name": entry["display_name"],
@@ -205,6 +212,8 @@ async def snapshot(session: AsyncSession, principal: Principal, *,
             # M-04: online idle, working, or (any state but online) offline.
             "activity": ("working" if tasks else "idle") if info.get("online") else "offline",
             "working_on": tasks,
+            "computer_id": computer_id,
+            "seat": seat,
             # Every name an event may carry for this agent (actor, sender, targets).
             "names": sorted({name for name in (entry["agent_id"], entry["principal_id"],
                                                *(entry["signatures"] or []),
@@ -219,6 +228,20 @@ async def snapshot(session: AsyncSession, principal: Principal, *,
         "archived": max(0, archived),
         "resolved_limit": resolved_limit,
         "agents": avatars,
+        "computers": [{
+            "computer_id": machine["computer_id"],
+            "name": machine["name"],
+            "os": machine["os"],
+            "arch": machine["arch"],
+            "runtimes": [{"id": runtime["id"], "available": runtime.get("available", True)}
+                         for runtime in machine["runtimes"]],
+            "state": machine["state"],
+            "max_concurrency": machine["max_concurrency"],
+            "free_slots": machine["free_slots"],
+            "seats": [{"agent_id": seat["agent_id"], "seat": seat["seat"],
+                       "state": seat["state"], "running": seat["running"]}
+                      for seat in machine["seats"]],
+        } for machine in machines],
         "presence_rules": {"heartbeat_every_s": presence.TOUCH_EVERY_SECONDS,
                            "offline_after_s": int(presence.ONLINE_WINDOW.total_seconds())},
         "stream": {"tables": ["collab_tasks", "timeline_streams"],

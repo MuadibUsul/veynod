@@ -182,6 +182,8 @@ export default function ConsolePage() {
     sort: "updated_desc",
   });
   const [agents, setAgents] = useState<AgentToken[]>([]);
+  // A computer's keys are its seats, listed with the computer, not as agents.
+  const [computerKeys, setComputerKeys] = useState(0);
   const [directory, setDirectory] = useState<DirectoryEntry[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [policies, setPolicies] = useState<PathPolicy[]>([]);
@@ -748,10 +750,13 @@ export default function ConsolePage() {
       ),
       loadOne(
         "agent-tokens",
-        call<{ items: AgentToken[] }>(
+        call<{ items: AgentToken[]; computer_keys?: number }>(
           `/v1/admin/workspaces/${id}/agent-tokens`,
         ),
-        (value) => setAgents(value.items),
+        (value) => {
+          setAgents(value.items);
+          setComputerKeys(value.computer_keys ?? 0);
+        },
       ),
       loadOne(
         "audit",
@@ -1709,6 +1714,7 @@ export default function ConsolePage() {
                     <AgentsView
                       workspaceId={selectedWorkspace.id}
                       tokens={agents}
+                      computerKeys={computerKeys}
                       directory={directory}
                       request={api}
                       onRefresh={async () => {

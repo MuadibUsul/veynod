@@ -178,3 +178,72 @@ async def test_the_owner_revokes_a_host_and_its_task_goes_back(client):
     everything = await client.get("/v1/runner/hosts", headers=ws["human"],
                                   params={"include_revoked": "true"})
     assert everything.json()["counts"]["revoked"] == 1
+
+
+async def _seat(client, ws: dict, role: str, name: str) -> dict:
+    minted = await client.post(
+        f"/v1/admin/workspaces/{ws['id']}/agent-tokens", headers=ADMIN,
+        json={"role_scope": role, "allowed_namespaces": ["*"]})
+    assert minted.status_code == 201, minted.text
+    headers = {"Authorization": f"Bearer {minted.json()['api_key']}"}
+    named = await client.post("/v1/agents/register", headers=headers, json={
+        "agent_id": name, "introduction": {"name": name, "function": "code"}})
+    assert named.status_code in (200, 201), named.text
+    return {"headers": headers, "agent_id": named.json()["agent_id"],
+            "token_id": minted.json()["token"]["canonical_id"]}
+
+
+async def test_a_computer_is_a_workstation_with_seats_not_an_agent(client):
+    """`veynod up --run-tasks` mints the computer's key and a -review key.
+
+    Both say hello from the same machine: one computer with two seats, which
+    the token list, onboarding and the live space do not count as agents.
+    """
+    ws = await _workspace(client)
+    suffix = uuid.uuid4().hex[:5]
+    work = await _seat(client, ws, "EXECUTOR", f"desk-{suffix}")
+    review = await _seat(client, ws, "AUDITOR", f"desk-{suffix}-review")
+    person = await _seat(client, ws, "EXECUTOR", f"helper-{suffix}")
+    machine = {**HOST, "hostname": "desk.local", "os": "win32", "arch": "x64"}
+    for seat in (work, review):
+        hello = await client.post("/v1/runner/hello", headers=seat["headers"],
+                                  json={"host": machine})
+        assert hello.status_code == 200, hello.text
+    elsewhere = await _seat(client, ws, "EXECUTOR", f"pi-{suffix}")
+    assert (await client.post("/v1/runner/hello", headers=elsewhere["headers"],
+                              json={"host": HOST})).status_code == 200
+
+    listed = (await client.get("/v1/runner/hosts", headers=ws["human"])).json()
+    assert len(listed["items"]) == 3
+    computers = {item["name"]: item for item in listed["computers"]}
+    assert set(computers) == {work["agent_id"], elsewhere["agent_id"]}
+    desk = computers[work["agent_id"]]
+    assert [(seat["agent_id"], seat["seat"]) for seat in desk["seats"]] == [
+        (work["agent_id"], "work"), (review["agent_id"], "review")]
+    assert (desk["os"], desk["state"], desk["max_concurrency"]) == ("windows", "online", 4)
+    assert listed["computer_counts"]["online"] == 2
+
+    for path in (f"/v1/admin/workspaces/{ws['id']}/agent-tokens", "/v1/human/agent-tokens"):
+        headers = ADMIN if path.startswith("/v1/admin") else ws["human"]
+        tokens = (await client.get(path, headers=headers)).json()
+        ids = {item["canonical_id"] for item in tokens["items"]}
+        assert person["token_id"] in ids
+        assert not ids & {work["token_id"], review["token_id"], elsewhere["token_id"]}
+        assert tokens["computer_keys"] == 3
+        every = (await client.get(path, headers=headers,
+                                  params={"include_computers": "true"})).json()
+        assert {work["token_id"], review["token_id"]} <= {
+            item["canonical_id"] for item in every["items"]}
+
+    progress = (await client.get("/v1/human/agent-onboarding", headers=ws["human"])).json()
+    assert {item["token_id"] for item in progress["items"]} == {person["token_id"]}
+
+    board = (await client.get("/v1/human/blackboard", headers=ws["human"])).json()
+    seats = {avatar["agent_id"]: (avatar["computer_id"], avatar["seat"])
+             for avatar in board["agents"]}
+    assert seats[work["agent_id"]] == (desk["computer_id"], "work")
+    assert seats[review["agent_id"]] == (desk["computer_id"], "review")
+    assert seats[person["agent_id"]] == (None, None)
+    drawn = {item["computer_id"]: item for item in board["computers"]}
+    assert [seat["seat"] for seat in drawn[desk["computer_id"]]["seats"]] == ["work", "review"]
+    assert "token_id" not in json.dumps(board["computers"])

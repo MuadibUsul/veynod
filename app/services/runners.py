@@ -263,6 +263,97 @@ async def _find(session: AsyncSession, workspace_id: Any, ref: str) -> dict[str,
     return dict(row)
 
 
+def _computer_name(seats: list[dict[str, Any]]) -> str:
+    """The computer is named after its own identity, not the reviewer beside it."""
+    for seat in seats:
+        if seat["seat"] == "work" and seat["agent_id"]:
+            return seat["agent_id"]
+    name = next((seat["agent_id"] for seat in seats if seat["agent_id"]), None)
+    if not name:
+        return seats[0]["host_id"]
+    return name[: -len("-review")] if name.endswith("-review") else name
+
+
+def computers_out(items: list[dict[str, Any]], roles: dict[str, str]) -> list[dict[str, Any]]:
+    """Group host keys into computers.
+
+    ``veynod up`` mints the computer's identity and, to review on the same
+    machine, a ``-review`` one; each key says hello on its own. They are two
+    seats at one workstation, not two computers: keys from the same machine
+    share the hostname digest. A key without one stands alone. ``roles`` maps
+    token ids to role scopes.
+    """
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for item in items:
+        key = f"h:{item['hostname_digest']}" if item["hostname_digest"] else f"k:{item['host_id']}"
+        groups.setdefault(key, []).append(item)
+    order = {"online": 0, "paused": 1, "offline": 2, "revoked": 3}
+    out = []
+    for hosts in groups.values():
+        seats = [{
+            "host_id": host["host_id"],
+            "agent_id": host["agent_id"],
+            "token_id": host["token_id"],
+            "role": roles.get(host["token_id"]),
+            "seat": "review" if roles.get(host["token_id"]) == "AUDITOR" else "work",
+            "state": host["state"],
+            "status": host["status"],
+            "running": host["running"],
+            "max_concurrency": host["max_concurrency"],
+            "free_slots": host["free_slots"],
+            "last_seen_at": host["last_seen_at"],
+        } for host in hosts]
+        seats.sort(key=lambda seat: (seat["seat"] != "work", seat["agent_id"] or ""))
+        runtimes: dict[str, dict[str, Any]] = {}
+        for host in hosts:
+            for runtime in host["runtimes"]:
+                known = runtimes.get(runtime["id"])
+                if known is None or (runtime.get("available") and not known.get("available")):
+                    runtimes[runtime["id"]] = runtime
+        first = next(host for host in hosts if host["host_id"] == seats[0]["host_id"])
+        states = [seat["state"] for seat in seats]
+        out.append({
+            "computer_id": seats[0]["host_id"],
+            "name": _computer_name(seats),
+            "os": first["os"],
+            "arch": first["arch"],
+            "runner_version": first["runner_version"],
+            "runtimes": list(runtimes.values()),
+            "repos": list(dict.fromkeys(repo for host in hosts for repo in host["repos"])),
+            # Online while any seat is; paused only when every live seat is.
+            "state": min(states, key=lambda state: order.get(state, 9)),
+            "max_concurrency": sum(seat["max_concurrency"] for seat in seats),
+            "free_slots": sum(seat["free_slots"] for seat in seats
+                              if seat["state"] == "online"),
+            "running": [key for seat in seats for key in seat["running"]],
+            "last_seen_at": max((seat["last_seen_at"] or "" for seat in seats), default="") or None,
+            "seats": seats,
+        })
+    out.sort(key=lambda computer: (order.get(computer["state"], 9), computer["name"]))
+    return out
+
+
+async def _roles(session: AsyncSession, workspace_id: Any, token_ids: list[str]) -> dict[str, str]:
+    if not token_ids:
+        return {}
+    rows = (await session.execute(text(
+        "SELECT canonical_id, role_scope::text AS role FROM agent_tokens "
+        "WHERE workspace_id = :ws AND canonical_id = ANY(CAST(:ids AS text[]))"),
+        {"ws": workspace_id, "ids": token_ids})).mappings().all()
+    return {row["canonical_id"]: row["role"] for row in rows}
+
+
+async def computers(session: AsyncSession, workspace_id: Any) -> list[dict[str, Any]]:
+    """The workspace's computers (revoked ones left out), each with its seats."""
+    rows = (await session.execute(text(
+        "SELECT * FROM runner_hosts WHERE workspace_id = :ws AND status <> 'revoked' "
+        "ORDER BY last_seen_at DESC LIMIT 200"), {"ws": workspace_id})).mappings().all()
+    now = _now()
+    items = [host_out(dict(row), now) for row in rows]
+    return computers_out(items, await _roles(
+        session, workspace_id, [item["token_id"] for item in items]))
+
+
 async def list_hosts(session: AsyncSession, principal: Principal, *,
                      include_revoked: bool = False) -> dict[str, Any]:
     rows = (await session.execute(text(
@@ -272,9 +363,15 @@ async def list_hosts(session: AsyncSession, principal: Principal, *,
         {"ws": principal.workspace.id})).mappings().all()
     now = _now()
     items = [host_out(dict(row), now) for row in rows]
+    grouped = computers_out(items, await _roles(
+        session, principal.workspace.id, [item["token_id"] for item in items]))
     return {"items": items,
             "counts": {state: sum(1 for item in items if item["state"] == state)
-                       for state in ("online", "offline", "paused", "revoked")}}
+                       for state in ("online", "offline", "paused", "revoked")},
+            # The same keys, one entry per machine with its seats.
+            "computers": grouped,
+            "computer_counts": {state: sum(1 for item in grouped if item["state"] == state)
+                                for state in ("online", "offline", "paused", "revoked")}}
 
 
 async def get_host(session: AsyncSession, principal: Principal, ref: str) -> dict[str, Any]:

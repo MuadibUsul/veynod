@@ -602,10 +602,15 @@ async def list_agent_tokens(
     ),
     parent: str | None = Query(default=None, max_length=40,
                                description="Only tokens delegated beneath this canonical id"),
+    include_computers: bool = Query(
+        default=False,
+        description="Also list computers' keys (left out by default: they are managed "
+                    "with their computer under /v1/runner/hosts)"),
     session: AsyncSession = Depends(get_db),
 ) -> AgentTokenListResponse:
     workspace = await services.get_workspace(session, workspace_id)
-    return await services.list_agent_tokens(session, workspace, issued_by, parent)
+    return await services.list_agent_tokens(session, workspace, issued_by, parent,
+                                            include_computers)
 
 
 @router.post(

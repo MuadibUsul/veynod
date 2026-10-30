@@ -514,7 +514,11 @@ async def overview(session, workspace_id) -> dict[str, Any]:
                 "ON o.workspace_id = t.workspace_id AND o.principal_key = t.canonical_id "
                 # Delegated child tokens are short-lived helpers, not identities
                 # people onboard: progress covers console-issued tokens only.
-                "WHERE t.workspace_id = :ws AND t.depth <= 1 ORDER BY t.created_at"
+                # A computer's keys are its seats, set up by `veynod up`, not
+                # agents to onboard.
+                "WHERE t.workspace_id = :ws AND t.depth <= 1 AND NOT EXISTS ("
+                "SELECT 1 FROM runner_hosts h WHERE h.workspace_id = t.workspace_id "
+                "AND h.token_id = t.canonical_id) ORDER BY t.created_at"
             ),
             {"ws": workspace_id},
         )

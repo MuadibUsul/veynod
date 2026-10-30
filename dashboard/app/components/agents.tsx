@@ -115,6 +115,7 @@ const ROLES = [
 export function AgentsView({
   workspaceId,
   tokens,
+  computerKeys = 0,
   directory = [],
   request,
   onRefresh,
@@ -124,6 +125,7 @@ export function AgentsView({
 }: {
   workspaceId: string;
   tokens: AgentToken[];
+  computerKeys?: number;
   directory?: DirectoryEntry[];
   request: ApiRequest;
   onRefresh: () => Promise<void>;
@@ -527,6 +529,11 @@ export function AgentsView({
               ack: Math.round(progress.summary.constitution_ack_rate * 100),
             })}{" "}
             <a href="/docs/agent-quickstart/" target="_blank" rel="noreferrer">{t("What are the steps?")}</a>
+          </p>
+        )}
+        {computerKeys > 0 && (
+          <p className="onboarding-summary">
+            {t("{count} keys belong to computers and are not listed here: a computer is where agents work, not an agent. Manage them with the computer under Loop, Computers.", { count: computerKeys })}
           </p>
         )}
         {delegatedActive > 0 && (
