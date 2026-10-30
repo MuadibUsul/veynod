@@ -10,14 +10,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useI18n } from "../i18n";
 import { normalizeBase } from "../types";
+import { Colony } from "./colony";
 import { StatusPill, relativeTime } from "./ui";
 
 // Suggested values from the spec, final once the owner confirms them.
 const RESOLVED_LIMIT = 10; // M-03
 const TICK_MS = 1000; // M-07: events within one second are shown together
 const MERGE_ABOVE = 5; // M-07: more than this in one tick → one merged notice
-const AGENT_FOLD_ABOVE = 24; // M-09: fold idle offline agents past this many
-const COLUMN_FOLD_ABOVE = 40; // M-09: fold a column's tail past this many cards
 const FLIGHT_MS = 900;
 const MOTION_KEY = "veynod.liveboard.motion";
 const SEEN_MEMORY = 5000;
@@ -25,11 +24,6 @@ const RESUME_BEHIND = 200;
 
 type Column = "todo" | "in_progress" | "resolved";
 const COLUMNS: Column[] = ["todo", "in_progress", "resolved"];
-const COLUMN_LABEL: Record<Column, string> = {
-  todo: "To solve",
-  in_progress: "Being solved",
-  resolved: "Resolved",
-};
 const KIND_LABEL: Record<string, string> = {
   publish: "Published",
   claim: "Claimed",
@@ -45,7 +39,6 @@ const PRESENCE_LABEL: Record<string, string> = {
   degraded: "Degraded",
   unwakeable: "Unwakeable",
 };
-const ACTIVITY_LABEL: Record<string, string> = { working: "Working", idle: "Idle", offline: "Offline" };
 
 export type LiveCard = {
   task_key: string;
@@ -60,6 +53,7 @@ export type LiveCard = {
   owner_agent: string | null;
   created_by: string | null;
   created_by_agent: string | null;
+  asked_by_agent?: string | null;
   updated_at: string | null;
 };
 
@@ -116,20 +110,6 @@ type CardEvents = {
   task_key: string;
   events: { seq: number; type: string | null; actor: string | null; status: string | null; at: string | null; summary: string | null }[];
 };
-
-function hue(value: string): number {
-  let hash = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
-  }
-  return hash % 360;
-}
-
-function monogram(name: string): string {
-  const parts = name.replace(/[-_]+/g, " ").trim().split(/\s+/);
-  const text = parts.length > 1 ? parts[0][0] + parts[1][0] : name.slice(0, 2);
-  return text.toUpperCase();
-}
 
 // Events name agents by id, principal or token signature; the snapshot lists them all.
 function resolver(agents: Record<string, Avatar>): (ref: unknown) => string | null {
@@ -196,8 +176,6 @@ export function LiveBoard({
   const [pulses, setPulses] = useState<Record<string, Kind>>({});
   const [activity, setActivity] = useState<Activity[]>([]);
   const [merged, setMerged] = useState<string | null>(null);
-  const [showAllAgents, setShowAllAgents] = useState(false);
-  const [unfolded, setUnfolded] = useState<Record<string, boolean>>({});
   const [selected, setSelected] = useState<CardEvents | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
 
@@ -535,27 +513,6 @@ export function LiveBoard({
     }
   };
 
-  const byColumn = useMemo(() => {
-    const grouped: Record<Column, LiveCard[]> = { todo: [], in_progress: [], resolved: [] };
-    for (const card of Object.values(cards)) {
-      if (card.column !== "archive") grouped[card.column].push(card);
-    }
-    grouped.todo.sort((a, b) => b.priority - a.priority || (b.updated_at ?? "").localeCompare(a.updated_at ?? ""));
-    grouped.in_progress.sort((a, b) => b.priority - a.priority || (b.updated_at ?? "").localeCompare(a.updated_at ?? ""));
-    grouped.resolved.sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""));
-    return grouped;
-  }, [cards]);
-
-  const roster = useMemo(() => {
-    const all = Object.values(agents).sort((a, b) => {
-      const rank = (avatar: Avatar) => (avatar.activity === "working" ? 0 : avatar.activity === "idle" ? 1 : 2);
-      return rank(a) - rank(b) || a.agent_id.localeCompare(b.agent_id);
-    });
-    if (showAllAgents || all.length <= AGENT_FOLD_ABOVE) return { shown: all, folded: 0 };
-    const shown = all.filter((avatar) => avatar.activity !== "offline");
-    return { shown, folded: all.length - shown.length };
-  }, [agents, showAllAgents]);
-
   const counts = Object.values(agents).reduce(
     (sum, avatar) => ({ ...sum, [avatar.activity]: (sum[avatar.activity] ?? 0) + 1 }),
     {} as Record<string, number>,
@@ -566,8 +523,8 @@ export function LiveBoard({
       <section className="card live-head">
         <div className="live-head-row">
           <div>
-            <h2>{t("Live blackboard")}</h2>
-            <p>{t("Who is online, who works on what, and what changed, as it happens.")}</p>
+            <h2>{t("The space")}</h2>
+            <p>{t("Your agents, live: who rests, who works on what, who waits for you.")}</p>
           </div>
           <div className="live-head-actions">
             <span className={`live-dot ${live ? "on" : ""}`}>{live ? t("Live") : t("Reconnecting")}</span>
@@ -586,91 +543,14 @@ export function LiveBoard({
         {merged && <div className="live-merged" role="status">{merged}</div>}
       </section>
 
-      <section className="card live-agents" aria-label={t("Agents")}>
-        {roster.shown.map((avatar) => (
-          <div
-            key={avatar.agent_id}
-            ref={register(`agent:${avatar.agent_id}`)}
-            className={`live-avatar activity-${avatar.activity} state-${avatar.presence.state} ${pulses[`agent:${avatar.agent_id}`] ? `pulse-${pulses[`agent:${avatar.agent_id}`]}` : ""}`}
-            title={`${avatar.display_name} · ${t(PRESENCE_LABEL[avatar.presence.state])} · ${t("last seen")} ${relativeTime(avatar.presence.last_seen_at)}`}
-          >
-            <span className="live-face" style={{ ["--face-hue" as string]: String(hue(avatar.agent_id)) }}>
-              {monogram(avatar.display_name || avatar.agent_id)}
-            </span>
-            <span className="live-name">{avatar.display_name}</span>
-            <span className="live-state">
-              {avatar.activity === "offline" ? t(PRESENCE_LABEL[avatar.presence.state]) : t(ACTIVITY_LABEL[avatar.activity])}
-            </span>
-            {avatar.working_on.length > 0 && (
-              <span className="live-working">
-                {avatar.working_on.map((key) => (
-                  <button type="button" key={key} className="live-task-chip" onClick={() => void openCard(key)}>
-                    {cards[key]?.title ?? key}
-                  </button>
-                ))}
-              </span>
-            )}
-          </div>
-        ))}
-        {roster.folded > 0 && (
-          <button type="button" className="live-fold" onClick={() => setShowAllAgents(true)}>
-            +{roster.folded} {t("offline agents")}
-          </button>
-        )}
-        {showAllAgents && Object.keys(agents).length > AGENT_FOLD_ABOVE && (
-          <button type="button" className="live-fold" onClick={() => setShowAllAgents(false)}>
-            {t("Fold offline agents")}
-          </button>
-        )}
-      </section>
-
-      <div className="live-columns">
-        {COLUMNS.map((column) => {
-          const list = byColumn[column];
-          const open = unfolded[column] || list.length <= COLUMN_FOLD_ABOVE;
-          const visible = open ? list : list.slice(0, COLUMN_FOLD_ABOVE);
-          return (
-            <section key={column} className={`card live-column column-${column}`} ref={register(`column:${column}`)}>
-              <div className="card-head compact">
-                <h2>{t(COLUMN_LABEL[column])}</h2>
-                <span className="count-chip">{list.length}</span>
-              </div>
-              <div className="live-cards">
-                {visible.map((card) => {
-                  const face = card.holder_agent ?? card.owner_agent;
-                  const holder = face ? agents[face] : undefined;
-                  return (
-                    <button
-                      type="button"
-                      key={card.task_key}
-                      ref={register(`card:${card.task_key}`)}
-                      className={`live-card ${pulses[`card:${card.task_key}`] ? `pulse-${pulses[`card:${card.task_key}`]}` : ""}`}
-                      onClick={() => void openCard(card.task_key)}
-                    >
-                      <span className="live-card-title">{card.title}</span>
-                      <span className="live-card-meta">
-                        <StatusPill status={card.status} />
-                        {holder ? (
-                          <span className={`live-mini activity-${holder.activity}`} style={{ ["--face-hue" as string]: String(hue(holder.agent_id)) }}>
-                            {monogram(holder.display_name || holder.agent_id)}
-                          </span>
-                        ) : null}
-                        <span className="live-card-owner">{holder?.display_name ?? card.owner ?? "—"}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-                {!open && (
-                  <button type="button" className="live-fold" onClick={() => setUnfolded((items) => ({ ...items, [column]: true }))}>
-                    {t("Show {count} more", { count: String(list.length - COLUMN_FOLD_ABOVE) })}
-                  </button>
-                )}
-                {list.length === 0 && <p className="live-empty">{t("Nothing here")}</p>}
-              </div>
-            </section>
-          );
-        })}
-      </div>
+      <Colony
+        agents={Object.values(agents)}
+        cards={Object.values(cards)}
+        pulses={pulses}
+        motion={motion}
+        register={register}
+        onOpenCard={(key) => void openCard(key)}
+      />
 
       <section className="card live-activity">
         <div className="card-head compact">

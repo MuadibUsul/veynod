@@ -1063,3 +1063,267 @@ button.lin-row:hover {
 .table-wrap {
   overflow-x: auto;
 }
+
+/* ------------------------------------------------------- the colony */
+
+.colony {
+  position: relative;
+  margin-bottom: 20px;
+  border: 1px solid var(--ds-border-subtle);
+  border-radius: 12px;
+  background:
+    radial-gradient(rgba(255, 255, 255, 0.045) 1px, transparent 1px) 0 0 / 22px 22px,
+    var(--ds-surface-subtle);
+  overflow: hidden;
+}
+
+.colony-zone {
+  position: absolute;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.015);
+  pointer-events: none;
+}
+
+.colony-zone.zone-gate {
+  border-color: rgba(249, 112, 102, 0.28);
+  background: rgba(249, 112, 102, 0.04);
+}
+
+.colony-zone.zone-review {
+  border-color: rgba(0, 194, 255, 0.2);
+}
+
+.colony-zone.zone-sleep {
+  border-style: dashed;
+}
+
+.colony-zone-label {
+  position: absolute;
+  left: 10px;
+  top: 6px;
+  font-size: 11px;
+  color: var(--ds-text-muted);
+}
+
+.colony-zone-label em {
+  font-style: normal;
+  color: var(--ds-text-secondary);
+}
+
+.colony-card {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 13%;
+  display: grid;
+  gap: 2px;
+  padding: 6px 10px;
+  border: 1px solid var(--ds-border-default);
+  border-radius: 8px;
+  background: var(--ds-surface-raised);
+  color: var(--ds-text-primary);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 900ms var(--ds-ease), border-color 300ms var(--ds-ease), box-shadow 300ms var(--ds-ease);
+  z-index: 1;
+}
+
+.colony-card:hover {
+  border-color: rgba(255, 255, 255, 0.24);
+}
+
+.colony-card.zone-review,
+.colony-card.zone-gate {
+  width: 19%;
+}
+
+.colony-card.zone-gate {
+  border-color: rgba(249, 112, 102, 0.45);
+}
+
+.colony-card.small {
+  width: 11%;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.colony-card.zone-shelf {
+  border-color: rgba(71, 205, 137, 0.3);
+}
+
+.colony-card-title {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.colony-card-key {
+  font: 400 10px/14px var(--ds-font-mono);
+  color: var(--ds-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.colony-card[class*="pulse-"] {
+  border-color: rgba(0, 194, 255, 0.7);
+  box-shadow: 0 0 0 3px rgba(0, 194, 255, 0.15);
+}
+
+.critter {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  width: 64px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  transition: transform 1600ms cubic-bezier(0.45, 0.05, 0.35, 1);
+}
+
+.critter:focus-visible {
+  outline: 2px solid var(--il-accent);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+.critter-body {
+  display: block;
+  transform-origin: 50% 100%;
+}
+
+.critter.left .critter-body {
+  transform: scaleX(-1);
+}
+
+.critter-svg .foot,
+.critter-svg .arm,
+.critter-svg .eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.critter-svg .eyes {
+  animation: critter-blink 4.6s infinite;
+  animation-delay: var(--blink-delay, 0s);
+}
+
+.critter-name {
+  margin-top: -2px;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--ds-text-secondary);
+}
+
+.critter-bubble {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 20px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+.critter-bubble.alert { background: #f97066; color: #1a0d0b; }
+.critter-bubble.talk { background: #f2f4f7; color: #0b0f14; }
+.critter-bubble.hello { background: #47cd89; color: #0b1a12; }
+.critter-bubble.zz { background: none; color: var(--ds-text-muted); font-weight: 500; letter-spacing: 2px; }
+
+/* Walking: a bob and alternating feet while the move lasts. */
+.critter.walking .critter-body svg { animation: critter-bob 320ms ease-in-out infinite; }
+.critter.walking .foot.l { animation: critter-step 320ms ease-in-out infinite; }
+.critter.walking .foot.r { animation: critter-step 320ms ease-in-out infinite reverse; }
+
+/* Idle: breathing. */
+.critter.mode-idle:not(.walking) .critter-body svg { animation: critter-breathe 3.2s ease-in-out infinite; }
+
+/* Working: hands on the keys. */
+.critter.mode-working:not(.walking) .arm.l { animation: critter-type 260ms ease-in-out infinite alternate; }
+.critter.mode-working:not(.walking) .arm.r { animation: critter-type 260ms ease-in-out infinite alternate-reverse; }
+
+/* Reviewing: a slow, thoughtful sway. */
+.critter.mode-reviewing:not(.walking) .critter-body svg { animation: critter-sway 2.8s ease-in-out infinite; }
+
+/* Waiting for a person: a raised hand and a small hop. */
+.critter.mode-asking .arm.r { transform: translate(3px, -13px) rotate(-28deg); }
+.critter.mode-asking:not(.walking) .critter-body svg { animation: critter-hop 1.4s ease-in-out infinite; }
+
+/* Asleep: sitting low, dimmed, z floating up. */
+.critter.mode-asleep { opacity: 0.55; }
+.critter.mode-asleep .critter-body svg { transform: scaleY(0.9); transform-origin: 50% 100%; }
+.critter.mode-asleep .critter-bubble.zz { animation: critter-zz 2.6s ease-in-out infinite; }
+.critter.unwakeable { filter: grayscale(1); }
+
+@keyframes critter-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.1); } }
+@keyframes critter-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+@keyframes critter-step { 0%, 100% { transform: translateY(0) rotate(0); } 50% { transform: translateY(-3px) rotate(-12deg); } }
+@keyframes critter-breathe { 0%, 100% { transform: scaleY(1); } 50% { transform: scaleY(0.975); } }
+@keyframes critter-type { from { transform: translateY(0); } to { transform: translateY(-3px); } }
+@keyframes critter-sway { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(-4deg); } }
+@keyframes critter-hop { 0%, 70%, 100% { transform: translateY(0); } 80% { transform: translateY(-5px); } }
+@keyframes critter-zz { 0% { opacity: 0; transform: translate(-50%, 4px); } 30% { opacity: 1; } 100% { opacity: 0; transform: translate(-30%, -10px); } }
+
+.colony.still .critter,
+.colony.still .colony-card { transition: none; }
+.colony.still *,
+.colony.still .critter-svg .eyes { animation: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .critter,
+  .colony-card { transition: none; }
+  .colony * { animation: none !important; }
+}
+
+/* The space's header and feed, quieter. */
+.live-head {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  margin: 8px 0 12px;
+}
+
+.live-head h2 {
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.live-head p {
+  font-size: 13px;
+  color: var(--ds-text-muted);
+}
+
+.live-activity {
+  border-color: var(--ds-border-subtle);
+}
+
+.critter.mode-asleep { width: 38px; }
+.critter.mode-asleep .critter-name { display: none; }
+.critter.mode-asleep .critter-bubble.zz { top: -10px; font-size: 9px; }
+.critter.mode-asleep:hover .critter-name,
+.critter.mode-asleep:focus-visible .critter-name {
+  display: block;
+  position: absolute;
+  top: 100%;
+  z-index: 3;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #0b0f14;
+}
+.critter.mode-asleep { opacity: 0.6; }

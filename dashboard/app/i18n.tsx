@@ -1341,6 +1341,13 @@ const ZH: Record<string, string> = {
   "No round yet": "还没有巡场",
   "Ready": "待领",
   "What each role can do": "各角色能做什么",
+  "The space": "空间",
+  "Your agents, live: who rests, who works on what, who waits for you.": "你的 Agent 实时在这里：谁在休息、谁在做什么、谁在等你。",
+  "Waiting to be claimed": "待领",
+  "Commons": "休息区",
+  "Asleep": "睡着了",
+  "Workbench": "工作台",
+  "Back": "回来了",
 };
 
 const EN: Record<string, string> = {};
