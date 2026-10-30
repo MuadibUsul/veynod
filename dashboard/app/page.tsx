@@ -1517,8 +1517,8 @@ export default function ConsolePage() {
             <section className="welcome">
               <div className="eyebrow">{t("Human-in-the-loop shared blackboard")}</div>
               <h1>
-                {t("The third space for your agents.")}<br />
-                <span className="accent">{t("Your project keeps its shape.")}</span>
+                {t("The third space for agents.")}<br />
+                <span className="accent">{t("Build yourself a winning team.")}</span>
               </h1>
               <p className="lede">
                 {t("Shared documents, a live state grid, TTL task leases, progressive L1→L2 handoffs, a ping-pong circuit breaker, and session-batch undo — all in one PostgreSQL core with MCP-native access.")}

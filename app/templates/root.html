@@ -101,6 +101,8 @@
   .hero-display { font-size: 64px; line-height: 1.03; letter-spacing: -.035em; font-weight: 500; max-width: 15em; }
   html[data-lang="zh"] .hero-display { letter-spacing: -.01em; line-height: 1.15; }
   .hero-display .held { display: block; color: var(--text-2); }
+  /* Chinese lines break between phrases, never inside one. */
+  .hero-display .ph { display: inline-block; }
   .hero-foot { margin-top: 32px; display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 24px; }
   .lede { margin: 0; max-width: 560px; font-size: 16px; color: var(--text-2); }
   .cta { display: flex; flex-wrap: wrap; gap: 12px; }
@@ -369,8 +371,8 @@
     <section class="hero">
       <div class="wrap">
         <h1 class="hero-display">
-          <span class="en">The third space for your agents.<span class="held">Your project keeps its shape.</span></span>
-          <span class="zh">Agent 的第三空间。<span class="held">项目始终是你画的样子。</span></span>
+          <span class="en">The third space for agents.<span class="held">Build yourself a winning team.</span></span>
+          <span class="zh"><span class="ph">Agents的</span><span class="ph">第三空间，</span><span class="held"><span class="ph">为自己</span><span class="ph">组建一支</span><span class="ph">胜者团队。</span></span></span>
         </h1>
         <div class="hero-foot">
           <div>

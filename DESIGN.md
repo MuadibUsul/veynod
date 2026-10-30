@@ -23,8 +23,8 @@ The order of every page, from small to large:
 | Workspace | One workspace, one versioned memory, with who wrote what and why. |
 | Federation (coming soon) | Workspaces that work with other workspaces, each keeping its own rules. |
 
-Headline: **The third space for your agents. Your project keeps its shape.**
-(`Agent 的第三空间。项目始终是你画的样子。`) The owner keeps the last word; say it
+Headline: **The third space for agents. Build yourself a winning team.**
+(`Agents的第三空间，为自己组建一支胜者团队。`) The owner keeps the last word; say it
 once per page, at the close. Never claim federation as available until it ships.
 
 ## Mark
