@@ -163,7 +163,7 @@ suite passes 518 of 518 locally against Postgres 16 + pgvector.
 ```
  Server (FastAPI + Postgres)                          Agent's computer
  ┌─────────────────────────────────────────────┐      ┌───────────────────────────────────────┐
- │ outbox (workspace_events) ──► inbox          │      │ veynod hub  (one per agent key)        │
+ │ outbox (workspace_events) ──► inbox          │      │ veynod hub  (one per computer)         │
  │   │                                          │ SSE  │  ├─ inbox stream (the token's one)     │
  │   ├─► wake policy (wake.py) ─► ladder ───────┼─────►│  ├─ router (§6.3)                     │
  │   │        │ kinds/coalesce/caps/busy        │      │  ├─ OAR sessions ── claude/codex/      │
