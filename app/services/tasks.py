@@ -1194,13 +1194,16 @@ async def _deploy_evidence_for_done(
 ) -> dict[str, Any] | bool | None:
     """Does an agent's DONE need a verified deploy, and is there one?
 
-    Under full automation a code task (one naming a repo) on the board
-    workspace the deploy gate ships is DONE only once a deploy that carried it
-    passed its smoke test (Loop A-03). Returns None when no deploy is needed,
-    the evidence when it exists, and False when it is still missing.
+    Loop A-03 held such a DONE until a deploy that carried the task passed its
+    smoke test. It is off by default since 2026-10-29 (DEPLOY_EVIDENCE_REQUIRED):
+    the deploy gate is off the task path and a merged pull request finishes a
+    task. Returns None when no deploy is needed, the evidence when it exists,
+    and False when it is still missing.
     """
     from app.services import deploy_gate
 
+    if not settings.deploy_evidence_required:
+        return None
     if not task.repo or not deploy_gate.governs(principal.workspace.id):
         return None
     if await automation.current_mode(session, principal.workspace.id) != "full":
