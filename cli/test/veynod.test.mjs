@@ -14,7 +14,9 @@ import {
   claudeDesktopEntry,
   configureClaudeCode,
   cursorEntry,
+  isNpxCachePath,
   makeKeyPair,
+  manualCommand,
   mergeServer,
   openSealed,
   parseArgs,
@@ -257,4 +259,21 @@ test("listen hands direct messages to the hook, not only pokes", async () => {
   assert.equal(got.length, 1);
   assert.equal(got[0].kind, "message.sent");
   assert.equal(got[0].message.conv_key, "dm_1");
+});
+
+test("a service is never pointed into the npx cache", () => {
+  assert.equal(isNpxCachePath(String.raw`C:\Users\me\AppData\Local\npm-cache\_npx\a6fe6d\node_modules\veynod\bin\veynod.mjs`), true);
+  assert.equal(isNpxCachePath("/home/me/.npm/_npx/abc/node_modules/veynod/bin/veynod.mjs"), true);
+  assert.equal(isNpxCachePath(String.raw`C:\Users\me\AppData\Roaming\npm\node_modules\veynod\bin\veynod.mjs`), false);
+  assert.equal(isNpxCachePath("/usr/local/lib/node_modules/veynod/bin/veynod.mjs"), false);
+});
+
+test("a blocked service command is printed so it can be run by hand", () => {
+  const launcher = String.raw`C:\Users\me\.veynod\veynod-hub.vbs`;
+  const line = manualCommand("schtasks", ["/Create", "/TN", "VeynodHub",
+    "/TR", `wscript.exe //B //Nologo "${launcher}"`, "/F"]);
+  assert.match(line, /^schtasks \/Create \/TN VeynodHub /);
+  assert.ok(line.includes(`/TR "wscript.exe //B //Nologo ""${launcher}"""`));
+  assert.ok(line.endsWith(" /F"));
+  assert.equal(manualCommand("systemctl", ["--user", "daemon-reload"]), "systemctl --user daemon-reload");
 });

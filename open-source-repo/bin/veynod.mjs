@@ -34,7 +34,7 @@ import { dirname, join, posix } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-export const VERSION = "0.5.0";
+export const VERSION = "0.5.1";
 const SEAL_INFO = Buffer.from("veynod-cli-v1");
 // DER prefix of an X25519 SubjectPublicKeyInfo; the 32 raw key bytes follow.
 const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
@@ -1059,6 +1059,18 @@ async function service(options) {
   return applyServicePlan(plan, action, { dryRun: options.dryRun });
 }
 
+/** True when this copy is running out of npm's throwaway npx cache. */
+export function isNpxCachePath(script) {
+  return /[\\/]_npx[\\/]/.test(String(script)) || /[\\/]npm-cache[\\/]_npx[\\/]/.test(String(script));
+}
+
+/** A failed plan command, quoted so it can be pasted into cmd.exe and run by hand. */
+export function manualCommand(command, args) {
+  return [command, ...args]
+    .map((word) => (/[\s"]/.test(word) ? `"${word.replace(/"/g, '""')}"` : word))
+    .join(" ");
+}
+
 /** Writes a service plan's files and runs its commands (or prints them for --dry-run). */
 export function applyServicePlan(plan, action, { dryRun = false } = {}) {
   if (dryRun) {
@@ -1081,7 +1093,18 @@ export function applyServicePlan(plan, action, { dryRun = false } = {}) {
       const benign = action === "install" && args[0] === "unload";
       if (!benign) {
         failed += 1;
-        process.stderr.write(`  ${red("✗")} ${command} ${args.join(" ")}: ${error.message.split("\n")[0]}\n`);
+        // EPERM means the child never started: on Windows that is a local
+        // security agent refusing to let node spawn it, not a bad command. A
+        // raw "spawnSync schtasks EPERM" leaves the user with nothing to do, so
+        // say what happened and print the command to run by hand.
+        if (error.code === "EPERM" && process.platform === "win32") {
+          process.stderr.write(`  ${red("✗")} ${command} ${args.join(" ")}: blocked before it ran `
+            + "(local security software refuses to let node start it)\n");
+          process.stderr.write(`      Run it yourself in cmd.exe:\n`);
+          process.stderr.write(`        ${manualCommand(command, args)}\n`);
+        } else {
+          process.stderr.write(`  ${red("✗")} ${command} ${args.join(" ")}: ${error.message.split("\n")[0]}\n`);
+        }
       }
     }
   }
@@ -1194,7 +1217,17 @@ async function up(options) {
     slots: options.slots, repos: options.repos, identities });
   out();
   let serviceInstalled;
-  if (options.service) {
+  if (options.service && isNpxCachePath(script)) {
+    // A service pointed into npm's npx cache breaks the first time npm cleans
+    // it, and it breaks silently (the launcher just restarts a missing file).
+    out();
+    out(`  ${red("✗")} The hub service was not installed: this copy runs from the npx cache,`);
+    out(`      which npm may clean at any time. Install it once, then run this again:`);
+    out(`        ${bold("npm install -g veynod")}`);
+    out(`        ${bold("veynod up --run-tasks --repo owner/name")}`);
+    out(`      ${dim("The identities approved above are kept, so this does not ask again.")}`);
+    serviceInstalled = () => false;
+  } else if (options.service) {
     const installed = applyServicePlan(service, "install") === 0;
     serviceInstalled = () => installed && service.files.every((file) => existsSync(file.path));
   } else {
