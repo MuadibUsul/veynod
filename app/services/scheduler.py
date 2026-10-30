@@ -893,6 +893,73 @@ async def _supervise(session: AsyncSession, workspace_id: Any, hosts: list[dict[
     return 1
 
 
+# ------------------------------------------------------------------ doctor
+
+
+async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
+    """What the Loop needs and what is missing, one check per line in words the
+    owner can act on (WAKE_AND_DISPATCH S-9). It answers with no hosts at all,
+    which is exactly when it is needed."""
+    workspace_id = principal.workspace.id
+    now = _now()
+    mode = await automation.current_mode(session, workspace_id)
+    hosts = [host for host in await _hosts(session, workspace_id) if host["status"] != "revoked"]
+    online = _online(hosts, now)
+    ready = [host for host in online
+             if (quota_used(host) or 0) < settings.runner_quota_exhausted_percent]
+    builders = [host for host in ready if host["role_scope"] == "EXECUTOR"]
+    reviewers = [host for host in ready if _reviewer(host)]
+    supervisors = [host for host in ready if _supervisor(host)]
+    checks: list[dict[str, Any]] = []
+
+    def check(check_id: str, ok: bool, required: bool, text: str, fix: str | None) -> None:
+        checks.append({"id": check_id, "ok": ok, "required": required, "text": text,
+                       "fix": None if ok else fix})
+
+    check("automation", mode == "full", True,
+          f"Automation is {mode}." + (" The Loop assigns work." if mode == "full"
+                                     else " The Loop only suggests computers."),
+          "Set automation to full in Governance so the Loop assigns work.")
+    check("hosts", bool(online), True,
+          f"{len(online)} of {len(hosts)} computer(s) online." if hosts
+          else "No computer is connected.",
+          "Run `npx veynod up --run-tasks` on a computer.")
+    check("builder", bool(builders), True,
+          f"{len(builders)} computer(s) can build (EXECUTOR) with quota left." if builders
+          else "No online computer can build tasks.",
+          "Connect a computer with `npx veynod up --run-tasks`.")
+    check("reviewer", bool(reviewers), True,
+          f"{len(reviewers)} computer(s) can review." if reviewers
+          else "No online computer can review, so built work waits in review.",
+          "Approve the `-review` identity when `veynod up --run-tasks` asks, or connect an "
+          "AUDITOR computer.")
+    check("supervisor", bool(supervisors), False,
+          "A supervisor computer looks after the Loop." if supervisors
+          else "No supervisor computer: stuck work is listed for you instead.",
+          "Optional: `npx veynod up --supervisor` on one computer.")
+    waiting = (await session.execute(select(CollabTask).where(
+        CollabTask.workspace_id == workspace_id, CollabTask.status == TaskStatus.READY,
+        CollabTask.assignee.is_(None), CollabTask.claimed_by.is_(None),
+        (CollabTask.kind.is_(None)) | (CollabTask.kind == "work")).limit(500))).scalars().all()
+    reach = {repo.lower() for host in builders for repo in host["repos"] or []}
+    uncovered = sorted({task.repo for task in waiting
+                        if task.repo and task.repo.lower() not in reach})
+    check("repos", not uncovered, False,
+          "Every waiting task's repository is on an online computer." if not uncovered
+          else f"No online computer works on {', '.join(uncovered[:5])}.",
+          "Add the repository with `npx veynod up --run-tasks --repo owner/name`.")
+    needs_you = (await session.execute(text(
+        "SELECT count(*) FROM runner_placements WHERE workspace_id = :ws AND status = 'unplaced' "
+        "AND reason <> ALL(CAST(:quiet AS text[]))"),
+        {"ws": workspace_id, "quiet": sorted(SELF_RESOLVING)})).scalar_one()
+    check("needs_you", not needs_you, False,
+          "Nothing waits for you on the Loop." if not needs_you
+          else f"{needs_you} task(s) or step(s) have no computer; the Loop page says why.",
+          "Open the Loop page (Needs you).")
+    return {"ok": all(item["ok"] or not item["required"] for item in checks), "mode": mode,
+            "ready_tasks": len(waiting), "checks": checks}
+
+
 # ------------------------------------------------------------------ reading
 
 

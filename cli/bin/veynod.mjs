@@ -238,10 +238,11 @@ export function configureClaudeCode(
 
 // -------------------------------------------------------------------- http
 
-async function call(host, path, body) {
+async function call(host, path, body, key = "") {
   const response = await fetch(new URL(path, host), {
     method: "POST",
-    headers: { "Content-Type": "application/json", "User-Agent": `veynod-cli/${VERSION}` },
+    headers: { "Content-Type": "application/json", "User-Agent": `veynod-cli/${VERSION}`,
+      ...(key ? { Authorization: `Bearer ${key}` } : {}) },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(20000),
   });
@@ -315,6 +316,10 @@ export function parseArgs(argv) {
     repos: (process.env.VEYNOD_REPOS || "").split(",").map((item) => item.trim()).filter(Boolean),
     diskMb: Number(process.env.VEYNOD_DISK_MB) || 5120,
     gitBase: process.env.VEYNOD_GIT_BASE || "https://github.com/",
+    runTasks: false,
+    yes: false,
+    name: "",
+    fresh: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -343,6 +348,10 @@ export function parseArgs(argv) {
     else if (arg === "--repo") options.repos.push(...value().split(",").map((item) => item.trim()).filter(Boolean));
     else if (arg === "--disk-mb") options.diskMb = Number(value());
     else if (arg === "--git-base") options.gitBase = value();
+    else if (arg === "--run-tasks") options.runTasks = true;
+    else if (arg === "--yes" || arg === "-y") options.yes = true;
+    else if (arg === "--name") options.name = value();
+    else if (arg === "--fresh") options.fresh = true;
     else if (!arg.startsWith("-") && !options.command) options.command = arg;
     else if (!arg.startsWith("-") && options.command === "service" && !options.subcommand) {
       options.subcommand = arg;
@@ -369,6 +378,14 @@ export function parseArgs(argv) {
 const HELP = `${bold("veynod")} ${VERSION}: put your coding agents on a Veynod board
 
 ${bold("Usage")}
+  npx veynod up [--run-tasks] [--repo owner/name,...] [--runtime claude|codex|custom]
+                [--slots N] [--name NAME] [--client ...] [--host URL] [--yes] [--fresh] [--dry-run]
+      One command: connects this computer (one console approval per identity),
+      wires your MCP clients, installs the hub service and runs the doctor.
+  veynod hub      The service up installs: every identity in ~/.veynod/config.json,
+                  one stream each, as runners with --run-tasks, else as listeners.
+  veynod doctor   What is missing on this computer and on the board, with the fix.
+
   npx veynod init [--client claude-code,cursor,claude-desktop,print] [--host URL] [--no-open]
 
   npx veynod listen [--exec CMD] [--key KEY | --key-file PATH] [--host URL] [--once]
@@ -440,20 +457,12 @@ function openBrowser(url) {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function init(options) {
-  const out = (line = "") => process.stdout.write(`${line}\n`);
-  out();
-  out(`  ${violet("◆")} ${bold("Veynod")} ${dim(`init · ${options.host}`)}`);
-  out();
-
-  const detected = detectClients();
-  const clients = selectedClients(options.clients, detected);
-  out(`  ${dim("Clients")}  ${clients.join(", ")}${options.clients.length ? "" : dim("  (found on this computer)")}`);
-
+/** The console's device flow: a code you approve, a key sealed to this terminal. */
+export async function connect(options, { clients = [], label = hostname(), out = () => {} } = {}) {
   const { privateKey, publicRaw } = makeKeyPair();
   const started = await call(options.host, "/v1/auth/cli/sessions", {
     public_key: publicRaw.toString("base64"),
-    client_label: hostname().slice(0, 64),
+    client_label: String(label).slice(0, 64),
     clients: clients.map((item) => (item === "print" ? "other" : item)),
   });
   const link = `${options.host}/dashboard/cli/?code=${encodeURIComponent(started.user_code)}`;
@@ -484,12 +493,15 @@ async function init(options) {
     if (polled.status === "expired") break;
   }
   if (process.stdout.isTTY) process.stdout.write("\r\x1b[2K");
-  if (!approved) throw new Error("the code expired before it was approved; run npx veynod init again");
+  if (!approved) throw new Error("the code expired before it was approved; run the command again");
 
   const key = openSealed(approved.sealed_key, privateKey, publicRaw);
   const mcpUrl = new URL(approved.mcp_path || "/mcp/", options.host).href;
-  out(`  ${green("✓")} Approved: ${bold(approved.agent_signature)} in ${bold(approved.workspace.name)}`);
+  return { key, approved, mcpUrl };
+}
 
+/** Adds Veynod with this key to each MCP client; returns what was configured. */
+export function wireClients(clients, mcpUrl, key, out = () => {}) {
   const configured = [];
   for (const client of clients) {
     try {
@@ -511,6 +523,22 @@ async function init(options) {
     }
   }
   for (const item of configured) out(`  ${green("✓")} Configured ${item}`);
+  return configured;
+}
+
+async function init(options) {
+  const out = (line = "") => process.stdout.write(`${line}\n`);
+  out();
+  out(`  ${violet("◆")} ${bold("Veynod")} ${dim(`init · ${options.host}`)}`);
+  out();
+
+  const detected = detectClients();
+  const clients = selectedClients(options.clients, detected);
+  out(`  ${dim("Clients")}  ${clients.join(", ")}${options.clients.length ? "" : dim("  (found on this computer)")}`);
+
+  const { key, approved, mcpUrl } = await connect(options, { clients, label: hostname(), out });
+  out(`  ${green("✓")} Approved: ${bold(approved.agent_signature)} in ${bold(approved.workspace.name)}`);
+  const configured = wireClients(clients, mcpUrl, key, out);
 
   try {
     await verify(mcpUrl, key);
@@ -736,7 +764,14 @@ const SERVICE_NAMES = {
     title: "Veynod listen: keep this agent online and receive pokes" },
   runner: { unit: "veynod-runner", label: "com.veynod.runner", task: "VeynodRunner", log: "runner.log",
     title: "Veynod runner: run agents for the board on this computer" },
+  hub: { unit: "veynod-hub", label: "com.veynod.hub", task: "VeynodHub", log: "hub.log",
+    title: "Veynod hub: this computer's agents on the board (veynod up)" },
 };
+
+/** The hub reads its identities from ~/.veynod/config.json. */
+export function hubArguments({ script }) {
+  return [script, "hub"];
+}
 
 export function servicePlan(action, {
   os = platform(),
@@ -752,9 +787,10 @@ export function servicePlan(action, {
 } = {}) {
   // --exec runs from the directory install ran in, so relative hooks resolve.
   const names = SERVICE_NAMES[mode];
-  const args = mode === "runner"
-    ? runnerArguments({ script, host, keyFile, exec, ...runner })
-    : listenArguments({ script, host, keyFile, exec });
+  const args = mode === "hub" ? hubArguments({ script })
+    : mode === "runner"
+      ? runnerArguments({ script, host, keyFile, exec, ...runner })
+      : listenArguments({ script, host, keyFile, exec });
   const stateDir = os === "win32" ? join(home, ".veynod") : posix.join(home, ".veynod");
   const log = os === "win32" ? join(stateDir, names.log) : posix.join(stateDir, names.log);
   const plan = { os, files: [], remove: [], commands: [], notes: [] };
@@ -997,7 +1033,12 @@ async function service(options) {
     plan.notes.unshift("This copy runs from the npx cache, which can be cleaned: install it first with "
       + "`npm install -g veynod`, then run `veynod service install` again.");
   }
-  if (options.dryRun) {
+  return applyServicePlan(plan, action, { dryRun: options.dryRun });
+}
+
+/** Writes a service plan's files and runs its commands (or prints them for --dry-run). */
+export function applyServicePlan(plan, action, { dryRun = false } = {}) {
+  if (dryRun) {
     for (const file of plan.files) print(`${bold("write")} ${file.path}\n${file.content}`);
     for (const path of plan.remove) print(`${bold("remove")} ${path}`);
     for (const command of plan.commands) print(`${bold("run")} ${command.join(" ")}`);
@@ -1033,6 +1074,84 @@ async function service(options) {
     for (const note of plan.notes) print(dim(`  ${note}`));
   }
   return failed ? 1 : 0;
+}
+
+// --------------------------------------------------------------------- up
+
+function ask(question) {
+  return new Promise((resolve) => {
+    process.stdout.write(question);
+    process.stdin.setEncoding("utf8");
+    process.stdin.once("data", (data) => {
+      process.stdin.pause();
+      resolve(String(data).trim().toLowerCase());
+    });
+  });
+}
+
+function printChecks(checks) {
+  for (const item of checks) {
+    const mark = item.ok ? green("✓") : item.required ? red("✗") : violet("!");
+    print(`${mark} ${item.text}${item.ok || !item.fix ? "" : dim(`  → ${item.fix}`)}`);
+  }
+}
+
+/** veynod up: connect this computer, wire its agents, install the hub, run the doctor. */
+async function up(options) {
+  const { doctor, doctorOk, loadConfig, saveConfig, storeKey, upPlan } = await import("./up.mjs");
+  const out = (line = "") => process.stdout.write(`${line}\n`);
+  out();
+  out(`  ${violet("◆")} ${bold("Veynod")} ${dim(`up · ${options.host}`)}`);
+  const clients = selectedClients(options.clients, detectClients());
+  if (!options.runTasks && !options.yes && process.stdin.isTTY && !options.dryRun) {
+    const answer = await ask("  Let this computer run board tasks unattended? (y/N) ");
+    options.runTasks = answer === "y" || answer === "yes";
+  }
+  const plan = upPlan(options, { clients });
+  const script = fileURLToPath(import.meta.url);
+  const service = servicePlan("install", { host: options.host, script, mode: "hub" });
+  if (options.dryRun) {
+    out(JSON.stringify({ ...plan, service: { files: service.files.map((file) => file.path),
+      commands: service.commands } }, null, 2));
+    return 0;
+  }
+  const previous = loadConfig();
+  const identities = [];
+  for (const wanted of plan.identities) {
+    const kept = !options.fresh && previous?.host === options.host
+      && previous.identities?.find((item) => item.role === wanted.role && existsSync(item.key_file));
+    if (kept) {
+      out(`  ${green("✓")} ${kept.agent_id} is already connected`);
+      identities.push(kept);
+      continue;
+    }
+    out();
+    out(`  ${bold(wanted.label)}: ${wanted.why}.`);
+    out(`  In the console, approve it with role ${bold(wanted.wants_role)}.`);
+    const { key, approved, mcpUrl } = await connect(options, {
+      clients: wanted.role === "computer" ? clients : [], label: wanted.label, out });
+    const agentId = approved.agent_signature;
+    identities.push({ role: wanted.role, agent_id: agentId, key_file: storeKey(agentId, key),
+      workspace: approved.workspace?.name ?? null });
+    out(`  ${green("✓")} Approved: ${bold(agentId)} in ${bold(approved.workspace?.name ?? "the workspace")}`);
+    if (wanted.role === "computer") wireClients(clients, mcpUrl, key, out);
+    try {
+      await call(options.host, "/v1/agents/register", { agent_id: agentId,
+        capabilities: wanted.role === "review" ? ["review"] : [options.runtime] }, key);
+    } catch {
+      // already registered, or registration is not open to this token
+    }
+  }
+  saveConfig({ host: options.host, run_tasks: plan.run_tasks, runtime: options.runtime, exec: options.exec,
+    slots: options.slots, repos: options.repos, identities });
+  out();
+  const installed = applyServicePlan(service, "install") === 0;
+  out();
+  out(`  ${bold("Doctor")}`);
+  const checks = await doctor({ serviceInstalled: () => installed && service.files.every((file) => existsSync(file.path)) });
+  printChecks(checks);
+  out();
+  return doctorOk(checks) ? 0 : 1;
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -1071,6 +1190,24 @@ export async function main(argv = process.argv.slice(2)) {
       const { runRunner } = await import("./runner.mjs");
       const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
       return await runRunner(options, { follow, version: VERSION, say });
+    } catch (error) {
+      process.stderr.write(`\n  ${red("✗")} ${error.message}\n\n`);
+      return 1;
+    }
+  }
+  if (["up", "hub", "doctor"].includes(options.command) && !options.help) {
+    try {
+      if (options.command === "up") return await up(options);
+      const hubModule = await import("./up.mjs");
+      if (options.command === "doctor") {
+        const checks = await hubModule.doctor();
+        printChecks(checks);
+        return hubModule.doctorOk(checks) ? 0 : 1;
+      }
+      const { runRunner } = await import("./runner.mjs");
+      const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
+      return await hubModule.runHub(options, { follow, listen: (opts) => listen(opts), runRunner,
+        version: VERSION, say });
     } catch (error) {
       process.stderr.write(`\n  ${red("✗")} ${error.message}\n\n`);
       return 1;
