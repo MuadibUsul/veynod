@@ -29,6 +29,29 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.24.0",
+        "date": "2026-10-31",
+        "summary": "The Loop becomes the engine's dashboard, the diagram shows what it is "
+        "doing, and a diagram sets how far the Loop may go on it.",
+        "highlights": [
+            "`GET /v1/loop/overview` reads the engine in one call: open work grouped as "
+            "planned, approvals waiting on a deploy, tasks waiting on a person, the last 24 "
+            "hours and the latest events. The Loop page is that dashboard and follows the "
+            "stream; the colony and the old live board are gone.",
+            "The diagram carries a live layer (state, who, which computer, how long, what it "
+            "waits for) next to the plan, including plans not drawn yet.",
+            "A diagram sets its own automation mode (schema 3.66, `diagrams.policy`): a careful "
+            "plan can ask at every step while another runs on its own.",
+            "One computer's keys are one workstation with seats (work, review); the agent lists "
+            "leave computers' keys out and the board marks the seats.",
+            "Eight diagram and board fixes from the design round: current block reasons, merges "
+            "that never re-dispatch circuit-broken chunks, no merge without a record, pinned "
+            "downstream docs, review without CI for chunks that run no commands, submission "
+            "with files when there is no repo, MANUAL criteria warnings, and `list_tasks` by "
+            "diagram with next steps.",
+        ],
+    },
+    {
         "version": "3.23.0",
         "date": "2026-10-30",
         "summary": "One command sets up a computer: `npx veynod up` brings up the hub "

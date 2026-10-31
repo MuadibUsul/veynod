@@ -741,7 +741,7 @@ export function CreateTaskModal({
           <label className="field">
             <span>{t("Repository (optional)")}</span>
             <input value={repo} onChange={(e) => setRepo(e.target.value)}
-              placeholder="MuadibUsul/AgentGraph" maxLength={256} />
+              placeholder="MuadibUsul/veynod" maxLength={256} />
           </label>
         </div>
         <label className="field">
