@@ -364,7 +364,7 @@ async def process_deliveries(session: AsyncSession) -> int:
             secret=rule.secret,
             event_name=event_type(body),
             idempotency_key=f"ag-{delivery.id}",
-            headers={"X-AgentGraph-Event-Seq": str(event.seq or "")},
+            headers={"X-Veynod-Event-Seq": str(event.seq or "")},
         )
         delivery.attempts += 1
         delivery.response_status = result.status_code

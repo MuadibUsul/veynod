@@ -309,7 +309,7 @@ async def set_wake_url(session: AsyncSession, principal: Principal,
     await session.commit()
     await _announce(principal.workspace.id)
     return {"wake_url": url, "webhook_id": str(rule.id), "secret": secret,
-            "signature": "X-AgentGraph-Signature = hex HMAC-SHA256(secret, "
-                         "f\"{X-AgentGraph-Timestamp}.\" + body)",
+            "signature": "X-Veynod-Signature = hex HMAC-SHA256(secret, "
+                         "f\"{X-Veynod-Timestamp}.\" + body)",
             "fires": "only while you have no open inbox stream",
             "retries": "30 s, 120 s, 600 s, then DEAD (see get_poke_receipts)"}

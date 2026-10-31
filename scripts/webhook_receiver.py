@@ -57,8 +57,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         body = self.rfile.read(length)
         if not verify(
-            self.headers.get("X-AgentGraph-Timestamp"),
-            self.headers.get("X-AgentGraph-Signature"),
+            self.headers.get("X-Veynod-Timestamp")
+                or self.headers.get("X-AgentGraph-Timestamp"),
+            self.headers.get("X-Veynod-Signature")
+                or self.headers.get("X-AgentGraph-Signature"),
             body,
         ):
             self.send_error(401, "invalid or stale signature")
@@ -70,8 +72,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         record = {
             "received_at": time.time(),
-            "event": self.headers.get("X-AgentGraph-Event"),
-            "delivery": self.headers.get("X-AgentGraph-Delivery"),
+            "event": self.headers.get("X-Veynod-Event")
+                or self.headers.get("X-AgentGraph-Event"),
+            "delivery": self.headers.get("X-Veynod-Delivery")
+                or self.headers.get("X-AgentGraph-Delivery"),
             "payload": event,
         }
         OUTBOX.parent.mkdir(parents=True, exist_ok=True)

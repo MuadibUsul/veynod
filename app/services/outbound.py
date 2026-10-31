@@ -149,17 +149,17 @@ async def send_json(
     body = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
     request_headers = {
         "Content-Type": "application/json",
-        "User-Agent": "AgentGraph-Outbound/3.2",
+        "User-Agent": "Veynod-Outbound/3.2",
         **(headers or {}),
     }
     if idempotency_key:
         request_headers["Idempotency-Key"] = idempotency_key
     if secret:
         timestamp = int(time.time())
-        request_headers["X-AgentGraph-Timestamp"] = str(timestamp)
-        request_headers["X-AgentGraph-Signature"] = signature(secret, timestamp, body)
+        request_headers["X-Veynod-Timestamp"] = str(timestamp)
+        request_headers["X-Veynod-Signature"] = signature(secret, timestamp, body)
     if event_name:
-        request_headers["X-AgentGraph-Event"] = event_name
+        request_headers["X-Veynod-Event"] = event_name
     duration_ms = 0
     try:
         pinned_url, host_header, sni_hostname = await _resolve_pinned(url)

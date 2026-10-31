@@ -310,7 +310,8 @@ app.add_middleware(
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Request-ID", "AgentGraph-Version", "AgentGraph-Build",
+    expose_headers=["X-Request-ID", "Veynod-Version", "Veynod-Build",
+                    "AgentGraph-Version", "AgentGraph-Build",
                     "Idempotent-Replayed", "Retry-After"],
 )
 
