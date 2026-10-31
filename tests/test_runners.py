@@ -247,3 +247,21 @@ async def test_a_computer_is_a_workstation_with_seats_not_an_agent(client):
     drawn = {item["computer_id"]: item for item in board["computers"]}
     assert [seat["seat"] for seat in drawn[desk["computer_id"]]["seats"]] == ["work", "review"]
     assert "token_id" not in json.dumps(board["computers"])
+
+    # Its work seat taken off the Loop: the computer stays, says so, and no longer
+    # counts what only that seat could run.
+    for seat, ready in ((work, True), (review, False)):
+        assert (await client.post("/v1/runner/hello", headers=seat["headers"], json={"host": {
+            **machine, "runtimes": [{"id": "codex", "available": ready}]}})).status_code == 200
+    work_host = next(item["host_id"] for item in listed["items"]
+                     if item["agent_id"] == work["agent_id"])
+    removed = await client.post(f"/v1/runner/hosts/{work_host}/revoke", headers=ws["human"],
+                                json={})
+    assert removed.status_code == 200, removed.text
+    listed = (await client.get("/v1/runner/hosts", headers=ws["human"])).json()
+    assert work["agent_id"] not in {item["agent_id"] for item in listed["items"]}
+    desk = next(item for item in listed["computers"] if item["computer_id"] == desk["computer_id"])
+    assert [(seat["seat"], seat["status"]) for seat in desk["seats"]] == [
+        ("work", "revoked"), ("review", "active")]
+    assert desk["state"] == "online" and desk["max_concurrency"] == 2
+    assert desk["runtimes"] == [{"id": "codex", "available": False}]

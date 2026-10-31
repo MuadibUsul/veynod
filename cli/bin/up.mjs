@@ -14,6 +14,8 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync,
 import { homedir, hostname } from "node:os";
 import { dirname, join } from "node:path";
 
+import { RUNTIME_NAMES, commandWorks } from "./runner.mjs";
+
 export const CONFIG_VERSION = 1;
 const NODE_FOR_OAR = 24;
 
@@ -160,7 +162,7 @@ export async function runHub(options, { follow, listen, runRunner, version, say 
       const stateDir = join(veynodDir(home), "hub", safeName(identity.agent_id));
       const tag = (text) => say(`[${identity.agent_id}] ${text}`);
       if (config.run_tasks) {
-        return runRunner({ host, key, runtime: config.runtime || "claude", exec: config.exec || "",
+        return runRunner({ host, key, runtime: config.runtime || "", exec: config.exec || "",
           slots: config.slots || 1, repos: config.repos || [], diskMb: config.disk_mb || 5120,
           gitBase: config.git_base || "https://github.com/" },
         { follow, version, say: tag, stateDir });
@@ -185,14 +187,8 @@ async function getJson(fetchImpl, url, key) {
   return { status: response.status, data };
 }
 
-const onPath = (run, command, args = ["--version"]) => {
-  try {
-    run(command, args, { stdio: ["ignore", "pipe", "ignore"], timeout: 10_000 });
-    return true;
-  } catch {
-    return false;
-  }
-};
+// Resolved like the runner does, so a Windows npm shim (claude.cmd) counts.
+const onPath = (run, command) => commandWorks(command, { run }) !== null;
 
 /**
  * What is missing on this computer and on the board, one line each:
@@ -240,10 +236,15 @@ export async function doctor({ home = homedir(), config = loadConfig(home), fetc
       roles.has("review") ? "A second identity reviews what this computer builds."
         : "No reviewer identity: a task built here cannot be reviewed here.",
       roles.has("review") ? null : "Run `npx veynod up --run-tasks` again and approve the review code.");
-    const runtime = config.runtime || "claude";
-    const ready = runtime === "custom" ? Boolean(config.exec) : onPath(run, runtime);
-    add("runtime", ready, true, ready ? `${runtime} is installed.` : `${runtime} is not installed or not on PATH.`,
-      ready ? null : `Install ${runtime === "codex" ? "Codex" : "Claude Code"} and sign in.`);
+    // No saved runtime means the hub uses whichever is here.
+    const wanted = config.runtime ? [config.runtime] : ["claude", "codex"];
+    const runtime = config.runtime === "custom" ? "custom" : wanted.find((id) => onPath(run, id));
+    const ready = runtime === "custom" ? Boolean(config.exec) : Boolean(runtime);
+    const named = wanted.map((id) => RUNTIME_NAMES[id] ?? id).join(" or ");
+    add("runtime", ready, true,
+      ready ? `${RUNTIME_NAMES[runtime] ?? runtime} is installed.` : `${named} is not installed or not on PATH.`,
+      ready ? null : `Install ${named} (the command-line tool, not the desktop app) and sign in; `
+        + "run `veynod up` again to see the commands.");
     if ((config.repos || []).length) {
       const git = onPath(run, "git");
       add("git", git, true, git ? "git is installed." : "git is missing.", git ? null : "Install git.");

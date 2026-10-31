@@ -1474,6 +1474,10 @@ const ZH: Record<string, string> = {
   "Pick an option or write an answer.": "选一个选项，或者写下回答。",
   "Answered. The task picks up from here.": "已回答，任务会从这里继续。",
   "Unable to send the answer.": "回答没有发出去。",
+  // What keeps a computer from working (CLI 0.5.2)
+  "Neither Claude Code nor Codex runs on this computer, so it cannot take tasks (the desktop apps do not count). On it, install one and sign in:": "这台电脑上 Claude Code 和 Codex 都运行不了，所以接不了任务（桌面应用不算）。在这台电脑上装一个并登录：",
+  "Its work seat was taken off the Loop, so it cannot build tasks. To connect it again, run on it:": "它的工作座位已被撤下，所以做不了任务。要重新接上，在这台电脑上运行：",
+  "Its review seat was taken off the Loop, so it cannot review here. To connect it again, run on it:": "它的评审座位已被撤下，所以这里评审不了。要重新接上，在这台电脑上运行：",
   // The Loop as the engine's dashboard, the diagram live (v3.24)
   "How far the Loop may go on this diagram": "这张图上 Loop 能自己走多远",
   "Automation for this diagram": "这张图的自动化",

@@ -75,9 +75,14 @@ for the board. It only connects out:
 - Receipts (delivered, accepted, started, finished or failed) go to
   `~/.veynod/runner-receipts.jsonl`.
 
+Without `--runtime` the runner uses whichever of Claude Code and Codex is
+installed: the command-line tool, not the desktop app (`npm install -g
+@anthropic-ai/claude-code` or `npm install -g @openai/codex`, then sign in).
+`veynod up --run-tasks` stops before asking for keys when neither is there.
 `--runtime claude` or `codex` runs through [OAR](https://www.npmjs.com/package/@botiverse/oar)
 when it is installed (Node 24+, quota-aware), else through the runtime's own
-CLI (`claude -p`, `codex exec`). `--runtime custom --exec CMD` runs any command
+CLI (`claude -p`, `codex exec`; on Windows an npm `.cmd` shim is started
+without a shell). `--runtime custom --exec CMD` runs any command
 with the prompt in `VEYNOD_PROMPT`. Repositories are cloned from
 `https://github.com/<owner>/<name>.git` with your own git credentials
 (`--git-base` changes the base).

@@ -6,8 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { Worktrees, adapterFor, claudeMcpConfig, inventory, pinsIdentity, placementOf, promptFor, runRunner,
-  veynodMcpServer } from "../bin/runner.mjs";
+import { Worktrees, adapterFor, chooseRuntime, claudeMcpConfig, commandWorks, installSteps, inventory,
+  pinsIdentity, placementOf, promptFor, resolveCommand, runRunner, shimTarget, veynodMcpServer }
+  from "../bin/runner.mjs";
 import { parseArgs, servicePlan } from "../bin/veynod.mjs";
 
 const git = (args, cwd) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -407,4 +408,102 @@ test("hello says whether the runner pins its MCP identity", async () => {
   const hello = fake.calls.find((call) => call.path === "/v1/runner/hello");
   assert.deepEqual(hello.body.host.capabilities_report, { mcp_pinning: true, runtime: "custom" });
   assert.deepEqual(Object.keys(hello.body), ["host"], "nothing outside host: the hello schema is strict");
+});
+
+// ------------------------------------------------------------------ runtimes (0.5.2)
+
+const CMD_SHIM = `@ECHO off
+GOTO start
+:find_dp0
+SET dp0=%~dp0
+EXIT /b
+:start
+SETLOCAL
+CALL :find_dp0
+
+IF EXIST "%dp0%\\node.exe" (
+  SET "_prog=%dp0%\\node.exe"
+) ELSE (
+  SET "_prog=node"
+  SET PATHEXT=%PATHEXT:;.JS;=;%
+)
+
+endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*
+`;
+
+test("an npm .cmd shim on Windows runs its script with Node, no shell", () => {
+  assert.equal(shimTarget(CMD_SHIM, "C:\\Users\\me\\AppData\\Roaming\\npm"),
+    "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js");
+  assert.equal(shimTarget("@echo off\r\nsomething.exe %*\r\n", "C:\\x"), null, "only npm's shims are read");
+  const files = {
+    "C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd": CMD_SHIM,
+    "C:\\Users\\me\\.local\\bin\\claude.exe": "",
+  };
+  const fs = { platform: "win32", execPath: "C:\\node\\node.exe",
+    env: { Path: "C:\\Windows;C:\\Users\\me\\.local\\bin;C:\\Users\\me\\AppData\\Roaming\\npm", PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+    exists: (file) => file in files, read: (file) => files[file] };
+  assert.deepEqual(resolveCommand("codex", fs), { command: "C:\\node\\node.exe",
+    prefix: ["C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js"] });
+  assert.deepEqual(resolveCommand("claude", fs), { command: "C:\\Users\\me\\.local\\bin\\claude.exe", prefix: [] });
+  assert.equal(resolveCommand("gemini", fs), null);
+  assert.deepEqual(resolveCommand("codex", { platform: "linux" }), { command: "codex", prefix: [] });
+
+  const seen = [];
+  const version = commandWorks("codex", { resolve: (name) => resolveCommand(name, fs),
+    run: (command, args) => { seen.push([command, ...args]); return "codex-cli 0.141.0\n"; } });
+  assert.equal(version, "codex-cli 0.141.0");
+  assert.deepEqual(seen, [["C:\\node\\node.exe",
+    "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js", "--version"]]);
+});
+
+test("inventory without OAR finds a runtime through its shim", async () => {
+  const found = await inventory({ importer: noOar,
+    resolve: (name) => (name === "codex" ? { command: "node", prefix: ["codex.js"] } : null),
+    run: (command, args) => `${command} ${args.join(" ")}` });
+  assert.deepEqual(found, [{ id: "claude", available: false },
+    { id: "codex", available: true, via: "cli", version: "node codex.js --version" }]);
+});
+
+test("the runtime is the one this computer has", () => {
+  const codexOnly = [{ id: "claude", available: false }, { id: "codex", available: true }];
+  const both = [{ id: "claude", available: true }, { id: "codex", available: true }];
+  const none = [{ id: "claude", available: false }, { id: "codex", available: false }];
+  assert.deepEqual(chooseRuntime("", codexOnly), { runtime: "codex" });
+  assert.deepEqual(chooseRuntime("", both), { runtime: "claude" });
+  assert.deepEqual(chooseRuntime("codex", both), { runtime: "codex" });
+  assert.equal(chooseRuntime("claude", codexOnly).runtime, null, "asked for by name: up stops");
+  assert.match(chooseRuntime("claude", codexOnly).reason, /Claude Code is not installed/);
+  assert.deepEqual(chooseRuntime("claude", codexOnly, { fallback: true }),
+    { runtime: "codex", note: "Claude Code is not installed here; using Codex." });
+  assert.equal(chooseRuntime("", none).runtime, null);
+  assert.match(chooseRuntime("", none, { fallback: true }).reason, /neither Claude Code nor Codex/);
+  assert.deepEqual(chooseRuntime("custom", none), { runtime: "custom" });
+});
+
+test("with no runtime, the install and sign-in steps for this system", () => {
+  const windows = installSteps(null, { platform: "win32" });
+  assert.ok(windows.some((line) => line.includes("npm install -g @openai/codex")));
+  assert.ok(windows.some((line) => line.includes("npm install -g @anthropic-ai/claude-code")));
+  assert.ok(windows.some((line) => line.includes("codex login")));
+  assert.ok(windows.some((line) => /desktop apps do not count/.test(line)));
+  assert.ok(windows.some((line) => /new terminal/.test(line)));
+  const mac = installSteps("codex", { platform: "darwin" });
+  assert.ok(!mac.some((line) => /Claude Code/.test(line)) && !mac.some((line) => /new terminal/.test(line)));
+});
+
+test("a hub uses the runtime that is installed, whatever was saved", async () => {
+  const state = mkdtempSync(join(tmpdir(), "veynod-state-"));
+  for (const saved of ["", "claude"]) {
+    const fake = await fakeVeynod();
+    const said = [];
+    await runRunner({ host: fake.host, key: "ag_box", runtime: saved, slots: 1 },
+      { follow: async () => 0, version: "t", every: 1000, stateDir: state, importer: noOar,
+        say: (line) => said.push(line),
+        takeInventory: async () => [{ id: "claude", available: false }, { id: "codex", available: true, via: "cli" }] });
+    fake.close();
+    const hello = fake.calls.find((call) => call.path === "/v1/runner/hello");
+    assert.equal(hello.body.host.capabilities_report.runtime, "codex", `saved ${saved || "nothing"}`);
+    assert.equal(said.some((line) => line.includes("Claude Code is not installed here; using Codex.")),
+      saved === "claude");
+  }
 });

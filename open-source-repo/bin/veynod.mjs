@@ -34,7 +34,7 @@ import { dirname, join, posix } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-export const VERSION = "0.5.1";
+export const VERSION = "0.5.2";
 const SEAL_INFO = Buffer.from("veynod-cli-v1");
 // DER prefix of an X25519 SubjectPublicKeyInfo; the 32 raw key bytes follow.
 const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
@@ -313,7 +313,8 @@ export function parseArgs(argv) {
     dryRun: false,
     subcommand: null,
     runner: false,
-    runtime: process.env.VEYNOD_RUNTIME || "claude",
+    // Empty: use whichever of Claude Code and Codex this computer has.
+    runtime: process.env.VEYNOD_RUNTIME || "",
     slots: Number(process.env.VEYNOD_SLOTS) || 1,
     repos: (process.env.VEYNOD_REPOS || "").split(",").map((item) => item.trim()).filter(Boolean),
     diskMb: Number(process.env.VEYNOD_DISK_MB) || 5120,
@@ -368,7 +369,7 @@ export function parseArgs(argv) {
   if (!Number.isInteger(options.slots) || options.slots < 1 || options.slots > 64) {
     throw new Error("--slots must be a whole number from 1 to 64");
   }
-  if (!["claude", "codex", "custom"].includes(options.runtime)) {
+  if (!["", "claude", "codex", "custom"].includes(options.runtime)) {
     throw new Error(`unknown runtime ${options.runtime} (claude, codex or custom)`);
   }
   options.repos = [...new Set(options.repos)];
@@ -420,8 +421,10 @@ ${bold("What runner does")}
   every 30 s. When the platform places a task here it starts the runtime in a
   fresh git worktree on branch veynod/<task> (pushes of any other branch are
   refused) with a prompt to claim and do the task, and cleans up afterwards.
-  Three failed starts leave the task for another computer. --runtime custom
-  runs --exec CMD with the prompt in VEYNOD_PROMPT. Receipts are written to
+  Three failed starts leave the task for another computer. Without --runtime it
+  uses whichever of Claude Code and Codex is installed (the command-line tool,
+  not the desktop app); up stops and says how to install one when neither is.
+  --runtime custom runs --exec CMD with the prompt in VEYNOD_PROMPT. Receipts are written to
   ~/.veynod/runner-receipts.jsonl. Use OAR (npm i -g @botiverse/oar, Node 24+)
   for quota-aware runs; without it the runtime's own CLI is used.
 
@@ -774,9 +777,9 @@ export function listenArguments({ script, host, keyFile, exec }) {
   return [script, "listen", "--host", host, "--key-file", keyFile, ...(exec ? ["--exec", exec] : [])];
 }
 
-export function runnerArguments({ script, host, keyFile, exec, runtime = "claude", slots = 1, repos = [],
+export function runnerArguments({ script, host, keyFile, exec, runtime = "", slots = 1, repos = [],
   diskMb = 5120 }) {
-  return [script, "runner", "--host", host, "--key-file", keyFile, "--runtime", runtime,
+  return [script, "runner", "--host", host, "--key-file", keyFile, ...(runtime ? ["--runtime", runtime] : []),
     "--slots", String(slots), ...(repos.length ? ["--repo", repos.join(",")] : []),
     "--disk-mb", String(diskMb), ...(exec ? ["--exec", exec] : [])];
 }
@@ -1160,6 +1163,21 @@ async function up(options) {
     out(JSON.stringify({ ...plan, service: { files: service.files.map((file) => file.path),
       commands: service.commands } }, null, 2));
     return 0;
+  }
+  if (plan.run_tasks && options.runtime !== "custom") {
+    // Before any key is asked for: a computer with no runtime would come online and do nothing.
+    const { chooseRuntime, inventory, installSteps, RUNTIME_NAMES } = await import("./runner.mjs");
+    const picked = chooseRuntime(options.runtime, await inventory());
+    if (!picked.runtime) {
+      out();
+      out(`  ${red("✗")} ${picked.reason}`);
+      out("      Install one, sign in, then run this again:");
+      for (const line of installSteps(options.runtime || null)) out(`        ${line}`);
+      out();
+      return 1;
+    }
+    options.runtime = picked.runtime;
+    out(`  ${green("✓")} ${RUNTIME_NAMES[picked.runtime]} runs this computer's tasks`);
   }
   const previous = loadConfig();
   const identities = [];

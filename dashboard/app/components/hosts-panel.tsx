@@ -69,6 +69,11 @@ const SEAT_LABEL: Record<Seat["seat"], string> = {
 };
 
 const INSTALL = "npx veynod up --run-tasks";
+const RUNTIME_INSTALL = {
+  claude: "npm install -g @anthropic-ai/claude-code",
+  codex: "npm install -g @openai/codex && codex login",
+};
+const RECONNECT = "veynod up --run-tasks";
 
 export function runtimeName(id: string): string {
   return id === "claude" ? "Claude Code" : id === "codex" ? "Codex" : id;
@@ -168,6 +173,10 @@ export function HostsPanel({
         const left = quotaLeft(computer);
         const runtimes = computer.runtimes.filter((runtime) => runtime.available).map((runtime) => runtimeName(runtime.id));
         const paused = computer.seats.every((seat) => seat.status !== "active");
+        // What keeps an online computer from working: no runtime it can start, or a seat taken off.
+        const noRuntime = computer.state !== "revoked" && computer.runtimes.length > 0 && runtimes.length === 0;
+        const removedSeats = computer.state === "revoked" ? []
+          : computer.seats.filter((seat) => seat.status === "revoked");
         const stateText = computer.last_seen_at && computer.state !== "online"
           ? `${t(STATE_LABEL[computer.state])} · ${relativeTime(computer.last_seen_at)}`
           : t(STATE_LABEL[computer.state]);
@@ -212,6 +221,20 @@ export function HostsPanel({
                 <span>{left}%</span>
               </div>
             )}
+            {noRuntime && (
+              <p className="station-note">
+                {t("Neither Claude Code nor Codex runs on this computer, so it cannot take tasks (the desktop apps do not count). On it, install one and sign in:")}{" "}
+                <code>{RUNTIME_INSTALL.claude}</code> {t("or")} <code>{RUNTIME_INSTALL.codex}</code>
+              </p>
+            )}
+            {removedSeats.map((seat) => (
+              <p key={seat.host_id} className="station-note">
+                {seat.seat === "work"
+                  ? t("Its work seat was taken off the Loop, so it cannot build tasks. To connect it again, run on it:")
+                  : t("Its review seat was taken off the Loop, so it cannot review here. To connect it again, run on it:")}{" "}
+                <code>{RECONNECT}</code>
+              </p>
+            ))}
             {left === 0 && waitingForQuota > 0 && (
               <p className="station-note">
                 {t("Out of quota: {n} tasks wait and start on their own when it resets.", { n: waitingForQuota })}
