@@ -1,6 +1,6 @@
 """Pure-ASGI failure-semantics protocol layer (PRD AG-ST-18).
 
-* Negotiates ``AgentGraph-Version`` for REST and MCP-over-HTTP requests and
+* Negotiates ``Veynod-Version`` for REST and MCP-over-HTTP requests and
   echoes the effective version on every response.
 * Applies idempotency to REST writes that send an ``Idempotency-Key`` header:
   the first response is stored and replayed (``replayed: true``) for the same
@@ -131,10 +131,14 @@ def _error_response(exc: ApiError, version: str) -> JSONResponse:
         headers=exc.headers,
     )
     response.headers[versioning.VERSION_HEADER] = version
+    response.headers[versioning.LEGACY_VERSION_HEADER] = version
+    response.headers[BUILD_HEADER] = _BUILD
+    response.headers[LEGACY_BUILD_HEADER] = _BUILD
     return response
 
 
-BUILD_HEADER = "AgentGraph-Build"
+BUILD_HEADER = "Veynod-Build"
+LEGACY_BUILD_HEADER = "AgentGraph-Build"
 _BUILD = get_settings().app_version
 
 
@@ -147,7 +151,9 @@ class ProtocolMiddleware:
             await self.app(scope, receive, send)
             return
         headers = Headers(scope=scope)
-        declared = versioning.normalize(headers.get(versioning.VERSION_HEADER))
+        declared = versioning.normalize(
+            headers.get(versioning.VERSION_HEADER)
+            or headers.get(versioning.LEGACY_VERSION_HEADER))
         if declared is not None and not versioning.is_supported(declared):
             response = _error_response(
                 ApiError(
@@ -177,8 +183,10 @@ class ProtocolMiddleware:
             if message["type"] == "http.response.start":
                 outgoing = MutableHeaders(scope=message)
                 outgoing[versioning.VERSION_HEADER] = version
+                outgoing[versioning.LEGACY_VERSION_HEADER] = version
                 # The build, so a client sees a deploy even when the API version holds.
                 outgoing[BUILD_HEADER] = _BUILD
+                outgoing[LEGACY_BUILD_HEADER] = _BUILD
                 content_type = Headers(raw=message.get("headers", [])).get("content-type", "")
                 if merge and collected and content_type.startswith("application/json"):
                     held_start = message

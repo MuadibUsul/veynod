@@ -636,7 +636,7 @@ RELEASE_NOTES: list[dict[str, Any]] = [
                    "default, while explicit 2026-10-21 clients keep synchronous writes; "
                    "budget enforcement is on.",
         "highlights": [
-            "With ASYNC_INDEX_DEFAULT=true, a client that sends no AgentGraph-Version "
+            "With ASYNC_INDEX_DEFAULT=true, a client that sends no Veynod-Version "
             "returns after storing and queues indexing; an explicit 2026-10-21 client "
             "still embeds synchronously before returning.",
             "BUDGET_MODE=enforce makes the per-workspace monthly token/cost budgets and "

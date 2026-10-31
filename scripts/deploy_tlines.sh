@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deploy AgentGraph on the Tlines VPS with a database backup, a tagged
+# Deploy Veynod on the Tlines VPS with a database backup, a tagged
 # rollback image and post-deploy verification.
 #
 # Run on the server from the checkout (default /home/deploy/agentgraph):
@@ -14,15 +14,15 @@
 #
 # A failed verification rolls the image back only. The database backup is kept
 # for an explicit, destructive `rollback`, never restored automatically.
-# <stamp> is printed by `deploy` and is the suffix of backups/agentgraph-<stamp>.sql.gz
-# and of the image tag agentgraph:rollback-<stamp>.
+# <stamp> is printed by `deploy` and is the suffix of backups/veynod-<stamp>.sql.gz
+# and of the image tag veynod:rollback-<stamp>.
 #
 # Secrets stay in .env; this script never prints ADMIN_TOKEN or model keys.
 
 set -euo pipefail
 
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.prod.yml}"
-API_CONTAINER="${API_CONTAINER:-agentgraph-api}"
+API_CONTAINER="${API_CONTAINER:-veynod-api}"
 PUBLIC_URL="${PUBLIC_URL:-https://veynod.com}"
 BACKUP_DIR="${BACKUP_DIR:-backups}"
 EXPECTED_SCHEMA="${EXPECTED_SCHEMA:-3.56.0}"
@@ -36,7 +36,7 @@ env_value() {
   grep -E "^$1=" .env | tail -n1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//'
 }
 
-api_image() { compose config --images | grep -E '^agentgraph' | head -n1; }
+api_image() { compose config --images | grep -E '^veynod' | head -n1; }
 
 preflight() {
   [ -f .env ] || fail ".env not found; run from the deployment directory"
@@ -50,7 +50,7 @@ backup_db() {
   local stamp="$1" user db file
   user="$(env_value POSTGRES_USER)"; user="${user:-agentgraph}"
   db="$(env_value POSTGRES_DB)"; db="${db:-agentgraph}"
-  file="$BACKUP_DIR/agentgraph-$stamp.sql.gz"
+  file="$BACKUP_DIR/veynod-$stamp.sql.gz"
   log "backing up database to $file"
   compose exec -T db pg_dump -U "$user" -d "$db" --no-owner --clean --if-exists \
     | gzip -9 > "$file"
@@ -71,9 +71,9 @@ tag_current_image() {
     log "no running $API_CONTAINER; nothing to tag for rollback"
     return
   fi
-  docker image tag "$current" "agentgraph:rollback-$stamp"
-  git rev-parse HEAD > "$BACKUP_DIR/agentgraph-$stamp.commit" 2>/dev/null || true
-  log "tagged running image ($image) as agentgraph:rollback-$stamp"
+  docker image tag "$current" "veynod:rollback-$stamp"
+  git rev-parse HEAD > "$BACKUP_DIR/veynod-$stamp.commit" 2>/dev/null || true
+  log "tagged running image ($image) as veynod:rollback-$stamp"
 }
 
 in_api() {
@@ -193,7 +193,7 @@ restart_with_image() {
 
 restore_db() {
   local stamp="$1" user db file
-  file="$BACKUP_DIR/agentgraph-$stamp.sql.gz"
+  file="$BACKUP_DIR/veynod-$stamp.sql.gz"
   [ -f "$file" ] || fail "backup $file not found"
   user="$(env_value POSTGRES_USER)"; user="${user:-agentgraph}"
   db="$(env_value POSTGRES_DB)"; db="${db:-agentgraph}"
@@ -232,8 +232,8 @@ deploy() {
   if [ -n "${DEPLOY_STAMP:-}" ]; then
     # Prepared by `prepare` (the deploy gate's G-04): reuse its checked backup and tag.
     stamp="$DEPLOY_STAMP"
-    [ -s "$BACKUP_DIR/agentgraph-$stamp.sql.gz" ] || fail "prepared backup for $stamp not found"
-    docker image inspect "agentgraph:rollback-$stamp" >/dev/null 2>&1 \
+    [ -s "$BACKUP_DIR/veynod-$stamp.sql.gz" ] || fail "prepared backup for $stamp not found"
+    docker image inspect "veynod:rollback-$stamp" >/dev/null 2>&1 \
       || fail "prepared rollback image agentgraph:rollback-$stamp not found"
     log "using prepared backup and rollback image $stamp"
   else
@@ -253,9 +253,9 @@ deploy() {
   if ! wait_ready || ! verify; then
     log "deployment failed verification"
     compose logs --tail 80 api || true
-    if docker image inspect "agentgraph:rollback-$stamp" >/dev/null 2>&1; then
+    if docker image inspect "veynod:rollback-$stamp" >/dev/null 2>&1; then
       log "rolling back the image only; the database is preserved"
-      restart_with_image "agentgraph:rollback-$stamp"
+      restart_with_image "veynod:rollback-$stamp"
       wait_ready || log "image rollback did not become ready; inspect the log"
     fi
     fail "deploy aborted; database was NOT restored. The backup is $BACKUP_DIR/agentgraph-$stamp.sql.gz; use 'rollback $stamp' only if you accept losing writes made after the backup"
@@ -268,10 +268,10 @@ deploy() {
 rollback() {
   local stamp="${1:?usage: rollback <stamp>}"
   preflight
-  docker image inspect "agentgraph:rollback-$stamp" >/dev/null 2>&1 \
+  docker image inspect "veynod:rollback-$stamp" >/dev/null 2>&1 \
     || fail "image agentgraph:rollback-$stamp not found"
   restore_db "$stamp"
-  restart_with_image "agentgraph:rollback-$stamp"
+  restart_with_image "veynod:rollback-$stamp"
   wait_ready || fail "rolled-back api did not become ready"
   log "rolled back to $stamp (writes made after the backup were discarded)"
 }
@@ -279,10 +279,10 @@ rollback() {
 rollback_image() {
   local stamp="${1:?usage: rollback-image <stamp>}"
   preflight
-  docker image inspect "agentgraph:rollback-$stamp" >/dev/null 2>&1 \
+  docker image inspect "veynod:rollback-$stamp" >/dev/null 2>&1 \
     || fail "image agentgraph:rollback-$stamp not found"
   # Migrations are additive: the previous image ignores newer tables.
-  restart_with_image "agentgraph:rollback-$stamp"
+  restart_with_image "veynod:rollback-$stamp"
   wait_ready || fail "rolled-back api did not become ready"
   log "image rolled back to $stamp; database kept as is"
 }

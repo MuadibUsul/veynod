@@ -2,7 +2,7 @@
 
 Versions are dates. A request that declares nothing runs on the baseline
 ``2026-10-21`` (the 3.2.1 semantics). REST declares with the
-``AgentGraph-Version`` header; MCP over HTTP uses the same header on each
+``Veynod-Version`` header; MCP over HTTP uses the same header on each
 request because the server is stateless. Inside one version only additive
 changes ship; behaviour changes are gated on ``at_least(<version>)``.
 A deployment may set ``ASYNC_INDEX_DEFAULT`` to enqueue indexing for requests
@@ -16,7 +16,9 @@ from contextvars import ContextVar
 BASELINE_VERSION = "2026-10-21"
 LATEST_VERSION = "2026-11"
 SUPPORTED_VERSIONS: tuple[str, ...] = (BASELINE_VERSION, LATEST_VERSION)
-VERSION_HEADER = "AgentGraph-Version"
+VERSION_HEADER = "Veynod-Version"
+# Kept for one release so clients that still send the old name keep working.
+LEGACY_VERSION_HEADER = "AgentGraph-Version"
 
 _current_version: ContextVar[str] = ContextVar(
     "agentgraph_api_version", default=BASELINE_VERSION
@@ -52,7 +54,7 @@ def current_version() -> str:
 
 
 def is_declared() -> bool:
-    """True when the request sent AgentGraph-Version explicitly."""
+    """True when the request sent Veynod-Version explicitly."""
     return _declared.get()
 
 
@@ -66,6 +68,7 @@ __all__ = [
     "LATEST_VERSION",
     "SUPPORTED_VERSIONS",
     "VERSION_HEADER",
+    "LEGACY_VERSION_HEADER",
     "at_least",
     "current_version",
     "is_declared",
