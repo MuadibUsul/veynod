@@ -305,8 +305,10 @@ def computers_out(items: list[dict[str, Any]], roles: dict[str, str]) -> list[di
         } for host in hosts]
         seats.sort(key=lambda seat: (seat["seat"] != "work", seat["agent_id"] or ""))
         runtimes: dict[str, dict[str, Any]] = {}
-        for host in hosts:
-            for runtime in host["runtimes"]:
+        # What the computer can run now: a seat taken off the Loop no longer counts.
+        live = [host for host in hosts if host["status"] != "revoked"] or hosts
+        for host in live:
+            for runtime in host["runtimes"] or []:
                 known = runtimes.get(runtime["id"])
                 if known is None or (runtime.get("available") and not known.get("available")):
                     runtimes[runtime["id"]] = runtime
@@ -322,7 +324,8 @@ def computers_out(items: list[dict[str, Any]], roles: dict[str, str]) -> list[di
             "repos": list(dict.fromkeys(repo for host in hosts for repo in host["repos"])),
             # Online while any seat is; paused only when every live seat is.
             "state": min(states, key=lambda state: order.get(state, 9)),
-            "max_concurrency": sum(seat["max_concurrency"] for seat in seats),
+            "max_concurrency": sum(seat["max_concurrency"] for seat in seats
+                                   if seat["status"] != "revoked"),
             "free_slots": sum(seat["free_slots"] for seat in seats
                               if seat["state"] == "online"),
             "running": [key for seat in seats for key in seat["running"]],
@@ -358,13 +361,17 @@ async def list_hosts(session: AsyncSession, principal: Principal, *,
                      include_revoked: bool = False) -> dict[str, Any]:
     rows = (await session.execute(text(
         "SELECT * FROM runner_hosts WHERE workspace_id = :ws "
-        + ("" if include_revoked else "AND status <> 'revoked' ")
-        + "ORDER BY last_seen_at DESC LIMIT 200"),
+        "ORDER BY last_seen_at DESC LIMIT 200"),
         {"ws": principal.workspace.id})).mappings().all()
     now = _now()
-    items = [host_out(dict(row), now) for row in rows]
-    grouped = computers_out(items, await _roles(
-        session, principal.workspace.id, [item["token_id"] for item in items]))
+    every = [host_out(dict(row), now) for row in rows]
+    items = [item for item in every if include_revoked or item["status"] != "revoked"]
+    grouped = computers_out(every, await _roles(
+        session, principal.workspace.id, [item["token_id"] for item in every]))
+    # A computer still on the Loop keeps its removed seat, so the console can say
+    # what it no longer does; one whose every seat is removed is listed on request.
+    grouped = [computer for computer in grouped
+               if include_revoked or computer["state"] != "revoked"]
     return {"items": items,
             "counts": {state: sum(1 for item in items if item["state"] == state)
                        for state in ("online", "offline", "paused", "revoked")},

@@ -2279,3 +2279,11 @@ button.timeline-row:disabled {
   color: var(--ds-text-secondary);
   font: 500 12px var(--ds-font-body);
 }
+
+/* Commands inside a computer's note read as commands, not as more warning text. */
+.station-note code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+}

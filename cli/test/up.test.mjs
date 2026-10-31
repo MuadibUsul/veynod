@@ -182,3 +182,24 @@ test("up waits for the new hub's hello, never for what this computer lacks", asy
   await settledDoctor(async () => { calls += 1; return [red("board:automation")]; }, { doctorOk, waitMs: 1 });
   assert.equal(calls, 1, "no hello turns automation on");
 });
+
+test("the doctor counts whichever runtime is installed when none was chosen", async () => {
+  const home = mkdtempSync(join(tmpdir(), "veynod-home-"));
+  const offline = async () => { throw new Error("offline"); };
+  const codexOnly = (command) => {
+    if (command === "claude") throw new Error("not found");
+    return "codex-cli 0.141.0";
+  };
+  for (const [runtime, run, ok, text] of [
+    ["", codexOnly, true, "Codex is installed."],
+    ["claude", codexOnly, false, "Claude Code is not installed or not on PATH."],
+    ["", () => { throw new Error("not found"); }, false, "Claude Code or Codex is not installed or not on PATH."],
+  ]) {
+    const config = { host: "http://127.0.0.1:9", run_tasks: true, runtime, repos: [], identities: [] };
+    const checks = await doctor({ home, config, nodeVersion: "24.0.0", run, fetchImpl: offline });
+    const check = checks.find((item) => item.id === "runtime");
+    assert.equal(check.ok, ok, runtime);
+    assert.equal(check.text, text);
+    if (!ok) assert.match(check.fix, /command-line tool, not the desktop app/);
+  }
+});

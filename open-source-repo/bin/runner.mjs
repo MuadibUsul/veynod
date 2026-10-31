@@ -16,9 +16,9 @@
 // then finished or failed.
 
 import { execFileSync, spawn } from "node:child_process";
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { arch as osArch, homedir, hostname, platform } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 
 export const RUNNER_HEARTBEAT_MS = 30_000;
 // Leases are at least 60 s and heartbeat at a third of their TTL; renewing every
@@ -43,8 +43,88 @@ async function oarRuntime(id, importer) {
   }
 }
 
+/**
+ * The script an npm `.cmd` shim runs (cmd-shim writes `"%dp0%\node_modules\...\cli.js" %*`),
+ * or null for any other `.cmd`.
+ */
+export function shimTarget(text, dir) {
+  const match = String(text).match(/"%~?dp0%?\\([^"]+\.[cm]?js)"/i);
+  return match ? win32.join(dir, match[1]) : null;
+}
+
+/**
+ * How to start a command by name without a shell: {command, prefix}, or null
+ * when it is not on PATH. On Windows npm installs `claude` and `codex` as `.cmd`
+ * shims, which Node cannot start without cmd.exe, and cmd.exe would re-read a
+ * prompt's quotes and metacharacters; so a shim's script runs with this Node.
+ */
+export function resolveCommand(name, { platform = process.platform, env = process.env,
+  exists = existsSync, read = (path) => readFileSync(path, "utf8"), execPath = process.execPath } = {}) {
+  if (platform !== "win32") return { command: name, prefix: [] };
+  const dirs = String(env.PATH ?? env.Path ?? "").split(";").filter(Boolean);
+  const exts = String(env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").map((ext) => ext.toLowerCase())
+    .filter(Boolean);
+  for (const dir of dirs) {
+    for (const ext of exts) {
+      const file = win32.join(dir, `${name}${ext}`);
+      if (!exists(file)) continue;
+      if (ext === ".exe" || ext === ".com") return { command: file, prefix: [] };
+      if (ext === ".cmd" || ext === ".bat") {
+        const script = shimTarget(read(file), dir);
+        if (script) return { command: execPath, prefix: [script] };
+      }
+    }
+  }
+  return null;
+}
+
+/** Whether `name --version` runs here (Windows npm shims included). */
+export function commandWorks(name, { run = execFileSync, resolve = resolveCommand } = {}) {
+  const target = resolve(name);
+  if (!target) return null;
+  try {
+    return String(run(target.command, [...target.prefix, "--version"],
+      { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"] })).trim();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The runtime to use: the one asked for when it is ready, else (with
+ * `fallback`, for a hub whose saved choice may predate what is installed) the
+ * one that is; with nothing asked, Claude Code, then Codex. {runtime, note} or
+ * {runtime: null, reason}.
+ */
+export function chooseRuntime(wanted, runtimes, { fallback = false } = {}) {
+  const ready = RUNTIME_IDS.filter((id) => runtimes.some((item) => item.id === id && item.available));
+  if (wanted === "custom") return { runtime: "custom" };
+  if (wanted && ready.includes(wanted)) return { runtime: wanted };
+  if (wanted && !fallback) return { runtime: null, reason: `${RUNTIME_NAMES[wanted]} is not installed on this computer (or not on PATH).` };
+  if (ready.length === 0) {
+    return { runtime: null, reason: "No coding agent found on this computer: neither Claude Code nor Codex is on PATH." };
+  }
+  if (wanted) return { runtime: ready[0], note: `${RUNTIME_NAMES[wanted]} is not installed here; using ${RUNTIME_NAMES[ready[0]]}.` };
+  return { runtime: ready[0] };
+}
+
+export const RUNTIME_NAMES = { claude: "Claude Code", codex: "Codex" };
+
+/** What to type to install and sign in to a runtime (or both, with none named). */
+export function installSteps(runtime, { platform = process.platform } = {}) {
+  const steps = {
+    codex: ["Codex:        npm install -g @openai/codex", "              then: codex login"],
+    claude: ["Claude Code:  npm install -g @anthropic-ai/claude-code", "              then: claude   (sign in when it asks)"],
+  };
+  const lines = runtime ? [...steps[runtime]] : [...steps.claude, ...steps.codex];
+  lines.push("The desktop apps do not count: the runner starts the command-line tool.");
+  if (platform === "win32") lines.push("Open a new terminal after installing, so it is on PATH.");
+  return lines;
+}
+
 /** What runtimes this computer has, without account emails or tokens. */
-export async function inventory({ importer = (spec) => import(spec), run = execFileSync } = {}) {
+export async function inventory({ importer = (spec) => import(spec), run = execFileSync,
+  resolve = resolveCommand } = {}) {
   const found = [];
   for (const id of RUNTIME_IDS) {
     const runtime = await oarRuntime(id, importer);
@@ -78,10 +158,10 @@ export async function inventory({ importer = (spec) => import(spec), run = execF
         // fall through to the CLI probe
       }
     }
-    try {
-      const version = String(run(id, ["--version"], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "ignore"] })).trim();
+    const version = commandWorks(id, { run, resolve });
+    if (version !== null) {
       found.push({ id, available: true, via: "cli", version: version.split("\n")[0].slice(0, 32) });
-    } catch {
+    } else {
       found.push({ id, available: false });
     }
   }
@@ -178,8 +258,11 @@ export function promptFor({ taskKey, placementId, branch, host, step = "work", d
 }
 
 function spawnRun(command, args, { cwd, env, shell = false, signal }) {
+  // Resolved here so a Windows npm shim starts without a shell; custom --exec keeps its shell.
+  const target = shell ? { command, prefix: [] } : resolveCommand(command);
+  if (!target) return Promise.resolve({ ok: false, reason: `${command} is not on PATH` });
   return new Promise((resolve) => {
-    const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, shell, stdio: ["ignore", "inherit", "inherit"], windowsHide: true, signal });
+    const child = spawn(target.command, [...target.prefix, ...args], { cwd, env: { ...process.env, ...env }, shell, stdio: ["ignore", "inherit", "inherit"], windowsHide: true, signal });
     child.on("error", (error) => resolve({ ok: false, reason: error.message }));
     child.on("close", (code) => resolve(code === 0 ? { ok: true } : { ok: false, reason: `exited ${code}` }));
   });
@@ -449,11 +532,23 @@ export async function runRunner(options, {
   leaseEvery = LEASE_KEEP_MS,
   sleepMs = 2_000,
   stateDir = process.env.VEYNOD_STATE_DIR || join(homedir(), ".veynod"),
+  takeInventory = () => inventory({ importer }),
 } = {}) {
   const slots = Math.max(1, Number(options.slots) || 1);
   const repos = options.repos || [];
-  const adapter = adapterFor(options.runtime || "claude", { exec: options.exec, importer,
+  let runtimes = options.runtime === "custom"
+    ? [{ id: "custom", available: true, via: "exec" }]
+    : await takeInventory();
+  // A saved choice can predate what is installed: use what is here, and say so.
+  const picked = chooseRuntime(options.runtime || "", runtimes, { fallback: true });
+  if (picked.note) say(`warning: ${picked.note}`);
+  if (!picked.runtime) {
+    say(`warning: ${picked.reason} The board shows this computer without a runtime until one is installed:`);
+    for (const line of installSteps(null)) say(`  ${line}`);
+  }
+  const makeAdapter = (runtime) => adapterFor(runtime, { exec: options.exec, importer,
     ...(spawner ? { spawner } : {}), ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}) });
+  let adapter = makeAdapter(picked.runtime || options.runtime || "claude");
   const pin = { host: options.host, key: options.key };
   const configDir = join(stateDir, "run");
   const worktrees = new Worktrees({
@@ -466,9 +561,6 @@ export async function runRunner(options, {
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const receipt = (fields) => appendFileSync(receipts, `${JSON.stringify({ at: new Date().toISOString(), ...fields })}\n`);
 
-  let runtimes = options.runtime === "custom"
-    ? [{ id: "custom", available: true, via: "exec" }]
-    : await inventory({ importer });
   const mcpPinning = await pinsIdentity(adapter.id, { importer });
   if (!mcpPinning) say(`warning: ${adapter.id} without OAR cannot pin Veynod's MCP to this runner's key; install OAR (Node 24+)`);
   const hello = await callApi(fetchImpl, options.host, options.key, "/v1/runner/hello", {
@@ -485,8 +577,14 @@ export async function runRunner(options, {
   const beat = async () => {
     try {
       if (options.runtime !== "custom" && Date.now() - lastInventory > 10 * 60_000) {
-        runtimes = await inventory({ importer });
+        runtimes = await takeInventory();
         lastInventory = Date.now();
+        // Installed (or removed) while the hub runs: the next task uses what is here now.
+        const now = chooseRuntime(options.runtime || "", runtimes, { fallback: true });
+        if (now.runtime && now.runtime !== adapter.id) {
+          adapter = makeAdapter(now.runtime);
+          say(`runtime is now ${now.runtime}`);
+        }
       }
       await callApi(fetchImpl, options.host, options.key, "/v1/runner/heartbeat", {
         method: "POST", body: { running: [...running.keys()], runtimes },
