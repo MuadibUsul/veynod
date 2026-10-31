@@ -106,6 +106,8 @@ export interface AcceptanceState {
 
 export interface TaskDetail extends TaskSummary {
   description: string | null;
+  // work, question, escalation (a question an agent asked a person) or peer_review.
+  kind?: string;
   input_context: Record<string, unknown>;
   output_artifact: Record<string, unknown>;
   handoff_brief: HandoffBrief | null;
@@ -120,6 +122,20 @@ export interface TaskDetail extends TaskSummary {
   review_round?: number;
   context_docs?: unknown[];
   supersedes?: string;
+}
+
+/** A question an agent asked a person (an open escalation) and the tasks it ties together. */
+export interface OpenQuestion {
+  id: string;
+  question: string;
+  options: { id: string; label: string; consequence?: string | null }[] | null;
+  recommended_option: string | null;
+  raised_by: string | null;
+  created_at: string;
+  due_at?: string | null;
+  default_on_timeout?: string | null;
+  task_key: string | null;
+  escalation_task_key: string | null;
 }
 
 export interface HandoffBrief {

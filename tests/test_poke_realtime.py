@@ -202,10 +202,10 @@ async def test_offline_agent_is_woken_and_the_outcome_is_recorded(
             assert good.hits, "the wake webhook was not called"
             hit = good.hits[0]
             assert hit["body"]["task_key"] == task_key
-            stamp = hit["headers"]["X-AgentGraph-Timestamp"]
+            stamp = hit["headers"]["X-Veynod-Timestamp"]
             expected = hmac.new(secret.encode(), f"{stamp}.".encode() + hit["raw"],
                                 hashlib.sha256).hexdigest()
-            assert hit["headers"]["X-AgentGraph-Signature"] == expected
+            assert hit["headers"]["X-Veynod-Signature"] == expected
 
             receipts = None
             for _ in range(20):

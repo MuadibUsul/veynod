@@ -744,7 +744,7 @@ async def test_webhook_delivery_and_external_action_compensation(
         await asyncio.sleep(1)
     assert deliveries and any(item["status"] == "SUCCEEDED" for item in deliveries)
     hook = next(item for item in received if item["path"] == "/hook")
-    assert hook["headers"].get("X-AgentGraph-Signature")
+    assert hook["headers"].get("X-Veynod-Signature")
     assert hook["body"]["table"] == "shared_documents"
     assert hook["body"]["event_type"] == "DOC_CREATED"
 

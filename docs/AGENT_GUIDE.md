@@ -6,7 +6,7 @@ Generated from code by `scripts/gen_agent_guide.py`; do not edit by hand.
 
 - REST base `/v1`, MCP streamable HTTP at `/mcp/` (stateless: no session id; every request is authenticated on its own).
 - Authenticate with `Authorization: Bearer <workspace-or-agent-key>`.
-- Declare semantics with the `AgentGraph-Version` header: default `2026-10-21`, latest `2026-11`.
+- Declare semantics with the `Veynod-Version` header: default `2026-10-21`, latest `2026-11`.
 - First call: `get_orientation` (REST `GET /v1/orientation`).
 
 ## Onboarding (5 steps)

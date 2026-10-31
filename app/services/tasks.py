@@ -1251,6 +1251,10 @@ async def review_task(
             raise Forbidden(
                 "a human account is required to resolve a task awaiting human review"
             )
+    if task.kind == "escalation":
+        answered = await _answer_by_review(session, principal, task, request)
+        if answered is not None:
+            return answered
     if (
         request.decision == "approve"
         and not principal.is_human
@@ -1428,6 +1432,37 @@ async def review_task(
         version=task.version,
         task_key=task.task_key,
     )
+
+
+async def _answer_by_review(session: AsyncSession, principal: Principal, task: CollabTask,
+                            request: TaskReviewRequest) -> TaskActionResponse | None:
+    """A verdict on a question task is the person's answer (v3.25): it resolves the
+    escalation, so the task waiting on it resumes, instead of only closing the
+    question. An approval without a note takes the recommended option."""
+    row = (await session.execute(text(
+        "SELECT id, recommended_option FROM escalations "
+        "WHERE escalation_task_id = :t AND status = 'open'"),
+        {"t": task.id})).mappings().one_or_none()
+    if row is None:
+        return None
+    _check_version(task, request.expected_version)
+    feedback = (request.feedback or "").strip()
+    option_id = None
+    if request.decision == "approve":
+        if feedback:
+            answer = f"approved: {feedback}"
+        elif row["recommended_option"]:
+            option_id, answer = row["recommended_option"], None
+        else:
+            answer = "approved"
+    else:
+        answer = f"rejected: {feedback}"
+    await collab.resolve(session, principal, row["id"], option_id=option_id, answer=answer,
+                         note=None)
+    await session.refresh(task)
+    return TaskActionResponse(task=task_out(task),
+                              session_batch_id=request.session_batch_id or uuid.uuid4(),
+                              status=task.status, version=task.version, task_key=task.task_key)
 
 
 @_task_failure_event("ESCALATE")
@@ -2006,8 +2041,11 @@ async def list_escalations(
     require_permission(principal, "task:read")
     rows = (
         await session.execute(
-            text("SELECT e.*, t.task_key AS task_key FROM escalations e LEFT JOIN "
-                 "collab_tasks t ON t.id = e.task_id WHERE e.workspace_id = :ws AND "
+            text("SELECT e.*, t.task_key AS task_key, t.status AS task_status, "
+                 "q.task_key AS escalation_task_key FROM escalations e "
+                 "LEFT JOIN collab_tasks t ON t.id = e.task_id "
+                 "LEFT JOIN collab_tasks q ON q.id = e.escalation_task_id "
+                 "WHERE e.workspace_id = :ws AND "
                  "(CAST(:status AS text) IS NULL OR e.status = :status) "
                  "ORDER BY e.created_at DESC LIMIT 200"),
             {"ws": principal.workspace.id, "status": status},
