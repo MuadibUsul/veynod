@@ -469,6 +469,12 @@ async def favicon() -> FileResponse:
     )
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon_ico() -> RedirectResponse:
+    # Some clients ask for the legacy path; send them to the SVG.
+    return RedirectResponse("/favicon.svg?v=2", status_code=307)
+
+
 @app.get("/favicon.png", include_in_schema=False)
 async def favicon_png() -> FileResponse:
     return FileResponse(
