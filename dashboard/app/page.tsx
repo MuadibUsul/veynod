@@ -49,6 +49,7 @@ import type {
   ExternalAction,
   HumanUser,
   KeyReveal,
+  OpenQuestion,
   PathPolicy,
   Proposal,
   ReadyInfo,
@@ -93,6 +94,7 @@ function sessionPath(path: string, workspaceId: string, method: string): string 
   if (rest === "/audit" || rest.startsWith("/audit?")) return `/v1/human/audit${rest.slice(6)}`;
   if (rest.startsWith("/batches")) return `/v1/human${rest}`;
   if (rest.startsWith("/proposals")) return `/v1/human${rest}`;
+  if (rest.startsWith("/escalations")) return method === "POST" ? `/v1/human${rest}` : `/v1${rest}`;
   if (rest.startsWith("/policies")) return `/v1/human${rest}`;
   if (rest.startsWith("/webhooks")) return `/v1/human${rest}`;
   if (rest.startsWith("/external-actions")) return `/v1/human${rest}`;
@@ -258,6 +260,7 @@ export default function ConsolePage() {
   const [mintSignal, setMintSignal] = useState(0);
   const [creatingTask, setCreatingTask] = useState(false);
   const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null);
+  const [taskQuestion, setTaskQuestion] = useState<OpenQuestion | null>(null);
   const [taskBusy, setTaskBusy] = useState(false);
 
   const [slotEditor, setSlotEditor] = useState<Slot | null>(null);
@@ -1108,6 +1111,46 @@ export default function ConsolePage() {
     }
   }
 
+  // The question an agent asked about the open task, so the dialog can answer it.
+  useEffect(() => {
+    setTaskQuestion(null);
+    if (!selectedId || !taskDetail) return;
+    if (taskDetail.status !== "WAITING_HUMAN" && taskDetail.kind !== "escalation") return;
+    let live = true;
+    api<{ items: OpenQuestion[] }>(`/v1/admin/workspaces/${selectedId}/escalations?status=open`)
+      .then((data) => {
+        if (!live) return;
+        setTaskQuestion(data.items.find((item) => item.task_key === taskDetail.task_key
+          || item.escalation_task_key === taskDetail.task_key) ?? null);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedId, taskDetail?.task_key, taskDetail?.status]);
+
+  async function answerQuestion(optionId: string | null, answer: string) {
+    if (!selectedId || !taskQuestion) return;
+    setTaskBusy(true);
+    try {
+      await api(
+        `/v1/admin/workspaces/${selectedId}/escalations/${encodeURIComponent(taskQuestion.id)}/resolve`,
+        {
+          method: "POST",
+          body: JSON.stringify({ option_id: optionId ?? undefined, answer: answer.trim() || undefined }),
+        },
+      );
+      setTaskDetail(null);
+      await loadWorkspace(selectedId, true);
+      setNotice(t("Answered. The task picks up from here."));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : t("Unable to send the answer."));
+    } finally {
+      setTaskBusy(false);
+    }
+  }
+
   async function reviewTask(decision: "approve" | "reject", feedback: string) {
     if (!selectedId || !taskDetail) return;
     setTaskBusy(true);
@@ -1846,6 +1889,8 @@ export default function ConsolePage() {
           busy={taskBusy}
           onClose={() => setTaskDetail(null)}
           onReview={reviewTask}
+          question={taskQuestion}
+          onAnswer={answerQuestion}
           onOpenTask={(key) => void openTaskByKey(key)}
           docTitle={(key) => documents.find((document) => document.doc_key === key)?.title}
           onOpenArtifact={(uri) => {

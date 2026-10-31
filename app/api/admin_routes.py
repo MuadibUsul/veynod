@@ -48,6 +48,7 @@ from app.schemas import (
     DocumentVerifyRequest,
     DocumentVersionListResponse,
     DocumentVersionOut,
+    EscalationResolveRequest,
     ExportRequest,
     ExternalActionCompensateRequest,
     ExternalActionListResponse,
@@ -316,6 +317,35 @@ async def escalate_task(
     return await services.escalate_task(
         session, principal_for_admin(workspace), task_key, body
     )
+
+
+@router.get("/workspaces/{workspace_id}/escalations",
+            summary="Questions agents asked people, with the tasks they block")
+async def list_escalations(
+    workspace_id: uuid.UUID,
+    status: str | None = Query(default=None, pattern="^(open|resolved)$"),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import tasks as task_service
+
+    workspace = await services.get_workspace(session, workspace_id)
+    return await task_service.list_escalations(session, principal_for_admin(workspace),
+                                               status=status)
+
+
+@router.post("/workspaces/{workspace_id}/escalations/{escalation_id}/resolve",
+             summary="Answer an agent's question from the console; the task resumes")
+async def resolve_escalation(
+    workspace_id: uuid.UUID,
+    escalation_id: str,
+    body: EscalationResolveRequest,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import tasks as task_service
+
+    workspace = await services.get_workspace(session, workspace_id)
+    return await task_service.resolve_escalation(session, principal_for_admin(workspace),
+                                                 escalation_id, body)
 
 
 # ------------------------------------------------------------------ slots

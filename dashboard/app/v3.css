@@ -5379,3 +5379,62 @@ body::before {
     grid-template-columns: 1fr;
   }
 }
+
+/* A question an agent asked, answered in the task dialog. */
+.question-box {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid rgba(255, 184, 0, 0.28);
+  border-radius: 10px;
+  background: rgba(255, 184, 0, 0.05);
+}
+.question-text {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+.question-options {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+}
+.question-options label {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--line, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  cursor: pointer;
+}
+.question-options label.picked {
+  border-color: rgba(255, 184, 0, 0.55);
+}
+.question-options label span {
+  display: grid;
+  gap: 2px;
+}
+.question-options small {
+  color: var(--muted, #8a93a0);
+}
+.question-recommended {
+  margin-left: 8px;
+  font-style: normal;
+  font-size: 11px;
+  color: #ffb800;
+}
+.question-meta {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted, #8a93a0);
+}
+.question-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent, #00c2ff);
+  cursor: pointer;
+}

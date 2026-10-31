@@ -1458,6 +1458,22 @@ const ZH: Record<string, string> = {
   "{done} of {total} done": "完成 {done}/{total}",
   // The Loop as the engine's dashboard, the diagram live (v3.24)
   "Open it": "打开",
+  // Answering an agent's question from the task dialog (v3.25)
+  "Answer it": "去回答",
+  "Send answer": "发送回答",
+  "{who} asks you": "{who} 在问你",
+  "An agent asks you": "有 agent 在问你",
+  "Options": "选项",
+  "recommended": "推荐",
+  "Answer in words instead": "不选，直接写回答",
+  "Your answer": "你的回答",
+  "What the agent should know or do…": "告诉 agent 该知道什么、接下来怎么做…",
+  "If nobody answers by {when}, it goes with {option}.": "如果 {when} 前没人回答，就按 {option} 处理。",
+  "Asked in": "提问记录在",
+  "It blocks": "它卡住了",
+  "Pick an option or write an answer.": "选一个选项，或者写下回答。",
+  "Answered. The task picks up from here.": "已回答，任务会从这里继续。",
+  "Unable to send the answer.": "回答没有发出去。",
   // The Loop as the engine's dashboard, the diagram live (v3.24)
   "How far the Loop may go on this diagram": "这张图上 Loop 能自己走多远",
   "Automation for this diagram": "这张图的自动化",

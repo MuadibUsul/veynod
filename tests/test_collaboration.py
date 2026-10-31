@@ -279,6 +279,79 @@ async def test_escalation_blocks_and_resumes(collab):
     assert found[0]["option_id"] == "blue"
 
 
+async def test_a_person_answers_a_question_from_the_console(collab):
+    """v3.25: the console finds the question a task waits on and answers it; a verdict on
+    the question task resolves the escalation instead of only closing the question."""
+    client = collab
+    ws = await _workspace(client)
+    worker = await _agent(client, ws, "worker-q")
+
+    async def blocked(title: str) -> tuple[str, dict]:
+        created = await client.post("/v1/tasks", headers=ws["key"], json={"title": title})
+        key = created.json()["task_key"]
+        await client.post(f"/v1/tasks/{key}/claim", headers=worker["headers"], json={})
+        asked = await client.post(f"/v1/tasks/{key}/escalate", headers=worker["headers"], json={
+            "reason": "need a decision", "question": f"{title}?",
+            "options": [{"id": "go", "label": "Go"}, {"id": "stop", "label": "Stop"}],
+            "recommended_option": "go"})
+        assert asked.status_code == 200, asked.text
+        return key, asked.json()["escalation"]
+
+    async def answer_of(escalation_id: str) -> dict:
+        listed = await client.get("/v1/escalations", headers=ws["key"],
+                                  params={"status": "resolved"})
+        return next(item for item in listed.json()["items"] if item["id"] == escalation_id)
+
+    async def version(task_key: str) -> int:
+        return (await client.get(f"/v1/tasks/{task_key}", headers=ws["key"])).json()["version"]
+
+    async def status(task_key: str) -> str:
+        return (await client.get(f"/v1/tasks/{task_key}", headers=ws["key"])).json()["status"]
+
+    # The console lists the open question with both tasks it ties together.
+    first, asked = await blocked("Cut over tonight")
+    listed = await client.get(f"/v1/admin/workspaces/{ws['id']}/escalations", headers=ADMIN,
+                              params={"status": "open"})
+    assert listed.status_code == 200, listed.text
+    item = next(i for i in listed.json()["items"] if i["id"] == asked["escalation_id"])
+    assert item["task_key"] == first and item["task_status"] == "WAITING_HUMAN"
+    assert item["escalation_task_key"] == asked["escalation_task_key"]
+
+    # A person's session answers it under /v1/human; the task resumes.
+    answered = await client.post(f"/v1/human/escalations/{asked['escalation_id']}/resolve",
+                                 headers=ws["human"], json={"answer": "the old box is off"})
+    assert answered.status_code == 200, answered.text
+    assert answered.json()["task_status"] == "IN_PROGRESS"
+
+    # Approving the question task in the review column answers it: with no note,
+    # the recommended option.
+    second, asked = await blocked("Rotate the keys")
+    question = asked["escalation_task_key"]
+    approved = await client.post(f"/v1/human/tasks/{question}/review", headers=ws["human"],
+                                 json={"decision": "approve",
+                                       "expected_version": await version(question)})
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["status"] == "DONE"
+    assert await status(second) == "IN_PROGRESS"
+    assert (await answer_of(asked["escalation_id"]))["option_id"] == "go"
+
+    # Rejecting it answers it too, with the reason; the admin console works the same way.
+    third, asked = await blocked("Drop the table")
+    question = asked["escalation_task_key"]
+    rejected = await client.post(
+        f"/v1/admin/workspaces/{ws['id']}/tasks/{question}/review", headers=ADMIN,
+        json={"decision": "reject", "feedback": "not before the backup",
+              "expected_version": await version(question)})
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["status"] == "DONE"
+    assert await status(third) == "IN_PROGRESS"
+    assert (await answer_of(asked["escalation_id"]))["answer"] == "rejected: not before the backup"
+    again = await client.post(f"/v1/admin/workspaces/{ws['id']}/escalations/"
+                              f"{asked['escalation_id']}/resolve", headers=ADMIN,
+                              json={"answer": "twice"})
+    assert again.status_code == 409
+
+
 async def test_task_trees_roll_up_and_cancel(collab):
     """AG-CO-08: subtasks, rollup summaries, children_done, tree view, cascading cancel."""
     client = collab

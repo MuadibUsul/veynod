@@ -3,7 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import { useI18n } from "../i18n";
-import type { DirectoryEntry, TaskDetail, TaskSummary } from "../types";
+import type { DirectoryEntry, OpenQuestion, TaskDetail, TaskSummary } from "../types";
 import { directoryDisplayName, directoryRefs, formatNumber, pretty, relativeTime } from "../types";
 import {
   Empty,
@@ -296,7 +296,7 @@ function TaskFields({
         {onOpenTask ? (
           <button
             type="button"
-            className="link-button mono"
+            className="question-link mono"
             onClick={() => onOpenTask(attribution.supersedes!)}
           >
             {attribution.supersedes}
@@ -439,12 +439,16 @@ export function TaskDetailModal({
   onOpenArtifact,
   onOpenTask,
   docTitle,
+  question = null,
+  onAnswer,
 }: {
   task: TaskDetail;
   directory?: DirectoryEntry[];
   busy: boolean;
   onClose: () => void;
   onReview: (decision: "approve" | "reject", feedback: string) => Promise<void>;
+  question?: OpenQuestion | null;
+  onAnswer?: (optionId: string | null, answer: string) => Promise<void>;
   onOpenArtifact: (artifactUri: string) => void;
   onOpenTask?: (taskKey: string) => void;
   docTitle?: (docKey: string) => string | undefined;
@@ -455,9 +459,18 @@ export function TaskDetailModal({
     setFeedback(task.human_feedback ?? "");
   }, [task.id, task.human_feedback]);
 
-  const reviewable = ["REVIEWING", "AWAITING_HUMAN", "ESCALATED_TO_HUMAN"].includes(
+  // A question an agent asked is answered, not approved: the answer box replaces
+  // approve/reject on the question task too.
+  const answering = Boolean(question && onAnswer);
+  const reviewable = !answering && ["REVIEWING", "AWAITING_HUMAN", "ESCALATED_TO_HUMAN"].includes(
     task.status,
   );
+  const [choice, setChoice] = useState<string | null>(question?.recommended_option ?? null);
+  const [answer, setAnswer] = useState("");
+  useEffect(() => {
+    setChoice(question?.recommended_option ?? null);
+    setAnswer("");
+  }, [question?.id, question?.recommended_option]);
   const openDoc = (docKey: string) => onOpenArtifact(`doc://${docKey}`);
 
   return (
@@ -476,6 +489,17 @@ export function TaskDetailModal({
           <button type="button" className="button ghost" onClick={onClose}>
             {t("Close")}
           </button>
+          {answering && (
+            <button
+              type="button"
+              className="button primary"
+              disabled={busy || (!choice && !answer.trim())}
+              title={choice || answer.trim() ? undefined : t("Pick an option or write an answer.")}
+              onClick={() => void onAnswer!(choice, answer)}
+            >
+              {busy ? <Spinner /> : <IconCheck />} {t("Send answer")}
+            </button>
+          )}
           {reviewable && (
             <>
               <button
@@ -501,6 +525,76 @@ export function TaskDetailModal({
       }
     >
       <TaskFields task={task} onOpenTask={onOpenTask} onOpenDoc={openDoc} docTitle={docTitle} />
+
+      {question && answering && (
+        <div className="detail-section question-section">
+          <h3>
+            {question.raised_by
+              ? t("{who} asks you", { who: directoryDisplayName(directory, question.raised_by) })
+              : t("An agent asks you")}
+            <span className="muted"> · {relativeTime(question.created_at)}</span>
+          </h3>
+          <div className="question-box">
+            <p className="question-text">{question.question}</p>
+            {(question.options ?? []).length > 0 && (
+              <div className="question-options" role="radiogroup" aria-label={t("Options")}>
+                {question.options!.map((option) => (
+                  <label key={option.id} className={choice === option.id ? "picked" : undefined}>
+                    <input
+                      type="radio"
+                      name={`question-${question.id}`}
+                      checked={choice === option.id}
+                      onChange={() => setChoice(option.id)}
+                    />
+                    <span>
+                      <b>{option.label}</b>
+                      {option.id === question.recommended_option && (
+                        <em className="question-recommended">{t("recommended")}</em>
+                      )}
+                      {option.consequence && <small>{option.consequence}</small>}
+                    </span>
+                  </label>
+                ))}
+                {choice && (
+                  <button type="button" className="button ghost small" onClick={() => setChoice(null)}>
+                    {t("Answer in words instead")}
+                  </button>
+                )}
+              </div>
+            )}
+            <label className="field">
+              <span>{(question.options ?? []).length > 0 ? t("Note (optional)") : t("Your answer")}</span>
+              <textarea
+                rows={3}
+                value={answer}
+                onChange={(event) => setAnswer(event.target.value)}
+                placeholder={t("What the agent should know or do…")}
+              />
+            </label>
+            {question.due_at && (
+              <p className="question-meta">
+                {t("If nobody answers by {when}, it goes with {option}.", {
+                  when: new Date(question.due_at).toLocaleString(),
+                  option: question.default_on_timeout ?? "—",
+                })}
+              </p>
+            )}
+            {question.escalation_task_key && question.escalation_task_key !== task.task_key && (
+              <p className="question-meta">{t("Asked in")} <span className="mono">{question.escalation_task_key}</span></p>
+            )}
+            {question.task_key && question.task_key !== task.task_key && (
+              <p className="question-meta">
+                {t("It blocks")}{" "}
+                {onOpenTask ? (
+                  <button type="button" className="question-link mono" onClick={() => onOpenTask(question.task_key!)}>
+                    {question.task_key}
+                  </button>
+                ) : <span className="mono">{question.task_key}</span>}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
 
       <AcceptanceSection task={task} />
 

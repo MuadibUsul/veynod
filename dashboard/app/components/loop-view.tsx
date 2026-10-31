@@ -196,7 +196,7 @@ export function LoopView({
       key: `waiting-${item.key}`, tone: "red",
       title: item.asked_by ? t("{who} waits for your answer", { who: item.asked_by }) : t("A task waits for your answer"),
       detail: `${item.title} · ${waited(item.since, t)}`,
-      action: { label: t("Open it"), run: () => onOpenTask(item.key) },
+      action: { label: t("Answer it"), run: () => onOpenTask(item.key) },
     });
   }
   if (waitingReview > 0) {

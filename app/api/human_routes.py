@@ -35,6 +35,7 @@ from app.schemas import (
     DocumentStatusRequest,
     DocumentTaintRequest,
     DocumentVerifyRequest,
+    EscalationResolveRequest,
     ExternalActionCompensateRequest,
     ExternalActionListResponse,
     ExternalActionOut,
@@ -253,6 +254,23 @@ async def review_task(
 ) -> TaskActionResponse:
     result = await services.review_task(session, principal, task_key, body)
     await product_events.human_decision(principal, "task_review", body.decision)
+    return result
+
+
+@router.post(
+    "/escalations/{escalation_id}/resolve",
+    summary="Answer an agent's question; the task it blocks resumes",
+)
+async def resolve_escalation(
+    escalation_id: str,
+    body: EscalationResolveRequest,
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import tasks as task_service
+
+    result = await task_service.resolve_escalation(session, principal, escalation_id, body)
+    await product_events.human_decision(principal, "escalation_answer", "resolve")
     return result
 
 
