@@ -460,7 +460,11 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
         if host is None:
             await session.execute(text(
                 "INSERT INTO runner_placements (workspace_id, task_id, task_key, mode, status, "
-                "reason, note) VALUES (:ws, :t, :key, :mode, 'unplaced', :reason, :note)"),
+                "reason, note) VALUES (:ws, :t, :key, :mode, 'unplaced', :reason, :note) "
+                "ON CONFLICT (task_id, step) WHERE status IN "
+                "('suggested', 'offered', 'claimed', 'unplaced') DO UPDATE SET "
+                "status = 'unplaced', host_id = NULL, agent_id = NULL, "
+                "reason = EXCLUDED.reason, note = EXCLUDED.note, updated_at = NOW()"),
                 {"ws": workspace_id, "t": task.id, "key": task.task_key,
                  "mode": "assign" if mode == "full" else "suggest", "reason": reason,
                  "note": _words(reason, task)})
@@ -739,7 +743,8 @@ async def _place_steps(session: AsyncSession, workspace_id: Any, online: list[di
             continue
         open_row = (await session.execute(text(
             "SELECT * FROM runner_placements WHERE task_id = :t AND status IN "
-            "('suggested', 'offered', 'claimed', 'unplaced')"), {"t": task.id})
+            "('suggested', 'offered', 'claimed', 'unplaced') "
+            "ORDER BY updated_at DESC, placement_id LIMIT 1"), {"t": task.id})
         ).mappings().one_or_none()
         if open_row is not None and open_row["status"] != "unplaced":
             continue
@@ -762,7 +767,11 @@ async def _place_steps(session: AsyncSession, workspace_id: Any, online: list[di
                 await session.execute(text(
                     "INSERT INTO runner_placements (workspace_id, task_id, task_key, mode, status, "
                     "step, diagram_key, chunk_key, reason, note) VALUES (:ws, :t, :key, 'assign', "
-                    "'unplaced', :step, :dk, :ck, :reason, :note)"),
+                    "'unplaced', :step, :dk, :ck, :reason, :note) "
+                    "ON CONFLICT (task_id, step) WHERE status IN "
+                    "('suggested', 'offered', 'claimed', 'unplaced') DO UPDATE SET "
+                    "status = 'unplaced', host_id = NULL, agent_id = NULL, "
+                    "reason = EXCLUDED.reason, note = EXCLUDED.note, updated_at = NOW()"),
                     {"ws": workspace_id, "t": task.id, "key": task.task_key, "step": step,
                      "dk": chunk and chunk["diagram_key"], "ck": chunk and chunk["chunk_key"],
                      "reason": reason, "note": _words(reason, task)})
