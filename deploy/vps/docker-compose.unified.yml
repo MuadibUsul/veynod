@@ -1,16 +1,16 @@
-# Veynod production plane (VPS). Started with --no-deps on an existing db.
+# Veynod production (single host) — runtime + kernel planes on the existing db.
 #
 #   docker compose -f docker-compose.unified.yml --project-name veynod \
 #     up -d --no-deps kernel-api kernel-gate runtime-api runtime-worker api
 #
-# The `db` service is intentionally NOT defined here: production runs
-# veynod-db-1 (pgvector/pgvector:pg16) from the original compose, with volume
-# veynod_pgdata.  This file only adds the execution planes and re-points `api`
-# at them.  All services join the existing docker network so `db` resolves by
-# container name.
-#
-# Three databases in one cluster (bounded contexts):
+# The `db` service is NOT defined here: production runs veynod-db-1 (created by
+# the original compose) with three databases in one cluster:
 #   veynod (product) / veynod_kernel / veynod_runtime
+#
+# Networks are the existing ones:
+#   agentgraph_internal — api <-> db, and every internal service
+#   web                 — api <-> Caddy (Caddy proxies veynod-api:8000)
+# Kernel and Runtime are never attached to `web`.
 
 name: veynod
 
@@ -26,22 +26,24 @@ services:
     image: veynod-kernel:${VEYNOD_TAG:?VEYNOD_TAG is required}
     container_name: veynod-kernel-api
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-veynod}:${POSTGRES_PASSWORD:?}@${DB_HOST:-veynod-db-1}:5432/veynod_kernel
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@veynod-db-1:5432/veynod_kernel
       VN_AUTO_INIT_DB: "true"
-      VN_AUTH_MODE: ${VN_AUTH_MODE:-prod}
+      VN_AUTH_MODE: prod
       VN_ADMIN_API_KEY: ${KERNEL_ADMIN_KEY:?}
       VN_RUNTIME_SERVICE_KEY: ${KERNEL_SERVICE_KEY:?}
       VN_REQUIRE_BOUND_TOKENS: "true"
       VN_GATE_SANDBOX: local
-      # Required for several tasks on one repository: HEAD may advance during
-      # a gate; the verified patch is tree-merged under CAS instead of being
-      # rejected after bounded revalidations (ADR-020).
-      VN_FAST_FORWARD_MERGE: "true"
       VN_ALLOW_LOCAL_GATE_IN_PROD: "1"
       VN_GATE_MEMORY_MB: ${VN_GATE_MEMORY_MB:-2048}
+      VN_FAST_FORWARD_MERGE: "true"
+      # The mounted repository is owned by the host deploy user; the container
+      # runs as root.  Trust the mount instead of failing every git call.
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: "*"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
-      - ${REPOS_DIR:-./repos}:/repos
+      - ${REPOS_DIR:?REPOS_DIR is required}:/repos
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=4)\""]
       interval: 15s
@@ -49,7 +51,7 @@ services:
       retries: 10
       start_period: 40s
     restart: unless-stopped
-    networks: [veynod]
+    networks: [agentgraph_internal]
     <<: *logging
 
   kernel-gate:
@@ -62,35 +64,44 @@ services:
       - --workers
       - ${VN_GATE_WORKERS:-1}
       - --database-url
-      - postgresql+asyncpg://${POSTGRES_USER:-veynod}:${POSTGRES_PASSWORD}@${DB_HOST:-veynod-db-1}:5432/veynod_kernel
+      - postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@veynod-db-1:5432/veynod_kernel
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-veynod}:${POSTGRES_PASSWORD}@${DB_HOST:-veynod-db-1}:5432/veynod_kernel
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@veynod-db-1:5432/veynod_kernel
       VN_AUTO_INIT_DB: "true"
-      VN_AUTH_MODE: ${VN_AUTH_MODE:-prod}
+      VN_AUTH_MODE: prod
       VN_ADMIN_API_KEY: ${KERNEL_ADMIN_KEY}
       VN_RUNTIME_SERVICE_KEY: ${KERNEL_SERVICE_KEY}
       VN_GATE_SANDBOX: local
-      # Required for several tasks on one repository: HEAD may advance during
-      # a gate; the verified patch is tree-merged under CAS instead of being
-      # rejected after bounded revalidations (ADR-020).
-      VN_FAST_FORWARD_MERGE: "true"
       VN_ALLOW_LOCAL_GATE_IN_PROD: "1"
       VN_GATE_MEMORY_MB: ${VN_GATE_MEMORY_MB:-2048}
+      VN_FAST_FORWARD_MERGE: "true"
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: "*"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
-      - ${REPOS_DIR:-./repos}:/repos
+      - ${REPOS_DIR}:/repos
+    # The Gate Worker process serves no HTTP API; its metrics port is the only
+    # socket it opens.  The image-level healthcheck (kernel API :8001) does not
+    # apply to this command.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8030/metrics', timeout=4)\""]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     depends_on:
       kernel-api:
         condition: service_healthy
     restart: unless-stopped
-    networks: [veynod]
+    networks: [agentgraph_internal]
     <<: *logging
 
   runtime-api:
     image: veynod-runtime:${VEYNOD_TAG}
     container_name: veynod-runtime-api
     environment:
-      RUNTIME_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-veynod}:${POSTGRES_PASSWORD}@${DB_HOST:-veynod-db-1}:5432/veynod_runtime
+      RUNTIME_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@veynod-db-1:5432/veynod_runtime
       RUNTIME_API_KEY: ${RUNTIME_API_KEY:?}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     healthcheck:
@@ -100,49 +111,76 @@ services:
       retries: 10
       start_period: 30s
     restart: unless-stopped
-    networks: [veynod]
+    networks: [agentgraph_internal]
     <<: *logging
 
   runtime-worker:
     image: veynod-runtime:${VEYNOD_TAG}
     container_name: veynod-runtime-worker
     command: ["python", "-m", "agent_runtime.worker_main"]
+    env_file:
+      - path: .env.runtime
+        required: false
     environment:
-      RUNTIME_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-veynod}:${POSTGRES_PASSWORD}@${DB_HOST:-veynod-db-1}:5432/veynod_runtime
-      RUNTIME_MODEL_URL: ${MODEL_BASE_URL:?}
-      RUNTIME_MODEL_API_KEY: ${MODEL_API_KEY:?}
-      RUNTIME_MODEL_NAME: ${MODEL_NAME:?}
+      # Model endpoint/key, the runner token and the workspace stay in
+      # .env.runtime (env_file above): the product container never sees them.
+      RUNTIME_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@veynod-db-1:5432/veynod_runtime
       RUNTIME_MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-60}
       RUNTIME_TOOL_MODE: kernel
       KERNEL_URL: http://veynod-kernel-api:8001
-      KERNEL_RUNTIME_TOKEN: ${KERNEL_RUNTIME_TOKEN:?}
       KERNEL_SERVICE_KEY: ${KERNEL_SERVICE_KEY}
-      KERNEL_WORKER_HUB_ID: ${KERNEL_WORKER_HUB_ID:-veynod-runtime}
+      KERNEL_WORKER_HUB_ID: veynod-runtime
       RUNTIME_WORKER_COUNT: ${RUNTIME_WORKER_COUNT:-2}
-      RUNTIME_WORKER_LEASE_SECONDS: ${RUNTIME_WORKER_LEASE_SECONDS:-120}
-      RUNTIME_SUBMISSION_DEADLINE_SECONDS: ${RUNTIME_SUBMISSION_DEADLINE_SECONDS:-3600}
-      RUNTIME_CONTEXT_TOKEN_BUDGET: ${RUNTIME_CONTEXT_TOKEN_BUDGET:-6000}
+      RUNTIME_WORKER_LEASE_SECONDS: "120"
+      RUNTIME_WORKER_METRICS_PORT: "8031"
+      RUNTIME_SUBMISSION_DEADLINE_SECONDS: "3600"
+      RUNTIME_CONTEXT_TOKEN_BUDGET: "6000"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    # The worker serves /metrics on 8031, not the runtime API port.
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8031/metrics', timeout=4)\""]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
     depends_on:
       runtime-api:
         condition: service_healthy
       kernel-api:
         condition: service_healthy
     restart: unless-stopped
-    networks: [veynod]
+    networks: [agentgraph_internal]
     <<: *logging
 
   api:
-    image: veynod-api:${VEYNOD_TAG}
+    image: veynod:monorepo-${VEYNOD_TAG}
     container_name: veynod-api
     env_file:
       - path: .env
-        required: false
+        required: true
     environment:
-      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-veynod}:${POSTGRES_PASSWORD}@${DB_HOST:-veynod-db-1}:5432/veynod
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@veynod-db-1:5432/veynod
       ENVIRONMENT: production
       AUTO_INIT_DB: "true"
       ADMIN_TOKEN: ${ADMIN_TOKEN:?}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-hash}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      MCP_ENABLED: "true"
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-[]}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-[]}
+      CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+      RLS_ENABLED: "true"
+      RLS_ROLE: agentgraph_app
+      OUTBOUND_ALLOW_PRIVATE_NETWORKS: "false"
+      OUTBOUND_ALLOWED_HOSTS: ${OUTBOUND_ALLOWED_HOSTS:-[]}
+      BACKUP_DIR: ${BACKUP_DIR:-/backups}
+      BACKUP_UPLOAD_COMMAND: ${BACKUP_UPLOAD_COMMAND:-}
+      STAGING_DATABASE_URL: ${STAGING_DATABASE_URL:-}
+      SECURITY_CONTACT: ${SECURITY_CONTACT:-}
+      PLATFORM_ADMIN_EMAIL: ${PLATFORM_ADMIN_EMAIL:-}
+      # The execution planes this product delegates to.
       AGENT_RUNTIME_URL: http://veynod-runtime-api:8002
       AGENT_RUNTIME_KEY: ${RUNTIME_API_KEY}
       AGENT_RUNTIME_PROJECTION_ENABLED: "false"
@@ -151,12 +189,10 @@ services:
       KERNEL_SERVICE_KEY: ${KERNEL_SERVICE_KEY}
       KERNEL_WORKSPACE_ID: ${KERNEL_WORKSPACE_ID:-}
       EVENT_DISPATCH_ENABLED: "true"
-      INTERNAL_VIEWS_ENABLED: ${INTERNAL_VIEWS_ENABLED:-false}
+      INTERNAL_VIEWS_ENABLED: "false"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-    ports:
-      - "${API_BIND:-127.0.0.1:8000}:8000"
     volumes:
-      - ${BACKUP_HOST_DIR:-./backups}:/backups
+      - ${BACKUP_HOST_DIR:-./backups/agentgraph}:/backups
     depends_on:
       kernel-api:
         condition: service_healthy
@@ -167,12 +203,13 @@ services:
       interval: 20s
       timeout: 8s
       retries: 10
-      start_period: 60s
+      start_period: 90s
     restart: unless-stopped
-    networks: [veynod]
+    networks: [agentgraph_internal, web]
     <<: *logging
 
 networks:
-  veynod:
-    name: ${VEYNOD_DOCKER_NETWORK:-veynod_default}
+  agentgraph_internal:
+    external: true
+  web:
     external: true
