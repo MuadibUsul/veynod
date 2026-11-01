@@ -57,6 +57,7 @@ from app.services.ast_slicer import SignatureInfo, get_slicer, hash_signature_te
 from app.services.event_bus import EventBus
 from app.services.git_ops import GitError, GitRepository, RepositoryNotUsable
 from app.services.runtime_metrics import get_runtime_metrics
+from app.services.task_evidence import build_task_evidence
 from app.services.task_factory import insert_task
 
 _EXCLUDED_DIRS = {
@@ -803,116 +804,13 @@ async def get_task_evidence(
     """Return the *durable* gate/merge evidence for a task.
 
     AgentGraph must project these results, never infer PASS from a status.
-    The endpoint is admin-only because it exposes patch/gate details.
     """
-    task = await session.get(DagTask, task_id)
-    if task is None:
+    payload = await build_task_evidence(session, task_id)
+    if payload is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"Task {task_id} not found."
         )
-    submission = (
-        await session.execute(
-            text(
-                """
-                SELECT submission_id, status, task_status, result_commit_sha,
-                       merge_mode, gate_results, error_code, error_detail,
-                       attempts, patch_sha256, created_at, completed_at
-                FROM patch_submissions
-                WHERE task_id = :task_id
-                ORDER BY created_at DESC
-                LIMIT 1
-                """
-            ),
-            {"task_id": task_id},
-        )
-    ).mappings().first()
-    intent = (
-        await session.execute(
-            text(
-                """
-                SELECT merge_id, status, merged_commit_sha, merge_mode,
-                       gate_results, merge_timing, task_status, error_code,
-                       error_detail, created_at, completed_at
-                FROM merge_intents
-                WHERE task_id = :task_id
-                ORDER BY created_at DESC
-                LIMIT 1
-                """
-            ),
-            {"task_id": task_id},
-        )
-    ).mappings().first()
-
-    def _submission_payload(row) -> dict | None:
-        if row is None:
-            return None
-        return {
-            "submission_id": str(row["submission_id"]),
-            "status": row["status"],
-            "task_status": row["task_status"],
-            "result_commit_sha": row["result_commit_sha"],
-            "merge_mode": row["merge_mode"],
-            "gate_results": _json_value(row["gate_results"], []),
-            "error_code": row["error_code"],
-            "error_detail": row["error_detail"],
-            "attempts": int(row["attempts"] or 0),
-            "patch_sha256": row["patch_sha256"],
-            "created_at": row["created_at"],
-            "completed_at": row["completed_at"],
-        }
-
-    def _intent_payload(row) -> dict | None:
-        if row is None:
-            return None
-        return {
-            "merge_id": str(row["merge_id"]),
-            "status": row["status"],
-            "merged_commit_sha": row["merged_commit_sha"],
-            "merge_mode": row["merge_mode"],
-            "gate_results": _json_value(row["gate_results"], []),
-            "merge_timing": _json_value(row["merge_timing"], {}),
-            "task_status": row["task_status"],
-            "error_code": row["error_code"],
-            "error_detail": row["error_detail"],
-            "created_at": row["created_at"],
-            "completed_at": row["completed_at"],
-        }
-
-    delivery = (
-        await session.execute(
-            text(
-                """
-                SELECT delivery_id, commit_sha, merge_mode, evidence_hash,
-                       snapshot_id, created_at
-                FROM delivery_records WHERE task_id = :task_id
-                """
-            ),
-            {"task_id": task_id},
-        )
-    ).mappings().first()
-    submission_payload = _submission_payload(submission)
-    intent_payload = _intent_payload(intent)
-    gate_results = (
-        (intent_payload or {}).get("gate_results")
-        or (submission_payload or {}).get("gate_results")
-        or []
-    )
-    return {
-        "task_id": str(task.task_id),
-        "task_status": task.status.value,
-        "result_commit_sha": task.result_commit_sha,
-        "submission": submission_payload,
-        "merge_intent": intent_payload,
-        "delivery": dict(delivery) if delivery is not None else None,
-        "gate_results": gate_results,
-        "evidence_complete": bool(
-            submission_payload
-            and submission_payload["status"] == "COMMITTED"
-            and intent_payload
-            and intent_payload["status"] == "MERGED"
-            and gate_results
-        ),
-    }
+    return payload
 
 
 @router.post("/tasks/{task_id}/cancel")

@@ -21,11 +21,17 @@ const NODE_FOR_OAR = 24;
 
 // ------------------------------------------------------------------ files
 
-export function veynodDir(home = homedir()) {
+// Tests and CI set HOME to a throwaway tree; node's homedir() ignores HOME on
+// Windows (it prefers USERPROFILE), so honour VEYNOD_HOME/HOME explicitly.
+export function defaultHome() {
+  return process.env.VEYNOD_HOME || process.env.HOME || homedir();
+}
+
+export function veynodDir(home = defaultHome()) {
   return join(home, ".veynod");
 }
 
-export function configPath(home = homedir()) {
+export function configPath(home = defaultHome()) {
   return join(veynodDir(home), "config.json");
 }
 
@@ -37,11 +43,11 @@ export function agentName(value) {
   return clean.length >= 3 ? clean : `computer${clean ? `-${clean}` : ""}`;
 }
 
-export function keyPath(agentId, home = homedir()) {
+export function keyPath(agentId, home = defaultHome()) {
   return join(veynodDir(home), "keys", `${safeName(agentId)}.key`);
 }
 
-export function loadConfig(home = homedir()) {
+export function loadConfig(home = defaultHome()) {
   try {
     return JSON.parse(readFileSync(configPath(home), "utf8"));
   } catch {
@@ -56,12 +62,12 @@ function writePrivate(path, content) {
   chmodSync(path, 0o600);
 }
 
-export function saveConfig(config, home = homedir()) {
+export function saveConfig(config, home = defaultHome()) {
   writePrivate(configPath(home), `${JSON.stringify({ version: CONFIG_VERSION, ...config }, null, 2)}\n`);
   return configPath(home);
 }
 
-export function storeKey(agentId, key, home = homedir()) {
+export function storeKey(agentId, key, home = defaultHome()) {
   const path = keyPath(agentId, home);
   writePrivate(path, `${key}\n`);
   return path;
@@ -78,7 +84,7 @@ export function readKey(identity) {
  * connect, the clients to wire, the service to install and what the doctor
  * will check. `--dry-run` prints it; the tests read it.
  */
-export function upPlan(options, { home = homedir(), clients = [], name = hostname() } = {}) {
+export function upPlan(options, { home = defaultHome(), clients = [], name = hostname() } = {}) {
   // Names are agent ids too (a letter, then letters, digits and dashes, at most
   // 40 long), with room for the `-review` suffix.
   const base = agentName(options.name || name);
@@ -106,7 +112,7 @@ export function upPlan(options, { home = homedir(), clients = [], name = hostnam
 // ------------------------------------------------------------------ hub
 
 /** One process per key: a second hub on the same key would fight for its one stream. */
-export function acquireLock(agentId, { home = homedir(), pid = process.pid, alive = isAlive } = {}) {
+export function acquireLock(agentId, { home = defaultHome(), pid = process.pid, alive = isAlive } = {}) {
   const path = join(veynodDir(home), `hub-${safeName(agentId)}.lock`);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   try {
@@ -141,7 +147,7 @@ function isAlive(pid) {
  * With run_tasks each identity runs as a runner (the scheduler places work and
  * reviews on it); otherwise each one listens, so pokes reach --exec hooks.
  */
-export async function runHub(options, { follow, listen, runRunner, version, say = () => {}, home = homedir(),
+export async function runHub(options, { follow, listen, runRunner, version, say = () => {}, home = defaultHome(),
   config = loadConfig(home) } = {}) {
   if (!config?.identities?.length) {
     throw new Error("no identities on this computer yet: run `npx veynod up` first");
@@ -194,7 +200,7 @@ const onPath = (run, command) => commandWorks(command, { run }) !== null;
  * What is missing on this computer and on the board, one line each:
  * {id, ok, required, text, fix}. `up` exits non-zero while a required item is red.
  */
-export async function doctor({ home = homedir(), config = loadConfig(home), fetchImpl = fetch,
+export async function doctor({ home = defaultHome(), config = loadConfig(home), fetchImpl = fetch,
   run = execFileSync, nodeVersion = process.versions.node, serviceInstalled } = {}) {
   const checks = [];
   const add = (id, ok, required, text, fix = null) => checks.push({ id, ok: Boolean(ok), required, text, fix });

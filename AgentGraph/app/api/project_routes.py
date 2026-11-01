@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import Principal, RoleScope, get_principal
+from app.auth import Principal, RoleScope, get_principal, require_permission
 from app.database import get_db
 from app.services import projects
 
@@ -21,6 +21,18 @@ class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     repo: str | None = Field(default=None, max_length=256)
     description: str = Field(default="", max_length=20_000)
+
+
+class RepositoryCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    repo_path: str = Field(min_length=1, max_length=1024)
+    default_branch: str = Field(default="main", max_length=128)
+    kernel_workspace_id: str = Field(min_length=1, max_length=64)
+    kernel_base_url: str | None = Field(default=None, max_length=1024)
+    credential_ref: str = Field(
+        default="KERNEL_RUNTIME_TOKEN", max_length=128
+    )
 
 
 class TenantLimit(BaseModel):
@@ -51,6 +63,115 @@ async def create_project(
         repo=body.repo,
         description=body.description,
     )
+
+
+@router.get(
+    "/projects/{project}/repositories",
+    summary="Repositories bound to a project",
+)
+async def list_project_repositories(
+    project: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]]:
+    from sqlalchemy import text
+
+    from app.services import task_lifecycle  # noqa: F401  (import check)
+
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT r.id, r.project_id, r.repo_path, r.default_branch,
+                       r.kernel_workspace_id,
+                       b.kernel_base_url, b.binding_id
+                FROM project_repositories r
+                LEFT JOIN kernel_bindings b
+                  ON b.workspace_id = r.workspace_id
+                 AND b.repo_path = r.repo_path
+                 AND b.project = :project
+                WHERE r.workspace_id = :workspace_id
+                  AND r.project_id = (
+                      SELECT project_id FROM projects
+                      WHERE workspace_id = :workspace_id AND name = :project
+                  )
+                ORDER BY r.created_at ASC
+                """
+            ),
+            {
+                "workspace_id": principal.workspace.id,
+                "project": project,
+            },
+        )
+    ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+@router.post(
+    "/projects/{project}/repositories",
+    status_code=201,
+    summary="Bind a repository (and its Kernel workspace) to a project",
+)
+async def add_project_repository(
+    project: str,
+    body: RepositoryCreate,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    from sqlalchemy import text
+
+    from app.services import task_lifecycle
+
+    require_permission(principal, "task:create")
+    project_row = (
+        await session.execute(
+            text(
+                "SELECT project_id FROM projects "
+                "WHERE workspace_id = :ws AND name = :name"
+            ),
+            {"ws": principal.workspace.id, "name": project},
+        )
+    ).mappings().first()
+    if project_row is None:
+        raise HTTPException(status_code=404, detail=f"project {project} not found")
+    row = (
+        await session.execute(
+            text(
+                """
+                INSERT INTO project_repositories
+                    (workspace_id, project_id, repo_path, default_branch,
+                     kernel_workspace_id)
+                VALUES (:ws, :project_id, :repo, :branch,
+                        CAST(:kernel_ws AS UUID))
+                ON CONFLICT (project_id, repo_path) DO UPDATE
+                SET default_branch = EXCLUDED.default_branch,
+                    kernel_workspace_id = EXCLUDED.kernel_workspace_id
+                RETURNING id, repo_path, default_branch, kernel_workspace_id
+                """
+            ),
+            {
+                "ws": principal.workspace.id,
+                "project_id": project_row["project_id"],
+                "repo": body.repo_path,
+                "branch": body.default_branch,
+                "kernel_ws": body.kernel_workspace_id,
+            },
+        )
+    ).mappings().one()
+    await session.commit()
+    from app.config import get_settings
+
+    settings = get_settings()
+    await task_lifecycle.upsert_kernel_binding(
+        session,
+        workspace_id=principal.workspace.id,
+        project=project,
+        repo_path=body.repo_path,
+        kernel_base_url=body.kernel_base_url or settings.kernel_url,
+        kernel_workspace_id=body.kernel_workspace_id,
+        credential_ref=body.credential_ref,
+    )
+    return dict(row)
 
 
 @router.get("/execution-graph", summary="Execution graph for a project or workspace")

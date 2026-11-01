@@ -25,6 +25,7 @@ from app.engine.lock_algebra import LockAlgebra
 from app.engine.mutator import GraphMutator, SubTaskNodeSpec
 from app.engine.scheduler import DisjointWriteSetScheduler
 from app.engine.scheduler_core import scheduler_core_manager
+from app.engine.workspace_context import current_request_workspace
 from app.mcp_server.syscalls import (
     ActiveLeaseContext,
     ArtifactKind as ApiArtifactKind,
@@ -91,6 +92,12 @@ class PostgresKernelEngineService(KernelEngineService):
 
     # ------------------------------------------------------------- workspace
     async def _default_workspace_id(self) -> UUID:
+        # A routed request (X-Workspace-Id validated against the runner token)
+        # wins over every process-wide default.
+        routed = current_request_workspace()
+        if routed is not None:
+            return routed
+
         if settings.default_workspace_id is not None:
             exists = await self.session.scalar(
                 select(Workspace.workspace_id).where(
@@ -157,6 +164,12 @@ class PostgresKernelEngineService(KernelEngineService):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Task {task_id} not found.",
             )
+        routed = current_request_workspace()
+        if routed is not None and task.workspace_id != routed:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Task belongs to a different workspace than this request.",
+            )
         if task.status != TaskStatus.LEASED:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -206,6 +219,7 @@ class PostgresKernelEngineService(KernelEngineService):
             lease_token_hash=token_hash,
             lease_seconds=settings.lease_seconds,
             wait_seconds=req.wait_seconds,
+            requested_task_id=req.task_id,
         )
         claim_decision_ms = int((time.monotonic() - started) * 1000)
         if row is None:

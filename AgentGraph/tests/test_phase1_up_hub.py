@@ -184,8 +184,11 @@ async def test_one_hub_serves_both_identities_and_the_doctor_goes_green(client, 
         review = json.loads((log / "review.json").read_text())
         assert work["key_tail"] == builder["key"][-6:]
         assert review["key_tail"] == reviewer["key"][-6:]
-        # The hub let go of its locks when it stopped.
-        assert not list((home / ".veynod").glob("hub-*.lock"))
+        # The hub let go of its locks when it stopped. Windows terminates a
+        # process without running exit handlers, so a stale file may remain;
+        # the next hub checks the pid and overwrites it.
+        if sys.platform != "win32":
+            assert not list((home / ".veynod").glob("hub-*.lock"))
 
 
 async def test_veynod_up_connects_both_identities_in_one_approval_then_the_loop_runs(
@@ -240,8 +243,12 @@ async def test_veynod_up_connects_both_identities_in_one_approval_then_the_loop_
             config = json.loads(config_file.read_text())
             assert [(item["role"], item["agent_id"]) for item in config["identities"]] == [
                 ("computer", name), ("review", f"{name}-review")]
-            assert all((Path(item["key_file"]).stat().st_mode & 0o777) == 0o600
-                       for item in config["identities"])
+            # POSIX permission bits are not enforced on Windows.
+            if sys.platform != "win32":
+                assert all(
+                    (Path(item["key_file"]).stat().st_mode & 0o777) == 0o600
+                    for item in config["identities"]
+                )
             hub = subprocess.Popen(["node", str(CLI), "hub"], env=env, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.PIPE, text=True)
             rest, _ = await asyncio.wait_for(up.communicate(), 90)

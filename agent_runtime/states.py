@@ -20,6 +20,7 @@ class RunState(str, Enum):
     RUNNING = "RUNNING"
     WAITING_MODEL = "WAITING_MODEL"
     WAITING_TOOL = "WAITING_TOOL"
+    WAITING_EXTERNAL = "WAITING_EXTERNAL"
     WAITING_CHILDREN = "WAITING_CHILDREN"
     BLOCKED = "BLOCKED"
     CHECKPOINTING = "CHECKPOINTING"
@@ -70,6 +71,7 @@ ALLOWED: dict[RunState, frozenset[RunState]] = {
         {
             RunState.WAITING_MODEL,
             RunState.WAITING_TOOL,
+            RunState.WAITING_EXTERNAL,
             RunState.WAITING_CHILDREN,
             RunState.BLOCKED,
             RunState.CHECKPOINTING,
@@ -87,7 +89,21 @@ ALLOWED: dict[RunState, frozenset[RunState]] = {
         {RunState.RUNNING, RunState.FAILED, RunState.CANCELLED, RunState.TIMED_OUT}
     ),
     RunState.WAITING_TOOL: frozenset(
-        {RunState.RUNNING, RunState.FAILED, RunState.CANCELLED, RunState.TIMED_OUT}
+        {
+            RunState.RUNNING,
+            RunState.WAITING_EXTERNAL,
+            RunState.FAILED,
+            RunState.CANCELLED,
+            RunState.TIMED_OUT,
+        }
+    ),
+    RunState.WAITING_EXTERNAL: frozenset(
+        {
+            RunState.RUNNING,
+            RunState.FAILED,
+            RunState.CANCELLED,
+            RunState.TIMED_OUT,
+        }
     ),
     RunState.WAITING_CHILDREN: frozenset(
         {RunState.RUNNING, RunState.FAILED, RunState.CANCELLED}

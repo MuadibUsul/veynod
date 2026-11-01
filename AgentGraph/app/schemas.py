@@ -1099,6 +1099,9 @@ class TaskOut(TaskSummary):
                     "(latest audit, then the task status)")
     input_context: dict[str, Any] = Field(default_factory=dict)
     output_artifact: dict[str, Any] = Field(default_factory=dict)
+    # Execution correlation (v3.75): run/trace/kernel/submission identities.
+    correlation: dict[str, Any] = Field(default_factory=dict)
+    active_run_id: str | None = None
     handoff_brief: dict[str, Any] | None = None
     human_feedback: str | None = None
     reject_history: list[Any] = Field(default_factory=list)

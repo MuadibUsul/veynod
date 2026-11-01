@@ -607,9 +607,14 @@ export function parseSse(buffer) {
   return [events, rest];
 }
 
+// Honour VEYNOD_HOME/HOME (node's homedir() ignores HOME on Windows).
+function defaultHome() {
+  return process.env.VEYNOD_HOME || process.env.HOME || homedir();
+}
+
 function cursorFile(host, key) {
   const tag = Buffer.from(`${host}|${key.slice(-12)}`).toString("base64url").slice(0, 24);
-  const directory = process.env.VEYNOD_STATE_DIR || join(homedir(), ".veynod");
+  const directory = process.env.VEYNOD_STATE_DIR || join(defaultHome(), ".veynod");
   return join(directory, `listen-${tag}.json`);
 }
 
@@ -800,7 +805,7 @@ export function hubArguments({ script }) {
 
 export function servicePlan(action, {
   os = platform(),
-  home = homedir(),
+  home = defaultHome(),
   node = process.execPath,
   script = fileURLToPath(import.meta.url),
   host,
@@ -1026,7 +1031,7 @@ function audit() {
 
 function serviceKeyFile(options) {
   if (options.keyFile) return options.keyFile;
-  const path = join(homedir(), ".veynod", options.runner ? "runner.key" : "listen.key");
+  const path = join(defaultHome(), ".veynod", options.runner ? "runner.key" : "listen.key");
   if (options.key) {
     if (!options.dryRun) {
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 });

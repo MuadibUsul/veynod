@@ -1,3 +1,5 @@
+> **已被取代（2026-11-01）**：本文描述的是统一重构之前的架构。当前架构见 [docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md)，审计见 [docs/UNIFIED_ARCHITECTURE_AUDIT.md](docs/UNIFIED_ARCHITECTURE_AUDIT.md)，验收见 [docs/UNIFIED_ACCEPTANCE_REPORT.md](docs/UNIFIED_ACCEPTANCE_REPORT.md)。
+
 # Veynod 项目架构与路径
 
 > 更新时间：2026-10-31  

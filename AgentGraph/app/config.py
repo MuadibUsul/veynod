@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     agent_runtime_url: str | None = None
     agent_runtime_key: str = "dev-runtime"
     agent_runtime_timeout: float = 30.0
+    # A Run with no explicit budget still needs a ceiling: an unproductive
+    # loop must stop instead of spending without bound.
+    runtime_default_max_model_calls: int = 40
+    runtime_default_max_cost_usd: float = 5.0
     agent_runtime_projection_enabled: bool = True
     agent_runtime_projection_interval_seconds: int = Field(
         default=10, ge=3, le=3_600
@@ -93,6 +97,14 @@ class Settings(BaseSettings):
     lease_reaper_interval_seconds: int = Field(default=15, ge=5, le=3_600)
     # Kernel code-run projection (Phase 1H): terminal states become product
     # task states without requiring a human to refresh the Code page.
+    # Internal operator views (code / agent-runs / delivery consoles).  They
+    # are NOT product navigation (ADR-018): hidden from users, served only at
+    # /dashboard/internal/* and only when this flag is on (or never in
+    # production unless an operator explicitly enables it).
+    internal_views_enabled: bool = False
+    # Compatibility switch (one release): create Kernel tasks directly from
+    # POST /v1/code/runs instead of starting an Agent Run. See ADR-018.
+    code_engine_legacy_direct: bool = False
     code_projection_enabled: bool = True
     code_projection_interval_seconds: int = Field(default=30, ge=5, le=3_600)
     code_projection_batch_size: int = Field(default=100, ge=1, le=500)

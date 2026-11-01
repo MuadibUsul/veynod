@@ -47,8 +47,10 @@ class HTTPModelGateway:
         config: ModelGatewayConfig,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
+        tool_catalog: list[dict[str, Any]] | None = None,
     ) -> None:
         self.config = config
+        self.tool_catalog = tool_catalog or []
         self._client = httpx.AsyncClient(
             timeout=config.timeout_seconds, transport=transport
         )
@@ -57,11 +59,30 @@ class HTTPModelGateway:
         await self._client.aclose()
 
     async def decide(self, run: dict[str, Any], context: dict[str, Any]) -> ModelAction:
-        prompt = (
-            "You are the decision step of a coding Agent Run. Return exactly one "
-            "JSON object with keys: kind (tool|finish|pause), tool (string|null), "
-            "arguments (object), idempotency_key (string|null), output (object), "
-            "reason (string). Do not include markdown fences or prose."
+        nl = chr(10)
+        catalog = nl.join(
+            f"- {item['name']}: {item['description']}"
+            + (" (mutating)" if item.get("mutating") else "")
+            for item in self.tool_catalog
+        )
+        tools = ("Available tools:" + nl + catalog) if self.tool_catalog else (
+            "No tools are available; finish or pause."
+        )
+        prompt = nl.join(
+            [
+                "You are the decision step of a coding Agent Run. You cannot run",
+                "shell commands; every code change goes through the Veynod Kernel",
+                "tools below. Return exactly one JSON object with keys:",
+                "kind (tool|finish|pause), tool (string|null), arguments (object),",
+                "idempotency_key (string|null), output (object), reason (string).",
+                "No markdown fences, no prose outside the object.",
+                "Typical flow: create_task (once, from the product task) ->",
+                "pull_task_bundle -> read_file/query_symbol_signature ->",
+                "submit_patch (the gate answer arrives later as an external",
+                "result) -> get_submission or get_task_evidence -> submit_patch",
+                "again with a fixed diff if the gate failed -> finish.",
+                tools,
+            ]
         )
         payload = {
             "model": self.config.model,

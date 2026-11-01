@@ -11,7 +11,6 @@ import json
 import logging
 import re
 import secrets
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
@@ -232,6 +231,7 @@ class RunStore:
         if data.get("parent_run_id"):
             data["parent_run_id"] = str(data["parent_run_id"])
         data["budget"] = _loads(data.get("budget"), {})
+        data["kernel"] = _loads(data.get("kernel"), {})
         return data
 
     # ---------------------------------------------------------------- create
@@ -249,9 +249,14 @@ class RunStore:
         idempotency_key: str | None = None,
         parent_run_id: UUID | str | None = None,
         delegation_key: str | None = None,
+        project_id: str | None = None,
+        repo_path: str | None = None,
+        trace_id: str | None = None,
+        kernel: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         run_id = uuid4()
         correlation = correlation_id or f"corr_{uuid4().hex}"
+        trace = trace_id or uuid4().hex
         async with self._sessions() as session:
             if idempotency_key:
                 existing = await self._idempotent(
@@ -266,12 +271,15 @@ class RunStore:
                     INSERT INTO {self.schema}.agent_runs
                         (run_id, tenant_id, workspace_id, product_task_id,
                          goal, workflow_id, workflow_version, status, version,
-                         budget, correlation_id, parent_run_id, delegation_key)
+                         budget, correlation_id, parent_run_id, delegation_key,
+                         project_id, repo_path, trace_id, kernel)
                     VALUES
                         (:run_id, :tenant_id, :workspace_id, :product_task_id,
                          :goal, :workflow_id, :workflow_version, 'CREATED', 1,
                          CAST(:budget AS JSONB), :correlation_id,
-                         :parent_run_id, :delegation_key)
+                         :parent_run_id, :delegation_key,
+                         :project_id, :repo_path, :trace_id,
+                         CAST(:kernel AS JSONB))
                     """
                 ),
                 {
@@ -286,6 +294,10 @@ class RunStore:
                     "correlation_id": correlation,
                     "parent_run_id": str(parent_run_id) if parent_run_id else None,
                     "delegation_key": delegation_key,
+                    "project_id": project_id,
+                    "repo_path": repo_path,
+                    "trace_id": trace,
+                    "kernel": _json(kernel or {}),
                 },
             )
             event_seq = await self._publish(
@@ -296,6 +308,8 @@ class RunStore:
                     "run_id": str(run_id),
                     "workspace_id": str(workspace_id),
                     "correlation_id": correlation,
+                    "trace_id": trace,
+                    "product_task_id": product_task_id,
                 },
             )
             result = {
@@ -1153,6 +1167,662 @@ class RunStore:
                 {"run_id": str(run_id), "token_hash": _token_hash(token)},
             )
             await session.commit()
+
+    # ------------------------------------------------- external (async) work
+    async def defer_external(
+        self,
+        run_id: UUID | str,
+        *,
+        tool: str,
+        idempotency_key: str,
+        request: dict[str, Any] | None = None,
+        submission_id: str | None = None,
+        kernel_workspace_id: str | None = None,
+        kernel_task_id: str | None = None,
+        deadline_seconds: int = 3600,
+        step_id: UUID | str | None = None,
+    ) -> dict[str, Any]:
+        """Persist a deferred tool call; the Run must leave RUNNING after this."""
+        external_id = uuid4()
+        async with self._sessions() as session:
+            await session.execute(
+                text(
+                    f"""
+                    INSERT INTO {self.schema}.external_invocations
+                        (external_id, run_id, step_id, tool, idempotency_key,
+                         submission_id, kernel_workspace_id, kernel_task_id,
+                         status, request, deadline)
+                    VALUES (
+                        :external_id, :run_id, :step_id, :tool, :key,
+                        :submission_id, :kernel_workspace_id, :kernel_task_id,
+                        'PENDING', CAST(:request AS JSONB),
+                        NOW() + (:deadline_seconds * INTERVAL '1 second')
+                    )
+                    ON CONFLICT (run_id, idempotency_key) DO NOTHING
+                    """
+                ),
+                {
+                    "external_id": external_id,
+                    "run_id": str(run_id),
+                    "step_id": str(step_id) if step_id else None,
+                    "tool": tool,
+                    "key": idempotency_key,
+                    "submission_id": str(submission_id) if submission_id else None,
+                    "kernel_workspace_id": (
+                        str(kernel_workspace_id) if kernel_workspace_id else None
+                    ),
+                    "kernel_task_id": (
+                        str(kernel_task_id) if kernel_task_id else None
+                    ),
+                    "request": _json(request or {}),
+                    "deadline_seconds": max(30, int(deadline_seconds)),
+                },
+            )
+            row = (
+                await session.execute(
+                    text(
+                        f"""
+                        SELECT * FROM {self.schema}.external_invocations
+                        WHERE run_id = :run_id AND idempotency_key = :key
+                        """
+                    ),
+                    {"run_id": str(run_id), "key": idempotency_key},
+                )
+            ).mappings().first()
+            await self._publish(
+                session,
+                UUID(str(run_id)),
+                "AgentRunDeferred",
+                {
+                    "run_id": str(run_id),
+                    "external_id": str(row["external_id"]) if row else None,
+                    "tool": tool,
+                    "submission_id": str(submission_id) if submission_id else None,
+                },
+            )
+            await session.commit()
+        if row is None:
+            raise RunNotFound(f"external invocation for {run_id} not found")
+        return self._external_dict(row)
+
+    async def get_external(
+        self, run_id: UUID | str, idempotency_key: str
+    ) -> dict[str, Any] | None:
+        async with self._sessions() as session:
+            row = (
+                await session.execute(
+                    text(
+                        f"""
+                        SELECT * FROM {self.schema}.external_invocations
+                        WHERE run_id = :run_id AND idempotency_key = :key
+                        """
+                    ),
+                    {"run_id": str(run_id), "key": idempotency_key},
+                )
+            ).mappings().first()
+        return self._external_dict(row) if row else None
+
+    async def list_external(self, run_id: UUID | str) -> list[dict[str, Any]]:
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        f"""
+                        SELECT * FROM {self.schema}.external_invocations
+                        WHERE run_id = :run_id
+                        ORDER BY created_at ASC
+                        """
+                    ),
+                    {"run_id": str(run_id)},
+                )
+            ).mappings().all()
+        return [self._external_dict(row) for row in rows]
+
+    async def finalize_external(
+        self,
+        external_id: UUID | str,
+        *,
+        status: str,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> dict[str, Any] | None:
+        async with self._sessions() as session:
+            row = (
+                await session.execute(
+                    text(
+                        f"""
+                        UPDATE {self.schema}.external_invocations
+                        SET status = :status,
+                            result = CAST(:result AS JSONB),
+                            error = :error,
+                            updated_at = NOW()
+                        WHERE external_id = :external_id
+                          AND status = 'PENDING'
+                        RETURNING *
+                        """
+                    ),
+                    {
+                        "external_id": str(external_id),
+                        "status": status,
+                        "result": _json(result or {}),
+                        "error": (error or "")[:8000] or None,
+                    },
+                )
+            ).mappings().first()
+            await session.commit()
+        return self._external_dict(row) if row else None
+
+    # --------------------------------------------------------------- wakeups
+    async def add_wakeup(
+        self,
+        *,
+        kind: str,
+        ref_id: str,
+        kernel_event_seq: int | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> bool:
+        async with self._sessions() as session:
+            result = await session.execute(
+                text(
+                    f"""
+                    INSERT INTO {self.schema}.runtime_wakeups
+                        (kind, ref_id, kernel_event_seq, payload)
+                    VALUES (:kind, :ref_id, :seq, CAST(:payload AS JSONB))
+                    ON CONFLICT (kind, ref_id, kernel_event_seq) DO NOTHING
+                    RETURNING wakeup_id
+                    """
+                ),
+                {
+                    "kind": kind,
+                    "ref_id": str(ref_id),
+                    "seq": kernel_event_seq,
+                    "payload": _json(payload or {}),
+                },
+            )
+            inserted = result.first() is not None
+            await session.commit()
+        return inserted
+
+    async def consume_wakeups(self, limit: int = 200) -> dict[str, int]:
+        """Apply unconsumed wakeups to deferred invocations and their runs.
+
+        Idempotent: a wakeup is marked consumed in the same transaction that
+        finalizes the matching invocation.  A Run leaves WAITING_EXTERNAL only
+        once, so a duplicate wakeup has no second side effect.
+        """
+        stats = {"wakeups": 0, "finalized": 0, "resumed": 0, "skipped": 0}
+        async with self._sessions() as session:
+            wakeups = (
+                await session.execute(
+                    text(
+                        f"""
+                        SELECT * FROM {self.schema}.runtime_wakeups
+                        WHERE consumed_at IS NULL
+                        ORDER BY wakeup_id ASC
+                        FOR UPDATE SKIP LOCKED
+                        LIMIT :limit
+                        """
+                    ),
+                    {"limit": max(1, min(1000, limit))},
+                )
+            ).mappings().all()
+            for wakeup in wakeups:
+                stats["wakeups"] += 1
+                payload = _loads(wakeup["payload"], {})
+                if wakeup["kind"] != "SUBMISSION_FINAL":
+                    stats["skipped"] += 1
+                else:
+                    externals = (
+                        await session.execute(
+                            text(
+                                f"""
+                                UPDATE {self.schema}.external_invocations
+                                SET status = 'FINAL',
+                                    result = CAST(:result AS JSONB),
+                                    updated_at = NOW()
+                                WHERE submission_id = :submission_id
+                                  AND status = 'PENDING'
+                                RETURNING external_id, run_id
+                                """
+                            ),
+                            {
+                                "submission_id": str(wakeup["ref_id"]),
+                                "result": _json(payload),
+                            },
+                        )
+                    ).mappings().all()
+                    for external in externals:
+                        stats["finalized"] += 1
+                        run_id = str(external["run_id"])
+                        resumed = await self._resume_waiting_run(
+                            session, run_id, payload, str(external["external_id"])
+                        )
+                        if resumed:
+                            stats["resumed"] += 1
+                await session.execute(
+                    text(
+                        f"""
+                        UPDATE {self.schema}.runtime_wakeups
+                        SET consumed_at = NOW()
+                        WHERE wakeup_id = :wakeup_id
+                        """
+                    ),
+                    {"wakeup_id": wakeup["wakeup_id"]},
+                )
+            await session.commit()
+        return stats
+
+    async def _resume_waiting_run(
+        self,
+        session: AsyncSession,
+        run_id: str,
+        external_result: dict[str, Any],
+        external_id: str,
+    ) -> bool:
+        row = (
+            await session.execute(
+                text(
+                    f"""
+                    SELECT status, version FROM {self.schema}.agent_runs
+                    WHERE run_id = :run_id FOR UPDATE
+                    """
+                ),
+                {"run_id": run_id},
+            )
+        ).mappings().first()
+        if row is None or str(row["status"]) != RunState.WAITING_EXTERNAL.value:
+            return False
+        version = int(row["version"]) + 1
+        await session.execute(
+            text(
+                f"""
+                UPDATE {self.schema}.agent_runs
+                SET status = 'RUNNING', version = :version, updated_at = NOW()
+                WHERE run_id = :run_id
+                """
+            ),
+            {"version": version, "run_id": run_id},
+        )
+        await self._publish(
+            session,
+            UUID(run_id),
+            "AgentRunStateChanged",
+            {
+                "run_id": run_id,
+                "from": RunState.WAITING_EXTERNAL.value,
+                "to": RunState.RUNNING.value,
+                "version": version,
+                "reason": "external result available",
+                "actor": "wakeup",
+            },
+        )
+        await self._publish(
+            session,
+            UUID(run_id),
+            "AgentRunExternalResult",
+            {
+                "run_id": run_id,
+                "external_id": external_id,
+                "result": external_result,
+            },
+        )
+        checkpoint_version = (
+            await session.scalar(
+                text(
+                    f"""
+                    SELECT COALESCE(MAX(version), 0) + 1
+                    FROM {self.schema}.run_checkpoints WHERE run_id = :run_id
+                    """
+                ),
+                {"run_id": run_id},
+            )
+        ) or 1
+        await session.execute(
+            text(
+                f"""
+                INSERT INTO {self.schema}.run_checkpoints
+                    (checkpoint_id, run_id, version, state, idempotency_key)
+                VALUES (
+                    :checkpoint_id, :run_id, :version, CAST(:state AS JSONB),
+                    :key
+                )
+                ON CONFLICT (run_id, idempotency_key) DO NOTHING
+                """
+            ),
+            {
+                "checkpoint_id": uuid4(),
+                "run_id": run_id,
+                "version": int(checkpoint_version),
+                "state": _json(
+                    {
+                        "external_result": external_result,
+                        "external_id": external_id,
+                    }
+                ),
+                "key": f"external:{external_id}",
+            },
+        )
+        return True
+
+    async def expire_external(self, limit: int = 100) -> dict[str, int]:
+        """Fail Runs whose deferred call passed its deadline (safety net)."""
+        stats = {"expired": 0, "runs_failed": 0}
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        f"""
+                        SELECT external_id, run_id FROM
+                            {self.schema}.external_invocations
+                        WHERE status = 'PENDING' AND deadline < NOW()
+                        ORDER BY deadline ASC
+                        LIMIT :limit
+                        FOR UPDATE SKIP LOCKED
+                        """
+                    ),
+                    {"limit": max(1, min(1000, limit))},
+                )
+            ).mappings().all()
+            for row in rows:
+                await session.execute(
+                    text(
+                        f"""
+                        UPDATE {self.schema}.external_invocations
+                        SET status = 'FAILED', error = 'external deadline exceeded',
+                            updated_at = NOW()
+                        WHERE external_id = :external_id
+                        """
+                    ),
+                    {"external_id": row["external_id"]},
+                )
+                stats["expired"] += 1
+                run_row = (
+                    await session.execute(
+                        text(
+                            f"""
+                            SELECT status, version FROM {self.schema}.agent_runs
+                            WHERE run_id = :run_id FOR UPDATE
+                            """
+                        ),
+                        {"run_id": str(row["run_id"])},
+                    )
+                ).mappings().first()
+                if (
+                    run_row is not None
+                    and str(run_row["status"])
+                    == RunState.WAITING_EXTERNAL.value
+                ):
+                    await session.execute(
+                        text(
+                            f"""
+                            UPDATE {self.schema}.agent_runs
+                            SET status = 'FAILED',
+                                version = version + 1,
+                                updated_at = NOW(),
+                                finished_at = COALESCE(finished_at, NOW()),
+                                last_error = 'external deadline exceeded'
+                            WHERE run_id = :run_id
+                            """
+                        ),
+                        {"run_id": str(row["run_id"])},
+                    )
+                    await self._publish(
+                        session,
+                        UUID(str(row["run_id"])),
+                        "AgentRunStateChanged",
+                        {
+                            "run_id": str(row["run_id"]),
+                            "from": RunState.WAITING_EXTERNAL.value,
+                            "to": RunState.FAILED.value,
+                            "reason": "external deadline exceeded",
+                            "actor": "reaper",
+                        },
+                    )
+                    stats["runs_failed"] += 1
+            await session.commit()
+        return stats
+
+    async def wakeup_cursor(self, source_instance: str) -> int:
+        async with self._sessions() as session:
+            value = await session.scalar(
+                text(
+                    f"""
+                    SELECT last_event_seq FROM {self.schema}.runtime_wakeup_cursors
+                    WHERE source_instance = :instance
+                    """
+                ),
+                {"instance": source_instance},
+            )
+            await session.commit()
+        return int(value or 0)
+
+    async def set_wakeup_cursor(self, source_instance: str, seq: int) -> None:
+        async with self._sessions() as session:
+            await session.execute(
+                text(
+                    f"""
+                    INSERT INTO {self.schema}.runtime_wakeup_cursors
+                        (source_instance, last_event_seq, updated_at)
+                    VALUES (:instance, :seq, NOW())
+                    ON CONFLICT (source_instance) DO UPDATE
+                    SET last_event_seq = GREATEST(
+                            {self.schema}.runtime_wakeup_cursors.last_event_seq,
+                            EXCLUDED.last_event_seq
+                        ),
+                        updated_at = NOW()
+                    """
+                ),
+                {"instance": source_instance, "seq": max(0, int(seq))},
+            )
+            await session.commit()
+
+    # --------------------------------------------------------- kernel tasks
+    async def remember_kernel_task(
+        self,
+        *,
+        run_id: UUID | str,
+        kernel_task_id: UUID | str,
+        kernel_workspace_id: UUID | str,
+        request_key: str | None = None,
+    ) -> None:
+        async with self._sessions() as session:
+            await session.execute(
+                text(
+                    f"""
+                    INSERT INTO {self.schema}.kernel_tasks
+                        (run_id, kernel_task_id, kernel_workspace_id, request_key)
+                    VALUES (
+                        :run_id, :task_id, :workspace_id, :request_key
+                    )
+                    ON CONFLICT (run_id) DO UPDATE
+                    SET kernel_task_id = EXCLUDED.kernel_task_id,
+                        kernel_workspace_id = EXCLUDED.kernel_workspace_id,
+                        request_key = COALESCE(
+                            EXCLUDED.request_key,
+                            {self.schema}.kernel_tasks.request_key
+                        ),
+                        created_at = NOW()
+                    """
+                ),
+                {
+                    "run_id": str(run_id),
+                    "task_id": str(kernel_task_id),
+                    "workspace_id": str(kernel_workspace_id),
+                    "request_key": request_key,
+                },
+            )
+            await session.commit()
+
+    async def kernel_task(self, run_id: UUID | str) -> dict[str, Any] | None:
+        async with self._sessions() as session:
+            row = (
+                await session.execute(
+                    text(
+                        f"""
+                        SELECT run_id, kernel_task_id, kernel_workspace_id,
+                               request_key, created_at
+                        FROM {self.schema}.kernel_tasks WHERE run_id = :run_id
+                        """
+                    ),
+                    {"run_id": str(run_id)},
+                )
+            ).mappings().first()
+            await session.commit()
+        if row is None:
+            return None
+        data = dict(row)
+        data["run_id"] = str(data["run_id"])
+        return data
+
+    # ----------------------------------------------------------- kern leases
+    async def remember_kernel_lease(
+        self,
+        *,
+        run_id: UUID | str,
+        kernel_task_id: UUID | str,
+        kernel_workspace_id: UUID | str,
+        lease_token: str,
+        expires_at: Any | None = None,
+    ) -> None:
+        async with self._sessions() as session:
+            await session.execute(
+                text(
+                    f"""
+                    INSERT INTO {self.schema}.kernel_leases
+                        (run_id, kernel_task_id, kernel_workspace_id,
+                         lease_token, expires_at)
+                    VALUES (
+                        :run_id, :kernel_task_id, :kernel_workspace_id,
+                        :lease_token, :expires_at
+                    )
+                    ON CONFLICT (run_id, kernel_task_id) DO UPDATE
+                    SET lease_token = EXCLUDED.lease_token,
+                        kernel_workspace_id = EXCLUDED.kernel_workspace_id,
+                        expires_at = EXCLUDED.expires_at,
+                        created_at = NOW()
+                    """
+                ),
+                {
+                    "run_id": str(run_id),
+                    "kernel_task_id": str(kernel_task_id),
+                    "kernel_workspace_id": str(kernel_workspace_id),
+                    "lease_token": lease_token,
+                    "expires_at": expires_at,
+                },
+            )
+            await session.commit()
+
+    async def kernel_lease(
+        self, run_id: UUID | str, kernel_task_id: UUID | str
+    ) -> str | None:
+        async with self._sessions() as session:
+            value = await session.scalar(
+                text(
+                    f"""
+                    SELECT lease_token FROM {self.schema}.kernel_leases
+                    WHERE run_id = :run_id AND kernel_task_id = :task_id
+                    """
+                ),
+                {"run_id": str(run_id), "task_id": str(kernel_task_id)},
+            )
+            await session.commit()
+        return str(value) if value else None
+
+    async def latest_kernel_lease(self, run_id: UUID | str) -> dict[str, Any] | None:
+        async with self._sessions() as session:
+            row = (
+                await session.execute(
+                    text(
+                        f"""
+                        SELECT run_id, kernel_task_id, kernel_workspace_id,
+                               lease_token, expires_at
+                        FROM {self.schema}.kernel_leases
+                        WHERE run_id = :run_id
+                        ORDER BY created_at DESC
+                        LIMIT 1
+                        """
+                    ),
+                    {"run_id": str(run_id)},
+                )
+            ).mappings().first()
+            await session.commit()
+        if row is None:
+            return None
+        data = dict(row)
+        for key in ("run_id", "kernel_task_id", "kernel_workspace_id"):
+            data[key] = str(data[key])
+        return data
+
+    async def list_kernel_workspaces(self) -> list[str]:
+        """Workspaces that currently have a live Run bound to a Kernel."""
+        async with self._sessions() as session:
+            rows = (
+                await session.execute(
+                    text(
+                        f"""
+                        SELECT DISTINCT kernel->>'workspace_id' AS workspace_id
+                        FROM {self.schema}.agent_runs
+                        WHERE status NOT IN (
+                            'COMPLETED', 'FAILED', 'CANCELLED',
+                            'TIMED_OUT', 'BUDGET_EXCEEDED'
+                        )
+                          AND kernel->>'workspace_id' IS NOT NULL
+                        """
+                    )
+                )
+            ).all()
+            await session.commit()
+        return [str(row[0]) for row in rows if row[0]]
+
+    # ------------------------------------------------------------ tool audit
+    async def record_tool_audit(
+        self,
+        *,
+        run_id: UUID | str | None,
+        tool: str,
+        idempotency_key: str,
+        status: str,
+        latency_ms: int,
+        error_class: str | None = None,
+        kernel_status: int | None = None,
+        correlation: dict[str, Any] | None = None,
+    ) -> None:
+        async with self._sessions() as session:
+            await session.execute(
+                text(
+                    f"""
+                    INSERT INTO {self.schema}.runtime_tool_audit
+                        (run_id, tool, idempotency_key, status, latency_ms,
+                         error_class, kernel_status, correlation)
+                    VALUES (
+                        :run_id, :tool, :key, :status, :latency_ms,
+                        :error_class, :kernel_status, CAST(:correlation AS JSONB)
+                    )
+                    """
+                ),
+                {
+                    "run_id": str(run_id) if run_id else None,
+                    "tool": tool,
+                    "key": idempotency_key[:200],
+                    "status": status,
+                    "latency_ms": max(0, int(latency_ms)),
+                    "error_class": error_class,
+                    "kernel_status": kernel_status,
+                    "correlation": _json(correlation or {}),
+                },
+            )
+            await session.commit()
+
+    @staticmethod
+    def _external_dict(row: Any) -> dict[str, Any]:
+        data = dict(row)
+        for key in ("external_id", "run_id", "step_id", "submission_id",
+                    "kernel_workspace_id", "kernel_task_id"):
+            if data.get(key):
+                data[key] = str(data[key])
+        data["request"] = _loads(data.get("request"), {})
+        data["result"] = _loads(data.get("result"), {})
+        return data
 
     @staticmethod
     def _invocation_dict(row: Any) -> dict[str, Any]:

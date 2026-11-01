@@ -3,7 +3,14 @@
 import { useEffect, useState, type ReactNode } from "react";
 
 import { useI18n } from "../i18n";
-import type { DirectoryEntry, OpenQuestion, TaskDetail, TaskSummary } from "../types";
+import type {
+  ApiRequest,
+  DirectoryEntry,
+  ExecutionView,
+  OpenQuestion,
+  TaskDetail,
+  TaskSummary,
+} from "../types";
 import { directoryDisplayName, directoryRefs, formatNumber, pretty, relativeTime } from "../types";
 import {
   Empty,
@@ -430,9 +437,158 @@ function KeyValueSection({
   );
 }
 
+/**
+ * One task's execution, from the three owners: the Agent Runtime loop, the
+ * Kernel's code facts and its durable gate evidence.  This replaces the three
+ * separate technical consoles (ADR-018): Code / Agent Runs / Delivery are
+ * sections of a task, not products.
+ */
+export function ExecutionPanel({ api, taskKey }: { api: ApiRequest; taskKey: string }) {
+  const { t } = useI18n();
+  const [view, setView] = useState<ExecutionView | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setView(null);
+    setError(null);
+    void (async () => {
+      try {
+        const payload = await api<ExecutionView>(
+          `/v1/tasks/${encodeURIComponent(taskKey)}/execution`,
+        );
+        if (!cancelled) setView(payload);
+      } catch (exc) {
+        if (!cancelled) setError(exc instanceof Error ? exc.message : String(exc));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [api, taskKey]);
+
+  if (error) {
+    return (
+      <div className="detail-section">
+        <h3>{t("Execution")}</h3>
+        <p className="muted">{t("No execution yet: {reason}", { reason: error })}</p>
+      </div>
+    );
+  }
+  if (!view) {
+    return (
+      <div className="detail-section">
+        <h3>{t("Execution")}</h3>
+        <p className="muted"><Spinner /> {t("Loading the loop…")}</p>
+      </div>
+    );
+  }
+  if (!view.loop && !view.code) {
+    return null;
+  }
+  const loop = view.loop;
+  const steps = loop?.steps ?? [];
+  return (
+    <div className="detail-section execution-panel">
+      <h3>
+        <button
+          type="button"
+          className="button ghost small"
+          onClick={() => setOpen((value) => !value)}
+          aria-expanded={open}
+        >
+          <IconChevron />
+          {t("Execution")}
+        </button>
+        {loop?.status && <StatusPill status={loop.status} />}
+        {loop?.waiting_on && (
+          <span className="muted"> {t("waiting on {thing}", { thing: loop.waiting_on })}</span>
+        )}
+      </h3>
+      {open && (
+        <>
+          {loop && (
+            <div className="execution-loop">
+              <div className="muted">
+                {t("Run {run} · {steps} step(s)", {
+                  run: String(loop.run_id ?? "").slice(0, 8),
+                  steps: formatNumber(loop.step_count ?? steps.length),
+                })}
+              </div>
+              <ol className="lin-list execution-steps">
+                {steps
+                  .filter((step) => step.kind === "TOOL" || step.kind === "MODEL")
+                  .slice(-8)
+                  .map((step, index) => {
+                    const payload = (step.payload ?? {}) as Record<string, unknown>;
+                    const tool = String(payload.tool ?? step.kind ?? "");
+                    return (
+                      <li key={`${step.step_no ?? index}-${tool}`}>
+                        <span className={`pill ${step.status === "FAILED" ? "red" : "green"}`}>
+                          {String(step.status ?? "")}
+                        </span>{" "}
+                        <span className="mono">{tool}</span>
+                        {step.created_at && (
+                          <span className="muted"> · {relativeTime(step.created_at)}</span>
+                        )}
+                      </li>
+                    );
+                  })}
+              </ol>
+              {loop.last_error && <p className="muted">{loop.last_error}</p>}
+            </div>
+          )}
+          {view.code && (
+            <div className="execution-code">
+              <div>
+                <span className="muted">{t("Kernel task")}: </span>
+                <span className="mono">{view.code.kernel_task_id}</span>
+              </div>
+              {view.code.submission_status && (
+                <div>
+                  <span className="muted">{t("Submission")}: </span>
+                  {view.code.submission_status}
+                </div>
+              )}
+              {view.code.commit_sha && (
+                <div>
+                  <span className="muted">{t("Commit")}: </span>
+                  <span className="mono">{view.code.commit_sha.slice(0, 12)}</span>
+                </div>
+              )}
+            </div>
+          )}
+          {view.verification && (view.verification.gate_results ?? []).length > 0 && (
+            <div className="execution-gates">
+              {(view.verification.gate_results ?? []).map((gate, index) => (
+                <div key={index} className="gate-row">
+                  <span className={`pill ${gate.passed === true ? "green" : "red"}`}>
+                    {gate.passed === true ? "PASS" : "FAIL"}
+                  </span>{" "}
+                  <span className="mono">{String(gate.stage ?? "")}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {view.delivery && (
+            <div className="execution-delivery">
+              <span className="muted">{t("Delivered")}: </span>
+              <span className="mono">
+                {String((view.delivery as Record<string, unknown>).commit_sha ?? "").slice(0, 12)}
+              </span>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export function TaskDetailModal({
   task,
   directory = [],
+  api,
   busy,
   onClose,
   onReview,
@@ -444,6 +600,7 @@ export function TaskDetailModal({
 }: {
   task: TaskDetail;
   directory?: DirectoryEntry[];
+  api: ApiRequest;
   busy: boolean;
   onClose: () => void;
   onReview: (decision: "approve" | "reject", feedback: string) => Promise<void>;
@@ -525,6 +682,8 @@ export function TaskDetailModal({
       }
     >
       <TaskFields task={task} onOpenTask={onOpenTask} onOpenDoc={openDoc} docTitle={docTitle} />
+
+      <ExecutionPanel api={api} taskKey={task.task_key} />
 
       {question && answering && (
         <div className="detail-section question-section">

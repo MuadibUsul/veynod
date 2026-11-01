@@ -86,7 +86,7 @@ async def _free_agent_id(session: AsyncSession, tenant_id: str, wanted: str) -> 
     return candidate
 
 
-async def backfill_auto() -> int:
+async def backfill_auto(limit: int = 500) -> int:
     """R-03: every active agent token appears in the directory. Tokens that never
     registered get an entry the platform fills in (source=auto); the agent
     completes it with register_agent the next time it comes in."""
@@ -99,7 +99,9 @@ async def backfill_auto() -> int:
             "t.role_scope::text AS role FROM agent_tokens t JOIN workspaces w "
             "ON w.id = t.workspace_id WHERE t.is_active AND t.revoked_at IS NULL "
             "AND t.canonical_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM agent_directory d "
-            "WHERE t.canonical_id = ANY(d.token_ids)) LIMIT 5000"))).mappings().all()
+            "WHERE t.canonical_id = ANY(d.token_ids)) LIMIT :limit"),
+            {"limit": max(1, limit)},
+        )).mappings().all()
         for row in rows:
             agent_id = await _free_agent_id(session, row["tenant_id"],
                                             default_agent_id(row["agent_signature"]))

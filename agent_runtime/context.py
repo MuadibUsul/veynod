@@ -8,7 +8,7 @@ omitted; the model always sees the references that survive.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 

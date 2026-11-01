@@ -676,3 +676,53 @@ export interface DocumentParts {
     content: string;
   }[];
 }
+
+
+// Unified execution view (GET /v1/tasks/{key}/execution): one Task Detail
+// renders the product task, the Agent Run loop, Kernel code facts and gates.
+export type ExecutionStep = {
+  step_no?: number;
+  kind?: string;
+  status?: string;
+  payload?: Record<string, unknown>;
+  created_at?: string;
+};
+
+export type ExecutionView = {
+  task: {
+    task_key: string;
+    title: string;
+    status: TaskStatus;
+    project: string | null;
+    repo: string | null;
+    version: number;
+    updated_at: string | null;
+  };
+  correlation: Record<string, string | null | undefined>;
+  loop: null | {
+    run_id?: string;
+    status?: string;
+    version?: number;
+    usage?: Record<string, number>;
+    budget?: Record<string, number>;
+    last_error?: string | null;
+    step_count?: number;
+    current_tool?: { tool?: string | null; status?: string; at?: string } | null;
+    waiting_on?: string | null;
+    steps?: ExecutionStep[];
+    externals?: Array<Record<string, unknown>>;
+    error?: string;
+  };
+  code: null | {
+    kernel_task_id?: string;
+    kernel_workspace_id?: string | null;
+    submission_id?: string | null;
+    commit_sha?: string | null;
+    submission_status?: string | null;
+  };
+  verification: null | {
+    gate_results?: Array<Record<string, unknown>>;
+    evidence_complete?: boolean;
+  };
+  delivery: null | Record<string, unknown>;
+};

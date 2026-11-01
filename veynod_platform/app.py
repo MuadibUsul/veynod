@@ -1,4 +1,8 @@
-"""Veynod Platform gateway.
+"""Veynod Platform gateway — DEPRECATED (ADR-018).
+
+This module is a third product surface with its own SQLite store. It is not
+part of Veynod: the product is AgentGraph, the Agent Runtime executes, and the
+Kernel is headless. Kept for one release as reference; do not deploy it.
 
 One product, two bounded contexts:
   * AgentGraph: identity, workspace, task, audit, console.

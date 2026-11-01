@@ -13,9 +13,9 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Awaitable, Callable, Protocol
 
 from .context import ContextBuilder
-from .errors import InvalidTransition, RunNotFound
 from .quota import QuotaPolicy
 from .store import RunStore
+from .tool_context import ToolContext, tool_context
 
 logger = logging.getLogger("agent_runtime.loop")
 
@@ -50,6 +50,16 @@ class ToolResult:
     ok: bool
     output: dict[str, Any] = field(default_factory=dict)
     error: str | None = None
+    # TRANSPORT | AUTH | VALIDATION | CONFLICT | ADMISSION | NOT_FOUND | INTERNAL
+    error_class: str | None = None
+    # Set when the effect is owned by an external system and will be delivered
+    # by a durable event (Kernel submit_patch -> 202).  The Run leaves RUNNING.
+    deferred: dict[str, Any] | None = None
+
+
+# Consecutive failed tool calls a Run may absorb before it is failed.  A failed
+# deterministic gate is evidence the model must repair, not a terminal error.
+DEFAULT_MAX_TOOL_FAILURES = 6
 
 
 def budget_exceeded(run: dict[str, Any]) -> str | None:
@@ -80,6 +90,7 @@ class LoopController:
         guard: Callable[[], Awaitable[None]] | None = None,
         context_builder: ContextBuilder | None = None,
         quota: QuotaPolicy | None = None,
+        max_tool_failures: int = DEFAULT_MAX_TOOL_FAILURES,
     ) -> None:
         self.store = store
         self.model = model
@@ -87,6 +98,7 @@ class LoopController:
         self.guard = guard
         self.context_builder = context_builder
         self.quota = quota
+        self.max_tool_failures = max(1, int(max_tool_failures))
 
     async def _check_guard(self) -> None:
         if self.guard is not None:
@@ -234,6 +246,24 @@ class LoopController:
                 "executed": False,
                 "reused_invocation": invocation,
             }
+        if invocation["status"] == "DEFERRED":
+            # The external effect already owns this idempotency key; wait for it
+            # instead of submitting twice.
+            run = await self.store.get_run(run_id)
+            if run["status"] == "RUNNING":
+                await self.store.transition(
+                    run_id,
+                    "WAITING_EXTERNAL",
+                    expected_version=run["version"],
+                    reason=f"tool {action.tool} already deferred",
+                )
+            return {
+                "run": await self.store.get_run(run_id),
+                "action": action,
+                "executed": False,
+                "reused_invocation": invocation,
+                "deferred": True,
+            }
 
         run = await self.store.get_run(run_id)
         if run["status"] != "RUNNING":
@@ -245,8 +275,15 @@ class LoopController:
             expected_version=run["version"],
             reason=f"tool {action.tool}",
         )
-        result = await self.tools.execute(action.tool, action.arguments, key)
+        with tool_context(ToolContext.from_run(run)):
+            result = await self.tools.execute(action.tool, action.arguments, key)
         await self._check_guard()
+
+        if result.deferred:
+            return await self._defer_tool(
+                run_id, action, key, invocation, result, step_no
+            )
+
         await self.store.finish_invocation(
             invocation["invocation_id"],
             status="SUCCEEDED" if result.ok else "FAILED",
@@ -263,18 +300,28 @@ class LoopController:
                 "arguments": action.arguments,
                 "output": result.output,
                 "error": result.error,
+                "error_class": result.error_class,
             },
             idempotency_key=f"tool-step:{key}",
         )
         run = await self.store.get_run(run_id)
+        failures = await self._consecutive_tool_failures(run_id) if not result.ok else 0
+        give_up = (
+            not result.ok
+            and result.error_class in {"AUTH", "NOT_FOUND", "INTERNAL"}
+        ) or failures >= self.max_tool_failures
         await self.store.transition(
             run_id,
-            "RUNNING" if result.ok else "FAILED",
+            "FAILED" if give_up else "RUNNING",
             expected_version=run["version"],
             reason=(
                 f"tool {action.tool} completed"
                 if result.ok
-                else f"tool {action.tool} failed: {result.error or ''}"
+                else (
+                    f"tool {action.tool} failed: {result.error or ''}"
+                    if give_up
+                    else f"tool {action.tool} failed; returning evidence to the model"
+                )
             ),
         )
         await self._checkpoint(
@@ -284,6 +331,8 @@ class LoopController:
                 "tool": action.tool,
                 "output": result.output,
                 "ok": result.ok,
+                "error": result.error,
+                "error_class": result.error_class,
             },
         )
         return {
@@ -292,6 +341,85 @@ class LoopController:
             "executed": True,
             "tool_result": result,
         }
+
+    async def _defer_tool(
+        self,
+        run_id: str,
+        action: ModelAction,
+        key: str,
+        invocation: dict[str, Any],
+        result: ToolResult,
+        step_no: int,
+    ) -> dict[str, Any]:
+        """Persist an external wait, release the lease implicitly, return."""
+        deferred = result.deferred or {}
+        await self.store.finish_invocation(
+            invocation["invocation_id"],
+            status="DEFERRED",
+            result={"deferred": deferred},
+        )
+        external = await self.store.defer_external(
+            run_id,
+            tool=str(action.tool),
+            idempotency_key=key,
+            request=action.arguments,
+            submission_id=deferred.get("submission_id"),
+            kernel_workspace_id=deferred.get("kernel_workspace_id"),
+            kernel_task_id=deferred.get("kernel_task_id"),
+            deadline_seconds=int(deferred.get("deadline_seconds") or 3600),
+            step_id=invocation.get("step_id"),
+        )
+        await self.store.record_step(
+            run_id,
+            step_no + 1,
+            "TOOL",
+            "DEFERRED",
+            {
+                "tool": action.tool,
+                "arguments": action.arguments,
+                "deferred": deferred,
+                "external_id": external["external_id"],
+            },
+            idempotency_key=f"tool-step:{key}",
+        )
+        run = await self.store.get_run(run_id)
+        if run["status"] == "WAITING_TOOL":
+            await self.store.transition(
+                run_id,
+                "WAITING_EXTERNAL",
+                expected_version=run["version"],
+                reason=f"tool {action.tool} awaits an external event",
+            )
+        await self._checkpoint(
+            run_id,
+            {
+                "step": step_no,
+                "tool": action.tool,
+                "deferred": deferred,
+                "external_id": external["external_id"],
+                "submission_id": deferred.get("submission_id"),
+            },
+        )
+        return {
+            "run": await self.store.get_run(run_id),
+            "action": action,
+            "executed": True,
+            "tool_result": result,
+            "deferred": True,
+            "external": external,
+        }
+
+    async def _consecutive_tool_failures(self, run_id: str) -> int:
+        steps = await self.store.list_steps(run_id, 50)
+        failures = 0
+        for step in reversed(steps):
+            if step.get("kind") != "TOOL":
+                continue
+            if step.get("status") == "FAILED":
+                failures += 1
+                continue
+            break
+        return failures
 
     async def _checkpoint(self, run_id: str, state: dict[str, Any]) -> None:
         await self.store.checkpoint(

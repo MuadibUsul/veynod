@@ -1,8 +1,9 @@
-"""Local demo tool endpoint for the Agent Runtime (NOT production).
+"""Test fixture: a local echo tool endpoint for the Agent Runtime.
 
-POST /tools/{name} with {"arguments": {...}} returns a deterministic JSON
-result.  Only ``echo`` is implemented; this is a wiring/demo tool, not a
-sandboxed coding tool.
+NOT a production tool. Production Runs use ``RUNTIME_TOOL_MODE=kernel`` and the
+``KernelToolRuntime`` adapter (agent_runtime/tools/kernel.py); this server only
+exists so the generic ``HTTPToolRuntime`` protocol has a deterministic target
+in tests and local wiring demos.
 """
 
 from __future__ import annotations

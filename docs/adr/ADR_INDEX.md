@@ -264,3 +264,19 @@ C. AgentGraph 吞并 Kernel。
 | Rejected | 明确不采用 |
 
 当前全部为 **Proposed**。Phase 0 只负责提出，不代替架构评审。
+
+
+---
+
+## 2. 本轮已接受（2026-11-01）
+
+统一重构的最终决策见 [ADR_013_RUNTIME_KERNEL_FUSION.md](ADR_013_RUNTIME_KERNEL_FUSION.md)：
+
+| ADR | 决策 | 状态 |
+|---|---|---|
+| ADR-013 | KernelToolRuntime 是 Runtime 调用 Kernel 的唯一入口（服务身份，不用 admin key） | Accepted |
+| ADR-014 | 外部等待：`WAITING_EXTERNAL` + 持久事件唤醒，轮询只作兜底 | Accepted |
+| ADR-015 | 产品任务执行态只有一个写入者：`app/services/task_lifecycle.py` | Accepted |
+| ADR-016 | syscall 平面显式 Workspace 路由（`X-Workspace-Id`，向后兼容） | Accepted |
+| ADR-017 | Kernel Runner CLI 降级为开发工具，Runtime 是唯一执行者 | Accepted |
+| ADR-018 | 废弃 `veynod_platform` 与三个独立技术入口 | Accepted |

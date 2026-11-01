@@ -121,6 +121,10 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     # Phase 3: named cursors survive with their events; resource definitions.
     "watermarks": ("objects.jsonl", ()),
     "resources": ("objects.jsonl", ()),
+    # Product projects, their repositories and usage metering (v3.71, v3.75).
+    "projects": ("objects.jsonl", ()),
+    "project_repositories": ("objects.jsonl", ()),
+    "runtime_usage_metered": ("objects.jsonl", ()),
 }
 # Rebuilt from exported state after an import.
 DERIVED = frozenset({"document_chunks", "document_index"})
@@ -170,6 +174,13 @@ EPHEMERAL = frozenset({
     # Automation modes (v3.55) are the owner's choice in this deployment: like
     # tiers, an imported workspace starts manual until a person chooses again.
     "automation_modes",
+    # Delivery bookkeeping (v3.69-3.75): cursors, inbox rows and projection
+    # dedupe keys describe this deployment's progress, not the tenant's data.
+    # Kernel bindings name a local endpoint and credential reference.
+    "code_projection_cursors", "runtime_projection_cursors", "event_inbox",
+    "lifecycle_projections", "kernel_bindings",
+    # Per-tenant runtime limits are the operator's ceiling, like budget limits.
+    "tenant_runtime_limits",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")

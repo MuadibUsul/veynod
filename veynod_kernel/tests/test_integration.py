@@ -643,9 +643,24 @@ def test_runner_token_workspace_binding_and_debug_auth(tmp_path: Path) -> None:
         )
         assert cross_stream.status_code == 403, cross_stream.text
 
-        cross_pull = harness.client.post(
+        # ADR-016: a bound token that omits X-Workspace-Id is scoped to its
+        # own workspace and never leases another workspace's task.
+        own_pull = harness.client.post(
             "/v1/syscalls/pull_task_bundle",
             headers=headers_b,
+            json={
+                "worker_hub_id": "foreign",
+                "supported_task_types": ["IMPLEMENT_BODY"],
+                "max_context_tokens": 6000,
+            },
+        )
+        assert own_pull.status_code == 200, own_pull.text
+        assert own_pull.json()["leased"] is False
+
+        # Explicitly routing another workspace is refused.
+        cross_pull = harness.client.post(
+            "/v1/syscalls/pull_task_bundle",
+            headers={**headers_b, "X-Workspace-Id": harness.workspace_id},
             json={
                 "worker_hub_id": "foreign",
                 "supported_task_types": ["IMPLEMENT_BODY"],

@@ -604,6 +604,14 @@ class CollabTask(Base):
         JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
     )
     handoff_brief: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Unified execution correlation (v3.75): run/trace/kernel/submission IDs and
+    # the one active Agent Run.  Written only by app.services.task_lifecycle.
+    correlation: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    active_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
     artifact_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
     artifact_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     artifact_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)

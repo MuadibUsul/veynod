@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -50,6 +50,31 @@ class Settings(BaseSettings):
     admin_api_key: str | None = Field(
         default=None, validation_alias=AliasChoices("VN_ADMIN_API_KEY", "ADMIN_API_KEY")
     )
+    # Internal service identity used by the Agent Runtime: evidence reads,
+    # cancellation and the durable event feed. Never handed to a model or a
+    # browser; it is a different principal from the admin key.
+    runtime_service_key: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "VN_RUNTIME_SERVICE_KEY", "RUNTIME_SERVICE_KEY"
+        ),
+    )
+    # Runner-plane read access to workspace files (needed to build a valid
+    # unified diff). Read-only, workspace-scoped, size-capped.
+    allow_runner_file_read: bool = Field(
+        default=True,
+        validation_alias=AliasChoices(
+            "VN_ALLOW_RUNNER_FILE_READ", "ALLOW_RUNNER_FILE_READ"
+        ),
+    )
+    runner_file_max_bytes: int = Field(
+        default=1_000_000,
+        ge=1024,
+        le=8_000_000,
+        validation_alias=AliasChoices(
+            "VN_RUNNER_FILE_MAX_BYTES", "RUNNER_FILE_MAX_BYTES"
+        ),
+    )
     bootstrap_runner_token: str | None = Field(
         default=None,
         validation_alias=AliasChoices("VN_BOOTSTRAP_RUNNER_TOKEN", "BOOTSTRAP_RUNNER_TOKEN"),
@@ -87,6 +112,16 @@ class Settings(BaseSettings):
             "VN_CLAIM_MAX_WAIT_SECONDS", "CLAIM_MAX_WAIT_SECONDS"
         ),
     )
+
+    @field_validator(
+        "default_workspace_id", "cell_id", mode="before", check_fields=False
+    )
+    @classmethod
+    def _empty_uuid_is_none(cls, value: object) -> object:
+        """Compose passes unset values as ""; treat them as absent, not invalid."""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     # --- workspace selection ----------------------------------------------
     # The 6 syscalls intentionally do not carry a workspace id (one kernel
@@ -372,8 +407,11 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias=AliasChoices("VN_GATE_CPU_LIMIT", "GATE_CPU_LIMIT"),
     )
+    # RLIMIT_AS for one gate command.  It caps *virtual* address space, not
+    # RSS: a Node-based checker (pyright) cannot even reserve its code range
+    # below ~1 GiB, so 512 MiB made every typecheck gate fail with SIGABRT.
     gate_memory_mb: int = Field(
-        default=512,
+        default=2048,
         ge=64,
         validation_alias=AliasChoices("VN_GATE_MEMORY_MB", "GATE_MEMORY_MB"),
     )

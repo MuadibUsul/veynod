@@ -186,7 +186,8 @@ async def test_commander_writes_require_a_live_in_scope_grant(grants):
         f"/v1/tasks/{inside['task_key']}/cancel",
         headers=_commander(ws, live["grant_id"]), json={"reason": "sweep"})
     assert done.status_code == 200, done.text
-    assert done.json()["status"] == "FAILED"
+    # A cancel is terminal as CANCELLED (v3_68); FAILED is for execution errors.
+    assert done.json()["status"] == "CANCELLED"
 
 
 async def test_grants_are_issued_by_the_owner_only(grants):
