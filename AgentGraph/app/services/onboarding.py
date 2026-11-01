@@ -481,11 +481,16 @@ async def scaffold_workspace(session: AsyncSession, workspace_id: uuid.UUID) -> 
         )
 
 
-async def backfill_all_workspaces(session: AsyncSession) -> int:
-    """Idempotent one-time migration: scaffold workspaces missing a constitution."""
+async def backfill_all_workspaces(session: AsyncSession, limit: int = 500) -> int:
+    """Idempotent migration: scaffold workspaces missing a constitution.
+
+    Bounded per boot: startup cost must not grow with the number of tenants.
+    A large backlog is filled across successive starts (and by onboarding).
+    """
     missing = (
         await session.execute(
-            select(Workspace.id).where(
+            select(Workspace.id)
+            .where(
                 ~select(SharedDocument.id)
                 .where(
                     SharedDocument.workspace_id == Workspace.id,
@@ -493,6 +498,8 @@ async def backfill_all_workspaces(session: AsyncSession) -> int:
                 )
                 .exists()
             )
+            .order_by(Workspace.created_at)
+            .limit(max(1, limit))
         )
     ).scalars().all()
     for workspace_id in missing:

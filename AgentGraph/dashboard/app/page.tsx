@@ -1348,18 +1348,6 @@ export default function ConsolePage() {
                 )}
               </button>
             ))}
-            <a className="side-link" href="/dashboard/code/">
-              <IconGraph />
-              <span>{t("Code")}</span>
-            </a>
-            <a className="side-link" href="/dashboard/agent-runs/">
-              <IconGraph />
-              <span>{t("Agent Runs")}</span>
-            </a>
-            <a className="side-link" href="/dashboard/projects/">
-              <IconGraph />
-              <span>{t("Projects & Delivery")}</span>
-            </a>
           </nav>
         )}
 
@@ -1898,6 +1886,7 @@ export default function ConsolePage() {
         <TaskDetailModal
           task={taskDetail}
           directory={directory}
+          api={api}
           busy={taskBusy}
           onClose={() => setTaskDetail(null)}
           onReview={reviewTask}

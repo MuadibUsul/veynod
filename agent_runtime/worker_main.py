@@ -37,6 +37,8 @@ from .maintenance import ReconciliationLoop
 from .pool import RuntimeWorkerPool
 from .quota import QuotaPolicy
 from .store import RunStore
+from .tools import KernelToolConfig, KernelToolRuntime
+from .wakeups import KernelEventSource, KernelEventWatcher
 
 logger = logging.getLogger("agent_runtime.worker_main")
 
@@ -82,6 +84,54 @@ async def main() -> int:
     store = RunStore(_required("RUNTIME_DATABASE_URL"))
     await store.init_schema()
 
+    mode = os.environ.get("RUNTIME_TOOL_MODE", "http").strip().lower()
+    watcher: KernelEventWatcher | None = None
+    if mode == "kernel":
+        kernel_config = KernelToolConfig.from_env()
+        if kernel_config.default_binding is None and not os.environ.get(
+            "KERNEL_URL"
+        ):
+            raise SystemExit(
+                "RUNTIME_TOOL_MODE=kernel needs KERNEL_URL and a binding "
+                "(KERNEL_WORKSPACE_ID or per-Run Kernel bindings)"
+            )
+        tools = KernelToolRuntime(kernel_config, store=store)
+        service_key = kernel_config.service_key
+        kernel_url = os.environ.get("KERNEL_URL", "").strip()
+        if service_key and kernel_url:
+            watcher = KernelEventWatcher(
+                store,
+                KernelEventSource(
+                    base_url=kernel_url,
+                    service_key=service_key,
+                    interval_seconds=float(
+                        os.environ.get("RUNTIME_KERNEL_EVENT_INTERVAL_SECONDS", "2")
+                    ),
+                ),
+            )
+        else:
+            logger.warning(
+                "KERNEL_SERVICE_KEY/KERNEL_URL missing: deferred Runs will only "
+                "resume through the deadline sweep"
+            )
+    else:
+        allowlist = frozenset(
+            item.strip()
+            for item in os.environ.get("RUNTIME_TOOL_ALLOWLIST", "").split(",")
+            if item.strip()
+        )
+        if not allowlist:
+            raise SystemExit("RUNTIME_TOOL_ALLOWLIST must list at least one tool")
+        tools = HTTPToolRuntime(
+            ToolGatewayConfig(
+                base_url=_required("RUNTIME_TOOL_URL"),
+                api_key=os.environ.get("RUNTIME_TOOL_API_KEY", ""),
+                allowed_tools=allowlist,
+                timeout_seconds=float(os.environ.get("RUNTIME_TOOL_TIMEOUT_SECONDS", "60")),
+                max_retries=int(os.environ.get("RUNTIME_TOOL_MAX_RETRIES", "1")),
+            )
+        )
+
     model = HTTPModelGateway(
         ModelGatewayConfig(
             base_url=_required("RUNTIME_MODEL_URL"),
@@ -89,23 +139,8 @@ async def main() -> int:
             model=_required("RUNTIME_MODEL_NAME"),
             timeout_seconds=float(os.environ.get("RUNTIME_MODEL_TIMEOUT_SECONDS", "30")),
             max_retries=int(os.environ.get("RUNTIME_MODEL_MAX_RETRIES", "2")),
-        )
-    )
-    allowlist = frozenset(
-        item.strip()
-        for item in os.environ.get("RUNTIME_TOOL_ALLOWLIST", "").split(",")
-        if item.strip()
-    )
-    if not allowlist:
-        raise SystemExit("RUNTIME_TOOL_ALLOWLIST must list at least one tool")
-    tools = HTTPToolRuntime(
-        ToolGatewayConfig(
-            base_url=_required("RUNTIME_TOOL_URL"),
-            api_key=os.environ.get("RUNTIME_TOOL_API_KEY", ""),
-            allowed_tools=allowlist,
-            timeout_seconds=float(os.environ.get("RUNTIME_TOOL_TIMEOUT_SECONDS", "60")),
-            max_retries=int(os.environ.get("RUNTIME_TOOL_MAX_RETRIES", "1")),
-        )
+        ),
+        tool_catalog=tools.describe() if hasattr(tools, "describe") else None,
     )
     worker = RuntimeWorkerPool(
         store,
@@ -131,15 +166,21 @@ async def main() -> int:
             pass
 
     logger.info(
-        "runtime worker pool starting: workers=%s lease=%ss tools=%s",
+        "runtime worker pool starting: workers=%s lease=%ss tools=%s wakeups=%s",
         worker.worker_count,
         worker.lease_seconds,
-        sorted(allowlist),
+        mode,
+        watcher is not None,
     )
     await worker.start()
     metrics_server = await _metrics_server(
         int(os.environ.get("RUNTIME_WORKER_METRICS_PORT", "8031")),
         worker,
+    )
+    watcher_task = (
+        asyncio.create_task(watcher.run_forever(), name="runtime-kernel-wakeups")
+        if watcher is not None
+        else None
     )
     maintenance = ReconciliationLoop(
         store,
@@ -157,6 +198,14 @@ async def main() -> int:
     finally:
         maintenance.stop()
         maintenance_task.cancel()
+        if watcher is not None:
+            watcher.stop()
+        if watcher_task is not None:
+            watcher_task.cancel()
+            try:
+                await watcher_task
+            except asyncio.CancelledError:
+                pass
         try:
             await maintenance_task
         except asyncio.CancelledError:

@@ -111,7 +111,8 @@ async def test_revoking_the_old_generation_keeps_the_task_manageable(client):
                                   json={"reason": "gen2 still owns the task"})
     assert cancelled.status_code == 200, cancelled.text
     detail = await client.get(f"/v1/tasks/{task['task_key']}", headers=ws["key"])
-    assert detail.json()["status"] == "FAILED"
+    # A cancel is terminal as CANCELLED (v3_68); FAILED is for execution errors.
+    assert detail.json()["status"] == "CANCELLED"
 
 
 async def test_assignee_survives_a_rotation_and_the_new_generation_claims(client):

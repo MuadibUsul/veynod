@@ -44,6 +44,13 @@ class RuntimeWorker:
         self._stopping = True
 
     async def run_once(self) -> dict[str, Any] | None:
+        # Durability first: apply external results that arrived while this
+        # worker was away, then fail runs whose external work timed out.
+        try:
+            await self.store.consume_wakeups()
+            await self.store.expire_external()
+        except Exception:  # noqa: BLE001 - a wakeup retry must not stop the loop
+            logger.exception("runtime wakeup application failed")
         claim = await self.store.claim_run(
             self.worker_id, lease_seconds=self.lease_seconds
         )

@@ -182,6 +182,8 @@ class DagTask(Base):
     lease_expires_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Set when the Agent Runtime created this node (idempotent retries).
+    runtime_request_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     base_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     result_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     snapshot_id: Mapped[UUID | None] = mapped_column(

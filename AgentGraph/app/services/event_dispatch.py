@@ -164,24 +164,15 @@ async def ingest_kernel_once(limit: int = 500) -> dict[str, int]:
 
 
 async def _runtime_base_urls() -> list[str]:
+    """The Runtime service this deployment talks to, when a Run is active."""
     async with async_session_factory() as session:
-        rows = (
-            await session.execute(
-                text(
-                    """
-                    SELECT DISTINCT value FROM (
-                        SELECT input_context->'agent_runtime'->>'base_url' AS value
-                        FROM collab_tasks
-                        WHERE input_context->'agent_runtime'->>'run_id' IS NOT NULL
-                        UNION
-                        SELECT runtime_base_url FROM runtime_projection_cursors
-                    ) candidates
-                    WHERE value IS NOT NULL AND value <> ''
-                    """
-                )
-            )
-        ).all()
-    return sorted({str(row[0]) for row in rows if row[0]})
+        active = await session.scalar(
+            text("SELECT 1 FROM collab_tasks WHERE active_run_id IS NOT NULL LIMIT 1")
+        )
+    base = (settings.agent_runtime_url or "").strip()
+    if active and base:
+        return [base]
+    return []
 
 
 async def _runtime_cursor(base_url: str) -> int:
@@ -359,7 +350,14 @@ async def _process_row(row: InboxRow) -> None:
         run_id = str(row.payload.get("run_id") or "")
         if not run_id:
             return
-        await agent_runtime.sync_runtime_run_event(row.source_instance, run_id)
+        from app.services import task_lifecycle
+
+        await task_lifecycle.project_run_event(
+            run_id,
+            row.workspace_id or "",
+            row.event_type,
+            row.payload,
+        )
         return
     raise ValueError(f"unknown event source {row.source}")
 

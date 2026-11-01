@@ -1,0 +1,227 @@
+# Veynod — one product, one deployment.
+#
+#   cp deploy/.env.unified.example .env
+#   docker compose up -d --build
+#   curl -fsS http://127.0.0.1:8000/healthz/deep
+#
+# The product entrypoint is the `api` service (dashboard + REST + MCP). The
+# Agent Runtime and the Kernel are internal: they are not published to the
+# host, they have no user surface, and only `api` talks to them. One
+# PostgreSQL cluster holds three bounded-context databases (ADR-006):
+#
+#   veynod          product control plane (AgentGraph)
+#   veynod_kernel   deterministic execution kernel
+#   veynod_runtime  agent run loop
+#
+# Startup order is expressed with health conditions; a starting API whose
+# Runtime or Kernel is unreachable fails /healthz/deep, never a false "ok".
+
+name: veynod
+
+x-logging: &logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-veynod}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-veynod} -d postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+    networks: [internal]
+    <<: *logging
+
+  kernel-api:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.kernel
+      args:
+        BUILD_RUST: ${BUILD_RUST:-1}
+    image: ${VEYNOD_IMAGE_PREFIX:-veynod}-kernel:${VEYNOD_VERSION:-dev}
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-veynod}:${POSTGRES_PASSWORD}@db:5432/veynod_kernel
+      VN_AUTO_INIT_DB: "true"
+      VN_AUTH_MODE: ${VN_AUTH_MODE:-prod}
+      VN_ADMIN_API_KEY: ${KERNEL_ADMIN_KEY:?KERNEL_ADMIN_KEY is required}
+      VN_RUNTIME_SERVICE_KEY: ${KERNEL_SERVICE_KEY:?KERNEL_SERVICE_KEY is required}
+      VN_DEFAULT_WORKSPACE_ID: ${KERNEL_WORKSPACE_ID:-}
+      VN_CELL_ID: ${VN_CELL_ID:-}
+      VN_REQUIRE_BOUND_TOKENS: "true"
+      VN_GATE_SANDBOX: local
+      VN_ALLOW_LOCAL_GATE_IN_PROD: "1"
+      VN_GATE_MEMORY_MB: ${VN_GATE_MEMORY_MB:-2048}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ${REPOS_DIR:-./.veynod/repos}:/repos
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=4)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    restart: unless-stopped
+    networks: [internal]
+    <<: *logging
+
+  kernel-gate:
+    image: ${VEYNOD_IMAGE_PREFIX:-veynod}-kernel:${VEYNOD_VERSION:-dev}
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.kernel
+    command:
+      - python
+      - -m
+      - app.worker
+      - --workers
+      - ${VN_GATE_WORKERS:-4}
+      - --database-url
+      - postgresql+asyncpg://${POSTGRES_USER:-veynod}:${POSTGRES_PASSWORD}@db:5432/veynod_kernel
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-veynod}:${POSTGRES_PASSWORD}@db:5432/veynod_kernel
+      VN_AUTO_INIT_DB: "true"
+      VN_AUTH_MODE: ${VN_AUTH_MODE:-prod}
+      VN_ADMIN_API_KEY: ${KERNEL_ADMIN_KEY}
+      VN_RUNTIME_SERVICE_KEY: ${KERNEL_SERVICE_KEY}
+      VN_CELL_ID: ${VN_CELL_ID:-}
+      VN_GATE_SANDBOX: local
+      VN_ALLOW_LOCAL_GATE_IN_PROD: "1"
+      VN_GATE_MEMORY_MB: ${VN_GATE_MEMORY_MB:-2048}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ${REPOS_DIR:-./.veynod/repos}:/repos
+    depends_on:
+      db:
+        condition: service_healthy
+      kernel-api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [internal]
+    <<: *logging
+
+  runtime-api:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.runtime
+    image: ${VEYNOD_IMAGE_PREFIX:-veynod}-runtime:${VEYNOD_VERSION:-dev}
+    environment:
+      RUNTIME_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-veynod}:${POSTGRES_PASSWORD}@db:5432/veynod_runtime
+      RUNTIME_API_KEY: ${RUNTIME_API_KEY:?RUNTIME_API_KEY is required}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/healthz', timeout=4)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [internal]
+    <<: *logging
+
+  runtime-worker:
+    image: ${VEYNOD_IMAGE_PREFIX:-veynod}-runtime:${VEYNOD_VERSION:-dev}
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile.runtime
+    command: ["python", "-m", "agent_runtime.worker_main"]
+    environment:
+      RUNTIME_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-veynod}:${POSTGRES_PASSWORD}@db:5432/veynod_runtime
+      RUNTIME_MODEL_URL: ${MODEL_BASE_URL:?MODEL_BASE_URL is required}
+      RUNTIME_MODEL_API_KEY: ${MODEL_API_KEY:?MODEL_API_KEY is required}
+      RUNTIME_MODEL_NAME: ${MODEL_NAME:?MODEL_NAME is required}
+      RUNTIME_MODEL_TIMEOUT_SECONDS: ${MODEL_TIMEOUT_SECONDS:-60}
+      RUNTIME_TOOL_MODE: kernel
+      KERNEL_URL: http://kernel-api:8001
+      KERNEL_WORKSPACE_ID: ${KERNEL_WORKSPACE_ID:-}
+      KERNEL_RUNTIME_TOKEN: ${KERNEL_RUNTIME_TOKEN:?KERNEL_RUNTIME_TOKEN is required}
+      KERNEL_SERVICE_KEY: ${KERNEL_SERVICE_KEY}
+      RUNTIME_KERNEL_TOOLS: ${RUNTIME_KERNEL_TOOLS:-}
+      KERNEL_WORKER_HUB_ID: ${KERNEL_WORKER_HUB_ID:-veynod-runtime}
+      RUNTIME_WORKER_COUNT: ${RUNTIME_WORKER_COUNT:-4}
+      RUNTIME_WORKER_LEASE_SECONDS: ${RUNTIME_WORKER_LEASE_SECONDS:-120}
+      RUNTIME_SUBMISSION_DEADLINE_SECONDS: ${RUNTIME_SUBMISSION_DEADLINE_SECONDS:-3600}
+      RUNTIME_CONTEXT_TOKEN_BUDGET: ${RUNTIME_CONTEXT_TOKEN_BUDGET:-8000}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      runtime-api:
+        condition: service_healthy
+      kernel-api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [internal]
+    <<: *logging
+
+  api:
+    build:
+      context: ./AgentGraph
+      dockerfile: Dockerfile
+    image: ${VEYNOD_IMAGE_PREFIX:-veynod}-api:${VEYNOD_VERSION:-dev}
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-veynod}:${POSTGRES_PASSWORD}@db:5432/veynod
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      AUTO_INIT_DB: "true"
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN is required}
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-hash}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      MCP_ENABLED: "true"
+      MCP_ALLOWED_HOSTS: ${MCP_ALLOWED_HOSTS:-[]}
+      MCP_ALLOWED_ORIGINS: ${MCP_ALLOWED_ORIGINS:-[]}
+      CORS_ORIGINS: ${CORS_ORIGINS:-[]}
+      # Internal services: reachable by name, never published to the host.
+      AGENT_RUNTIME_URL: http://runtime-api:8002
+      AGENT_RUNTIME_KEY: ${RUNTIME_API_KEY}
+      KERNEL_URL: http://kernel-api:8001
+      KERNEL_ADMIN_KEY: ${KERNEL_ADMIN_KEY}
+      KERNEL_WORKSPACE_ID: ${KERNEL_WORKSPACE_ID:-}
+      KERNEL_REPO_PATH: ${KERNEL_REPO_PATH:-}
+      AGENT_RUNTIME_PROJECTION_ENABLED: ${AGENT_RUNTIME_PROJECTION_ENABLED:-false}
+      CODE_PROJECTION_ENABLED: ${CODE_PROJECTION_ENABLED:-false}
+      EVENT_DISPATCH_ENABLED: "true"
+      INTERNAL_VIEWS_ENABLED: ${INTERNAL_VIEWS_ENABLED:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ${BACKUP_HOST_DIR:-./.veynod/backups}:/backups
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      kernel-api:
+        condition: service_healthy
+      runtime-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz/deep', timeout=6)\""]
+      interval: 15s
+      timeout: 8s
+      retries: 12
+      start_period: 40s
+    restart: unless-stopped
+    networks: [internal]
+    <<: *logging
+
+volumes:
+  pgdata:
+
+networks:
+  internal:
+    driver: bridge

@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .errors import RunConflict, RunNotFound
+from .errors import RunConflict
 from .states import TERMINAL
 from .store import RunStore
 

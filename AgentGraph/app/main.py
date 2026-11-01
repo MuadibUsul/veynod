@@ -820,6 +820,60 @@ async def healthz() -> dict[str, Any]:
     return payload
 
 
+@app.get(
+    "/healthz/deep",
+    tags=["Health"],
+    summary="Deep health: database, Agent Runtime, Veynod Kernel",
+)
+async def healthz_deep() -> JSONResponse:
+    """A start that cannot execute is not healthy (UNIFIED_ARCHITECTURE §9).
+
+    Liveness only says the process is up.  This probe answers whether a task
+    submitted right now could actually be executed: the product database, the
+    Agent Runtime API and the Kernel runnable plane must all answer.
+    """
+    import httpx
+
+    checks: dict[str, Any] = {}
+
+    async def probe(name: str, url: str, headers: dict[str, str] | None = None):
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                response = await client.get(url, headers=headers or {})
+            checks[name] = {
+                "status": "ok" if response.status_code < 400 else "degraded",
+                "http": response.status_code,
+            }
+        except Exception as exc:  # noqa: BLE001 - a probe reports, never raises
+            checks[name] = {"status": "unavailable", "error": str(exc)[:300]}
+
+    checks["database"] = (
+        {"status": "ok"} if await check_database() else {"status": "unavailable"}
+    )
+    if settings.agent_runtime_url:
+        await probe(
+            "agent_runtime", settings.agent_runtime_url.rstrip("/") + "/healthz"
+        )
+    else:
+        checks["agent_runtime"] = {"status": "not_configured"}
+    if settings.kernel_url:
+        await probe("kernel", settings.kernel_url.rstrip("/") + "/healthz")
+    else:
+        checks["kernel"] = {"status": "not_configured"}
+    ready = all(
+        entry["status"] in {"ok", "not_configured"}
+        for entry in checks.values()
+    )
+    return JSONResponse(
+        status_code=200 if ready else 503,
+        content={
+            "status": "ok" if ready else "degraded",
+            "checks": checks,
+            "version": settings.app_version,
+        },
+    )
+
+
 @app.get("/readyz", tags=["Health"], summary="Readiness probe")
 async def readyz() -> JSONResponse:
     database_ok = await check_database()

@@ -735,7 +735,8 @@ class GateWorker:
                     WHERE submission_id = :submission_id
                       AND status = 'RUNNING'
                       AND work_lease_id = :lease_id
-                    RETURNING submission_id, workspace_id, task_id
+                    RETURNING submission_id, workspace_id, task_id,
+                              correlation
                     """
                 ),
                 {
@@ -767,6 +768,14 @@ class GateWorker:
             get_runtime_metrics().inc(f"submission.error.{error_code}")
         with contextlib.suppress(Exception):
             async with session_scope() as session:
+                correlation = finalized.get("correlation") or {}
+                if isinstance(correlation, str):
+                    try:
+                        import json as _json
+
+                        correlation = _json.loads(correlation)
+                    except ValueError:
+                        correlation = {}
                 await EventBus(session).publish(
                     finalized["workspace_id"],
                     "SUBMISSION_COMMITTED" if status == "COMMITTED" else "SUBMISSION_FAILED",
@@ -776,8 +785,13 @@ class GateWorker:
                         "status": status,
                         "task_status": task_status,
                         "error_code": error_code,
+                        "error_detail": error_detail,
                         "result_commit_sha": result_commit_sha,
+                        "merge_mode": merge_mode,
+                        "gate_results": gate_results or [],
+                        "correlation": correlation,
                     },
+                    correlation_id=(correlation or {}).get("trace_id"),
                 )
                 await session.commit()
         return True

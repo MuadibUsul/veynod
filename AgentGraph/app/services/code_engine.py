@@ -24,11 +24,7 @@ from app.database import async_session_factory
 from app.models import CollabTask, TaskStatus, Workspace
 from app.schemas import (
     AcceptanceItem,
-    GateResultRequest,
-    HandoffBrief,
-    TaskClaimRequest,
     TaskCreateRequest,
-    TaskHandoffRequest,
 )
 from app.services import quality
 from app.services import tasks as task_service
@@ -200,7 +196,12 @@ def gate_updates_from_evidence(
     if not merged_sha or not commit_sha or str(merged_sha) != str(commit_sha):
         return []
 
-    results = evidence.get("gate_results") or intent.get("gate_results") or submission.get("gate_results") or []
+    results = (
+        evidence.get("gate_results")
+        or intent.get("gate_results")
+        or submission.get("gate_results")
+        or []
+    )
     if not isinstance(results, list) or not results:
         return []
 
@@ -251,37 +252,13 @@ def gate_updates_from_evidence(
 async def create_run(
     session: AsyncSession, principal: Principal, request: CodeRunCreate
 ) -> dict[str, Any]:
+    """Create the product task and start the one Agent Run that will execute it.
+
+    The Kernel task is created by the Runtime through ``KernelToolRuntime``
+    (pull_task_bundle), not here.  ``CODE_ENGINE_LEGACY_DIRECT=1`` restores the
+    previous behaviour for one release (see UNIFIED_MIGRATION_PLAN.md §5).
+    """
     require_permission(principal, "task:create")
-    workspace_id = _workspace_id()
-    configured_repo = settings.kernel_repo_path
-    if configured_repo and request.repo_path.rstrip("/\\") != configured_repo.rstrip("/\\"):
-        raise CodeEngineError(
-            "repo_path does not match this AgentGraph deployment's KERNEL_REPO_PATH", 422
-        )
-    engine = _engine()
-    for symbol, kind in ((request.symbol, "stub"), (request.test_symbol, "test")):
-        try:
-            await engine.create_artifact(workspace_id, symbol, kind=kind)
-        except CodeEngineError as exc:
-            if "409" not in str(exc):  # duplicate artifact is idempotent
-                raise
-
-    kernel_task = await engine.create_task(
-        workspace_id,
-        {
-            "title": request.title,
-            "spec_prompt": request.spec,
-            "type": "IMPLEMENT_BODY",
-            "target_symbols": [request.symbol],
-            "test_symbols": [request.test_symbol],
-            "write_set_symbols": [request.symbol],
-            "priority": request.priority,
-        },
-    )
-    kernel_task_id = str(kernel_task.get("task_id") or "")
-    if not kernel_task_id:
-        raise CodeEngineError("Kernel task creation returned no task_id")
-
     task_key = "code-" + uuid4().hex[:16]
     task = await task_service.create_task(
         session,
@@ -292,14 +269,9 @@ async def create_run(
             repo=request.repo_path,
             description=request.spec,
             status="READY",
-            priority=100,
+            priority=request.priority,
             input_context={
                 "code_engine": "veynod-kernel",
-                "kernel": {
-                    "base_url": settings.kernel_url,
-                    "workspace_id": workspace_id,
-                    "task_id": kernel_task_id,
-                },
                 "symbol": request.symbol,
                 "test_symbol": request.test_symbol,
             },
@@ -312,18 +284,70 @@ async def create_run(
             ],
         ),
     )
+    if settings.code_engine_legacy_direct:
+        workspace_id = _workspace_id()
+        engine = _engine()
+        for symbol, kind in ((request.symbol, "stub"), (request.test_symbol, "test")):
+            try:
+                await engine.create_artifact(workspace_id, symbol, kind=kind)
+            except CodeEngineError as exc:
+                if "409" not in str(exc):  # duplicate artifact is idempotent
+                    raise
+        kernel_task = await engine.create_task(
+            workspace_id,
+            {
+                "title": request.title,
+                "spec_prompt": request.spec,
+                "type": "IMPLEMENT_BODY",
+                "target_symbols": [request.symbol],
+                "test_symbols": [request.test_symbol],
+                "write_set_symbols": [request.symbol],
+                "priority": request.priority,
+            },
+        )
+        kernel_task_id = str(kernel_task.get("task_id") or "")
+        context = dict(task.input_context or {})
+        context["kernel"] = {
+            "base_url": settings.kernel_url,
+            "workspace_id": workspace_id,
+            "task_id": kernel_task_id,
+        }
+        task.input_context = context
+        await session.flush()
+        return {
+            "id": task_key,
+            "agentgraph_task_key": task_key,
+            "agentgraph_task_id": str(task.id),
+            "kernel_workspace_id": workspace_id,
+            "kernel_task_id": kernel_task_id,
+            "status": _status(task),
+            "kernel_status": str(kernel_task.get("status") or "READY"),
+            "title": task.title,
+            "repo_path": request.repo_path,
+            "symbol": request.symbol,
+            "test_symbol": request.test_symbol,
+            "legacy_direct": True,
+        }
+
+    from app.services import task_lifecycle
+
+    started = await task_lifecycle.start_run(session, principal, task_key)
+    refreshed = await task_service.get_task(session, principal, task_key)
     return {
         "id": task_key,
         "agentgraph_task_key": task_key,
         "agentgraph_task_id": str(task.id),
-        "kernel_workspace_id": workspace_id,
-        "kernel_task_id": kernel_task_id,
-        "status": _status(task),
-        "kernel_status": str(kernel_task.get("status") or "READY"),
-        "title": task.title,
+        "kernel_workspace_id": (started.get("kernel") or {}).get("workspace_id"),
+        "kernel_task_id": None,
+        "run_id": started.get("run_id"),
+        "trace_id": started.get("trace_id"),
+        "status": _status(refreshed),
+        "kernel_status": "PENDING",
+        "title": refreshed.title,
         "repo_path": request.repo_path,
         "symbol": request.symbol,
         "test_symbol": request.test_symbol,
+        "legacy_direct": False,
     }
 
 
@@ -424,125 +448,10 @@ def lifecycle_action(kernel_status: str, task_status: str) -> str | None:
 async def _sync_lifecycle(
     session: AsyncSession, principal: Principal, task: Any, kernel: dict[str, Any]
 ) -> Any:
-    task_status = _status(task)
-    action = lifecycle_action(str(kernel.get("status") or ""), task_status)
-    if action == "cancel":
-        try:
-            await task_service.cancel_task(
-                session,
-                principal.workspace.id,
-                task.task_key,
-                reason="Veynod Kernel task was cancelled.",
-                expected_version=task.version,
-                actor="kernel_projection",
-                propagate_to_kernel=False,
-            )
-        except Exception as exc:  # noqa: BLE001 - keep the run readable
-            logger.warning(
-                "could not project Kernel cancellation for %s: %s",
-                task.task_key,
-                exc,
-            )
-            return task
-        return await task_service.get_task(session, principal, task.task_key)
-    if action == "fail":
-        admin = principal_for_admin(principal.workspace)
-        try:
-            await task_service.fail_task(
-                session,
-                admin,
-                task.task_key,
-                reason=str(
-                    kernel.get("last_error_traceback") or "Veynod Kernel task failed."
-                )[:8000],
-                expected_version=task.version,
-            )
-        except Exception as exc:  # noqa: BLE001 - keep the run readable
-            logger.warning(
-                "could not project Kernel failure for %s: %s", task.task_key, exc
-            )
-            return task
-        return await task_service.get_task(session, principal, task.task_key)
-    if action != "commit":
-        return task
-    if task_status in {"REVIEWING", "HANDOFF", "AWAITING_HUMAN", "DONE", "COMMITTED"}:
-        return task
-    admin = principal_for_admin(principal.workspace)
-    commit_sha = kernel.get("result_commit_sha")
-    if not commit_sha:
-        return task
-    ids = _kernel_ids(task)
-    if ids is None:
-        return task
-    _workspace_id_value, kernel_task_id = ids
-    try:
-        evidence = await _engine().evidence(kernel_task_id)
-    except CodeEngineError as exc:
-        logger.warning(
-            "Kernel evidence unavailable for %s: %s", task.task_key, exc
-        )
-        return task
-    updates = gate_updates_from_evidence(evidence, str(commit_sha))
-    kinds = {update["gate_kind"] for update in updates}
-    if not updates or not {"CI", "TESTS"}.issubset(kinds):
-        logger.warning(
-            "Kernel committed %s without complete CI/TESTS evidence; "
-            "refusing to record PASS",
-            task.task_key,
-        )
-        return task
-    if any(update["status"] != "PASS" for update in updates):
-        logger.warning(
-            "Kernel evidence for %s contains a failed gate; not advancing",
-            task.task_key,
-        )
-        return task
-    for update in updates:
-        await quality.record_gate_result(
-            session,
-            admin,
-            GateResultRequest(
-                task_key=task.task_key,
-                gate_kind=update["gate_kind"],
-                status=update["status"],
-                source="RUNNER",
-                evidence=update["evidence"],
-            ),
-        )
-    try:
-        await task_service.claim_task(
-            session,
-            admin,
-            task.task_key,
-            TaskClaimRequest(lease_seconds=120, include_context=False),
-        )
-        await task_service.handoff_task(
-            session,
-            admin,
-            task.task_key,
-            TaskHandoffRequest(
-                next_status="REVIEWING",
-                brief=HandoffBrief(
-                    summary=(
-                        f"Veynod Kernel committed {commit_sha[:12]}; "
-                        f"{len(updates)} durable gate result(s) recorded."
-                    ),
-                    key_metrics={
-                        "commit_sha": commit_sha,
-                        "merge_mode": kernel.get("merge_mode"),
-                        "gates_recorded": len(updates),
-                        "gates_passed": sum(
-                            1 for update in updates if update["status"] == "PASS"
-                        ),
-                    },
-                    unverified_hypotheses=[],
-                    risk_flag=False,
-                ),
-            ),
-        )
-    except Exception as exc:  # noqa: BLE001 - evidence still stands
-        logger.info("AgentGraph lifecycle not advanced for %s: %s", task.task_key, exc)
-    return await task_service.get_task(session, principal, task.task_key)
+    """Legacy Kernel-only tasks converge through the single lifecycle writer."""
+    from app.services import task_lifecycle
+
+    return await task_lifecycle.project_kernel_task(session, principal, task, kernel)
 
 
 async def get_run(

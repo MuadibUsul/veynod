@@ -183,6 +183,12 @@ def task_out(task: CollabTask) -> TaskOut:
         acceptance_locked=bool(task.acceptance_locked),
         input_context=task.input_context or {},
         output_artifact=task.output_artifact or {},
+        correlation=getattr(task, "correlation", None) or {},
+        active_run_id=(
+            str(task.active_run_id)
+            if getattr(task, "active_run_id", None)
+            else None
+        ),
         handoff_brief=task.handoff_brief,
         reject_history=task.reject_history or [],
         review_round=task.review_round,

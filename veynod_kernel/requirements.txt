@@ -1,0 +1,15 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+pydantic-settings>=2.3
+sqlalchemy[asyncio]>=2.0.30
+asyncpg>=0.29
+httpx>=0.27
+tree-sitter>=0.23,<0.26
+tree-sitter-python>=0.23,<0.26
+# Gate commands run inside this image; a project's own test runner needs these.
+# pyright comes from npm in the image (deploy/Dockerfile.kernel): the pip
+# wrapper downloads a Node build at first use, which fails in slim containers.
+ruff>=0.6
+pytest>=8.0
+pytest-asyncio>=0.23

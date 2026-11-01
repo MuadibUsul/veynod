@@ -1,0 +1,61 @@
+# Kernel runtime image (API + gate worker + CLI share it).
+#
+# Build from the repository root:
+#   docker build -f deploy/Dockerfile.kernel -t veynod-kernel .
+#
+# The Rust SchedulerCore is built when BUILD_RUST=1 (default). It is optional:
+# set --build-arg BUILD_RUST=0 for the documented Python fallback.
+
+FROM python:3.12-slim AS rust-core
+ARG BUILD_RUST=1
+RUN if [ "$BUILD_RUST" = "1" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends \
+        curl build-essential pkg-config && \
+      curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y; \
+    fi
+ENV PATH="/root/.cargo/bin:${PATH}"
+WORKDIR /build
+COPY veynod_kernel/rust/veynod_core ./veynod_core
+RUN if [ "$BUILD_RUST" = "1" ]; then \
+      pip install --no-cache-dir "maturin>=1.7,<2.0" && \
+      cd veynod_core && maturin build --release --out /build/wheels; \
+    else mkdir -p /build/wheels; fi
+
+FROM python:3.12-slim
+# --jitless: V8's JIT code-range reservation fails under Docker Desktop's
+# WSL2 memory settings ("Failed to reserve virtual memory for CodeRange"),
+# which made every STATIC_TYPECHECK gate die before checking anything.
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    VN_GATE_SANDBOX=local \
+    NODE_OPTIONS=--jitless
+
+WORKDIR /app
+# The gate runs a real type checker. Debian's Node + npm pyright is
+# deterministic; the pip pyright wrapper downloads its own Node on first use,
+# which fails in a slim container (missing libs, virtual-memory reservation).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      git openssh-client ca-certificates libatomic1 nodejs npm && \
+    npm install -g pyright@1.1.380 && npm cache clean --force && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY veynod_kernel/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY --from=rust-core /build/wheels /tmp/wheels
+RUN if ls /tmp/wheels/*.whl >/dev/null 2>&1; then \
+      pip install --no-cache-dir /tmp/wheels/*.whl; \
+    else echo "building without the Rust core (Python fallback)"; fi && \
+    rm -rf /tmp/wheels
+
+COPY veynod_kernel/app ./app
+COPY veynod_kernel/sql ./sql
+COPY veynod_kernel/cli ./cli
+COPY veynod_kernel/scripts ./scripts
+
+EXPOSE 8001
+HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/healthz', timeout=4)"
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]

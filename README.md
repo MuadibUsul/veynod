@@ -1,253 +1,230 @@
-# Veynod — AgentGraph 控制面 + Kernel 核心引擎
+# Veynod — 统一的 Agent Coding Runtime
 
-> **一个产品，两个 bounded context。**
->
-> - **AgentGraph / Veynod 3.x**：身份、工作区、任务、审计、人类控制台。
-> - **Veynod Kernel 4.x**：仓库、AST 契约、符号锁、确定性门禁、Git 原子合入。
->
-> Kernel 是 **headless code engine**，没有自己的登录、dashboard 或产品壳；AgentGraph 后端直接调用它。`veynod_platform/` 是早期独立网关原型，已不在主链路上。
+> 一个产品入口，一套任务体系，一个 Agent 执行循环，一个确定性的执行内核。
 
-完整的项目架构、目录路径、数据边界和容量现状见 [PROJECT_ARCHITECTURE.md](PROJECT_ARCHITECTURE.md)。
+Veynod 让用户提出目标、创建项目、组织任务；Agent Runtime 理解目标、规划步骤、调用 Kernel
+改代码、跑门禁、处理失败、恢复执行；Kernel 负责 DAG 调度、写集锁、确定性门禁与原子合入；
+人类在同一个控制台里审批与交付。
+
+```
+USER
+ │
+ ▼
+Veynod 产品面（AgentGraph：身份 / 租户 / 项目 / 任务 / 审批 / 文档 / 审计 / UI）
+ │   唯一产品任务，唯一执行链
+ ▼
+Agent Runtime（唯一的模型推理与执行循环：Run / Step / Checkpoint / Lease / Delegate）
+ │        ModelGateway                KernelToolRuntime
+ │              │                          │
+ │              ▼                          ▼
+ │        模型提供方                  Veynod Kernel（headless）
+ │                              Rust SchedulerCore / DAG / 写集锁 / AST
+ │                              Task Leasing / Worktree / Patch
+ │                              5 阶段确定性门禁 / Merge / Git CAS / Evidence
+ │                                          │
+ └────────── Durable Events ◄───────────────┘
+             （kernel_events → event_inbox → runtime_wakeups → 投影 → REVIEWING → DONE）
+```
+
+架构与决策：[docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md)、
+[docs/adr/ADR_013_RUNTIME_KERNEL_FUSION.md](docs/adr/ADR_013_RUNTIME_KERNEL_FUSION.md)。
+审计与迁移：[docs/UNIFIED_ARCHITECTURE_AUDIT.md](docs/UNIFIED_ARCHITECTURE_AUDIT.md)、
+[docs/UNIFIED_MIGRATION_PLAN.md](docs/UNIFIED_MIGRATION_PLAN.md)、
+[docs/UNIFIED_ACCEPTANCE_REPORT.md](docs/UNIFIED_ACCEPTANCE_REPORT.md)。
 
 ---
 
-## 1. 现在的拓扑
+## 1. 一个产品，三类进程
 
-```text
-浏览器 / Agent
-      │  只登录 AgentGraph（/dashboard/）
-      ▼
-AgentGraph（FastAPI + Next.js console）
-  ├─ identity / workspace / task / audit / SSE
-  ├─ /v1/code/*  ──────────────┐   AgentGraph 的 Code 页面
-  └─ code_engine service        │
-                                ▼
-                     Veynod Kernel（headless）
-                       /v1/admin/*（AgentGraph 内部调用）
-                       /v1/syscalls/* 或 /mcp（Agent/Runner）
-                       Git / worktree / AST / gate / commit
-```
+| 进程 | 代码 | 唯一职责 | 是否对外 |
+|---|---|---|---|
+| `api` | `AgentGraph/` | 身份、项目、任务、审批、UI、事件投影 | **是**（唯一的用户入口） |
+| `runtime-api` / `runtime-worker` | `agent_runtime/` | 模型推理、规划、工具调用、Checkpoint、租约、恢复 | 否（内部服务） |
+| `kernel-api` / `kernel-gate` | `veynod_kernel/` | DAG 调度、写集锁、确定性门禁、合并、证据 | 否（内部服务） |
+| `db` | PostgreSQL 16 + pgvector | 一个集群，三个 bounded-context 数据库 | 否 |
 
-- **用户入口**：`http://127.0.0.1:8000/dashboard/`
-- **Code 页面**：`http://127.0.0.1:8000/dashboard/code/`
-- **Kernel**：`http://127.0.0.1:8001`，只作为引擎，不作为产品入口
-- **Platform 原型**：`http://127.0.0.1:8010`，已停用；保留代码作参考
+用户只需要一个账号、一个 dashboard、一条命令。
 
 ---
 
-## 2. Kernel 如何成为 AgentGraph 的核心引擎
+## 2. 一次任务的完整链路
 
-新增：
-
-```text
-AgentGraph/app/services/code_engine.py
-AgentGraph/app/api/code_routes.py
-AgentGraph/app/api/code_page.py
-AgentGraph/app/templates/code.html
-AgentGraph/dashboard/app/page.tsx   # 侧边栏 Code 入口
+```
+Create Project → Create Task → POST /v1/tasks/{key}/run
+  → AgentGraph 生成 trace_id、绑定 Kernel 仓库、创建唯一 Agent Run
+  → Runtime Worker 领取 Run
+  → 模型决定：create_task / pull_task_bundle / read_file / submit_patch …
+  → Kernel 创建或取得 DAG 节点、分配写集与上下文
+  → 模型产出 patch，Runtime 提交（202 + submission_id），Run 进入 WAITING_EXTERNAL 并释放租约
+  → Kernel Gate Worker 执行 5 阶段确定性门禁 → 合并 → 生成 Evidence
+  → SUBMISSION_COMMITTED 事件 → runtime_wakeups → Run 恢复
+  → 门禁失败则把证据交回模型继续修复；通过则 Run COMPLETED
+  → AgentGraph 记录 CI/TESTS 证据 → 任务 REVIEWING
+  → 人类审批 → DONE
 ```
 
-`AgentGraph` 直接持有 Kernel 的：
+关键约束（由代码强制）：
 
-```text
-KERNEL_URL
-KERNEL_ADMIN_KEY
-KERNEL_WORKSPACE_ID
-KERNEL_REPO_PATH
-```
-
-不再经过 Platform。
-
-### Code run 生命周期
-
-```text
-1. 用户/Agent 在 AgentGraph 创建 code run
-2. AgentGraph 调 Kernel admin：
-   - 创建 target/test artifacts（FROZEN）
-   - 创建 Kernel dag_task
-3. AgentGraph 创建 product task，input_context 记录 kernel workspace/task
-4. Kernel Runner 领任务、改代码、跑冻结测试、门禁、commit
-5. AgentGraph GET /v1/code/runs/{task}
-   - 读取 Kernel task
-   - COMMITTED → 回写 CI/TESTS PASS
-   - claim → handoff REVIEWING
-6. 人类/审查者在 AgentGraph 做最终 DONE
-```
-
-**AgentGraph 是产品事实，Kernel 是代码执行事实。**
+* 一个产品任务最多一个活动 Run（`collab_tasks.active_run_id` + 部分唯一索引）。
+* `collab_tasks` 的执行态只由 `AgentGraph/app/services/task_lifecycle.py` 写入。
+* 有活动 Run 的任务不会被 runner-host 调度再次认领。
+* 等待门禁期间 Runtime Worker 不占用租约；唤醒来自持久事件，不是定时轮询。
+* 没有 Kernel 证据就不推进任务：缺证据不是 PASS。
 
 ---
 
-## 3. 实际跑通的结果
-
-最近一次 **直接经由 AgentGraph → Kernel**（不经 Platform）：
-
-```text
-AgentGraph task: code-284425ab8f1343fb
-Kernel task:     7a086cfe-7230-40e1-95b3-4a7714feb13f
-Kernel commit:   13607c9f0231164500dc9e576fdf2a3f57a95307
-AgentGraph status: REVIEWING
-Gates: CI PASS, TESTS PASS
-```
-
-Code 页面：
-
-```text
-http://127.0.0.1:8000/dashboard/code/
-```
-
-页面复用 AgentGraph 人类登录会话；不需要第二个账号。Kernel 没有自己的 UI 入口。
-
----
-
-## 4. 为什么 Kernel 不做 UI
-
-Kernel 的接口是给 Agent/内部服务用的：
-
-- `pull_task_bundle`
-- `submit_patch`
-- `request_task_split`
-- `escalate_contract_defect`
-- `inject_dependency_task`
-- `query_symbol_signature`
-
-它只需要 `/healthz`、指标和日志。  
-Dashboard / Code 页面属于 **AgentGraph 的人类控制面**，不是 Kernel 的产品面。
-
----
-
-## 5. 目录
-
-```text
-E:\Codes\veynod\
-├── AgentGraph\                 # 产品控制面（3.24.0）
-│   ├── app/services/code_engine.py   # Kernel 作为核心引擎的适配层
-│   ├── app/api/code_routes.py        # /v1/code/*
-│   ├── app/api/code_page.py          # /dashboard/code/
-│   ├── app/templates/code.html
-│   └── dashboard/app/page.tsx        # Code 侧边栏入口
-├── veynod_kernel\              # headless code engine（4.0）
-├── veynod_platform\            # 早期独立网关原型（已不在主链路）
-└── README.md
-```
-
----
-
-## 6. 启动
-
-### AgentGraph
+## 3. 启动（生产）
 
 ```bash
-cd E:/Codes/veynod/AgentGraph
-docker compose up -d
+cp deploy/.env.unified.example .env      # 填入密钥
+docker compose up -d --build
+curl -fsS http://127.0.0.1:8000/healthz/deep
 ```
 
-需要在 compose / 环境变量中配置：
+`/healthz/deep` 只有在数据库、Agent Runtime、Kernel 都可用时才返回 200：
+API 起来了但执行链不可用时，部署会显示为不健康。
 
-```text
-KERNEL_URL=http://host.docker.internal:8001
-KERNEL_ADMIN_KEY=dev-admin
-KERNEL_WORKSPACE_ID=<kernel-workspace-id>
-KERNEL_REPO_PATH=<bare-repo-path>
-```
-
-### Kernel
+迁移由各服务启动时幂等执行；也可以先统一执行：
 
 ```bash
-cd E:/Codes/veynod/veynod_kernel
-export DATABASE_URL='postgresql+asyncpg://postgres:postgres@127.0.0.1:55432/veynod_dev'
-export VN_AUTH_MODE=dev
-export VN_ADMIN_API_KEY=dev-admin
-export VN_DEFAULT_WORKSPACE_ID='<kernel-workspace-id>'
-export VN_FAST_FORWARD_MERGE=true
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+./scripts/migrate_all.sh
 ```
 
-Kernel 的单 workspace 协议意味着：**一个 Kernel 实例服务一个代码仓库**。多仓库要么多实例，要么后续给 syscall 加 workspace 维度。
+---
 
-### 创建 Kernel workspace
+## 4. 本地开发
 
 ```bash
+# 1. PostgreSQL（三库）
+docker run -d --name veynod-dev -p 55432:5432 \
+  -e POSTGRES_USER=agentgraph -e POSTGRES_PASSWORD=agentgraph \
+  pgvector/pgvector:pg16
+
+# 2. Kernel（:8001）
+cd veynod_kernel && DATABASE_URL=postgresql+asyncpg://... VN_AUTH_MODE=dev \
+  VN_ADMIN_API_KEY=dev-admin python -m uvicorn app.main:app --port 8001
+python -m app.worker --workers 2 --database-url postgresql+asyncpg://...
+
+# 3. Runtime（:8002）
+RUNTIME_DATABASE_URL=... RUNTIME_API_KEY=dev-runtime \
+  python -m uvicorn agent_runtime.api:app --port 8002
+RUNTIME_TOOL_MODE=kernel KERNEL_URL=http://127.0.0.1:8001 \
+  KERNEL_RUNTIME_TOKEN=vnk_... KERNEL_SERVICE_KEY=... \
+  RUNTIME_MODEL_URL=... RUNTIME_MODEL_API_KEY=... RUNTIME_MODEL_NAME=... \
+  python -m agent_runtime.worker_main
+
+# 4. 产品面（:8000）
+cd AgentGraph && DATABASE_URL=... ADMIN_TOKEN=dev-admin \
+  AGENT_RUNTIME_URL=http://127.0.0.1:8002 AGENT_RUNTIME_KEY=dev-runtime \
+  KERNEL_URL=http://127.0.0.1:8001 KERNEL_ADMIN_KEY=dev-admin \
+  .venv/Scripts/python.exe -m uvicorn app.main:app --port 8000
+```
+
+产品入口：<http://127.0.0.1:8000/dashboard/>。Kernel 与 Runtime 没有用户页面。
+
+### 把一个仓库接入项目
+
+```bash
+# Kernel 侧：建 workspace，发一个绑定该 workspace 的 runner token
 curl -s -X POST http://127.0.0.1:8001/v1/admin/workspaces \
   -H 'X-Admin-Key: dev-admin' -H 'Content-Type: application/json' \
-  -d '{"name":"Code Plane","repo_path":"/absolute/path/to/repo.git","main_branch":"main"}'
+  -d '{"name":"calc","repo_path":"/abs/path/repo.git","main_branch":"main"}'
+
+curl -s -X POST http://127.0.0.1:8001/v1/admin/tokens \
+  -H 'X-Admin-Key: dev-admin' -H 'Content-Type: application/json' \
+  -d '{"label":"runtime","workspace_id":"<kernel-workspace-id>"}'
+
+# 产品侧：项目 + 仓库绑定
+curl -s -X POST http://127.0.0.1:8000/v1/projects \
+  -H "Authorization: Bearer <workspace key>" -H 'Content-Type: application/json' \
+  -d '{"name":"calc","repo":"/abs/path/repo.git","description":"计算器"}'
+
+curl -s -X POST http://127.0.0.1:8000/v1/projects/calc/repositories \
+  -H "Authorization: Bearer <workspace key>" -H 'Content-Type: application/json' \
+  -d '{"repo_path":"/abs/path/repo.git","kernel_workspace_id":"<kernel-workspace-id>",
+       "kernel_base_url":"http://127.0.0.1:8001"}'
 ```
 
-把返回的 `workspace_id` 填到 `VN_DEFAULT_WORKSPACE_ID` 和 AgentGraph 的 `KERNEL_WORKSPACE_ID`，重启两边。
-
-### 创建 code run
-
-```bash
-curl -s -X POST http://127.0.0.1:8000/v1/code/runs \
-  -H 'Authorization: Bearer <AgentGraph session or workspace key>' \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "title": "Implement quad",
-    "repo_path": "E:/Codes/veynod/.run/integration2.git",
-    "symbol": "src/calc.py::quad",
-    "test_symbol": "tests/test_quad.py::test_quad",
-    "spec": "Implement quad(a) so the frozen test passes."
-  }'
-```
-
-然后启动 Kernel Runner（见 Kernel README），最后 `GET /v1/code/runs/{task}` 同步。
+之后任何带 `project=calc, repo=/abs/path/repo.git` 的任务都会路由到该 Kernel workspace。
+一个 Kernel 可以承载多个 workspace；分片时把不同项目的 `kernel_base_url` 指向不同实例即可，对产品透明。
 
 ---
 
-## 7. API
+## 5. 用户看到什么
+
+唯一导航：**Diagram / Loop / Documents / Settings**。
+
+* **Loop**：任务板（需要你 / 审查中 / 进行中 / 就绪 / 已关闭）。
+* **任务详情**：目标、状态、计划、子任务、**Execution**（当前工具、步骤、等待原因）、
+  Kernel 任务、提交、commit、门禁证据、交付记录、审批。
+* **项目**：项目目标、仓库、任务与进度（`/v1/projects/*`，随任务一起呈现）。
+
+Kernel/Runtime 控制台不再是产品入口：`/dashboard/code/`、`/dashboard/agent-runs/`、
+`/dashboard/projects/` 一律 302 到 `/dashboard/`；详细视图只作为内部运维页面
+`/dashboard/internal/*`，生产环境默认关闭（`INTERNAL_VIEWS_ENABLED=1` 才开启）。
+
+---
+
+## 6. HTTP API（产品面）
 
 | 方法 | 路径 | 说明 |
-| :--- | :--- | :--- |
-| GET | `/dashboard/code/` | AgentGraph 人类 Code 页面（可选） |
-| GET | `/v1/code/runs` | 列出 Kernel code runs |
-| POST | `/v1/code/runs` | 创建 AgentGraph task + Kernel task |
-| GET | `/v1/code/runs/{task}` | 读取/刷新/同步状态 |
-| POST | `/v1/code/runs/{task}/sync` | 强制刷新并同步 |
-| GET | `/v1/code/runs/{task}/audit` | AgentGraph gate/audit 视图 |
+|---|---|---|
+| POST | `/v1/tasks` | 创建产品任务（唯一任务身份） |
+| POST | `/v1/tasks/{key}/run` | 启动该任务唯一的 Agent Run（`/agent-run` 为兼容别名） |
+| GET | `/v1/tasks/{key}/run` | 读取 Run 并做一次幂等投影 |
+| POST | `/v1/tasks/{key}/run/cancel` | 取消 Run 与任务 |
+| GET | `/v1/tasks/{key}/execution` | 任务详情的统一执行视图（Loop/Code/Verification/Delivery） |
+| GET/POST | `/v1/projects`、`/v1/projects/{p}/repositories` | 项目与仓库（Kernel workspace）绑定 |
+| GET | `/healthz/deep` | 数据库 + Runtime + Kernel 的联合健康 |
+
+Kernel 内部接口（用户不可见）：6 个 syscall、`/v2/syscalls/submit_patch`、
+`/v2/submissions/*`、`/v1/runtime/*`（服务身份）、`/v1/runner/*`（runner 身份）。
 
 ---
 
-## 8. 边界
-
-**AgentGraph 拥有：** 用户、租户、workspace、task、文档、审批、审计、SSE、控制台。
-
-**Kernel 拥有：** repo、artifact、AST 契约、符号锁、门禁、commit。
-
-**没有合并：** 数据库 schema、任务表、租约表、事件总线、两个 dashboard。
-
-**仍然限制：**
-
-- 一个 Kernel 实例一个代码仓库；
-- AgentGraph task 到 REVIEWING 后，DONE 仍由人类/审查者决定；
-- Kernel 的 6 个 syscall 目前不携带 workspace_id；
-- Kernel 的 dashboard 应作为 debug 工具，不对外暴露；
-- `veynod_platform/` 是早期原型，不是主链路，可删除或归档。
-
----
-
-## 9. 验证
+## 7. 测试与验收
 
 ```bash
-# AgentGraph health
-curl -s http://127.0.0.1:8000/healthz
+# Runtime（真实 Postgres）
+TEST_DATABASE_URL=postgresql+asyncpg://agentgraph:agentgraph@127.0.0.1:55433/agentgraph_test \
+  python -m pytest agent_runtime/tests contracts/tests -q
 
-# Code page
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8000/dashboard/code/
+# Kernel（真实 Postgres + Rust 可选）
+cd veynod_kernel && python -m pytest tests -q
 
-# Direct engine run
-curl -s http://127.0.0.1:8000/v1/code/runs/code-284425ab8f1343fb \
-  -H 'Authorization: Bearer <AgentGraph workspace key>'
+# 产品面（需要 pgvector）
+cd AgentGraph && TEST_DATABASE_URL=... .venv/Scripts/python.exe -m pytest tests -q
+
+# 全链路（真实 Kernel + Gate + Git + Runtime，模型为脚本化决策）
+python scripts/e2e_unified.py
 ```
 
-当前已验证：
+最近一次全链路结果见 [docs/UNIFIED_ACCEPTANCE_REPORT.md](docs/UNIFIED_ACCEPTANCE_REPORT.md)：
+任务从创建到 REVIEWING，5 阶段门禁全 PASS，代码已原子合入，证据完整。
+
+---
+
+## 8. 目录
 
 ```text
-AgentGraph 3.24.0
-Kernel 4.0.0 (Rust core available)
-direct run: REVIEWING
-gates: CI PASS, TESTS PASS
+veynod/
+├── AgentGraph/        产品控制面（FastAPI + Next.js + MCP）
+├── agent_runtime/     唯一 Agent 执行循环（API / Worker / KernelToolRuntime）
+├── veynod_kernel/     确定性执行内核（Python API + Gate Worker + Rust core）
+├── contracts/         跨服务 ID / 事件 / 错误契约
+├── deploy/            统一部署（Dockerfile、环境模板、初始化脚本）
+├── docs/              统一架构、审计、迁移、ADR、验收报告
+├── scripts/           e2e_unified.py、migrate_all.sh、backfill_unified.py
+├── docker-compose.yml 一套生产部署
+└── veynod_platform/   DEPRECATED：早期第三产品原型，不再部署
 ```
 
-一句话：
+---
 
-> **Kernel 不再是独立产品，而是 AgentGraph 的一处 headless 核心引擎；AgentGraph 是唯一产品入口，Kernel 只通过 API/MCP 给 Agent 和内部服务使用。**
+## 9. 边界与状态
+
+* **Kernel Runner CLI** 保留为开发/兼容工具；产品执行者只有 Agent Runtime（ADR-017）。
+* **共享一个 PostgreSQL 集群、三个数据库**：不强行合并 schema，不做跨库外键。
+* **历史数据**不删除：迁移只做 expand → migrate → contract，回滚方案见迁移计划。
+* `POST /v1/code/runs` 语义已收敛为"建任务 + 启动 Run"；旧行为可用
+  `CODE_ENGINE_LEGACY_DIRECT=1` 临时恢复一个版本。

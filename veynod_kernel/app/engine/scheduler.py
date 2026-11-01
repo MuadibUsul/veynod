@@ -54,6 +54,7 @@ class DisjointWriteSetScheduler:
         lease_token_hash: str,
         lease_seconds: int = 600,
         wait_seconds: float | None = None,
+        requested_task_id: UUID | None = None,
     ) -> dict[str, Any] | None:
         """Claim a task; optionally hold the request in memory without a DB connection."""
         effective_wait = (
@@ -92,6 +93,7 @@ class DisjointWriteSetScheduler:
                         lease_token_hash=lease_token_hash,
                         lease_seconds=lease_seconds,
                         permit_id=permit_id,
+                        requested_task_id=requested_task_id,
                     )
                 except BaseException:
                     await self._release_permit(permit_id)
@@ -324,10 +326,14 @@ class DisjointWriteSetScheduler:
         lease_token_hash: str,
         lease_seconds: int = 600,
         permit_id: UUID | None = None,
+        requested_task_id: UUID | None = None,
     ) -> dict[str, Any] | None:
         core = None
 
-        if settings.single_kernel_claim:
+        # A targeted claim (the Runtime leases the node it created) goes
+        # straight to the SQL fence: the in-memory core decides "any" task,
+        # not a specific one.
+        if settings.single_kernel_claim and requested_task_id is None:
             if settings.multi_core_claim:
                 ensure_started = time.perf_counter()
                 core = await scheduler_core_manager.ensure_loaded(
@@ -399,6 +405,7 @@ class DisjointWriteSetScheduler:
             supported_task_types=supported_task_types,
             lease_token_hash=lease_token_hash,
             lease_seconds=lease_seconds,
+            requested_task_id=requested_task_id,
         )
         if row is not None and permit_id is not None:
             await self._bind_permit_tx(permit_id, str(row["task_id"]), lease_seconds)
@@ -616,6 +623,7 @@ class DisjointWriteSetScheduler:
         supported_task_types: list[str],
         lease_token_hash: str,
         lease_seconds: int,
+        requested_task_id: UUID | None = None,
     ) -> dict[str, Any] | None:
         """Fallback when the optional Rust extension is unavailable."""
         sql = text(
@@ -642,6 +650,10 @@ class DisjointWriteSetScheduler:
                 CROSS JOIN locks l
                 WHERE t.workspace_id = :workspace_id
                   AND t.status = 'READY'
+                  AND (
+                        CAST(:requested_task_id AS UUID) IS NULL
+                     OR t.task_id = CAST(:requested_task_id AS UUID)
+                  )
                   AND t.type::TEXT = ANY(CAST(:supported_types AS TEXT[]))
                   AND NOT (t.write_locks && l.w)
                   AND NOT (t.write_locks && l.a)
@@ -677,6 +689,9 @@ class DisjointWriteSetScheduler:
                 "supported_types": supported_task_types,
                 "lease_token_hash": lease_token_hash,
                 "lease_seconds": lease_seconds,
+                "requested_task_id": (
+                    str(requested_task_id) if requested_task_id else None
+                ),
             },
         )
         row = result.mappings().first()

@@ -402,12 +402,15 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
     online = _online(hosts, now)
     load = await _load(session, workspace_id, hosts)
 
+    # ADR-017: a task with an active Agent Run is executed by the Runtime
+    # through the Kernel. It must never also be offered to a runner host.
     tasks = (await session.execute(
         select(CollabTask).where(
             CollabTask.workspace_id == workspace_id,
             CollabTask.status == TaskStatus.READY,
             CollabTask.assignee.is_(None),
             CollabTask.claimed_by.is_(None),
+            CollabTask.active_run_id.is_(None),
             (CollabTask.kind.is_(None)) | (CollabTask.kind == "work"),
         ).order_by(CollabTask.priority.desc(), CollabTask.created_at)
         .limit(100).with_for_update(skip_locked=True))).scalars().all()

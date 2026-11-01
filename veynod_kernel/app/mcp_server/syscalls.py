@@ -16,7 +16,7 @@ import time
 from collections import deque
 from datetime import datetime
 from enum import Enum
-from typing import Annotated, Any, Callable, Coroutine
+from typing import Annotated, Any, AsyncIterator, Callable, Coroutine
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
@@ -29,6 +29,7 @@ from app.auth import authenticate_worker_context, hash_token
 from app.config import settings
 from app.database import get_db_session
 from app.engine.scheduler import AdmissionDenied
+from app.engine.workspace_context import request_workspace
 from app.engine.scheduler_core import scheduler_core_manager
 from app.models import Workspace
 from app.services.runtime_metrics import get_runtime_metrics
@@ -233,6 +234,14 @@ class PullTaskBundleRequest(BaseModel):
             "The request releases its DB connection while waiting."
         ),
     )
+    task_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Lease this specific task instead of any orthogonal task. The Agent "
+            "Runtime always names the node it created, so one product task can "
+            "never take another product task's DAG node."
+        ),
+    )
 
 
 class SlicedArtifactView(BaseModel):
@@ -342,6 +351,14 @@ class SubmitPatchV2Request(SubmitPatchRequest):
         description=(
             "Opaque retry key. It is bound to task_id, lease identity and the "
             "patch SHA-256; reuse with different material returns 409."
+        ),
+    )
+    correlation: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Trace context carried from the Agent Run (tenant/workspace/"
+            "project/product_task/run/trace). Stored on the submission and "
+            "echoed in the final event."
         ),
     )
 
@@ -636,11 +653,18 @@ async def get_kernel_engine() -> KernelEngineService:
 async def get_authenticated_worker_id(
     session: Annotated[AsyncSession, Depends(get_db_session)],
     authorization: Annotated[str | None, Header()] = None,
-) -> str:
+    x_workspace_id: Annotated[str | None, Header(alias="X-Workspace-Id")] = None,
+) -> AsyncIterator[str]:
     """
     Validates the Runner's Bearer token against `agent_tokens` and returns the
     authenticated `worker_hub_id`. `VN_AUTH_MODE=dev` keeps the legacy
     hash-derived behaviour for a well-formed but unregistered token.
+
+    Workspace routing: an optional ``X-Workspace-Id`` selects the request's
+    workspace. A token bound to another workspace is rejected; a token bound to
+    one workspace may omit the header. The resolved workspace is installed for
+    the rest of the request so the engine never falls back to a process-wide
+    default when the caller routed elsewhere.
     """
     if not authorization or not authorization.startswith("Bearer vnk_"):
         raise HTTPException(
@@ -655,25 +679,44 @@ async def get_authenticated_worker_id(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Runner token is unknown or revoked.",
         )
-    # The syscall plane is single-workspace.  A token bound to a different
-    # workspace must not pull/default into this deployment's workspace.
-    target = settings.default_workspace_id
+
+    requested: UUID | None = None
+    if x_workspace_id:
+        try:
+            requested = UUID(x_workspace_id.strip())
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="X-Workspace-Id must be a UUID.",
+            ) from exc
+
+    target = requested or identity.workspace_id or settings.default_workspace_id
     if target is None:
         target = await session.scalar(
             select(Workspace.workspace_id)
             .order_by(Workspace.created_at.asc())
             .limit(1)
         )
-    if (
-        identity.workspace_id is not None
-        and target is not None
-        and identity.workspace_id != target
-    ):
+    if target is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="No workspace exists in this Kernel deployment.",
+        )
+    exists = await session.scalar(
+        select(Workspace.workspace_id).where(Workspace.workspace_id == target)
+    )
+    if exists is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workspace {target} does not exist.",
+        )
+    if identity.workspace_id is not None and identity.workspace_id != target:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Runner token is bound to a different workspace.",
         )
-    return identity.worker_id
+    with request_workspace(target):
+        yield identity.worker_id
 
 
 # ============================================================================
@@ -841,6 +884,7 @@ async def syscall_submit_patch_v2(
             touched_symbols=req.touched_symbols,
             local_test_passed=req.local_test_passed,
             existing=existing,
+            correlation=req.correlation,
         )
     except SubmissionConflict as exc:
         raise HTTPException(

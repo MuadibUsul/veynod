@@ -130,6 +130,7 @@ def _status_payload(row: Mapping[str, Any]) -> dict[str, Any]:
         "attempts": int(row.get("attempts") or 0),
         "patch_sha256": row.get("patch_sha256"),
         "idempotency_key": row.get("idempotency_key"),
+        "correlation": _json_load(row.get("correlation"), {}),
         "created_at": _iso(row.get("created_at")),
         "started_at": _iso(row.get("started_at")),
         "completed_at": _iso(row.get("completed_at")),
@@ -155,6 +156,7 @@ class SubmissionService:
         touched_symbols: list[str],
         local_test_passed: bool,
         existing: dict[str, Any] | None = None,
+        correlation: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         digest = patch_sha256(git_diff)
         key, derived = normalize_idempotency_key(
@@ -211,6 +213,7 @@ class SubmissionService:
             "lease_expires_at": task_row["lease_expires_at"],
             "base_sha": task_row["base_commit_sha"],
             "snapshot_id": task_row["snapshot_id"],
+            "correlation": json.dumps(correlation or {}, default=str),
         }
         inserted = await self._insert(session, params)
         if inserted is not None:
@@ -290,12 +293,14 @@ class SubmissionService:
                 INSERT INTO patch_submissions (
                     workspace_id, task_id, runner_id, lease_token_hash,
                     idempotency_key, patch_sha256, git_diff, touched_symbols,
-                    local_test_passed, lease_expires_at, base_sha, snapshot_id
+                    local_test_passed, lease_expires_at, base_sha, snapshot_id,
+                    correlation
                 ) VALUES (
                     :workspace_id, :task_id, :runner_id, :lease_token_hash,
                     :idempotency_key, :patch_sha256, :git_diff,
                     CAST(:touched_symbols AS TEXT[]), :local_test_passed,
-                    :lease_expires_at, :base_sha, :snapshot_id
+                    :lease_expires_at, :base_sha, :snapshot_id,
+                    CAST(:correlation AS JSONB)
                 )
                 ON CONFLICT DO NOTHING
                 RETURNING submission_id, workspace_id, task_id, runner_id,
@@ -303,7 +308,7 @@ class SubmissionService:
                           status, attempts, task_status, result_commit_sha,
                           merge_mode, gate_results, merge_timing,
                           unlocked_downstream_task_ids, error_code,
-                          error_detail, created_at, updated_at,
+                          error_detail, correlation, created_at, updated_at,
                           started_at, completed_at
                 """
             ),

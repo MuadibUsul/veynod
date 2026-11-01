@@ -169,7 +169,9 @@ async def test_every_owned_row_carries_a_derived_tenant(client, admin_headers):
         nullable = await conn.fetch(
             "SELECT table_name FROM information_schema.columns "
             "WHERE table_schema = 'public' AND column_name = 'tenant_id' "
-            "AND is_nullable = 'YES' AND table_name <> 'tenants'"
+            # event_inbox is an operational delivery ledger: an event can name
+            # no workspace (e.g. a platform event) before any tenant exists.
+            "AND is_nullable = 'YES' AND table_name NOT IN ('tenants', 'event_inbox')"
         )
         assert [row["table_name"] for row in nullable] == []
         missing = await conn.fetch(
@@ -178,7 +180,7 @@ async def test_every_owned_row_carries_a_derived_tenant(client, admin_headers):
             # Operator-only tables (RLS forced, no application-role policy):
             # a CLI code or a product event may exist before any tenant does.
             "AND c.table_name NOT IN ('rate_limit_windows', 'product_events', 'cli_sessions', "
-            "'oauth_requests') "
+            "'oauth_requests', 'event_inbox') "
             "AND NOT EXISTS ("
             "  SELECT 1 FROM information_schema.columns t WHERE t.table_schema = 'public' "
             "  AND t.table_name = c.table_name AND t.column_name = 'tenant_id')"
