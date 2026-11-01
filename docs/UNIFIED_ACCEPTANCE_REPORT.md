@@ -170,7 +170,7 @@ status=REVIEWING after ~50s
 |---|---|---|
 | Agent Runtime + contracts | `RUNTIME_TEST_DATABASE_URL=... pytest agent_runtime/tests contracts/tests -q` | **42 passed**（含新增 14 个外部等待/工具/Kernel 唤醒/定向租约测试） |
 | Veynod Kernel | `cd veynod_kernel && python -m pytest tests` | **136 passed / 0 failed** |
-| AgentGraph 全量 | `TEST_DATABASE_URL=... .venv/Scripts/python.exe -m pytest tests -q` | **542 passed / 0 failed / 26 skipped**（干净测试库）；重跑一次为 541 passed + 1 个与本次重构无关的偶发失败 `test_list_contract`（单独连跑 3 次均通过） |
+| AgentGraph 全量 | `TEST_DATABASE_URL=... .venv/Scripts/python.exe -m pytest tests -q` | **542 passed / 0 failed / 26 skipped**（干净测试库，主体完成后）；全部改动完成后的最终重跑为 **541 passed + 1 个偶发失败** `test_list_contract::test_limit_and_cursor_errors`（同一测试单独连跑 3 次全通过，且与本次重构涉及的模块无关） |
 | 前端类型 | `cd dashboard && npx tsc --noEmit` | **通过（0 错误）** |
 | Lint | `ruff check`（改动文件 + agent_runtime + kernel app + scripts） | **通过** |
 
