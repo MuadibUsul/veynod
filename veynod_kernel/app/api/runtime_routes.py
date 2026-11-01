@@ -33,7 +33,12 @@ from app.engine.task_commands import (
     TaskNotFound,
     cancel_task as cancel_task_command,
 )
-from app.services.git_ops import GitError, GitRepository, RepositoryNotUsable
+from app.services.git_ops import (
+    GitError,
+    GitRepository,
+    RepositoryNotUsable,
+    validate_rev,
+)
 from app.services.task_bootstrap import create_dag_task, task_json
 from app.services.task_evidence import build_task_evidence
 
@@ -325,6 +330,12 @@ async def runner_workspace_file(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="path must be a relative repository path.",
         )
+    try:
+        rev = validate_rev(rev)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     repo = GitRepository(workspace.repo_path, workspace.main_branch)
     try:
         content = await repo.read_file(cleaned, rev=rev)

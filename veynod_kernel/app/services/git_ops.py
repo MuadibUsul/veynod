@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import os
 import shutil
 import time
@@ -240,6 +241,22 @@ async def close_git_batch_pools() -> None:
         await pool.close()
 
 
+_REV_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$")
+
+
+def validate_rev(rev: str) -> str:
+    """A git revision we are willing to put on a command line.
+
+    ``git show <rev>:<path>`` takes ``rev`` as part of one argv word, but git
+    also parses a leading ``-`` as an option (``--output=<file>`` writes a
+    file).  Only hex object names and plain ref names are accepted.
+    """
+    value = (rev or "").strip()
+    if not value or not _REV_RE.fullmatch(value) or ".." in value:
+        raise ValueError(f"invalid revision {rev!r}")
+    return value
+
+
 class GitRepository:
     def __init__(self, repo_path: str | Path, main_branch: str = "main") -> None:
         self.repo_path = Path(repo_path)
@@ -302,6 +319,7 @@ class GitRepository:
         return files
 
     async def read_file(self, path: str, rev: str = "HEAD") -> str | None:
+        rev = validate_rev(rev)
         immutable = len(rev) in (40, 64) and all(
             character in "0123456789abcdefABCDEF" for character in rev
         )
@@ -324,6 +342,7 @@ class GitRepository:
     async def read_files_batch(
         self, paths: list[str] | set[str], rev: str = "HEAD"
     ) -> dict[str, str | None]:
+        rev = validate_rev(rev)
         """Read many blobs with one ``git cat-file --batch`` process.
 
         Claim bundle assembly otherwise starts one ``git show`` per artifact;

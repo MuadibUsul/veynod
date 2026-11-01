@@ -16,7 +16,7 @@ C. 在 Runtime 实现 `KernelToolRuntime`，以**服务身份 + 工作区上下�
 
 **决策**：C。
 
-- 覆盖 9 个 capability：pull_task_bundle、submit_patch、get_submission、query_symbol_signature、
+- 覆盖 12 个 capability：create_task、pull_task_bundle、submit_patch、get_submission、query_symbol_signature、
   get_task_evidence、get_task_status、cancel_task、request_task_split、escalate_contract_defect、
   inject_dependency_task。
 - 复用 Kernel 既有 syscall 语义（lease_token、写集校验、202 异步提交、幂等键）。
@@ -26,7 +26,7 @@ C. 在 Runtime 实现 `KernelToolRuntime`，以**服务身份 + 工作区上下�
 
 **取舍**：Runtime 需要理解 Kernel 的错误码与 202 语义；换来唯一执行链与完整审计。
 
-**验收**：`agent_runtime/tests/test_kernel_tool.py` 覆盖 9 capability、幂等重放、错误分类；
+**验收**：`agent_runtime/tests/test_kernel_tool.py` 覆盖 capability 注册表、幂等重放、错误分类；
 真实 E2E：Runtime → pull_task_bundle → submit_patch(202) → gate → commit → Runtime resume。
 
 ---

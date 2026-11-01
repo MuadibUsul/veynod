@@ -9,6 +9,7 @@ code that talks to the Kernel administrative API.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from typing import Any
 from uuid import uuid4
@@ -154,8 +155,28 @@ class KernelEngineClient:
         return payload if isinstance(payload, dict) else {}
 
 
-def _engine() -> KernelEngineClient:
-    return KernelEngineClient(settings.kernel_url, settings.kernel_admin_key)
+def _admin_keys() -> dict[str, str]:
+    raw = (settings.kernel_admin_keys or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        logger.error("KERNEL_ADMIN_KEYS is not valid JSON; using the default key")
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {
+        str(base).rstrip("/"): str(key)
+        for base, key in parsed.items()
+        if base and key
+    }
+
+
+def _engine(base_url: str | None = None) -> KernelEngineClient:
+    """Client for the Kernel instance a task is bound to (not a global)."""
+    base = (base_url or settings.kernel_url).rstrip("/")
+    return KernelEngineClient(base, _admin_keys().get(base, settings.kernel_admin_key))
 
 
 def _workspace_id() -> str:
@@ -646,6 +667,14 @@ async def _kernel_workspace_ids() -> list[str]:
                         SELECT input_context->'kernel'->>'workspace_id' AS candidate
                         FROM collab_tasks
                         WHERE input_context->>'code_engine' = 'veynod-kernel'
+                        UNION
+                        SELECT correlation->>'kernel_workspace_id'
+                        FROM collab_tasks
+                        WHERE correlation ? 'kernel_workspace_id'
+                        UNION
+                        SELECT kernel_workspace_id::text
+                        FROM kernel_bindings
+                        WHERE status = 'ACTIVE'
                         UNION
                         SELECT kernel_workspace_id::text
                         FROM code_projection_cursors

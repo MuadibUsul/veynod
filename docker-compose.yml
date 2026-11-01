@@ -61,6 +61,10 @@ services:
       VN_CELL_ID: ${VN_CELL_ID:-}
       VN_REQUIRE_BOUND_TOKENS: "true"
       VN_GATE_SANDBOX: local
+      # Required for several tasks on one repository: HEAD may advance during
+      # a gate; the verified patch is tree-merged under CAS instead of being
+      # rejected after bounded revalidations (ADR-020).
+      VN_FAST_FORWARD_MERGE: "true"
       VN_ALLOW_LOCAL_GATE_IN_PROD: "1"
       VN_GATE_MEMORY_MB: ${VN_GATE_MEMORY_MB:-2048}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -97,6 +101,10 @@ services:
       VN_RUNTIME_SERVICE_KEY: ${KERNEL_SERVICE_KEY}
       VN_CELL_ID: ${VN_CELL_ID:-}
       VN_GATE_SANDBOX: local
+      # Required for several tasks on one repository: HEAD may advance during
+      # a gate; the verified patch is tree-merged under CAS instead of being
+      # rejected after bounded revalidations (ADR-020).
+      VN_FAST_FORWARD_MERGE: "true"
       VN_ALLOW_LOCAL_GATE_IN_PROD: "1"
       VN_GATE_MEMORY_MB: ${VN_GATE_MEMORY_MB:-2048}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -191,6 +199,7 @@ services:
       AGENT_RUNTIME_KEY: ${RUNTIME_API_KEY}
       KERNEL_URL: http://kernel-api:8001
       KERNEL_ADMIN_KEY: ${KERNEL_ADMIN_KEY}
+      KERNEL_SERVICE_KEY: ${KERNEL_SERVICE_KEY}
       KERNEL_WORKSPACE_ID: ${KERNEL_WORKSPACE_ID:-}
       KERNEL_REPO_PATH: ${KERNEL_REPO_PATH:-}
       AGENT_RUNTIME_PROJECTION_ENABLED: ${AGENT_RUNTIME_PROJECTION_ENABLED:-false}

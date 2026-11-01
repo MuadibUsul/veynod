@@ -525,7 +525,11 @@ export function ExecutionPanel({ api, taskKey }: { api: ApiRequest; taskKey: str
                     const tool = String(payload.tool ?? step.kind ?? "");
                     return (
                       <li key={`${step.step_no ?? index}-${tool}`}>
-                        <span className={`pill ${step.status === "FAILED" ? "red" : "green"}`}>
+                        <span
+                          className={`status-pill tone-${
+                            step.status === "FAILED" ? "rose" : "mint"
+                          }`}
+                        >
                           {String(step.status ?? "")}
                         </span>{" "}
                         <span className="mono">{tool}</span>
@@ -563,7 +567,11 @@ export function ExecutionPanel({ api, taskKey }: { api: ApiRequest; taskKey: str
             <div className="execution-gates">
               {(view.verification.gate_results ?? []).map((gate, index) => (
                 <div key={index} className="gate-row">
-                  <span className={`pill ${gate.passed === true ? "green" : "red"}`}>
+                  <span
+                    className={`status-pill tone-${
+                      gate.passed === true ? "mint" : "rose"
+                    }`}
+                  >
                     {gate.passed === true ? "PASS" : "FAIL"}
                   </span>{" "}
                   <span className="mono">{String(gate.stage ?? "")}</span>

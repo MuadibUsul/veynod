@@ -1,5 +1,8 @@
 # Veynod 统一重构验收报告
 
+> **后续**：本报告记录统一重构的验收。生产资格轮（fencing、混沌、容量、Rust、
+> 安全隔离）见 [PRODUCTION_QUALIFICATION_REPORT.md](PRODUCTION_QUALIFICATION_REPORT.md)。
+
 日期：2026-11-01。范围：`E:\Codes\veynod` 工作树，分支 `refactor/unified-runtime-kernel-fusion`，
 提交 `88c306f`（基于 `main` 的 `0718173`）。
 所有数据来自本机真实运行（Windows 10 x64，12 逻辑核，31 GB，PostgreSQL 16 + pgvector，
@@ -29,7 +32,7 @@ Docker `veynod-test-pgvector` :55433）。没有模拟状态，没有跳过测�
 
 | 区域 | 文件 | 作用 |
 |---|---|---|
-| Runtime | `agent_runtime/tools/kernel.py` | `KernelToolRuntime`：11 个 capability、参数校验、workspace 路由、幂等、重试、错误分类、审计 |
+| Runtime | `agent_runtime/tools/kernel.py` | `KernelToolRuntime`：12 个 capability、参数校验、workspace 路由、幂等、重试、错误分类、审计 |
 | Runtime | `agent_runtime/tool_context.py` | 每次工具调用的 Run/租户/项目/仓库/绑定上下文（contextvar） |
 | Runtime | `agent_runtime/wakeups.py` | Kernel 持久事件 → `runtime_wakeups`（游标幂等） |
 | Runtime | `agent_runtime/loop.py` | 延迟工具（202）→ `WAITING_EXTERNAL`；失败证据交回模型；连续失败上限 |
@@ -177,7 +180,7 @@ status=REVIEWING after ~50s
 本轮新增测试：
 
 * `agent_runtime/tests/test_external_wait.py` — 延迟停放、幂等唤醒、超时失败、重复提交不重放
-* `agent_runtime/tests/test_kernel_tool.py` — 11 capability、租约脱敏、202 deferred、AUTH 不重试、429 重试、参数校验、路由来自 Run、事件→唤醒
+* `agent_runtime/tests/test_kernel_tool.py` — 12 capability、租约脱敏、202 deferred、AUTH 不重试、429 重试、参数校验、路由来自 Run、事件→唤醒
 * `AgentGraph/tests/test_task_lifecycle.py` — 单活动 Run、失败投影、无证据不推进、调度排他
 
 ### 3.1 AgentGraph 全量套件的六个基线失败（本轮全部修复）
@@ -259,7 +262,7 @@ Kernel 建 DAG/租约 → patch → 202 → WAITING_EXTERNAL → 门禁 → comm
 
 ### 已实现并测试通过
 
-* KernelToolRuntime 11 个 capability、参数校验、错误分类、重试、审计、租约脱敏。
+* KernelToolRuntime 12 个 capability、参数校验、错误分类、重试、审计、租约脱敏。
 * 延迟执行：202 → `WAITING_EXTERNAL` → 持久唤醒 → 恢复；超时失败。
 * Kernel 请求级 workspace 路由（`X-Workspace-Id`），跨 workspace 403。
 * Kernel 服务面：事件流、任务创建（幂等键）、证据、取消；runner 面：证据、只读文件。

@@ -69,6 +69,7 @@ class RuntimeWorker:
             guard=lambda: self.store.assert_lease(run_id, token),
             quota=self.quota,
             context_builder=self.context_builder,
+            fence=int(claim["lease_epoch"]),
         )
         try:
             return await controller.step(run_id)

@@ -11119,6 +11119,26 @@
          "name": "task_key",
          "required": true,
          "type": "string"
+        }
+       ],
+       "path": "/v1/tasks/{task_key}/trace",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "One task_key -> product, Run, Kernel facts and merged timeline"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "task_key",
+         "required": true,
+         "type": "string"
         },
         {
          "description": "",

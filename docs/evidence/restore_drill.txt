@@ -1,0 +1,33 @@
+# Backup / restore drill
+
+## veynod_chaos_product
+
+- dump_bytes: 939750
+- tables: 152
+- rows: 2052
+- restore_exit: 0
+- mismatched_tables: {}
+- pass: True
+- restore_stderr: 
+
+## veynod_chaos_kernel
+
+- dump_bytes: 144945
+- tables: 21
+- rows: 509
+- restore_exit: 0
+- mismatched_tables: {}
+- pass: True
+- restore_stderr: 
+
+## veynod_chaos_runtime
+
+- dump_bytes: 216241
+- tables: 14
+- rows: 2601
+- restore_exit: 0
+- mismatched_tables: {}
+- pass: True
+- restore_stderr: 
+
+**3/3 databases restored with identical row counts.**

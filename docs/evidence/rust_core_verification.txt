@@ -1,0 +1,49 @@
+{
+  "image": "veynod-kernel:rust",
+  "image_size": "607MB",
+  "core": {
+    "available": true,
+    "version": "0.1.0",
+    "disabled": false,
+    "import_error": null
+  },
+  "submission": "COMMITTED",
+  "commit": "03de585ab97035d4f39b09f2c9fcdb6f5f6e868a",
+  "gates": [
+    "WRITE_SET_BOUNDARY",
+    "AST_SCOPE_DIFF",
+    "CONTRACT_HASH_GUARD",
+    "STATIC_TYPECHECK",
+    "UNIT_TEST_SUITE"
+  ],
+  "evidence_complete": true,
+  "claim_timing_ms": {
+    "claim_decision_ms": 63,
+    "bundle_ms": 71,
+    "total_ms": 163
+  },
+  "merge_timing_ms": {
+    "total_ms": 249,
+    "edge_db_ms": 0,
+    "kahn_db_ms": 19,
+    "core_sync_ms": 0,
+    "lock_wait_ms": 0,
+    "artifact_db_ms": 13,
+    "dirty_check_ms": 0,
+    "edge_enqueue_ms": 4,
+    "gate_pool_wait_ms": 744,
+    "git_tree_commit_ms": 90
+  },
+  "normalize_ms": {
+    "rust": 29.26,
+    "python": 115.98
+  },
+  "conflicts_ms": {
+    "rust": 50.9,
+    "python": 204.16
+  },
+  "python_engine": "python",
+  "rust_engine": "rust",
+  "parity_sample": true
+}
+PASS

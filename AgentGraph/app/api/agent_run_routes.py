@@ -37,6 +37,25 @@ async def task_execution(
         ) from exc
 
 
+@router.get(
+    "/{task_key}/trace",
+    summary="One task_key -> product, Run, Kernel facts and merged timeline",
+)
+async def task_trace(
+    task_key: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> Any:
+    from app.services import task_lifecycle
+
+    try:
+        return await task_lifecycle.trace_view(session, principal, task_key)
+    except task_lifecycle.LifecycleError as exc:
+        raise HTTPException(
+            status_code=exc.status_code, detail=str(exc)
+        ) from exc
+
+
 @router.post("/{task_key}/run", summary="Start the task's Agent Run")
 @router.post("/{task_key}/agent-run", summary="Start an Agent Runtime run for a task")
 async def create_agent_run(

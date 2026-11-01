@@ -60,6 +60,9 @@ class ToolResult:
 # Consecutive failed tool calls a Run may absorb before it is failed.  A failed
 # deterministic gate is evidence the model must repair, not a terminal error.
 DEFAULT_MAX_TOOL_FAILURES = 6
+# A model provider outage is not repaired by retrying forever: after this many
+# consecutive provider failures the Run fails with the provider error recorded.
+DEFAULT_MAX_MODEL_FAILURES = 3
 
 
 def budget_exceeded(run: dict[str, Any]) -> str | None:
@@ -91,14 +94,20 @@ class LoopController:
         context_builder: ContextBuilder | None = None,
         quota: QuotaPolicy | None = None,
         max_tool_failures: int = DEFAULT_MAX_TOOL_FAILURES,
+        max_model_failures: int = DEFAULT_MAX_MODEL_FAILURES,
+        fence: int | None = None,
     ) -> None:
         self.store = store
         self.model = model
         self.tools = tools
         self.guard = guard
+        # Fencing token from claim_run; every write this controller performs
+        # carries it, so a worker whose lease was taken over cannot write.
+        self.fence = fence
         self.context_builder = context_builder
         self.quota = quota
         self.max_tool_failures = max(1, int(max_tool_failures))
+        self.max_model_failures = max(1, int(max_model_failures))
 
     async def _check_guard(self) -> None:
         if self.guard is not None:
@@ -116,6 +125,7 @@ class LoopController:
                 "BUDGET_EXCEEDED",
                 expected_version=run["version"],
                 reason=exceeded,
+                fence=self.fence,
             )
             await self._checkpoint(run_id, {"budget": exceeded})
             return {
@@ -132,6 +142,7 @@ class LoopController:
                     "BUDGET_EXCEEDED",
                     expected_version=run["version"],
                     reason=quota_reason,
+                    fence=self.fence,
                 )
                 await self._checkpoint(run_id, {"tenant_quota": quota_reason})
                 return {
@@ -151,9 +162,16 @@ class LoopController:
             )
         else:
             context = checkpoint_state
-        action = await self.model.decide(run, context)
+        try:
+            action = await self.model.decide(run, context)
+        except Exception as exc:  # noqa: BLE001 - provider errors are run state
+            return await self._model_failed(run_id, step_no, exc)
         if action.kind not in {"tool", "finish", "pause"}:
-            raise ValueError(f"unsupported model action {action.kind!r}")
+            return await self._model_failed(
+                run_id,
+                step_no,
+                ValueError(f"unsupported model action {action.kind!r}"),
+            )
 
         await self._check_guard()
         model_step = await self.store.record_step(
@@ -163,9 +181,11 @@ class LoopController:
             "SUCCEEDED",
             {"action": asdict(action)},
             idempotency_key=f"model:{run_id}:{step_no}",
+            fence=self.fence,
         )
         await self.store.add_usage(
             run_id,
+            fence=self.fence,
             model_calls=1,
             prompt_tokens=action.prompt_tokens,
             completion_tokens=action.completion_tokens,
@@ -179,6 +199,7 @@ class LoopController:
                 "BUDGET_EXCEEDED",
                 expected_version=run["version"],
                 reason=exceeded,
+                fence=self.fence,
             )
             await self._checkpoint(run_id, {"step": step_no, "budget": exceeded})
             return {
@@ -196,6 +217,7 @@ class LoopController:
                 "COMPLETED",
                 expected_version=run["version"],
                 reason=action.reason or "model finished",
+                fence=self.fence,
             )
             await self._checkpoint(
                 run_id, {"step": step_no, "result": action.output}
@@ -213,6 +235,7 @@ class LoopController:
                 "PAUSING",
                 expected_version=run["version"],
                 reason=action.reason or "model requested pause",
+                fence=self.fence,
             )
             run = await self.store.get_run(run_id)
             await self.store.transition(
@@ -220,6 +243,7 @@ class LoopController:
                 "PAUSED",
                 expected_version=run["version"],
                 reason=action.reason or "model requested pause",
+                fence=self.fence,
             )
             await self._checkpoint(run_id, {"step": step_no, "paused": True})
             return {
@@ -256,6 +280,7 @@ class LoopController:
                     "WAITING_EXTERNAL",
                     expected_version=run["version"],
                     reason=f"tool {action.tool} already deferred",
+                fence=self.fence,
                 )
             return {
                 "run": await self.store.get_run(run_id),
@@ -274,6 +299,7 @@ class LoopController:
             "WAITING_TOOL",
             expected_version=run["version"],
             reason=f"tool {action.tool}",
+                fence=self.fence,
         )
         with tool_context(ToolContext.from_run(run)):
             result = await self.tools.execute(action.tool, action.arguments, key)
@@ -289,6 +315,7 @@ class LoopController:
             status="SUCCEEDED" if result.ok else "FAILED",
             result=result.output,
             error=result.error,
+            fence=self.fence,
         )
         await self.store.record_step(
             run_id,
@@ -303,6 +330,7 @@ class LoopController:
                 "error_class": result.error_class,
             },
             idempotency_key=f"tool-step:{key}",
+            fence=self.fence,
         )
         run = await self.store.get_run(run_id)
         failures = await self._consecutive_tool_failures(run_id) if not result.ok else 0
@@ -342,6 +370,54 @@ class LoopController:
             "tool_result": result,
         }
 
+    async def _model_failed(
+        self, run_id: str, step_no: int, exc: Exception
+    ) -> dict[str, Any]:
+        """Record a provider failure; bound the retries, then fail the Run."""
+        await self._check_guard()
+        message = f"{type(exc).__name__}: {exc}"[:2000]
+        await self.store.record_step(
+            run_id,
+            step_no,
+            "MODEL",
+            "FAILED",
+            {"error": message},
+            idempotency_key=f"model:{run_id}:{step_no}",
+            fence=self.fence,
+        )
+        failures = await self._consecutive_model_failures(run_id)
+        run = await self.store.get_run(run_id)
+        if run["status"] == "RUNNING" and failures >= self.max_model_failures:
+            await self.store.transition(
+                run_id,
+                "FAILED",
+                expected_version=run["version"],
+                reason=f"model unavailable: {message}",
+                fence=self.fence,
+            )
+        await self._checkpoint(
+            run_id,
+            {"step": step_no, "model_error": message, "failures": failures},
+        )
+        return {
+            "run": await self.store.get_run(run_id),
+            "action": None,
+            "executed": False,
+            "model_error": message,
+        }
+
+    async def _consecutive_model_failures(self, run_id: str) -> int:
+        steps = await self.store.list_steps(run_id, 50)
+        failures = 0
+        for step in reversed(steps):
+            if step.get("kind") != "MODEL":
+                continue
+            if step.get("status") == "FAILED":
+                failures += 1
+                continue
+            break
+        return failures
+
     async def _defer_tool(
         self,
         run_id: str,
@@ -357,6 +433,7 @@ class LoopController:
             invocation["invocation_id"],
             status="DEFERRED",
             result={"deferred": deferred},
+            fence=self.fence,
         )
         external = await self.store.defer_external(
             run_id,
@@ -368,6 +445,7 @@ class LoopController:
             kernel_task_id=deferred.get("kernel_task_id"),
             deadline_seconds=int(deferred.get("deadline_seconds") or 3600),
             step_id=invocation.get("step_id"),
+            fence=self.fence,
         )
         await self.store.record_step(
             run_id,
@@ -381,6 +459,7 @@ class LoopController:
                 "external_id": external["external_id"],
             },
             idempotency_key=f"tool-step:{key}",
+            fence=self.fence,
         )
         run = await self.store.get_run(run_id)
         if run["status"] == "WAITING_TOOL":
@@ -389,6 +468,7 @@ class LoopController:
                 "WAITING_EXTERNAL",
                 expected_version=run["version"],
                 reason=f"tool {action.tool} awaits an external event",
+                fence=self.fence,
             )
         await self._checkpoint(
             run_id,
@@ -427,6 +507,7 @@ class LoopController:
             state,
             idempotency_key=f"checkpoint:{run_id}:{state.get('step')}:"
             f"{state.get('tool') or state.get('result') or state.get('paused') or state.get('budget')}",
+            fence=self.fence,
         )
 
 

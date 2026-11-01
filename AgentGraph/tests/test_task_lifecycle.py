@@ -19,6 +19,8 @@ class _RuntimeState:
         self.runs: dict[str, dict] = {}
         self.steps: dict[str, list] = {}
         self.externals: dict[str, list] = {}
+        self.cancelled: list[str] = []
+        self.fail_start = False
         self.lock = threading.Lock()
 
     def create(self, body: dict) -> dict:
@@ -121,11 +123,17 @@ def _runtime_handler(state: _RuntimeState):
             if len(parts) >= 4 and parts[1] == "runs":
                 run_id = parts[2]
                 if parts[3] == "start":
+                    if state.fail_start:
+                        state.fail_start = False
+                        self._send(500, {"detail": "runtime is down"})
+                        return
                     state.set_status(run_id, "RUNNING")
                     self._send(200, state.get(run_id))
                     return
                 if parts[3] == "cancel":
                     state.set_status(run_id, "CANCELLED")
+                    with state.lock:
+                        state.cancelled.append(run_id)
                     self._send(200, state.get(run_id))
                     return
                 if parts[3] == "wakeups":
@@ -296,3 +304,47 @@ async def test_runtime_owned_task_is_not_placed_by_the_scheduler(
     assert agenda.status_code == 200, agenda.text
     keys = json.dumps(agenda.json())
     assert key not in keys, "a Runtime-owned task must not wait for a runner host"
+
+
+@pytest.mark.integration
+async def test_failed_start_cancels_the_run_instead_of_orphaning_it(
+    lifecycle_client, workspace_headers, runtime_state
+) -> None:
+    key = await _task(lifecycle_client, workspace_headers)
+    runtime_state.fail_start = True
+    response = await lifecycle_client.post(
+        f"/v1/tasks/{key}/run", headers=workspace_headers, json={}
+    )
+    assert response.status_code >= 500, response.text
+
+    task = (
+        await lifecycle_client.get(f"/v1/tasks/{key}", headers=workspace_headers)
+    ).json()
+    assert task["active_run_id"] is None
+    assert task["correlation"].get("run_id") is None
+    # The Runtime was told to cancel the Run it had already created.
+    assert runtime_state.cancelled, "an orphan Run must be compensated"
+    status = runtime_state.get(runtime_state.cancelled[-1])
+    assert status is not None and status["status"] == "CANCELLED"
+
+
+@pytest.mark.integration
+async def test_trace_view_joins_all_three_planes(
+    lifecycle_client, workspace_headers
+) -> None:
+    key = await _task(lifecycle_client, workspace_headers)
+    started = (
+        await lifecycle_client.post(
+            f"/v1/tasks/{key}/run", headers=workspace_headers, json={}
+        )
+    ).json()
+    response = await lifecycle_client.get(
+        f"/v1/tasks/{key}/trace", headers=workspace_headers
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["task"]["task_key"] == key
+    assert body["ids"]["run_id"] == started["run_id"]
+    assert body["ids"]["trace_id"] == started["trace_id"]
+    assert isinstance(body["timeline"], list)
+    assert body["run"] is None or "run_id" in (body["run"] or {})

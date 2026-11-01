@@ -20,7 +20,7 @@ Agent Runtime                        唯一模型推理与执行循环（Run / S
   │  ModelGateway        ToolRuntime
   │        │                  │
   │        ▼                  ▼
-  │   Model Providers     KernelToolRuntime（9 capability，内部服务身份）
+  │   Model Providers     KernelToolRuntime（12 capability，内部服务身份）
   │                             │
   ▼                             ▼
                          Veynod Kernel（headless）

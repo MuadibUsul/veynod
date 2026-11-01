@@ -5438,3 +5438,59 @@ body::before {
   color: var(--accent, #00c2ff);
   cursor: pointer;
 }
+
+/* ---------------------------------------------------------------- execution
+   Task detail: one task's execution, from the three owners. Loop steps are a
+   compact timeline; the header keeps the section label and the live Run state
+   on one line. Nothing here overrides the shared studio tokens. */
+
+.execution-panel h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.execution-panel h3 .button {
+  color: var(--muted-2);
+}
+
+.execution-panel h3 .button svg {
+  transition: transform 0.15s ease;
+}
+
+.execution-loop,
+.execution-code,
+.execution-gates,
+.execution-delivery {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.execution-code > div,
+.execution-delivery {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.execution-steps {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.execution-steps li {
+  line-height: 1.5;
+}
+
+.gate-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
