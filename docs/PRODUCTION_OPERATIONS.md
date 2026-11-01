@@ -18,6 +18,10 @@
 | 冒烟 | 生产 Kernel 真实执行：task → bundle → patch → 5 门禁 PASS → `COMMITTED 64930420a1a4` → evidence complete |
 | 冒烟仓库 | `/home/deploy/veynod-monorepo/repos/smoke.git`（Kernel workspace，供验证；绑定真实项目时替换） |
 
+**部署禁忌**：`veynod-db-1` 由旧 compose 管理，不在 unified 文件里。绝对不要对 unified 文件执行
+`docker compose down -v` 或 `up --remove-orphans`——那会连数据库容器/卷一起清掉。只对具体服务
+`up -d --no-deps <service>`。
+
 回滚：把 `VEYNOD_TAG` 改回 `63f3b95c`、`API` 镜像改回 `veynod:monorepo-63f3b95c`，并只启动 `api`；
 数据库迁移是 expand-only，旧镜像可直接运行。备份在 `/home/deploy/veynod-monorepo/backups/`。
 
