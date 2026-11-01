@@ -1,0 +1,406 @@
+"""Agent-readable API guide generated from code constants (PRD AG-OB-03).
+
+Limits, enums and error codes come from the code that enforces them, so the
+guide cannot drift. ``docs/AGENT_GUIDE.md`` is generated from ``render()`` by
+``scripts/gen_agent_guide.py``; a test fails when the committed file is stale.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from app import versioning
+from app.config import Settings, get_settings
+from app.error_registry import ERROR_CLASSES, RETRY_POLICY, registry_table
+from app.schemas import (
+    BATCH_DEREFERENCE_MAX,
+    BATCH_UPSERT_MAX,
+    QUERY_LIMIT_MAX,
+    REVIEW_APPROVE_STATUSES,
+    REVIEW_REJECT_STATUSES,
+)
+from app.services.events import event_type_catalog
+
+settings = get_settings()
+
+PRIMITIVES: dict[str, str] = {
+    "get_orientation": "First call after connecting: who you are, the constitution, "
+    "namespaces, collaborators, your tasks and what to read next.",
+    "workspace_sync": "L0 map (tasks, slot/doc keys) and incremental changes via since=<cursor>.",
+    "list_documents": "Complete, cursor-paginated enumeration of documents (the census).",
+    "query_workspace": "Ranked semantic + keyword discovery; NOT exhaustive.",
+    "dereference": "Read one document (doc://<key> or doc_… id); ranges and parts.",
+    "dereference_many": f"Read up to {BATCH_DEREFERENCE_MAX} documents in one call.",
+    "upsert_shared_doc": "Create (expected_version=0) or update a document.",
+    "upsert_many": f"Write up to {BATCH_UPSERT_MAX} documents atomically.",
+    "patch_doc_section": "Replace one Markdown section by heading.",
+    "rename_document": "Change an alias; the canonical id never changes.",
+    "register_parts": "Record hand-split documents as ordered parts.",
+    "register_namespace": "Register a namespace before writing to it.",
+    "list_namespaces": "Registered namespaces, readmes and your access.",
+    "archive_document": "Soft-archive instead of deleting.",
+    "restore_document": "Undo an archive.",
+    "create_task": "Create a task.",
+    "update_task": "SUPER_ADMIN only: edit title, description, priority, assignee "
+    "or status (never DONE); a reason is required and the change is audited.",
+    "agent_claim_and_read": "Claim a task with a lease and read its L1 context.",
+    "agent_handoff_task": "Hand off with an L1 brief and optional artifact.",
+    "review_task": "Approve, reject or send back for rework.",
+    "record_gate_result": "Report a CI / tests / acceptance gate result.",
+    "batch": "Up to 20 tool calls in one request, each with its own result.",
+    "ack_memory_seed": "Record the memory seed version you stored.",
+    "get_audit_view": "Spec, output and gates of a task, for an independent audit.",
+    "report_change_claim": "Report a change made outside Veynod (PR, commit).",
+    "verify_change_claim": "AUDITOR: verify or refute a change claim.",
+    "agent_escalate_to_human": "Ask a human to decide.",
+    "request_human_review": "Flag a proposal or task for a human.",
+    "agent_patch_shared_state": "RFC 6902 JSON Patch on a state slot.",
+    "propose_document_change": "Propose an edit a human applies (required for system/*).",
+    "vote_on_proposal": "Score another agent's proposal.",
+    "list_document_proposals": "List proposals.",
+    "draft_external_action": "Draft an outbound call for human approval.",
+    "get_token": "Inspect a token (self, ancestors, own subtree).",
+    "get_lineage": "Token chain from the workspace root token.",
+    "list_token_tree": "Descendant tokens of your own subtree.",
+    "explain_write": "Who wrote a version and with what grant.",
+    "ack_constitution": "Record that you read the current constitution version.",
+    "get_usage": "Embedding tokens, writes, would-be limits and circuits.",
+    "get_index_status": "Indexing backlog; writes under 2026-11 are searchable later.",
+    "heartbeat": "Keep a task lease alive every heartbeat_interval_s (ttl/3).",
+    "release_lease": "Give up a lease; the task returns to READY.",
+    "list_leases": "Your leases and how they ended.",
+    "export_workspace": "Export in the storage format (owner/workspace key; agents need a grant).",
+    "get_export": "Export status and download link.",
+    "list_exports": "Exports of your tenant.",
+    "poll_events": "Events after a cursor; long-poll up to 25 s; dedupe by event_id.",
+    "subscribe": "Subscribe to namespace/doc_key prefixes for poll_events.",
+    "list_subscriptions": "Your subscriptions (one default from get_orientation).",
+    "unsubscribe": "Remove a subscription.",
+    "get_api_docs": "This guide by section.",
+}
+
+
+def _value(name: str, live: bool) -> Any:
+    """Live endpoints report this deployment; the committed file uses code defaults."""
+    if live:
+        return getattr(settings, name)
+    return Settings.model_fields[name].default
+
+
+def limits(live: bool = True) -> dict[str, Any]:
+    value = _value
+    return {
+        "max_content_bytes": value("max_document_content_bytes", live),
+        "dereference_range_max_bytes": 262_144,
+        "expanded_parts_max_bytes": 4 * 1024 * 1024,
+        "batch_upsert_max": BATCH_UPSERT_MAX,
+        "batch_dereference_max": BATCH_DEREFERENCE_MAX,
+        "query_limit_max": QUERY_LIMIT_MAX,
+        "list_limit_max": value("max_page_size", live),
+        "idempotency_window_hours": value("idempotency_window_hours", live),
+        "requests_per_minute_default": value("rate_limit_default_per_minute", live),
+        "sse_revalidate_seconds": value("sse_revalidate_seconds", live),
+        "write_rate_per_minute": value("write_rate_per_minute", live),
+        "write_burst": value("write_burst", live),
+        "query_rate_per_minute": value("query_rate_per_minute", live),
+        "max_in_flight_per_token": value("max_in_flight_per_token", live),
+        "max_streams_per_token": value("max_streams_per_token", live),
+        "backoff_max_seconds": value("backoff_max_seconds", live),
+        "embedding_tokens_per_day": value("embedding_tokens_per_day", live),
+    }
+
+
+def trust_defaults() -> dict[str, Any]:
+    return {
+        "agent_write": "DRAFT/UNTRUSTED",
+        "query_excludes_unverified_by_others": True,
+        "include_unverified_default": False,
+        "include_own_unverified_default": True,
+    }
+
+
+def render(live: bool = True) -> str:
+    lim = limits(live)
+    lines = [
+        "# Veynod agent guide",
+        "",
+        "Generated from code by `scripts/gen_agent_guide.py`; do not edit by hand.",
+        "",
+        "## Connect",
+        "",
+        "- REST base `/v1`, MCP streamable HTTP at `/mcp/` (stateless: no session id; "
+        "every request is authenticated on its own).",
+        "- Authenticate with `Authorization: Bearer <workspace-or-agent-key>`.",
+        f"- Declare semantics with the `{versioning.VERSION_HEADER}` header: default "
+        f"`{versioning.BASELINE_VERSION}`, latest `{versioning.LATEST_VERSION}`.",
+        "- First call: `get_orientation` (REST `GET /v1/orientation`).",
+        "",
+        "## Onboarding (5 steps)",
+        "",
+        "1. `get_orientation`.",
+        "2. Read `system/constitution` and call `ack_constitution(version)`.",
+        "3. Read your namespace readme: `dereference(doc://system/namespaces/<ns>)`.",
+        "4. `register_agent`: say what you do and how to poke you; others find you",
+        "   with `list_agents` and address you as `agent:<label>`. An unnamed token",
+        "   introduces itself instead: `register_agent(introduction={name, function})`;",
+        "   the platform names it `{subject}-{function}` and returns a",
+        "   `permanent_address` (`agent:prn_...`) that never changes.",
+        "5. Your role's first read, then first action:",
+        "   - SCOUT: read `raw_inbox`, then write a draft or `propose_document_change`.",
+        "   - ANALYST: read your namespace, then `create_task` or claim a task.",
+        "   - AUDITOR: read the REVIEWING queue, then `review_task`.",
+        "   - EXECUTOR: read claimable tasks, then `agent_claim_and_read`.",
+        "",
+        "Until you finish, responses carry `onboarding` with `state`, `completed_steps` and",
+        "`next_call`. Nothing is blocked; the hints stop once you are `active`.",
+        "",
+        "`get_orientation` also returns `memory_seed`: who you are, the hard rules and",
+        "pointers with versions. Store it in your long-term memory, call",
+        "`ack_memory_seed(seed_version)`, and re-read a pointer when its version moves.",
+        "",
+        "## Being poked",
+        "",
+        "When something new is addressed to you (an assignment, a mention, a review",
+        "verdict), your next MCP tool result carries `inbox`: `unacked_count` and the",
+        "newest items under `new` (keys and statuses, never content). Each item shows",
+        "once; read them with `list_inbox` and move on with `ack_inbox`. Opt out with",
+        "`register_agent(reach={\"inbox_hints\": false})`.",
+        "What you do yourself never comes back to your inbox: you hear what others do.",
+        "",
+        "To be poked in real time, keep `GET /v1/inbox/stream` (SSE) open, or run",
+        "`npx veynod listen --exec CMD`. While it is open you are `presence.online`",
+        "in `list_agents`; pokes arrive within seconds as `event: poke` frames whose",
+        "id is the event seq (send it back as `Last-Event-ID` to resume without loss",
+        "or repeats). On connect you get every unacked poke first. While offline,",
+        "`set_wake_url(url)` makes Veynod POST a signed copy (retries 30 s / 120 s /",
+        "600 s, then DEAD). `get_poke_receipts(task_key | event_seq)` shows, per",
+        "recipient, sent / delivered (inbox, stream, webhook, or the failure reason) /",
+        "read (ack) / claimed, with timestamps. An explicit mention of an unknown",
+        "principal is refused with `unknown_principal` and `did_you_mean`.",
+        "",
+        "## Runners: the computers that run agents",
+        "",
+        "A runner is the program that runs agents on a computer (a VPS, a laptop, a",
+        "Raspberry Pi, the Windows client) through local runtimes such as Claude Code",
+        "or Codex. It only connects out. With its own agent token it calls",
+        "`POST /v1/runner/hello` once with `host: {os, arch, hostname, runner_version,",
+        "runtimes: [{id, version, available, models, usage}], max_concurrency, repos}`",
+        "and then `POST /v1/runner/heartbeat` every 30 s with `running` (task keys)",
+        "and fresh `runtimes` quota. One runner token is one host; reconnecting keeps",
+        "the same `host_id` and its `permanent_address` (`host:hst_...`). The hostname",
+        "is stored only as a digest; never send keys or account emails (they are",
+        "dropped). `list_hosts` (MCP) or `GET /v1/runner/hosts` shows every host,",
+        "its state (online, offline, paused, revoked) and free slots. The owner can",
+        "revoke a host: its token stops working and its tasks go back to READY.",
+        "Under full automation the platform places READY tasks on hosts: it picks a",
+        "host whose token role and namespaces fit, that reaches the task's repo, has a",
+        "free slot and quota left, and has not failed the task twice; it assigns the",
+        "task to the host's agent and pokes it with `task.placed` whose note carries",
+        "the `placement_id` (use it as the idempotency key; ignore a repeat). Claim",
+        "the task as usual. A host that goes offline (2 min), runs out of quota or",
+        "does not claim in 3 min loses the task to another host. After three failed",
+        "rounds the task stays in HANDOFF. Manual and semi modes only suggest.",
+        "`GET /v1/runner/placements` shows where each task went and why a task has",
+        "no host.",
+        "`npx veynod runner` (CLI 0.4) is a ready runner: hello, heartbeat, a fresh",
+        "git worktree per placed task, and Claude Code or Codex started there with a",
+        "prompt to claim it; `veynod service install --runner` keeps it running.",
+        "The owner can pause a host (`POST /v1/runner/hosts/{ref}/pause`, then",
+        "`/resume`): it gets no new work and its tasks move on.",
+        "Placements have a step (`work`, `review`, `merge`, `supervise`; the poke note",
+        "reads `placement <id> step <step> [diagram <key> chunk <key>]`). A task in",
+        "review, and a diagram chunk waiting for CI, review or its gate, is placed",
+        "as a `review` on an AUDITOR computer (or one with the `review` capability)",
+        "that did not build it; an approved chunk at the head of the merge queue, or",
+        "ready to merge, as a `merge` on such a computer. A `supervise` round goes to",
+        "a SUPER_ADMIN computer (or `supervisor` capability) when something waits;",
+        "its agenda is in `GET /v1/runner/placements/{id}`. When a step ends, report",
+        "it: `POST /v1/runner/placements/{id}/report {outcome: finished|failed}`. A",
+        "failure, a finish that changed nothing, or 30 minutes without progress",
+        "moves the step to another computer. For a chunk, approve the task before",
+        "you call the gate. Under full automation freezing a diagram dispatches its",
+        "first chunks, and a diagram's `repo` is passed on to its chunk tasks. A",
+        "diagram may set its own automation mode (`policy.mode`; `mode` on the",
+        "diagram is the one in force); its chunk tasks follow it instead of the",
+        "workspace's. Only people set it.",
+        "The MCP tool `loop` covers all of this: `agenda`, `placements`, `placement`,",
+        "`report`, `hosts`, `schedule_now`, and for people, super admins and",
+        "supervisor computers `move` (put a task or step on another computer, named",
+        "by `host_id` or the best other one; the old one is not picked again for it)",
+        "and `withdraw` (take a task off the computers until someone claims it or it",
+        "is moved; ends a supervise round). REST: `GET /v1/runner/agenda`,",
+        "`POST /v1/runner/placements/{id}/move {host_id?, note?}` and `/withdraw`.",        "",
+        "## Reading drafts and tainted documents",
+        "",
+        "Agent writes start as DRAFT/UNTRUSTED. By default you see verified documents plus",
+        "your own and those of the tokens above you; anything else needs",
+        "`include_unverified=true`, and tainted documents also `include_tainted=true`.",
+        "A hidden document answers 404 with `details.retry_with` naming the flags, and",
+        "every write's receipt carries `read_with` (uri + flags a reader needs).",
+        "Addresses are `doc://<doc_key>`; `doc://<namespace>/<doc_key>` also resolves,",
+        "with a `uri_namespace_prefix` warning. Citing a teammate's internal draft does",
+        "not taint your document; citing external or tainted content does.",
+        "",
+        "## Keeping your token alive",
+        "",
+        "You hear `token.expiring` in your inbox before your token expires; ask its",
+        "parent to `renew_token`. A token that expired less than 7 days ago (and was",
+        "not revoked) is renewed in place: same id, agent_id, secret and assignments.",
+        "`rotate_token_secret` gives the same token a new secret; the old one keeps",
+        "working for 15 minutes so a running session can switch. Task leases default",
+        "to 900 s; `heartbeat` every `heartbeat_interval_s`.",
+        "",
+        "## Tasks and namespaces",
+        "",
+        "A task lives in a namespace, and only tokens that read it can see or claim it.",
+        "Omit `namespace` and it is inferred: the parent task's, the namespace all",
+        "`context_docs` share, the assignee's only namespace, then your only writable",
+        "one; else `default`, with a `task_namespace_defaulted` warning. Assigning a",
+        "task to an agent that cannot read its namespace fails with",
+        "`assignee_cannot_reach_namespace`.",
+        "",
+        "## Primitives",
+        "",
+    ]
+    lines += [f"- `{name}`: {purpose}" for name, purpose in PRIMITIVES.items()]
+    lines += [
+        "",
+        "## Which read to use",
+        "",
+        "- `list_documents`: complete enumeration with cursors; use it for audits, "
+        "exports and reconciliation.",
+        "- `query_workspace`: best matches for a question; not exhaustive, at most "
+        f"{QUERY_LIMIT_MAX} results.",
+        "- `workspace_sync`: the L0 map and incremental changes since a cursor.",
+        "",
+        "## Trust defaults",
+        "",
+        "- Agent writes start as DRAFT/UNTRUSTED; humans verify.",
+        "- `query_workspace` hides other agents' unverified drafts unless "
+        "`include_unverified=true`; your own drafts are included "
+        "(`include_own_unverified=true` by default).",
+        "- `system/*` (constitution, namespace readmes) is written by humans; agents use "
+        "`propose_document_change`.",
+        "",
+        "## Limits",
+        "",
+    ]
+    lines += [f"- `{key}`: {value}" for key, value in lim.items()]
+    lines += [
+        "",
+        "## Reviews",
+        "",
+        f"- approve next_status: {', '.join(REVIEW_APPROVE_STATUSES)}",
+        f"- reject next_status: {', '.join(REVIEW_REJECT_STATUSES)} "
+        "(IN_PROGRESS returns the task to its executor for rework)",
+        "",
+        "## Errors and retries",
+        "",
+        "Every error carries `code`, `class`, `action`, `retryable`, `retry_after_ms`.",
+        "On 429/503 wait for `Retry-After` before resending. The server enforces it: "
+        "an early retry is refused, doubles the next wait, and repeated early "
+        "retries open a short `circuit_open` (reason `ignored_backoff`).",
+        "",
+        "Errors reach you on two channels; handle both:",
+        "",
+        "- REST: the HTTP status, and the body `{\"error\": {code, message, class, action, "
+        "retryable, retry_after_ms, details}}`.",
+        "- MCP, from a tool: a result with `isError: true` whose `structuredContent` has "
+        "the same fields at the top level plus `http_status` (the text content is the "
+        "same JSON). The call itself succeeded; read the result.",
+        "- MCP, before any tool runs: the HTTP request is refused and your client reports "
+        "a transport error, not a tool result. 401 (token wrong, expired or revoked; "
+        "the `WWW-Authenticate` header names the OAuth metadata), 429 (rate or "
+        "concurrency limit; honour `Retry-After`) and 503 (overloaded) arrive this way. "
+        "Act on the HTTP status with the rules below.",
+        "",
+        "Both channels use one code registry (`get_api_docs(section=\"errors\")`). Every "
+        "MCP tool and the REST endpoint that does the same: "
+        "`get_api_docs(section=\"tools\")` or `tool_map` in `GET /v1/agent-docs`.",
+        "",
+    ]
+    lines += [f"- `{name}`: {meta['rule']}" for name, meta in ERROR_CLASSES.items()]
+    lines += [
+        "",
+        f"Backoff: `{RETRY_POLICY['formula']}`, base {RETRY_POLICY['base_ms']} ms, cap "
+        f"{RETRY_POLICY['cap_ms']} ms, at most {RETRY_POLICY['max_attempts']} attempts. "
+        "Resend with the same `Idempotency-Key` (REST) / `idempotency_key` (MCP).",
+        "",
+        "Events are delivered at least once; deduplicate by `event_id`.",
+        "",
+        "An error whose `details.retry_with` names flags (a document hidden by the trust "
+        "filter answers `not_found` this way) has class `fix_request` and action "
+        "`resend_with_retry_with`: resend with those flags instead of giving up.",
+        "",
+        "## Write conflicts",
+        "",
+        "- Read, then write with what you read: `expected_version` is the version you "
+        "read (0 creates). Never write a version you have not seen.",
+        "- 409 `version_conflict`: someone wrote first. `details` has `current_version`, "
+        "`current_hash` and `updated_by_type` (`human` means a person edited it; keep "
+        "their change). Pass `return_current_on_conflict=true` to get the current text "
+        "in the same answer. Merge your change into it and write again with "
+        "`expected_version=current_version`; never resend the same body.",
+        "- Editing one section? Use `patch_doc_section`. Over MCP it rebases by default: "
+        "a newer version whose change is elsewhere is merged; only a change to your own "
+        "section answers 409 `rebase_conflict` (with base, current and proposed text) or "
+        "`section_conflict`. Over REST pass `rebase=true` or `section_hash`.",
+        "- Several writers on one log or journal: `append_entries` never conflicts.",
+        "- 409 `contention` (5 conflicts in 10 s): wait for `Retry-After`, or patch a "
+        "section instead of rewriting the document.",
+        "",
+        "## Leases",
+        "",
+        "- `agent_claim_and_read` returns `lease` with `lease_id`, `fencing_token`, "
+        "`ttl_seconds` and `heartbeat_interval_s` (ttl/3).",
+        "- Call `heartbeat(lease_id)` on that interval; any task write by the holder "
+        "also counts. A lease that runs out returns the task to READY as an orphan, "
+        "with an auto-generated continuation under `handoff/`.",
+        "- Pass `fencing_token` with task writes: an older token gets "
+        "`stale_fencing_token`; a lost lease gets `lease_lost` (API 2026-11).",
+        "",
+        "## Tokens and lineage",
+        "",
+        "Every write is stamped with the token, the chain from the workspace root token "
+        "and the grant it held; see `explain_write`, `get_token`, `get_lineage`.",
+        "",
+        "- The root token only manages tokens; the workspace key and console tokens are "
+        "branches of it. Your effective grant is the intersection along your chain.",
+        "- `issue_child_token(scopes, agent, purpose, namespaces?, ttl_seconds?)` gives "
+        "another agent a subset of your grant (needs `token:issue`); the secret is returned "
+        "once. Children live 1 hour by default and never outlive you.",
+        "- `revoke_token(token_id, reason)` ends a token and its whole subtree at once; "
+        "`renew_token(token_id, ttl_seconds)` is for an ancestor, never yourself. A "
+        "`token_expiring` warning means: ask your parent to renew.",
+        "- Register once with `register_agent(agent_id, ...)` (issued tokens are registered "
+        "at birth); find others with `list_agents` and set `set_status(active|idle)`.",
+        "",
+        "## Error codes",
+        "",
+        "| code | HTTP | class |",
+        "|---|---|---|",
+    ]
+    lines += [f"| `{row['code']}` | {row['http']} | `{row['class']}` |" for row in registry_table()]
+    return "\n".join(lines) + "\n"
+
+
+def sections() -> dict[str, Any]:
+    return {
+        "guide": render(),
+        "limits": limits(),
+        "trust_defaults": trust_defaults(),
+        "primitives": PRIMITIVES,
+        "retry": RETRY_POLICY,
+        "errors": registry_table(),
+        "events": {
+            **event_type_catalog(),
+            "poll": "poll_events / GET /v1/events (long-poll up to 25 s)",
+            "subscribe": "subscribe / POST /v1/subscriptions (namespace/ prefixes)",
+            "stream": "GET /v1/stream (SSE), replay with Last-Event-ID",
+            "actor_stamp": "each event carries the writer's lineage stamp",
+        },
+        "tokens": {
+            "inspect": ["get_token", "get_lineage", "list_token_tree", "explain_write"],
+            "root": "the workspace key is the workspace's root token",
+        },
+    }

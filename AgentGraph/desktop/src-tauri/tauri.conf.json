@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Veynod",
+  "version": "0.1.0",
+  "identifier": "com.veynod.desktop",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Veynod",
+        "url": "setup.html",
+        "width": 1440,
+        "height": 940,
+        "minWidth": 1100,
+        "minHeight": 720,
+        "center": true
+      }
+    ],
+    "trayIcon": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": false
+    },
+    "security": {
+      "csp": null
+    },
+    "withGlobalTauri": true
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico",
+      "icons/icon.png"
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "windows/installer-hooks.nsh"
+      }
+    },
+    "resources": [
+      "../sidecar/bridge.mjs",
+      "../sidecar/daemon.mjs",
+      "../sidecar/describe.mjs",
+      "../sidecar/hide-console.mjs",
+      "../sidecar/inventory.mjs",
+      "../sidecar/queue.mjs",
+      "../sidecar/wake.mjs",
+      "../sidecar/package.json",
+      "../sidecar/node_modules/**/*",
+      "../sidecar/runtime/node.exe"
+    ]
+  }
+}

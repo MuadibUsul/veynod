@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Veynod Kernel · DAG</title>
+  <style>
+    :root {
+      --bg: #0b0f14;
+      --panel: #121922;
+      --panel2: #0f151d;
+      --line: #263241;
+      --text: #dbe6f2;
+      --muted: #7d8fa3;
+      --accent: #5eead4;
+      --ready: #34d399;
+      --leased: #60a5fa;
+      --verifying: #c084fc;
+      --blocked: #64748b;
+      --committed: #22c55e;
+      --failed: #f87171;
+      --split: #fb923c;
+      --escalated: #fbbf24;
+      --suspended: #fbbf24;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(1200px 600px at 20% -10%, #14202b 0, var(--bg) 60%);
+      color: var(--text);
+      font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    header {
+      display: flex; align-items: center; gap: 16px;
+      padding: 14px 20px; border-bottom: 1px solid var(--line);
+      background: rgba(10, 15, 21, .8); backdrop-filter: blur(10px);
+      position: sticky; top: 0; z-index: 10;
+    }
+    header h1 { font-size: 15px; margin: 0; letter-spacing: .08em; color: var(--accent); }
+    header .meta { color: var(--muted); font-size: 12px; }
+    header .spacer { flex: 1; }
+    button, input {
+      background: var(--panel); color: var(--text); border: 1px solid var(--line);
+      border-radius: 6px; padding: 6px 10px; font: inherit;
+    }
+    button { cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    .chips { display: flex; gap: 8px; flex-wrap: wrap; padding: 10px 20px; }
+    .chip {
+      border: 1px solid var(--line); border-radius: 999px; padding: 4px 10px;
+      color: var(--muted); background: var(--panel2);
+    }
+    .chip b { color: var(--text); }
+    .layout { display: grid; grid-template-columns: 1fr 340px; gap: 0; height: calc(100vh - 116px); }
+    .canvas-wrap { overflow: auto; position: relative; padding: 20px; }
+    svg { min-width: 100%; min-height: 100%; }
+    .node rect { rx: 8; ry: 8; }
+    .node text { pointer-events: none; }
+    .node { cursor: pointer; }
+    .node:hover rect { filter: brightness(1.25); }
+    aside {
+      border-left: 1px solid var(--line); background: var(--panel2);
+      padding: 16px; overflow: auto;
+    }
+    aside h2 { font-size: 12px; letter-spacing: .12em; color: var(--muted); text-transform: uppercase; }
+    .kv { display: grid; grid-template-columns: 110px 1fr; gap: 6px 10px; margin: 8px 0 16px; }
+    .kv div:nth-child(odd) { color: var(--muted); }
+    .kv div { word-break: break-word; }
+    pre {
+      white-space: pre-wrap; background: #0a0f14; border: 1px solid var(--line);
+      border-radius: 6px; padding: 10px; color: #b8c7d9; font-size: 12px;
+    }
+    .empty { color: var(--muted); padding: 40px; text-align: center; }
+    .legend { display: flex; gap: 10px; flex-wrap: wrap; padding: 0 20px 10px; color: var(--muted); font-size: 12px; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+    .pulse { animation: pulse 1.6s ease-in-out infinite; }
+    @keyframes pulse { 50% { opacity: .45; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>VEYNOD · KERNEL v4.0</h1>
+    <span class="meta" id="workspace">workspace …</span>
+    <span class="meta" id="head">HEAD …</span>
+    <span class="spacer"></span>
+    <input id="search" placeholder="filter symbols / titles…" size="26" />
+    <button id="refresh">refresh</button>
+    <button id="pause">pause</button>
+  </header>
+  <div class="chips" id="chips"></div>
+  <div class="legend" id="legend"></div>
+  <div class="layout">
+    <div class="canvas-wrap" id="canvasWrap"><div class="empty">loading…</div></div>
+    <aside>
+      <h2>Inspector</h2>
+      <div id="inspector" class="empty">select a node</div>
+      <h2 style="margin-top:20px">Event tail</h2>
+      <pre id="events">…</pre>
+    </aside>
+  </div>
+
+  <script>
+    const STATUS_COLORS = {
+      READY: 'var(--ready)', LEASED: 'var(--leased)', VERIFYING: 'var(--verifying)',
+      BLOCKED: 'var(--blocked)', COMMITTED: 'var(--committed)', FAILED: 'var(--failed)',
+      SPLIT_ARCHIVED: 'var(--split)', SUSPENDED_ESCALATED: 'var(--escalated)',
+      SUSPENDED: 'var(--suspended)',
+    };
+    const state = { data: null, paused: false, filter: '', lastSeq: 0 };
+
+    async function fetchJSON(url, options) {
+      const response = await fetch(url, options);
+      if (!response.ok) throw new Error(`${url}: HTTP ${response.status}`);
+      return response.json();
+    }
+
+    function esc(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (character) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      })[character]);
+    }
+
+    function truncate(text, max) {
+      text = String(text ?? '');
+      return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+    }
+
+    function levelsFor(nodes, edges) {
+      const ids = new Set(nodes.map((node) => node.task_id));
+      const incoming = new Map(nodes.map((node) => [node.task_id, 0]));
+      const outgoing = new Map(nodes.map((node) => [node.task_id, []]));
+      for (const edge of edges) {
+        if (!ids.has(edge.upstream_task_id) || !ids.has(edge.downstream_task_id)) continue;
+        incoming.set(edge.downstream_task_id, (incoming.get(edge.downstream_task_id) || 0) + 1);
+        outgoing.get(edge.upstream_task_id).push(edge.downstream_task_id);
+      }
+      const queue = nodes.filter((node) => (incoming.get(node.task_id) || 0) === 0).map((node) => node.task_id);
+      const level = new Map(nodes.map((node) => [node.task_id, 0]));
+      let visited = 0;
+      while (queue.length) {
+        const current = queue.shift();
+        visited += 1;
+        for (const next of outgoing.get(current) || []) {
+          level.set(next, Math.max(level.get(next) || 0, (level.get(current) || 0) + 1));
+          incoming.set(next, incoming.get(next) - 1);
+          if (incoming.get(next) === 0) queue.push(next);
+        }
+      }
+      if (visited !== nodes.length) {
+        // Defensive: an unexpected cycle still renders.
+        for (const node of nodes) if (!level.has(node.task_id)) level.set(node.task_id, 0);
+      }
+      return level;
+    }
+
+    function renderGraph() {
+      const wrap = document.getElementById('canvasWrap');
+      if (!state.data) return;
+      const filter = state.filter.toLowerCase();
+      const nodes = state.data.nodes.filter((node) =>
+        !filter || node.title.toLowerCase().includes(filter) ||
+        (node.write_locks || []).some((lock) => lock.toLowerCase().includes(filter))
+      );
+      const visible = new Set(nodes.map((node) => node.task_id));
+      const edges = state.data.edges.filter((edge) => visible.has(edge.upstream_task_id) && visible.has(edge.downstream_task_id));
+      if (!nodes.length) {
+        wrap.innerHTML = '<div class="empty">no tasks match</div>';
+        return;
+      }
+
+      const levels = levelsFor(nodes, edges);
+      const columns = new Map();
+      for (const node of nodes) {
+        const level = levels.get(node.task_id) || 0;
+        if (!columns.has(level)) columns.set(level, []);
+        columns.get(level).push(node);
+      }
+      const xGap = 230, yGap = 86, nodeW = 190, nodeH = 54, pad = 16;
+      const maxRows = Math.max(...[...columns.values()].map((column) => column.length));
+      const width = (Math.max(...columns.keys()) + 1) * xGap + pad * 2;
+      const height = maxRows * yGap + pad * 2;
+      const positions = new Map();
+      for (const [level, column] of columns) {
+        column.sort((a, b) => (a.status + a.title).localeCompare(b.status + b.title));
+        column.forEach((node, index) => {
+          positions.set(node.task_id, {
+            x: pad + level * xGap,
+            y: pad + index * yGap + (maxRows - column.length) * yGap / 2,
+          });
+        });
+      }
+
+      const edgeMarkup = edges.map((edge) => {
+        const from = positions.get(edge.upstream_task_id);
+        const to = positions.get(edge.downstream_task_id);
+        if (!from || !to) return '';
+        const x1 = from.x + nodeW, y1 = from.y + nodeH / 2;
+        const x2 = to.x, y2 = to.y + nodeH / 2;
+        const mid = (x1 + x2) / 2;
+        return `<path d="M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}"
+          fill="none" stroke="#2f4256" stroke-width="1.2" />`;
+      }).join('');
+
+      const nodeMarkup = nodes.map((node) => {
+        const position = positions.get(node.task_id);
+        const color = STATUS_COLORS[node.status] || 'var(--muted)';
+        const leased = node.status === 'LEASED' || node.status === 'VERIFYING';
+        return `<g class="node" data-task="${esc(node.task_id)}" transform="translate(${position.x},${position.y})">
+          <rect width="${nodeW}" height="${nodeH}" rx="8" fill="#121b25" stroke="${color}" stroke-width="1.4" ${leased ? 'class="pulse"' : ''} />
+          <rect width="4" height="${nodeH}" rx="2" fill="${color}" />
+          <text x="14" y="20" fill="#dbe6f2" font-size="11.5">${esc(truncate(node.title, 25))}</text>
+          <text x="14" y="37" fill="#8fa4ba" font-size="10">${esc(node.type)} · P${node.priority} · d${node.in_degree}</text>
+          <text x="14" y="49" fill="${color}" font-size="10" letter-spacing=".06em">${esc(node.status)}</text>
+        </g>`;
+      }).join('');
+
+      wrap.innerHTML = `<svg width="${Math.max(width, 600)}" height="${Math.max(height, 320)}">
+        <g>${edgeMarkup}</g><g>${nodeMarkup}</g></svg>`;
+      for (const element of wrap.querySelectorAll('.node')) {
+        element.addEventListener('click', () => inspect(element.dataset.task));
+      }
+    }
+
+    function inspect(taskId) {
+      const node = state.data?.nodes.find((item) => item.task_id === taskId);
+      if (!node) return;
+      const inspector = document.getElementById('inspector');
+      inspector.className = '';
+      inspector.innerHTML = `
+        <div class="kv">
+          <div>title</div><div>${esc(node.title)}</div>
+          <div>status</div><div style="color:${STATUS_COLORS[node.status] || 'var(--text)'}">${esc(node.status)}</div>
+          <div>type</div><div>${esc(node.type)}</div>
+          <div>task id</div><div>${esc(node.task_id)}</div>
+          <div>runner</div><div>${esc(node.runner || '—')}</div>
+          <div>retries</div><div>${esc(node.retry_count)}</div>
+          <div>in-degree</div><div>${esc(node.in_degree)}</div>
+          <div>updated</div><div>${esc(node.updated_at)}</div>
+        </div>
+        <h2>write locks</h2>
+        <pre>${esc((node.write_locks || []).join('\n') || '—')}</pre>`;
+    }
+
+    function renderChrome() {
+      if (!state.data) return;
+      const data = state.data;
+      document.getElementById('workspace').textContent =
+        `${data.workspace.name || 'workspace'} · ${data.workspace.workspace_id.slice(0, 8)}`;
+      document.getElementById('head').textContent = `HEAD ${String(data.workspace.head_commit_sha || '').slice(0, 10)}`;
+      const byStatus = data.stats.by_status || {};
+      document.getElementById('chips').innerHTML =
+        `<span class="chip">tasks <b>${data.stats.tasks}</b></span>` +
+        `<span class="chip">artifacts <b>${data.stats.artifacts}</b></span>` +
+        Object.entries(byStatus).sort().map(([status, count]) =>
+          `<span class="chip"><span class="dot" style="background:${STATUS_COLORS[status] || 'var(--muted)'}"></span>${esc(status)} <b>${count}</b></span>`
+        ).join('');
+      document.getElementById('legend').innerHTML = Object.entries(STATUS_COLORS)
+        .map(([status, color]) => `<span><span class="dot" style="background:${color}"></span>${status}</span>`)
+        .join('');
+    }
+
+    async function refresh() {
+      if (state.paused) return;
+      try {
+        state.data = await fetchJSON('/v1/dag');
+        renderChrome();
+        renderGraph();
+        const events = await fetchJSON(`/v1/dag/events?after_seq=0&limit=40`);
+        document.getElementById('events').textContent = (events.events || [])
+          .slice(-14)
+          .reverse()
+          .map((event) => `${String(event.event_seq).padStart(6, ' ')}  ${event.event_type}  ${truncate(JSON.stringify(event.payload), 160)}`)
+          .join('\n') || 'no events';
+      } catch (error) {
+        document.getElementById('canvasWrap').innerHTML =
+          `<div class="empty">${esc(error.message)}<br/>is the kernel running and is a workspace configured?</div>`;
+      }
+    }
+
+    document.getElementById('search').addEventListener('input', (event) => {
+      state.filter = event.target.value;
+      renderGraph();
+    });
+    document.getElementById('refresh').addEventListener('click', refresh);
+    document.getElementById('pause').addEventListener('click', (event) => {
+      state.paused = !state.paused;
+      event.target.textContent = state.paused ? 'resume' : 'pause';
+      if (!state.paused) refresh();
+    });
+
+    refresh();
+    setInterval(refresh, 4000);
+  </script>
+</body>
+</html>

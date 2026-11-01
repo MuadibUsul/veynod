@@ -1,0 +1,11 @@
+{
+  "name": "AgentGraph",
+  "version": "3.2.1",
+  "rest": "/v1",
+  "mcp": "/mcp/",
+  "health": "/healthz",
+  "agent_docs": "/v1/agent-docs",
+  "first_call": "get_orientation",
+  "primitives": 40,
+  "dashboard": "/dashboard/"
+}

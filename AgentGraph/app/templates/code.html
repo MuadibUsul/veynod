@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Veynod · Code</title>
+  <style>
+    :root { --ink:#0b0f14; --panel:#12171e; --line:#1f2630; --text:#f2f4f7; --muted:#8590a2; --cyan:#00c2ff; --green:#47cd89; --amber:#fdb022; --red:#f97066; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--ink); color:var(--text); font:13px/1.5 Inter,ui-sans-serif,system-ui,sans-serif; }
+    header { display:flex; align-items:center; gap:14px; padding:16px 24px; border-bottom:1px solid var(--line); position:sticky; top:0; background:rgba(11,15,20,.92); backdrop-filter:blur(10px); }
+    .brand { color:var(--cyan); font-weight:700; letter-spacing:.02em; }
+    .spacer { flex:1; }
+    a { color:var(--cyan); text-decoration:none; }
+    main { max-width:1280px; margin:0 auto; padding:24px; }
+    .grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; }
+    h2 { margin:0 0 12px; color:var(--muted); font-size:12px; letter-spacing:.08em; text-transform:uppercase; }
+    label { display:block; color:var(--muted); font-size:12px; margin-bottom:4px; }
+    input, textarea { width:100%; background:#0a0f14; color:var(--text); border:1px solid var(--line); border-radius:7px; padding:8px 10px; font:inherit; margin-bottom:10px; }
+    textarea { min-height:72px; resize:vertical; }
+    button { background:var(--cyan); color:var(--ink); border:0; border-radius:7px; padding:8px 14px; font-weight:600; cursor:pointer; }
+    button:disabled { opacity:.5; cursor:default; }
+    table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; margin-top:18px; }
+    th,td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+    th { color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.05em; }
+    tr:last-child td { border-bottom:0; }
+    tr[data-run] { cursor:pointer; }
+    tr[data-run]:hover { background:#17202a; }
+    code { font-family:Geist Mono,Consolas,monospace; font-size:12px; color:#b8c7d9; }
+    .status { font-weight:600; }
+    .SYNCED,.COMMITTED { color:var(--green); }
+    .DISPATCHED,.READY,.LEASED,.VERIFYING { color:var(--amber); }
+    .FAILED,.ERROR { color:var(--red); }
+    pre { white-space:pre-wrap; background:#0a0f14; border:1px solid var(--line); border-radius:8px; padding:12px; color:#b8c7d9; font-size:12px; min-height:160px; }
+    .muted { color:var(--muted); }
+    .error { color:var(--red); }
+    @media (max-width:900px) { .grid { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<header>
+  <span class="brand">veynod</span><strong>Code delivery</strong>
+  <span class="spacer"></span>
+  <a href="/dashboard/">← Console</a>
+</header>
+<main>
+  <div id="auth" class="card" style="display:none">
+    <h2>Session</h2>
+    <p class="muted">请先在 Veynod 控制台登录；Code 页面复用同一个人类会话，不需要额外账号。</p>
+    <a href="/dashboard/login/"><button type="button">去登录</button></a>
+  </div>
+  <div id="app" style="display:none">
+    <div class="grid">
+      <section class="card">
+        <h2>Create code run</h2>
+        <form id="create">
+          <label>Title</label><input name="title" required maxlength="256" />
+          <label>Repository (bare Git path)</label><input name="repo_path" required />
+          <label>Target symbol</label><input name="symbol" required placeholder="src/calc.py::triple" />
+          <label>Frozen test symbol</label><input name="test_symbol" required placeholder="tests/test_triple.py::test_triple" />
+          <label>Specification</label><textarea name="spec" required minlength="10"></textarea>
+          <button type="submit">Dispatch to Kernel →</button>
+          <span id="create-error" class="error"></span>
+        </form>
+      </section>
+      <section class="card">
+        <h2>Selected run</h2>
+        <pre id="detail">选择下方一行查看 Kernel 状态、commit 和 AgentGraph 门禁。</pre>
+      </section>
+    </div>
+    <table>
+      <thead><tr><th>Run</th><th>AgentGraph task</th><th>Kernel</th><th>Platform</th><th>Commit</th><th>Updated</th></tr></thead>
+      <tbody id="runs"><tr><td colspan="6" class="muted">loading…</td></tr></tbody>
+    </table>
+  </div>
+</main>
+<script>
+  const SESSION_KEY = 'agentgraph.session_token';
+  const RETURN_KEY = 'agentgraph.return_to';
+  const token = localStorage.getItem(SESSION_KEY) || '';
+  const auth = document.getElementById('auth');
+  const app = document.getElementById('app');
+  if (!token) {
+    auth.style.display = 'block';
+    sessionStorage.setItem(RETURN_KEY, '/dashboard/code/');
+  } else {
+    app.style.display = 'block';
+  }
+  const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  async function api(path, options = {}) {
+    const response = await fetch(path, {
+      ...options,
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...(options.headers || {}) },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(body.detail ? JSON.stringify(body.detail) : `HTTP ${response.status}`);
+    return body;
+  }
+  async function load() {
+    if (!token) return;
+    try {
+      const runs = await api('/v1/code/runs');
+      document.getElementById('runs').innerHTML = !runs.length
+        ? '<tr><td colspan="6" class="muted">还没有 code run。</td></tr>'
+        : runs.map(run => `<tr data-run="${esc(run.id)}">
+            <td><code>${esc(run.id)}</code><br/><span>${esc(run.title)}</span></td>
+            <td><code>${esc(run.agentgraph_task_key)}</code></td>
+            <td class="status ${esc(run.kernel_status)}">${esc(run.kernel_status || '—')}</td>
+            <td class="status ${esc(run.status)}">${esc(run.status)}</td>
+            <td><code>${esc((run.commit_sha || '').slice(0, 10) || '—')}</code></td>
+            <td><code>${esc(run.updated_at || '')}</code></td>
+          </tr>`).join('');
+      for (const row of document.querySelectorAll('tr[data-run]')) {
+        row.addEventListener('click', () => inspect(row.dataset.run));
+      }
+    } catch (error) {
+      document.getElementById('runs').innerHTML = `<tr><td colspan="6" class="error">${esc(error.message)}</td></tr>`;
+    }
+  }
+  async function inspect(runId) {
+    const out = document.getElementById('detail');
+    out.textContent = 'loading…';
+    try {
+      const [run, audit] = await Promise.all([
+        api(`/v1/code/runs/${runId}`),
+        api(`/v1/code/runs/${runId}/audit`).catch(() => null),
+      ]);
+      out.textContent = JSON.stringify({
+        run,
+        agentgraph: audit ? {status: audit.status, gates: audit.gates, effective_gate_status: audit.effective_gate_status} : 'audit unavailable',
+      }, null, 2);
+    } catch (error) {
+      out.innerHTML = `<span class="error">${esc(error.message)}</span>`;
+    }
+  }
+  document.getElementById('create').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.target);
+    const button = event.target.querySelector('button');
+    button.disabled = true;
+    document.getElementById('create-error').textContent = '';
+    try {
+      const run = await api('/v1/code/runs', {
+        method: 'POST',
+        body: JSON.stringify(Object.fromEntries(form.entries())),
+      });
+      await load();
+      await inspect(run.id);
+    } catch (error) {
+      document.getElementById('create-error').textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+  load();
+  setInterval(load, 5000);
+</script>
+</body>
+</html>

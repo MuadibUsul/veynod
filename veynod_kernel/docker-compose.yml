@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: veynod-kernel-pg
+    environment:
+      POSTGRES_USER: veynod
+      POSTGRES_PASSWORD: veynod
+      POSTGRES_DB: veynod
+    ports:
+      - "5432:5432"
+    volumes:
+      - veynod-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U veynod -d veynod"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  veynod-pgdata:

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 470 110" width="470" height="110">
+  <title>Veynod</title>
+  <path d="M8 10H40L60 56L80 10H112L71 92Q67 98 60 98Q53 98 49 92Z" fill="#0B0F14"/>
+  <path d="M8 10H40L53 40L22 38Z" fill="#00C2FF"/>
+  <text x="112" y="96" font-family="Poppins, sans-serif" font-weight="700" font-size="120" letter-spacing="-5" fill="#0B0F14">eynod</text>
+</svg>

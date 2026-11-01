@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Veynod Platform · Code Delivery</title>
+  <style>
+    :root { --bg:#0b0f14; --panel:#12171e; --line:#1f2630; --text:#f2f4f7; --muted:#8590a2; --cyan:#00c2ff; --green:#47cd89; --amber:#fdb022; --red:#f97066; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:13px/1.5 Inter, ui-sans-serif, system-ui, sans-serif; }
+    header { display:flex; align-items:center; gap:16px; padding:18px 24px; border-bottom:1px solid var(--line); position:sticky; top:0; background:rgba(11,15,20,.9); backdrop-filter:blur(10px); }
+    h1 { font-size:16px; margin:0; letter-spacing:.02em; }
+    .brand { color:var(--cyan); font-weight:700; }
+    .spacer { flex:1; }
+    a { color:var(--cyan); text-decoration:none; }
+    .chip { border:1px solid var(--line); border-radius:999px; padding:4px 10px; color:var(--muted); }
+    .dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+    main { padding:24px; max-width:1200px; margin:0 auto; }
+    .cards { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:20px; }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; }
+    .card h2 { margin:0 0 8px; font-size:12px; letter-spacing:.08em; color:var(--muted); text-transform:uppercase; }
+    .kv { display:grid; grid-template-columns:110px 1fr; gap:6px; color:var(--muted); }
+    .kv b { color:var(--text); font-weight:500; }
+    table { width:100%; border-collapse:collapse; background:var(--panel); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+    th, td { text-align:left; padding:10px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+    th { color:var(--muted); font-weight:500; font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+    tr:last-child td { border-bottom:0; }
+    code { font-family: Geist Mono, Consolas, monospace; font-size:12px; color:#b8c7d9; }
+    .empty { padding:30px; text-align:center; color:var(--muted); }
+    .status { font-weight:600; }
+    .SYNCED, .COMMITTED { color:var(--green); }
+    .DISPATCHED, .READY, .LEASED, .VERIFYING { color:var(--amber); }
+    .FAILED, .ERROR { color:var(--red); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><span class="brand">Veynod</span> Platform · Code Delivery</h1>
+    <span class="chip" id="health">checking…</span>
+    <span class="spacer"></span>
+    <a href="{{ agentgraph_console }}" target="_blank" rel="noreferrer">AgentGraph console ↗</a>
+    <a href="{{ kernel_console }}" target="_blank" rel="noreferrer">Kernel DAG ↗</a>
+  </header>
+  <main>
+    <div class="cards">
+      <div class="card">
+        <h2>Control plane · AgentGraph</h2>
+        <div class="kv">
+          <span>workspace</span><b id="ag-workspace">—</b>
+          <span>tasks</span><b id="ag-tasks">—</b>
+          <span>role</span><b>product / identity / audit</b>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Code plane · Veynod Kernel</h2>
+        <div class="kv">
+          <span>engine</span><b id="kernel-version">—</b>
+          <span>runs</span><b id="run-count">—</b>
+          <span>role</span><b>symbols / gate / commit</b>
+        </div>
+      </div>
+    </div>
+    <table>
+      <thead><tr><th>Run</th><th>Task</th><th>Kernel task</th><th>Kernel</th><th>Platform</th><th>Commit</th><th>Updated</th></tr></thead>
+      <tbody id="runs"><tr><td colspan="7" class="empty">loading…</td></tr></tbody>
+    </table>
+  </main>
+  <script>
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    async function load() {
+      try {
+        const health = await (await fetch('/v1/platform/health')).json();
+        const ag = health.agentgraph || {}, kernel = health.kernel || {};
+        document.getElementById('health').innerHTML =
+          `<span class="dot" style="background:${health.ok ? 'var(--green)' : 'var(--red)'}"></span>${health.ok ? 'both services healthy' : 'degraded'}`;
+        document.getElementById('ag-workspace').textContent = ag.version ? `v${ag.version}` : 'offline';
+        document.getElementById('kernel-version').textContent = kernel.version ? `v${kernel.version}` : 'offline';
+        const runs = await (await fetch('/v1/platform/code-runs')).json();
+        document.getElementById('run-count').textContent = runs.length;
+        document.getElementById('ag-tasks').textContent = runs.length;
+        const body = document.getElementById('runs');
+        if (!runs.length) { body.innerHTML = '<tr><td colspan="7" class="empty">no code runs yet — POST /v1/platform/code-runs</td></tr>'; return; }
+        body.innerHTML = runs.map(run => `<tr>
+          <td><code>${esc(run.id)}</code><br/><span class="status">${esc(run.title)}</span></td>
+          <td><code>${esc(run.agentgraph_task_key)}</code></td>
+          <td><code>${esc(run.kernel_task_id)}</code></td>
+          <td class="status ${esc(run.kernel_status)}">${esc(run.kernel_status || '—')}</td>
+          <td class="status ${esc(run.status)}">${esc(run.status)}</td>
+          <td><code>${esc((run.commit_sha || '').slice(0, 10) || '—')}</code></td>
+          <td><code>${esc(run.updated_at || '')}</code></td>
+        </tr>`).join('');
+      } catch (error) {
+        document.getElementById('health').innerHTML = `<span class="dot" style="background:var(--red)"></span>${esc(error.message)}`;
+      }
+    }
+    load();
+    setInterval(load, 3000);
+  </script>
+</body>
+</html>

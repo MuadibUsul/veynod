@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Veynod — Projects & Delivery</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0b0e14; --panel:#141a24; --line:#263041; --text:#e6edf7; --muted:#93a4bd; --accent:#3fb6ff; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text); font:14px/1.5 ui-sans-serif,system-ui,"Segoe UI",sans-serif; }
+    header { display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:2; }
+    header h1 { font-size:16px; margin:0; font-weight:650; }
+    header a { color:var(--muted); text-decoration:none; }
+    .wrap { max-width:1280px; margin:0 auto; padding:20px; }
+    .tabs { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+    .tabs button { background:transparent; color:var(--muted); border:1px solid var(--line); border-radius:8px; padding:8px 12px; cursor:pointer; }
+    .tabs button.active { color:var(--text); border-color:var(--accent); background:#102335; }
+    .grid { display:grid; gap:16px; }
+    .cols { grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); }
+    .card { background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:16px; }
+    .card h2 { font-size:14px; margin:0 0 12px; color:var(--muted); font-weight:600; text-transform:uppercase; letter-spacing:.04em; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); vertical-align:top; }
+    th { color:var(--muted); font-weight:600; font-size:12px; }
+    code, pre { font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:12px; }
+    pre { white-space:pre-wrap; word-break:break-word; background:#0d1219; padding:10px; border-radius:8px; border:1px solid var(--line); max-height:260px; overflow:auto; }
+    input, button.primary { background:#0d1219; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px 10px; }
+    button.primary { cursor:pointer; border-color:var(--accent); }
+    .muted { color:var(--muted); }
+    .pill { display:inline-block; padding:2px 8px; border-radius:999px; background:#1b2738; border:1px solid var(--line); font-size:12px; }
+    .error { color:#ff8a8a; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>Projects &amp; Delivery</h1>
+  <span class="muted">Phase 7 console</span>
+  <span style="flex:1"></span>
+  <a href="/dashboard/">← Console</a>
+</header>
+<div class="wrap">
+  <div class="row" style="margin-bottom:14px">
+    <input id="token" type="password" placeholder="session or API token" style="min-width:320px" />
+    <button class="primary" id="connect">Connect</button>
+    <span id="status" class="muted"></span>
+  </div>
+
+  <div class="tabs">
+    <button data-tab="projects" class="active">Projects</button>
+    <button data-tab="graph">Execution Graph</button>
+    <button data-tab="deliveries">Deliveries</button>
+    <button data-tab="runtime">Runtime Observability</button>
+  </div>
+
+  <section id="tab-projects" class="grid cols">
+    <div class="card">
+      <h2>Projects</h2>
+      <table><thead><tr><th>Name</th><th>Tasks</th><th>Done</th><th>Failed</th></tr></thead><tbody id="project-rows"></tbody></table>
+      <p id="projects-empty" class="muted">No projects yet.</p>
+    </div>
+    <div class="card">
+      <h2>Create / update</h2>
+      <div class="grid">
+        <input id="project-name" placeholder="project name" />
+        <input id="project-repo" placeholder="repo label (optional)" />
+        <input id="project-desc" placeholder="description" />
+        <button class="primary" id="create-project">Save project</button>
+      </div>
+      <p id="project-result" class="muted"></p>
+    </div>
+  </section>
+
+  <section id="tab-graph" class="grid" style="display:none">
+    <div class="card">
+      <div class="row" style="margin-bottom:10px">
+        <input id="graph-project" placeholder="project filter (optional)" />
+        <button class="primary" id="load-graph">Load</button>
+        <span id="graph-summary" class="muted"></span>
+      </div>
+      <table><thead><tr><th>Task</th><th>Status</th><th>Project</th><th>Agent Run</th><th>Kernel</th></tr></thead><tbody id="graph-rows"></tbody></table>
+    </div>
+  </section>
+
+  <section id="tab-deliveries" class="grid" style="display:none">
+    <div class="card">
+      <div class="row" style="margin-bottom:10px">
+        <input id="delivery-project" placeholder="project filter (optional)" />
+        <button class="primary" id="load-deliveries">Load</button>
+      </div>
+      <table><thead><tr><th>Task</th><th>Commit</th><th>Mode</th><th>Evidence</th></tr></thead><tbody id="delivery-rows"></tbody></table>
+      <p id="deliveries-empty" class="muted">No deliveries.</p>
+    </div>
+  </section>
+
+  <section id="tab-runtime" class="grid cols" style="display:none">
+    <div class="card">
+      <h2>Runtime Usage</h2>
+      <pre id="usage">—</pre>
+      <h2 style="margin-top:16px">Tenant Limit</h2>
+      <div class="row">
+        <input id="limit-calls" type="number" min="0" placeholder="max model calls" />
+        <input id="limit-cost" type="number" min="0" step="0.000001" placeholder="max cost USD" />
+        <button class="primary" id="save-limit">Save</button>
+      </div>
+      <p id="limit-result" class="muted"></p>
+    </div>
+    <div class="card">
+      <h2>Provider Health</h2>
+      <pre id="health">—</pre>
+      <h2 style="margin-top:16px">Agent Runs</h2>
+      <table><thead><tr><th>Task</th><th>Status</th><th>Run</th></tr></thead><tbody id="run-rows"></tbody></table>
+    </div>
+  </section>
+</div>
+<script>
+const state = { token: localStorage.getItem("agentgraph.session_token") || "" };
+const $ = (id) => document.getElementById(id);
+const statusEl = $("status");
+function setStatus(text, error) {
+  statusEl.textContent = text;
+  statusEl.className = error ? "error" : "muted";
+}
+function headers() { return { "Authorization": "Bearer " + state.token, "Content-Type": "application/json" }; }
+async function api(path, options = {}) {
+  if (!state.token) throw new Error("connect with a token first");
+  const response = await fetch(path, { ...options, headers: headers() });
+  if (!response.ok) throw new Error((await response.text()).slice(0, 400));
+  return response.status === 204 ? null : response.json();
+}
+function cell(text) { const td = document.createElement("td"); td.textContent = text == null ? "" : String(text); return td; }
+function row(values) { const tr = document.createElement("tr"); values.forEach((v) => tr.appendChild(cell(v))); return tr; }
+
+async function loadProjects() {
+  const projects = await api("/v1/projects");
+  const body = $("project-rows"); body.textContent = "";
+  projects.forEach((p) => body.appendChild(row([p.name, p.task_count, p.done_count, p.failed_count])));
+  $("projects-empty").style.display = projects.length ? "none" : "block";
+}
+async function createProject() {
+  const body = { name: $("project-name").value.trim(), repo: $("project-repo").value.trim() || null, description: $("project-desc").value.trim() };
+  if (!body.name) { $("project-result").textContent = "name is required"; return; }
+  const result = await api("/v1/projects", { method: "POST", body: JSON.stringify(body) });
+  $("project-result").textContent = "saved " + result.name;
+  await loadProjects();
+}
+async function loadGraph() {
+  const project = $("graph-project").value.trim();
+  const data = await api("/v1/execution-graph" + (project ? "?project=" + encodeURIComponent(project) : ""));
+  const body = $("graph-rows"); body.textContent = "";
+  data.nodes.forEach((n) => body.appendChild(row([
+    n.task_key + " — " + n.title, n.status, n.project || "",
+    n.agent_runtime ? n.agent_runtime.run_id : "", n.kernel ? n.kernel.task_id : ""
+  ])));
+  $("graph-summary").textContent = data.nodes.length + " tasks · " + JSON.stringify(data.status_counts);
+}
+async function loadDeliveries() {
+  const project = $("delivery-project").value.trim();
+  const data = await api("/v1/deliveries?limit=100" + (project ? "&project=" + encodeURIComponent(project) : ""));
+  const body = $("delivery-rows"); body.textContent = "";
+  data.forEach((d) => body.appendChild(row([
+    d.task_key, d.delivery.commit_sha, d.delivery.merge_mode,
+    (d.delivery.gate_results || []).map((g) => g.stage + ":" + (g.passed ? "PASS" : "FAIL")).join(" ")
+  ])));
+  $("deliveries-empty").style.display = data.length ? "none" : "block";
+}
+async function loadRuntime() {
+  const [usage, observability, limit] = await Promise.all([
+    api("/v1/usage/runtime"), api("/v1/runtime/observability"), api("/v1/tenant/runtime-limit")
+  ]);
+  $("usage").textContent = JSON.stringify(usage, null, 2);
+  $("health").textContent = JSON.stringify(observability.provider_health, null, 2);
+  const runs = $("run-rows"); runs.textContent = "";
+  observability.runs.forEach((r) => runs.appendChild(row([
+    r.task_key + " — " + r.title, r.status, r.run ? r.run.run_id : ""
+  ])));
+  $("limit-calls").value = limit.max_model_calls ?? "";
+  $("limit-cost").value = limit.max_cost_usd ?? "";
+}
+async function saveLimit() {
+  const body = {
+    max_model_calls: $("limit-calls").value === "" ? null : Number($("limit-calls").value),
+    max_cost_usd: $("limit-cost").value === "" ? null : Number($("limit-cost").value)
+  };
+  const result = await api("/v1/tenant/runtime-limit", { method: "PUT", body: JSON.stringify(body) });
+  $("limit-result").textContent = "saved: " + JSON.stringify(result);
+}
+
+function activate(tab) {
+  document.querySelectorAll(".tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  ["projects", "graph", "deliveries", "runtime"].forEach((name) => {
+    $("tab-" + name).style.display = name === tab ? "" : "none";
+  });
+  const loaders = { projects: loadProjects, graph: loadGraph, deliveries: loadDeliveries, runtime: loadRuntime };
+  loaders[tab]().catch((error) => setStatus(error.message, true));
+}
+
+$("token").value = state.token;
+$("connect").onclick = () => {
+  state.token = $("token").value.trim();
+  localStorage.setItem("agentgraph.session_token", state.token);
+  activate(document.querySelector(".tabs button.active").dataset.tab);
+};
+document.querySelectorAll(".tabs button").forEach((button) => {
+  button.onclick = () => activate(button.dataset.tab);
+});
+$("create-project").onclick = () => createProject().catch((e) => setStatus(e.message, true));
+$("load-graph").onclick = () => loadGraph().catch((e) => setStatus(e.message, true));
+$("load-deliveries").onclick = () => loadDeliveries().catch((e) => setStatus(e.message, true));
+$("save-limit").onclick = () => saveLimit().catch((e) => setStatus(e.message, true));
+activate("projects");
+</script>
+</body>
+</html>

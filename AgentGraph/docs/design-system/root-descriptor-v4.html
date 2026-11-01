@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>AgentGraph — service descriptor</title>
+<style>
+  :root {
+    --page: #080a0e;
+    --text: #eef2f8;
+    --muted: #8a97a9;
+    --faint: #78879c;
+    --string: #c9d5e6;
+    --key: #91a0b4;
+    --accent: #a5b4fc;
+    --accent-strong: #e0e7ff;
+    --action: #4f46e5;
+    --mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--page); }
+  body {
+    min-width: 320px;
+    min-height: 100svh;
+    overflow: hidden;
+    color: var(--text);
+    font-family: var(--mono);
+    background:
+      radial-gradient(ellipse 34% 30% at 61.8% 61.8%, rgba(79, 70, 229, .12), transparent 72%),
+      var(--page);
+  }
+
+  .brand {
+    position: absolute;
+    left: 4.5vw;
+    top: 4.5vh;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    user-select: none;
+  }
+  .brand-mark { display: block; width: 14px; height: 14px; flex: none; }
+  .brand-name {
+    color: #e4ebf7;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .01em;
+  }
+
+  .meta {
+    position: absolute;
+    right: 4.5vw;
+    top: 4.5vh;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 7px;
+    text-align: right;
+    user-select: none;
+  }
+  .meta-label {
+    color: var(--faint);
+    font-size: 8.5px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+  }
+  .meta-version {
+    color: #a8b4c5;
+    font-size: 10px;
+    letter-spacing: .08em;
+  }
+
+  .descriptor {
+    position: absolute;
+    left: 19.1vw;
+    top: 38.2vh;
+    width: 61.8vw;
+    font-size: 15px;
+    --line: 31.5px;
+  }
+  .json {
+    margin: 0;
+    color: var(--string);
+    font: inherit;
+    font-size: 15px;
+    line-height: 2.1;
+    letter-spacing: -.015em;
+    white-space: pre;
+    tab-size: 2;
+  }
+  .tok-key { color: var(--key); }
+  .tok-str { color: var(--string); }
+  .tok-num, .tok-bool { color: var(--muted); }
+  .entry-key { color: var(--accent); }
+  .entry {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 9px;
+    color: var(--accent);
+    text-decoration: none;
+    border-bottom: 1.5px solid rgba(165, 180, 252, .62);
+    outline-offset: 5px;
+    transition: color 140ms ease, border-color 140ms ease;
+  }
+  .entry .tok-str { color: inherit; }
+  .entry-arrow { font-size: 15px; transform: translateY(-1px); }
+  .entry:hover { color: var(--accent-strong); border-color: var(--accent-strong); }
+  .entry:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 5px;
+    border-radius: 2px;
+  }
+
+  .entry-hint {
+    position: absolute;
+    top: calc(9.5 * var(--line));
+    left: 33ch;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #aab7cc;
+    font-size: inherit;
+    white-space: nowrap;
+    visibility: hidden;
+    opacity: 0;
+    transform: translateY(-50%) translateX(-4px);
+    transition: opacity 160ms ease, transform 160ms ease, visibility 160ms;
+    pointer-events: none;
+  }
+  .entry-hint span {
+    font-size: 8.5px;
+    letter-spacing: .16em;
+    text-transform: uppercase;
+  }
+  .entry-hint::before {
+    content: "";
+    width: 16px;
+    height: 1px;
+    background: rgba(165, 180, 252, .42);
+  }
+  .descriptor:has(.entry:hover) .entry-hint,
+  .descriptor:has(.entry:focus-visible) .entry-hint {
+    visibility: visible;
+    opacity: 1;
+    transform: translateY(-50%) translateX(0);
+  }
+
+  .foot {
+    position: absolute;
+    bottom: 4.5vh;
+    color: var(--faint);
+    font-size: 8.5px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    user-select: none;
+  }
+  .foot-left { left: 4.5vw; }
+  .foot-right { right: 4.5vw; }
+
+  @media (max-width: 800px) {
+    body { overflow: auto; }
+    .brand { left: 24px; top: 22px; }
+    .meta { right: 24px; top: 21px; gap: 5px; }
+    .descriptor {
+      left: 24px;
+      top: 22vh;
+      width: calc(100% - 48px);
+      font-size: 12.5px;
+      --line: 25.625px;
+    }
+    .json { font-size: 12.5px; line-height: 2.05; }
+    .entry-hint {
+      top: calc(11 * var(--line) + 12px);
+      left: 0;
+      transform: translateX(-4px);
+    }
+    .descriptor:has(.entry:hover) .entry-hint,
+    .descriptor:has(.entry:focus-visible) .entry-hint {
+      transform: translateX(0);
+    }
+    .foot { bottom: 24px; }
+    .foot-left { left: 24px; }
+    .foot-right { right: 24px; }
+  }
+  @media (max-width: 390px) {
+    .brand { left: 18px; top: 18px; }
+    .brand-name { font-size: 11px; }
+    .meta { right: 18px; top: 18px; }
+    .meta-label { display: none; }
+    .descriptor {
+      left: 18px;
+      top: 20vh;
+      width: calc(100% - 36px);
+      font-size: 10.5px;
+      --line: 21.525px;
+    }
+    .json { font-size: 10.5px; line-height: 2.05; }
+    .entry-hint { top: calc(11 * var(--line) + 10px); }
+    .entry-hint span { font-size: 8px; letter-spacing: .12em; }
+    .foot { bottom: 18px; font-size: 7.5px; letter-spacing: .1em; }
+    .foot-left { left: 18px; }
+    .foot-right { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="brand" aria-label="AgentGraph">
+    <svg class="brand-mark" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M3.2 12.2 8 3.2l4.8 9" stroke="#a5b4fc" stroke-opacity=".52" stroke-width="1"/>
+      <circle cx="3.2" cy="12.2" r="1.45" fill="#a5b4fc"/>
+      <circle cx="8" cy="3.2" r="1.45" fill="#a5b4fc"/>
+      <circle cx="12.8" cy="12.2" r="1.45" fill="#a5b4fc"/>
+    </svg>
+    <span class="brand-name">AgentGraph</span>
+  </div>
+
+  <div class="meta" aria-label="Service descriptor version 3.2.1">
+    <span class="meta-label">Service descriptor</span>
+    <span class="meta-version">v3.2.1</span>
+  </div>
+
+  <div class="descriptor">
+    <pre class="json" aria-label="AgentGraph service descriptor JSON">{
+  &quot;name&quot;: &quot;AgentGraph&quot;,
+  &quot;version&quot;: &quot;<span class="tok-num">3.2</span>.<span class="tok-num">1</span>&quot;,
+  &quot;rest&quot;: &quot;/v<span class="tok-num">1</span>&quot;,
+  &quot;mcp&quot;: &quot;/mcp/&quot;,
+  &quot;health&quot;: &quot;/healthz&quot;,
+  &quot;agent_docs&quot;: &quot;/v<span class="tok-num">1</span>/agent-docs&quot;,
+  &quot;first_call&quot;: &quot;get_orientation&quot;,
+  &quot;primitives&quot;: <span class="tok-num">40</span>,
+  <span class="tok-key entry-key">"dashboard"</span>: <a class="entry" href="/dashboard/" aria-label="Open the AgentGraph human console"><span class="tok-str">"/dashboard/"</span><span class="entry-arrow" aria-hidden="true">↗</span></a>
+}</pre>
+    <div class="entry-hint" aria-hidden="true"><span>Open the human console</span></div>
+  </div>
+
+  <div class="foot foot-left" aria-hidden="true">GET / &middot; 200 OK</div>
+  <div class="foot foot-right" aria-hidden="true">40 primitives</div>
+</body>
+</html>

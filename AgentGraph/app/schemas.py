@@ -1,0 +1,3030 @@
+"""Pydantic contracts for the Veynod shared blackboard API."""
+
+from __future__ import annotations
+
+import json
+import re
+import uuid
+from datetime import datetime
+from typing import Annotated, Any, Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
+
+from app.config import get_settings
+from app.models import LinkType, TaskStatus
+
+settings = get_settings()
+
+Namespace = str
+RoleName = Literal["SUPER_ADMIN", "COMMANDER", "SCOUT", "ANALYST", "AUDITOR", "EXECUTOR"]
+CommanderAction = Literal["task:cancel", "task:review", "task:archive"]
+_KEY_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:/-]*$"
+_NAMESPACE_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+
+
+# Document bodies are stored byte-for-byte (PRD AG-ST-03): exempt them from
+# the model-wide whitespace stripping applied to identifiers and labels.
+RawText = Annotated[str, StringConstraints(strip_whitespace=False)]
+
+
+# Batch limits are referenced by the generated agent guide (PRD AG-OB-03).
+BATCH_UPSERT_MAX = 25
+BATCH_DEREFERENCE_MAX = 25
+QUERY_LIMIT_MAX = 50
+
+
+class StrictModel(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        str_strip_whitespace=True,
+        validate_assignment=False,
+    )
+
+
+def _clean_agent(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        return None
+    if len(value) > 128:
+        raise ValueError("agent signature must be at most 128 characters")
+    return value
+
+
+def _serialized_size(value: Any) -> int:
+    try:
+        return len(json.dumps(value, ensure_ascii=False, default=str))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("value must be JSON serializable") from exc
+
+
+def _clean_namespaces(values: list[str] | None) -> list[str]:
+    if not values:
+        raise ValueError("at least one namespace is required; use '*' for all")
+    cleaned: list[str] = []
+    for raw in values:
+        value = raw.strip()
+        if not value:
+            continue
+        if value != "*" and len(value) > 64:
+            raise ValueError("namespace must be at most 64 characters")
+        if value not in cleaned:
+            cleaned.append(value)
+    if not cleaned:
+        raise ValueError("at least one namespace is required")
+    return cleaned
+
+
+# --------------------------------------------------------------------- tasks
+
+
+class HandoffBrief(StrictModel):
+    model_config = ConfigDict(extra="allow", str_strip_whitespace=True)
+
+    summary: str = Field(min_length=1, max_length=4_000)
+    key_metrics: dict[str, Any]
+    unverified_hypotheses: list[str]
+    risk_flag: bool
+
+    @model_validator(mode="after")
+    def _size(self) -> HandoffBrief:
+        if _serialized_size(self.model_dump()) > settings.max_brief_bytes:
+            raise ValueError("handoff brief is too large")
+        return self
+
+
+class NextTaskSpec(StrictModel):
+    task_key: str = Field(pattern=_KEY_PATTERN + "$", min_length=1, max_length=128)
+    title: str = Field(min_length=1, max_length=256)
+    project: str | None = Field(default=None, min_length=1, max_length=128)
+    repo: str | None = Field(default=None, min_length=1, max_length=256)
+    assigned_role: RoleName | None = None
+    priority: int = Field(default=0, ge=-100, le=100)
+    namespace: Namespace | None = Field(
+        default=None, pattern=_NAMESPACE_PATTERN + "$",
+        description="Omit to keep the handed-off task's namespace")
+    input_context: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("task_key")
+    @classmethod
+    def _no_slash(cls, value: str) -> str:
+        return _task_key_without_slash(value)
+
+    @model_validator(mode="after")
+    def _claimable_role(self) -> NextTaskSpec:
+        if self.assigned_role == "SCOUT":
+            raise ValueError(
+                "SCOUT tokens cannot claim tasks; assign ANALYST, AUDITOR or EXECUTOR"
+            )
+        return self
+
+
+class DocRef(StrictModel):
+    namespace: str = Field(default="default", max_length=64)
+    doc_key: str = Field(min_length=1, max_length=256)
+    version: int | None = Field(default=None, ge=1, description="null: pinned at first claim")
+
+
+class OutputTo(StrictModel):
+    namespace: str = Field(default="default", max_length=64)
+    doc_key: str | None = Field(default=None, max_length=256)
+    doc_key_pattern: str | None = Field(default=None, max_length=256)
+
+
+def _check_mentions(values: list[str]) -> list[str]:
+    """Explicit mentions name a principal: agent:<label> or human:<id> (P-02).
+    A bare label used to be dropped without a word; now it is refused."""
+    values = [(item or "").strip().removeprefix("@") for item in values]
+    invalid = [item for item in values
+               if not re.fullmatch(r"(agent|human):[A-Za-z0-9_.:@-]{1,150}", item)]
+    if invalid:
+        raise ValueError(f"mentions must look like agent:<label> or human:<id>: {invalid}")
+    return values
+
+
+class AcceptanceItem(StrictModel):
+    """One acceptance item (quality control 1.0 §3.1)."""
+
+    id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
+    text: str = Field(min_length=1, max_length=2_000)
+    kind: Literal["AUTO", "MANUAL"] = "MANUAL"
+
+
+def _task_key_without_slash(value: str | None) -> str | None:
+    """2026-10-24 #9: a '/' in a task key breaks REST paths (/v1/tasks/{key}/claim)."""
+    if value and "/" in value:
+        raise ValueError(f"task_key may not contain '/'; try '{value.replace('/', '-')}'")
+    return value
+
+
+def _unique_acceptance(items: list[AcceptanceItem]) -> list[AcceptanceItem]:
+    ids = [item.id for item in items]
+    if len(ids) != len(set(ids)):
+        raise ValueError("acceptance item ids must be unique")
+    return items
+
+
+class TaskCreateRequest(StrictModel):
+    task_key: str | None = Field(
+        default=None, pattern=_KEY_PATTERN + "$", max_length=128
+    )
+    title: str = Field(min_length=1, max_length=256)
+    project: str | None = Field(default=None, min_length=1, max_length=128)
+    repo: str | None = Field(default=None, min_length=1, max_length=256)
+    description: str | None = Field(default=None, max_length=20_000)
+    status: Literal["TODO", "READY"] = "READY"
+    priority: int = Field(default=0, ge=-100, le=100)
+    assigned_role: RoleName | None = None
+    namespace: Namespace | None = Field(
+        default=None, pattern=_NAMESPACE_PATTERN + "$",
+        description="Omit to infer: parent task, context documents, the assignee's or "
+                    "creator's only namespace; else 'default'")
+    input_context: dict[str, Any] = Field(default_factory=dict)
+    max_retries: int = Field(default=settings.default_max_retries, ge=1, le=20)
+    depends_on: list[str] = Field(default_factory=list, max_length=50)
+    assignee: str | None = Field(
+        default=None,
+        pattern=r"^(agent|human):[A-Za-z0-9_.:@-]{1,150}$",
+        description="agent:<agent_id> or human:<user_id>; only they may claim",
+    )
+    # AG-CO-02: pointers, not copies.
+    context_docs: list[DocRef] = Field(default_factory=list, max_length=20)
+    allow_missing_context: bool = False
+    done_definition: str | None = Field(default=None, max_length=2_000)
+    output_to: OutputTo | None = None
+    required_role: str | None = Field(default=None, max_length=32)
+    required_capabilities: list[str] = Field(default_factory=list, max_length=10)
+    kind: Literal["work", "question", "escalation", "peer_review"] = "work"
+    require_continuation: bool = False
+    mentions: list[str] = Field(default_factory=list, max_length=20)
+    acceptance: list[AcceptanceItem] = Field(
+        default_factory=list, max_length=50,
+        description="Acceptance items the change is judged against; locked at the first claim")
+    agent: str | None = None
+    session_batch_id: uuid.UUID | None = None
+
+    @field_validator("acceptance")
+    @classmethod
+    def _acceptance(cls, value: list[AcceptanceItem]) -> list[AcceptanceItem]:
+        return _unique_acceptance(value)
+
+    @field_validator("task_key")
+    @classmethod
+    def _no_slash(cls, value: str | None) -> str | None:
+        return _task_key_without_slash(value)
+
+    @field_validator("mentions")
+    @classmethod
+    def _mentions(cls, value: list[str]) -> list[str]:
+        return _check_mentions(value)
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+    @field_validator("depends_on")
+    @classmethod
+    def _dep_keys(cls, value: list[str]) -> list[str]:
+        for item in value:
+            if not item or len(item) > 128:
+                raise ValueError("invalid dependency task key")
+        return list(dict.fromkeys(value))
+
+    @field_validator("input_context")
+    @classmethod
+    def _context_size(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if _serialized_size(value) > settings.max_state_bytes:
+            raise ValueError("input_context is too large")
+        return value
+
+    @model_validator(mode="after")
+    def _claimable_role(self) -> TaskCreateRequest:
+        if self.assigned_role == "SCOUT":
+            raise ValueError(
+                "SCOUT tokens cannot claim tasks; assign ANALYST, AUDITOR or EXECUTOR"
+            )
+        return self
+
+
+class TaskClaimRequest(StrictModel):
+    lease_seconds: int | None = Field(
+        default=None, ge=5, le=settings.max_task_lease_seconds
+    )
+    lease_ttl_seconds: int | None = Field(
+        default=None, ge=60, le=3_600,
+        description="Lease TTL; heartbeat every ttl/3 (default 900 under 2026-11)",
+    )
+    include_context: bool = True
+    context_max_bytes: int = Field(default=262_144, ge=1_024, le=4_194_304)
+    agent: str | None = None
+    session_batch_id: uuid.UUID | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+
+class TaskRenewRequest(StrictModel):
+    lease_seconds: int | None = Field(
+        default=None, ge=5, le=settings.max_task_lease_seconds
+    )
+    lease_epoch: int | None = Field(default=None, ge=0)
+    fencing_token: int | None = Field(
+        default=None, ge=0,
+        description="The fencing_token from your lease; an older one is refused",
+    )
+    agent: str | None = None
+
+
+class TaskLeaseRenewRequest(StrictModel):
+    fencing_token: int | None = Field(
+        default=None, ge=0,
+        description="The fencing_token from your lease; an older one is refused",
+    )
+    agent: str | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+
+class TaskReleaseRequest(StrictModel):
+    lease_epoch: int | None = Field(default=None, ge=0)
+    fencing_token: int | None = Field(
+        default=None, ge=0,
+        description="The fencing_token from your lease; an older one is refused",
+    )
+    agent: str | None = None
+    reason: str | None = Field(default=None, max_length=2_000)
+    session_batch_id: uuid.UUID | None = None
+    force: bool = False
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+
+class TaskHandoffRequest(StrictModel):
+    next_status: Literal["REVIEWING", "HANDOFF", "DONE", "AWAITING_HUMAN", "FAILED"]
+    brief: HandoffBrief | None = None
+    artifact_text: RawText | None = Field(
+        default=None, max_length=settings.max_artifact_chars
+    )
+    artifact_uri: str | None = Field(default=None, max_length=2_048)
+    output_artifact: dict[str, Any] = Field(default_factory=dict)
+    human_feedback: str | None = Field(default=None, max_length=8_000)
+    expected_version: int | None = Field(default=None, ge=1)
+    lease_epoch: int | None = Field(default=None, ge=0)
+    fencing_token: int | None = Field(
+        default=None, ge=0,
+        description="The fencing_token from your lease; an older one is refused",
+    )
+    create_next: NextTaskSpec | None = None
+    agent: str | None = None
+    session_batch_id: uuid.UUID | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+    @model_validator(mode="after")
+    def _handoff_contract(self) -> TaskHandoffRequest:
+        if self.next_status in ("REVIEWING", "HANDOFF", "DONE") and self.brief is None:
+            raise ValueError(
+                "a structured L1 handoff brief is required for REVIEWING/HANDOFF/DONE"
+            )
+        if self.artifact_uri and not self.artifact_uri.startswith("doc://"):
+            raise ValueError("artifact_uri must use doc://<doc_key>")
+        if _serialized_size(self.output_artifact) > settings.max_state_bytes:
+            raise ValueError("output_artifact is too large")
+        return self
+
+
+# One enum for REST and MCP review targets (PRD AG-CO-01); the service
+# validates against it so both paths accept and reject exactly the same values.
+REVIEW_NEXT_STATUSES: tuple[str, ...] = ("IN_PROGRESS", "DONE", "HANDOFF", "READY")
+REVIEW_APPROVE_STATUSES: tuple[str, ...] = ("DONE", "HANDOFF", "READY")
+REVIEW_REJECT_STATUSES: tuple[str, ...] = ("READY", "IN_PROGRESS")
+
+
+class AuditItemResult(StrictModel):
+    item_id: str = Field(min_length=1, max_length=64)
+    result: Literal["PASS", "FAIL"]
+
+
+class TaskUpdateRequest(StrictModel):
+    """SUPER_ADMIN edit of task fields; locked acceptance is not reachable here."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=256)
+    description: str | None = Field(default=None, max_length=200_000)
+    priority: int | None = Field(default=None, ge=-50, le=100)
+    assignee: str | None = Field(default=None, max_length=160)
+    status: Literal["TODO", "READY", "REVIEWING", "HANDOFF", "AWAITING_HUMAN",
+                    "ESCALATED_TO_HUMAN", "WAITING_HUMAN", "CANCELLED",
+                    "FAILED"] | None = None
+    reason: str = Field(min_length=1, max_length=2_000)
+    expected_version: int | None = Field(default=None, ge=1)
+
+    @field_validator("assignee")
+    @classmethod
+    def _assignee_ref(cls, value: str | None) -> str | None:
+        if value in (None, ""):
+            return value
+        if not re.match(r"^(agent|human):[A-Za-z0-9_.:-]+$", value):
+            raise ValueError("assignee must be agent:<id> or human:<id>")
+        return value
+
+
+class TaskReviewRequest(StrictModel):
+    decision: Literal["approve", "reject"]
+    feedback: str | None = Field(default=None, max_length=8_000)
+    items: list[AuditItemResult] = Field(
+        default_factory=list, max_length=50,
+        description="Per acceptance item results; an approval must cover every item with PASS")
+    cited_clauses: list[str] = Field(
+        default_factory=list, max_length=50,
+        description="Spec clauses the verdict rests on; required for a rejection when "
+                    "quality control is enforced")
+    expected_version: int | None = Field(default=None, ge=1)
+    next_status: str | None = Field(
+        default=None,
+        description="approve: " + "|".join(REVIEW_APPROVE_STATUSES)
+        + "; reject: " + "|".join(REVIEW_REJECT_STATUSES)
+        + " (IN_PROGRESS sends the task back to its executor for rework)",
+    )
+    agent: str | None = None
+    session_batch_id: uuid.UUID | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+
+class EscalationOption(StrictModel):
+    id: str = Field(min_length=1, max_length=64)
+    label: str | None = Field(default=None, max_length=200)
+    consequence: str | None = Field(default=None, max_length=500)
+
+
+# What an agent's question to a person is about. Under semi and full
+# automation only the non-technical topics reach the owner (Loop v1).
+EscalationTopic = Literal[
+    "technical", "money", "identity", "legal", "data_deletion", "external_commitment"]
+_TOPIC_HELP = ("technical (the default) | money | identity | legal | data_deletion | "
+               "external_commitment. Under semi or full automation a technical question "
+               "is refused: decide it with the safest default instead.")
+
+
+class TaskEscalateRequest(StrictModel):
+    reason: str = Field(min_length=1, max_length=8_000)
+    topic: EscalationTopic = Field(default="technical", description=_TOPIC_HELP)
+    # AG-CO-05: a question with options; blocking pauses the task and its lease.
+    question: str | None = Field(default=None, max_length=2_000)
+    options: list[EscalationOption] = Field(default_factory=list, max_length=5)
+    recommended_option: str | None = Field(default=None, max_length=64)
+    context_docs: list[DocRef] = Field(default_factory=list, max_length=20)
+    blocking: bool = True
+    due_at: datetime | None = None
+    default_on_timeout: str | None = Field(default=None, max_length=64)
+    route_to: str | None = Field(default=None, max_length=160)
+    expected_version: int | None = Field(default=None, ge=1)
+    fencing_token: int | None = Field(
+        default=None, ge=0,
+        description="The fencing_token from your lease; an older one is refused",
+    )
+    agent: str | None = None
+    session_batch_id: uuid.UUID | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+
+class AdminTaskReassignRequest(StrictModel):
+    assigned_role: Literal["ANALYST", "AUDITOR", "EXECUTOR"]
+    reason: str | None = Field(default=None, max_length=4_000)
+    expected_version: int | None = Field(default=None, ge=1)
+    reset_to_ready: bool = True
+
+
+class AdminTaskCancelRequest(StrictModel):
+    reason: str = Field(min_length=1, max_length=4_000)
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+# --------------------------------------------------------------------- slots
+
+
+class SlotPatchRequest(StrictModel):
+    return_current_on_conflict: bool = Field(
+        default=False,
+        description="On 409 version_conflict include current_content (bodies <= 64 KiB)",
+    )
+    ops: list[dict[str, Any]] = Field(min_length=1, max_length=100)
+    expected_version: int = Field(
+        ge=0, description="0 creates the slot: the patch applies to an empty state"
+    )
+    namespace: Namespace | None = Field(
+        default=None, pattern=_NAMESPACE_PATTERN + "$",
+        description="Namespace of a slot created with expected_version=0",
+    )
+    lease_epoch: int | None = Field(default=None, ge=0)
+    lease_seconds: int | None = Field(
+        default=None, ge=5, le=settings.max_task_lease_seconds
+    )
+    agent: str | None = None
+    session_batch_id: uuid.UUID | None = None
+    rebase: bool = False
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+
+class SlotReplaceRequest(StrictModel):
+    return_current_on_conflict: bool = Field(
+        default=False,
+        description="On 409 version_conflict include current_content (bodies <= 64 KiB)",
+    )
+    state: dict[str, Any]
+    expected_version: int = Field(ge=0)
+    goal: str | None = Field(default=None, max_length=8_000)
+    blockers: list[Any] | None = None
+    schema_hint: dict[str, Any] | None = None
+    namespace: Namespace | None = Field(
+        default=None, pattern=_NAMESPACE_PATTERN + "$"
+    )
+    lease_seconds: int | None = Field(
+        default=None, ge=5, le=settings.max_task_lease_seconds
+    )
+    lease_epoch: int | None = Field(default=None, ge=0)
+    agent: str | None = None
+    session_batch_id: uuid.UUID | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+    @model_validator(mode="after")
+    def _size(self) -> SlotReplaceRequest:
+        if (
+            _serialized_size(self.state) + _serialized_size(self.blockers or [])
+            > settings.max_state_bytes
+        ):
+            raise ValueError("state is too large")
+        return self
+
+
+class HumanSlotUpdateRequest(StrictModel):
+    state: dict[str, Any] | None = None
+    expected_version: int = Field(ge=1)
+    goal: str | None = Field(default=None, max_length=8_000)
+    blockers: list[Any] | None = None
+    schema_hint: dict[str, Any] | None = None
+    human_note: str | None = Field(default=None, max_length=4_000)
+    lock: bool | None = None
+    unlock: bool = False
+    session_batch_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _human_contract(self) -> HumanSlotUpdateRequest:
+        if self.lock is True and self.unlock:
+            raise ValueError("lock and unlock cannot both be true")
+        if (
+            self.state is None
+            and not self.unlock
+            and self.goal is None
+            and self.blockers is None
+        ):
+            raise ValueError("provide state/goal/blockers or unlock=true")
+        if (
+            self.state is not None
+            and _serialized_size(self.state) > settings.max_state_bytes
+        ):
+            raise ValueError("state is too large")
+        return self
+
+
+# ----------------------------------------------------------------- documents
+
+
+class DocumentUpsertRequest(StrictModel):
+    return_current_on_conflict: bool = Field(
+        default=False,
+        description="On 409 version_conflict include current_content (bodies <= 64 KiB)",
+    )
+    title: str | None = Field(default=None, max_length=256)
+    content: RawText = Field(min_length=1, max_length=settings.max_document_content_chars)
+    frontmatter: dict[str, Any] = Field(default_factory=dict)
+    expected_version: int = Field(ge=0)
+    namespace: Namespace | None = Field(
+        default=None, pattern=_NAMESPACE_PATTERN + "$"
+    )
+    mentions: list[str] = Field(
+        default_factory=list, max_length=20,
+        description="agent:<id> / human:<id> to notify (AG-EV-03); @agent:<id> in content too",
+    )
+
+    @field_validator("mentions")
+    @classmethod
+    def _mentions(cls, value: list[str]) -> list[str]:
+        return _check_mentions(value)
+
+    derived_from: list[DocRef] = Field(
+        default_factory=list, max_length=50,
+        description="Documents this version was derived from (AG-TC-01); recorded for recall",
+    )
+    content_origin: Literal["internal", "external_web", "external_user", "tool_output"] = Field(
+        default="internal", description="Anything but internal taints the version",
+    )
+    resolves_recall: str | None = Field(
+        default=None, max_length=40,
+        description="This version no longer depends on the recalled versions (AG-TC-02)",
+    )
+    doc_type: Literal["collaborative", "log"] | None = Field(
+        default=None, description="At creation only: log documents take append_entries")
+    agent: str | None = None
+    session_batch_id: uuid.UUID | None = None
+    rebase: bool = False
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+    @model_validator(mode="after")
+    def _size(self) -> DocumentUpsertRequest:
+        if _serialized_size(self.frontmatter) > settings.max_state_bytes:
+            raise ValueError("frontmatter is too large")
+        return self
+
+
+class AdminDocumentCreateRequest(DocumentUpsertRequest):
+    doc_key: str = Field(
+        pattern=_KEY_PATTERN + "$", min_length=1, max_length=256
+    )
+
+
+class DocumentSectionPatchRequest(StrictModel):
+    return_current_on_conflict: bool = Field(
+        default=False,
+        description="On 409 version_conflict include current_content (bodies <= 64 KiB)",
+    )
+    section_heading: str = Field(min_length=1, max_length=256)
+    new_markdown: RawText = Field(
+        max_length=settings.max_document_content_chars,
+        description=(
+            "Replacement section body only. Do not include the heading; a "
+            "leading matching heading is stripped for compatibility."
+        ),
+    )
+    expected_version: int | None = Field(default=None, ge=1)
+    section_hash: str | None = Field(
+        default=None, min_length=64, max_length=64,
+        description="sha256 of the section body you read: only that section must be "
+                    "unchanged (patches to other sections do not conflict)",
+    )
+    derived_from: list[DocRef] = Field(default_factory=list, max_length=50)
+    content_origin: Literal["internal", "external_web", "external_user", "tool_output"] = (
+        "internal")
+    agent: str | None = None
+    session_batch_id: uuid.UUID | None = None
+    rebase: bool = False
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+    @model_validator(mode="after")
+    def _version_or_hash(self) -> DocumentSectionPatchRequest:
+        if self.expected_version is None and self.section_hash is None:
+            raise ValueError("pass expected_version or section_hash")
+        return self
+
+
+class DocumentQueryRequest(StrictModel):
+    query: str | None = Field(default=None, max_length=10_000)
+    filters: dict[str, Any] = Field(default_factory=dict)
+    namespace: Namespace | None = Field(default=None, pattern=_NAMESPACE_PATTERN + "$")
+    limit: int = Field(default=10, ge=1, le=QUERY_LIMIT_MAX)
+    include_unverified: bool = False
+    include_own_unverified: bool = Field(
+        default=True, description="Include your own unverified drafts (default true)"
+    )
+    include_tainted: bool = False
+    include_archived: bool = False
+    include_shared: bool = Field(
+        default=False, description="Also search resources other nodes shared with you")
+    include_lifecycle: list[Literal["superseded", "expired", "cold"]] = Field(
+        default_factory=list,
+        description="Under 2026-11 these are left out unless named here (AG-ST-11)")
+    review_verdict: Literal["pass", "pass_with_notes", "fail"] | None = None
+    mode: Literal["auto", "semantic", "keyword", "hybrid"] = "hybrid"
+
+    @model_validator(mode="after")
+    def _size(self) -> DocumentQueryRequest:
+        if _serialized_size(self.filters) > 16_384:
+            raise ValueError("filters are too large")
+        return self
+
+
+class DocumentHumanUpdateRequest(StrictModel):
+    title: str | None = Field(default=None, max_length=256)
+    content: RawText | None = Field(
+        default=None, max_length=settings.max_document_content_chars
+    )
+    frontmatter: dict[str, Any] | None = None
+    expected_version: int = Field(ge=1)
+    human_note: str | None = Field(default=None, max_length=4_000)
+    lock: bool | None = None
+    unlock: bool = False
+    session_batch_id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _human_contract(self) -> DocumentHumanUpdateRequest:
+        if self.lock is True and self.unlock:
+            raise ValueError("lock and unlock cannot both be true")
+        if (
+            self.content is None
+            and self.title is None
+            and self.frontmatter is None
+            and not self.unlock
+        ):
+            raise ValueError("provide content/title/frontmatter or unlock=true")
+        if (
+            self.frontmatter is not None
+            and _serialized_size(self.frontmatter) > settings.max_state_bytes
+        ):
+            raise ValueError("frontmatter is too large")
+        return self
+
+
+class DereferenceRequest(StrictModel):
+    uri: str = Field(min_length=1, max_length=2_048)
+    include_unverified: bool = False
+    include_tainted: bool = False
+    content_offset: int = Field(default=0, ge=0, description="Byte offset into the body")
+    content_limit: int | None = Field(
+        default=None, ge=1, le=262_144, description="Bytes to return (<= 256 KiB)"
+    )
+    expand_parts: bool = Field(
+        default=False,
+        description="Concatenate frontmatter.parts in index order (<= 4 MiB)",
+    )
+    taint_mode: Literal["annotate", "separate", "exclude"] = Field(
+        default="annotate",
+        description="tainted bodies: annotate (metadata), separate (untrusted_content), exclude",
+    )
+
+
+# --------------------------------------------------------------------- links
+
+
+class LinkCreateRequest(StrictModel):
+    source_id: uuid.UUID
+    target_id: uuid.UUID
+    relation_type: LinkType = LinkType.DEPENDS_ON
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _no_loop(self) -> LinkCreateRequest:
+        if self.source_id == self.target_id:
+            raise ValueError("workspace links cannot be self-loops")
+        if _serialized_size(self.metadata) > 16_384:
+            raise ValueError("metadata is too large")
+        return self
+
+
+# ------------------------------------------------------------------- timeline
+
+
+class TimelineEventRequest(StrictModel):
+    event_type: str = Field(
+        min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$"
+    )
+    payload: dict[str, Any] = Field(default_factory=dict)
+    namespace: Namespace = Field(default="default", pattern=_NAMESPACE_PATTERN + "$")
+    agent: str | None = None
+    platform: str = Field(default="api", max_length=64)
+    token_cost: int = Field(default=0, ge=0)
+    latency_ms: int = Field(default=0, ge=0)
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+    @field_validator("payload")
+    @classmethod
+    def _payload_size(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if _serialized_size(value) > 65_536:
+            raise ValueError("payload exceeds 64 KiB")
+        return value
+
+
+# ------------------------------------------------------------- agent tokens
+
+
+AutomationMode = Literal["manual", "semi", "full"]
+
+
+class AutomationModeRequest(StrictModel):
+    mode: AutomationMode
+    auto_deploy_allowed: bool = False
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class AutomationModeOut(BaseModel):
+    mode: str
+    auto_deploy_allowed: bool
+    updated_by: str | None = None
+    updated_at: datetime | None = None
+    version: int = 0
+    # This workspace's switch also governs the server's deploy gate.
+    controls_deploy_gate: bool = False
+
+
+class SuperAdminTokenIssueRequest(StrictModel):
+    role_scope: RoleName = "EXECUTOR"
+    agent_signature: str | None = Field(default=None, min_length=1, max_length=128)
+    agent_id: str | None = Field(default=None, pattern=r"^[a-z][a-z0-9-]{2,39}$")
+    display_name: str | None = Field(default=None, max_length=64)
+    allowed_namespaces: list[str] = Field(default_factory=lambda: ["*"])
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
+    reason: str = Field(min_length=1, max_length=2_000)
+
+
+class CommanderGrantCreateRequest(StrictModel):
+    """A human OWNER's grant for a COMMANDER agent (role rules v0.2 §2.5)."""
+
+    grantee: str = Field(min_length=3, max_length=256)
+    allowed_actions: list[CommanderAction] = Field(min_length=1, max_length=3)
+    scope_namespace: str = Field(default="*", min_length=1, max_length=64)
+    scope_task_keys: list[str] | None = Field(default=None, max_length=50)
+    scope_task_kind: str | None = Field(default=None, max_length=16)
+    reason: str = Field(min_length=5, max_length=2_000)
+    expires_in_seconds: int = Field(default=3_600, ge=60, le=2_592_000)
+
+    @field_validator("grantee")
+    @classmethod
+    def _grantee(cls, value: str) -> str:
+        value = value.strip()
+        return value if value.startswith("agent:") else f"agent:{value}"
+
+
+class CommanderGrantOut(StrictModel):
+    grant_id: uuid.UUID
+    issued_by: str
+    grantee: str
+    allowed_actions: list[str]
+    scope_namespace: str
+    scope_task_keys: list[str] | None = None
+    scope_task_kind: str | None = None
+    reason: str
+    expires_at: datetime
+    revoked_at: datetime | None = None
+    revoked_by: str | None = None
+    created_at: datetime
+
+
+class TokenNamespacesRequest(StrictModel):
+    allowed_namespaces: list[str] = Field(min_length=1, max_length=50)
+    reason: str = Field(min_length=1, max_length=2_000)
+
+
+class AgentTokenCreateRequest(StrictModel):
+    agent_signature: str | None = Field(default=None, min_length=1, max_length=128)
+    agent_id: str | None = Field(
+        default=None, pattern=r"^[a-z][a-z0-9-]{2,39}$",
+        description="Stable machine identity; a new generation keeps it")
+    generation: int | None = Field(
+        default=None, ge=1,
+        description="Credential generation; defaults to the next free one")
+    display_name: str | None = Field(
+        default=None, max_length=64, description="Human-facing name; free-form")
+    role_scope: RoleName
+    purpose: str | None = Field(default=None, max_length=1_000)
+    allowed_namespaces: list[str] = Field(default_factory=lambda: ["*"])
+    is_active: bool = True
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
+    per_minute_limit: int | None = Field(default=None, ge=1, le=1_000_000)
+    monthly_token_budget: int | None = Field(default=None, ge=0)
+
+    @field_validator("allowed_namespaces")
+    @classmethod
+    def _namespaces(cls, value: list[str]) -> list[str]:
+        return _clean_namespaces(value)
+
+
+class AgentTokenUpdateRequest(StrictModel):
+    agent_signature: str | None = Field(default=None, min_length=1, max_length=128)
+    role_scope: RoleName | None = None
+    allowed_namespaces: list[str] | None = None
+    is_active: bool | None = None
+    expires_in_days: int | None = Field(default=None, ge=1, le=3650)
+    per_minute_limit: int | None = Field(default=None, ge=1, le=1_000_000)
+    monthly_token_budget: int | None = Field(default=None, ge=0)
+    scope_add: list[str] | None = Field(
+        default=None, max_length=50,
+        description="Permissions added to the role package (e.g. doc:create); replaces the list",
+    )
+    scope_remove: list[str] | None = Field(
+        default=None, max_length=50,
+        description="Permissions removed from the role package (e.g. proposal:vote)",
+    )
+    can_issue: bool | None = Field(
+        default=None,
+        description="Allow this token to issue child tokens "
+                    "(when the server enables child-token issuance)",
+    )
+    max_descendants: int | None = Field(
+        default=None, ge=0, le=10_000,
+        description="How many live descendants this token may create",
+    )
+
+    @field_validator("agent_signature")
+    @classmethod
+    def _agent_signature(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+    @field_validator("allowed_namespaces")
+    @classmethod
+    def _namespaces(cls, value: list[str] | None) -> list[str] | None:
+        return _clean_namespaces(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> AgentTokenUpdateRequest:
+        if not any(
+            value is not None
+            for value in (
+                self.agent_signature,
+                self.role_scope,
+                self.allowed_namespaces,
+                self.is_active,
+                self.expires_in_days,
+                self.per_minute_limit,
+                self.monthly_token_budget,
+                self.scope_add,
+                self.scope_remove,
+                self.can_issue,
+                self.max_descendants,
+            )
+        ):
+            raise ValueError("at least one token field is required")
+        return self
+
+
+# --------------------------------------------------------------- workspaces
+
+
+class CreateWorkspaceRequest(StrictModel):
+    name: str = Field(min_length=1, max_length=128)
+    tier: Literal["free", "developer_5usd", "pro"] = "developer_5usd"
+
+
+class UpdateWorkspaceRequest(StrictModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    tier: Literal["free", "developer_5usd", "pro"] | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> UpdateWorkspaceRequest:
+        if self.name is None and self.tier is None:
+            raise ValueError("name or tier is required")
+        return self
+
+
+# -------------------------------------------------------------------- output
+
+
+class WorkspaceInfo(BaseModel):
+    id: uuid.UUID
+    canonical_id: str | None = Field(
+        default=None, description="Opaque canonical address (<type>_<ULID>); never changes"
+    )
+    name: str
+    tier: str
+    tenant_id: str | None = Field(default=None, description="The tenant node that owns it")
+    created_at: datetime
+
+
+class TenantInfo(BaseModel):
+    id: str
+    alias: str
+    display_name: str
+    tenant_type: str
+    parent_tenant_id: str | None = None
+    root_tenant_id: str
+    path: list[str]
+    depth: int
+    status: str
+
+
+class TenantOut(TenantInfo):
+    billing_owner_tenant_id: str
+    status_reason: str | None = None
+    status_changed_at: datetime | None = None
+    deletion_admin_confirmed_at: datetime | None = None
+    deletion_owner_confirmed_at: datetime | None = None
+    purge_after: datetime | None = None
+    deleted_at: datetime | None = None
+    final_export_id: str | None = None
+    pending_confirmations: list[str] = Field(default_factory=list)
+    workspaces: int = 0
+    created_at: datetime
+
+
+class TenantListResponse(BaseModel):
+    items: list[TenantOut]
+
+
+class TenantSuspendRequest(StrictModel):
+    reason: str = Field(min_length=1, max_length=500)
+
+
+class TenantDeleteRequest(StrictModel):
+    confirm: str = Field(
+        min_length=1, max_length=64, description="The tenant alias, exactly"
+    )
+
+
+class WhoAmIResponse(BaseModel):
+    workspace: WorkspaceInfo
+    tenant: TenantInfo | None = None
+    role: str
+    agent_signature: str
+    agent_id: str | None = None
+    generation: int | None = None
+    auth_kind: str
+    allowed_namespaces: list[str]
+    permissions: list[str] = Field(
+        default_factory=list,
+        description="Fine-grained permissions in force (role package, deltas and scopes)")
+    namespaces: dict[str, list[str]] = Field(
+        default_factory=dict, description="read / write namespaces; ['*'] means all")
+    scopes: list[str] | None = Field(
+        default=None,
+        description="Coarse token scopes as issued (docs:read …); each grants the "
+                    "permissions listed in scope_permissions")
+    scope_permissions: dict[str, list[str]] = Field(default_factory=dict)
+    default_lease_seconds: int
+    embedding_model: str
+    embedding_dimensions: int
+    version: str
+    human_role: str | None = None
+
+
+class TaskSummary(BaseModel):
+    surfaced: bool = Field(
+        default=False,
+        description="Waiting on a person or a verdict for over 24 hours (computed)",
+    )
+    id: uuid.UUID
+    canonical_id: str | None = Field(
+        default=None, description="Opaque canonical address (<type>_<ULID>); never changes"
+    )
+    alias: str | None = Field(default=None, description="Current human-readable alias")
+    task_key: str
+    title: str
+    project: str | None = None
+    repo: str | None = None
+    status: TaskStatus
+    priority: int
+    assigned_role: str | None
+    namespace: str
+    claimed_by: str | None
+    lease_expires_at: datetime | None
+    lease_active: bool
+    handoff_summary: str | None = None
+    artifact_uri: str | None = None
+    human_feedback: str | None = None
+    review_feedback: str | None = None
+    reviewed_by: str | None = None
+    awaiting_deploy: bool | None = Field(
+        default=None, description="true: approved, waiting in HANDOFF for a verified deploy "
+                                  "before DONE (not sent back)")
+    ping_pong_count: int
+    retry_count: int = Field(
+        default=0, description="Alias of ping_pong_count (spec §4.2 retry_count)")
+    max_retries: int
+    version: int
+    lease_epoch: int
+    fencing_token: int | None = Field(
+        default=None, description="Current fencing token while a lease is held"
+    )
+    assignee: str | None = None
+    orphaned_from: str | None = None
+    orphan_count: int = 0
+    tainted: bool = False
+    taint_sources: list[Any] = Field(default_factory=list)
+    kind: str = "work"
+    required_role: str | None = None
+    context_docs_count: int = 0
+    done_definition_preview: str | None = None
+    output_to: dict[str, Any] | None = None
+    continuation: dict[str, Any] | None = None
+    parent_task_key: str | None = None
+    root_task_key: str | None = None
+    lead: str | None = None
+    children_done: bool = False
+    updated_at: datetime
+    updated_stamp: dict[str, Any] | None = None
+
+
+class TaskOut(TaskSummary):
+    description: str | None = None
+    acceptance: list[dict[str, Any]] = Field(default_factory=list)
+    acceptance_locked: bool = False
+    acceptance_state: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="Per acceptance item status: PASS, FAIL or PENDING "
+                    "(latest audit, then the task status)")
+    input_context: dict[str, Any] = Field(default_factory=dict)
+    output_artifact: dict[str, Any] = Field(default_factory=dict)
+    handoff_brief: dict[str, Any] | None = None
+    human_feedback: str | None = None
+    reject_history: list[Any] = Field(default_factory=list)
+    review_round: int = 0
+    review_history: list[Any] = Field(default_factory=list)
+    context_docs: list[Any] = Field(default_factory=list)
+    context_versions_pinned: dict[str, Any] | None = None
+    done_definition: str | None = None
+    required_capabilities: list[str] = Field(default_factory=list)
+    require_continuation: bool = False
+    output_summary: str | None = None
+    rollup: list[Any] = Field(default_factory=list)
+    mentions: list[Any] = Field(default_factory=list)
+    children_summary: dict[str, Any] | None = None
+    created_by: str
+    created_by_label: str | None = None
+    created_at: datetime
+
+
+class TaskListResponse(BaseModel):
+    items: list[TaskSummary]
+
+
+class TaskActionResponse(BaseModel):
+    task: TaskOut
+    escalated: bool = False
+    escalation: dict[str, Any] | None = None
+    effective_status: TaskStatus | None = None
+    reassigned: bool | None = None
+    awaiting_deploy: bool | None = None
+    deploy_evidence: dict[str, Any] | None = None
+    artifact_uri: str | None = None
+    session_batch_id: uuid.UUID
+    status: TaskStatus
+    version: int
+    task_key: str
+
+
+class LeaseOut(BaseModel):
+    lease_id: str
+    fencing_token: int
+    resource_kind: str
+    resource_ref: str
+    holder: str
+    acquired_at: datetime
+    expires_at: datetime
+    ttl_seconds: int
+    heartbeat_interval_s: int
+    last_heartbeat_at: datetime | None = None
+    heartbeat_note: str | None = None
+    progress: float | None = None
+    state: str
+    ended_at: datetime | None = None
+    end_reason: str | None = None
+
+
+class LeaseListResponse(BaseModel):
+    items: list[LeaseOut]
+    next_cursor: str | None = None
+
+
+class LeaseHeartbeatRequest(StrictModel):
+    note: str | None = Field(default=None, max_length=500)
+    progress: float | None = Field(default=None, ge=0, le=1)
+    agent: str | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+
+class LeaseHeartbeatResponse(BaseModel):
+    lease_id: str
+    expires_at: datetime
+    fencing_token: int
+    heartbeat_interval_s: int
+
+
+class LeaseReleaseRequest(StrictModel):
+    reason: str | None = Field(default=None, max_length=2_000)
+    agent: str | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+
+class TransferResponsibilitiesRequest(StrictModel):
+    from_: str = Field(alias="from", min_length=1, max_length=160)
+    to: str = Field(min_length=1, max_length=160)
+    include: list[Literal["assigned_tasks", "maintained_docs", "watermarks", "pending_reviews"]] = (
+        Field(default_factory=lambda: ["assigned_tasks", "maintained_docs", "pending_reviews"])
+    )
+    reason: str | None = Field(default=None, max_length=2_000)
+
+
+class OrphanClaimRequest(StrictModel):
+    task_keys: list[str] = Field(min_length=1, max_length=100)
+    assignee: str | None = Field(
+        default=None, max_length=160,
+        description="agent:<id> or human:<id>; defaults to the caller")
+    reason: str | None = Field(default=None, max_length=2_000)
+
+
+class TransferResponsibilitiesResponse(BaseModel):
+    from_: str = Field(serialization_alias="from")
+    to: str
+    assigned_tasks: list[str] = Field(default_factory=list)
+    maintained_docs: list[str] = Field(default_factory=list)
+    pending_reviews: list[str] = Field(default_factory=list)
+    leases_revoked: list[str] = Field(default_factory=list)
+    watermarks: list[str] = Field(default_factory=list,
+                                  description="Named watermarks copied to the successor")
+    skipped: dict[str, str] = Field(default_factory=dict)
+
+
+class OnboardingUpdate(StrictModel):
+    action: Literal["complete", "skip", "unskip", "dismiss", "reopen"]
+    step: str | None = Field(default=None, max_length=64)
+
+
+class SubscriptionRequest(StrictModel):
+    prefixes: list[str] = Field(
+        default_factory=list, max_length=50,
+        description="namespace/ or namespace/doc_key_prefix; empty means all you can read",
+    )
+    types: list[str] | None = Field(default=None, max_length=50,
+                                    description="Event types, prefix with * (doc.*)")
+    name: str = Field(default="default", min_length=1, max_length=128)
+
+
+class ExportRequest(StrictModel):
+    scope: Literal["tenant", "workspace", "namespace"] = "tenant"
+    scope_ref: str | None = Field(
+        default=None, max_length=256,
+        description="tenant id (tenant scope, default yours) or namespace (namespace scope)",
+    )
+    since_export_id: str | None = Field(
+        default=None, max_length=40, description="Export only what changed since this export"
+    )
+    include_history: bool = True
+    include_subtree: bool = True
+    include: list[Literal["documents", "versions", "doc_edges", "grants", "events",
+                          "audit_log"]] | None = None
+
+
+class BackupRunRequest(StrictModel):
+    type: Literal["full", "incremental"] | None = Field(
+        default=None, description="Omit to follow the schedule (full when due)"
+    )
+    tenant_ids: list[str] | None = Field(
+        default=None, max_length=1_000, description="Only these root tenants (default: all)"
+    )
+
+
+class RestoreRequest(StrictModel):
+    backup_id: str | None = Field(default=None, max_length=40)
+    point_in_time: datetime | None = Field(
+        default=None, description="Restore the newest backup taken at or before this time"
+    )
+    target: Literal["staging", "new_workspace", "in_place"] = "staging"
+    tenant_id: str | None = Field(default=None, max_length=40)
+    confirm: str | None = Field(
+        default=None, max_length=40, description="in_place only: repeat the tenant id"
+    )
+
+
+class ChildTenantCreateRequest(StrictModel):
+    display_name: str = Field(min_length=1, max_length=256)
+    tenant_type: Literal["organization", "personal"] = "organization"
+    alias: str | None = Field(default=None, max_length=64, pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")
+    workspace_name: str | None = Field(default=None, max_length=256)
+    tier: str = Field(default="free", max_length=32)
+
+
+class TenantMoveRequest(StrictModel):
+    new_parent: str = Field(min_length=1, max_length=64)
+    confirmation_id: str | None = Field(default=None, max_length=40)
+
+
+class TenantAttachRequest(StrictModel):
+    parent: str = Field(min_length=1, max_length=64)
+    confirmation_id: str | None = Field(default=None, max_length=40)
+
+
+class TenantPolicyRequest(StrictModel):
+    value: Any = None
+    locked: bool = False
+
+
+class ShareRequest(StrictModel):
+    resource_kind: Literal["document", "namespace", "workspace", "task"]
+    resource_ref: str = Field(min_length=1, max_length=256)
+    grantee: str = Field(min_length=3, max_length=256,
+                         description="node:<id|alias>, human:<id> or agent:<agent_id>")
+    access: Literal["read", "write"] = "read"
+    expires_at: datetime | None = None
+
+
+class AdminAccessRequest(StrictModel):
+    reason: str = Field(min_length=1, max_length=2_000)
+    duration_s: int = Field(default=3_600, ge=1, le=86_400)
+
+
+class NodeDeleteRequest(StrictModel):
+    confirm: str = Field(min_length=1, max_length=64, description="the node's alias")
+    cascade: bool = False
+
+
+class NodeDetachRequest(StrictModel):
+    confirmation_id: str | None = Field(default=None, max_length=40)
+
+
+class TenantQuotaRequest(StrictModel):
+    limit: int | None = Field(default=None, ge=0)
+
+
+class IncidentScopeInputs(StrictModel):
+    time_from: datetime | None = None
+    time_to: datetime | None = None
+    token_ids: list[str] = Field(default_factory=list, max_length=1_000)
+    principal_ids: list[str] = Field(default_factory=list, max_length=1_000)
+    object_ids: list[str] = Field(default_factory=list, max_length=1_000)
+    shard_keys: list[str] = Field(default_factory=list, max_length=1_000)
+    tables: list[str] = Field(default_factory=list, max_length=20)
+    components: list[str] = Field(default_factory=list, max_length=20)
+
+
+class IncidentCreateRequest(StrictModel):
+    title: str = Field(min_length=1, max_length=512)
+    severity: Literal["low", "medium", "high", "critical"]
+    detected_at: datetime | None = None
+    summary: str | None = Field(default=None, max_length=20_000)
+    measures_taken: str | None = Field(default=None, max_length=20_000)
+    recommended_actions: str | None = Field(default=None, max_length=20_000)
+    contact: str | None = Field(default=None, max_length=1_000)
+    owner_admin: str | None = Field(default=None, max_length=256)
+    scope_inputs: IncidentScopeInputs | None = None
+
+
+class IncidentUpdateRequest(StrictModel):
+    title: str | None = Field(default=None, min_length=1, max_length=512)
+    severity: Literal["low", "medium", "high", "critical"] | None = None
+    summary: str | None = Field(default=None, max_length=20_000)
+    measures_taken: str | None = Field(default=None, max_length=20_000)
+    recommended_actions: str | None = Field(default=None, max_length=20_000)
+    contact: str | None = Field(default=None, max_length=1_000)
+    owner_admin: str | None = Field(default=None, max_length=256)
+
+
+class IncidentScopeRequest(StrictModel):
+    scope_inputs: IncidentScopeInputs | None = Field(
+        default=None, description="Omit to reuse the incident's stored inputs"
+    )
+
+
+class IncidentNoticeRequest(StrictModel):
+    dry_run: bool = False
+
+
+class IncidentFollowUpRequest(StrictModel):
+    message: str = Field(min_length=1, max_length=20_000)
+    measures_taken: str | None = Field(default=None, max_length=20_000)
+    recommended_actions: str | None = Field(default=None, max_length=20_000)
+
+
+class SecurityContactsRequest(StrictModel):
+    emails: list[str] = Field(default_factory=list, max_length=10)
+
+
+class TokenNamespaces(StrictModel):
+    read: list[str] | None = Field(default=None, max_length=200)
+    write: list[str] | None = Field(default=None, max_length=200)
+
+
+class AgentProfile(StrictModel):
+    agent_id: str = Field(min_length=3, max_length=40, pattern=r"^[a-z][a-z0-9-]{2,39}$")
+    display_name: str | None = Field(default=None, max_length=64)
+    role: str | None = Field(default=None, max_length=32)
+    capabilities: list[str] = Field(default_factory=list, max_length=20)
+    description: str | None = Field(default=None, max_length=500)
+
+
+class TokenBudget(StrictModel):
+    per_minute_limit: int | None = Field(default=None, ge=1)
+    monthly_token_budget: int | None = Field(default=None, ge=1)
+
+
+class TokenIssueRequest(StrictModel):
+    scopes: list[str] = Field(min_length=1, max_length=20)
+    namespaces: TokenNamespaces | None = None
+    ttl_seconds: int | None = Field(default=None, ge=60)
+    can_issue: bool = False
+    max_descendants: int = Field(default=0, ge=0, le=10_000)
+    probe: bool = Field(
+        default=False, description="A token for trying things out: its own quota, usage "
+        "charged to itself only, cannot issue, lives at most 24 hours by default")
+    budget: TokenBudget | None = None
+    agent: AgentProfile
+    purpose: str = Field(min_length=1, max_length=200)
+    role_scope: Literal["SCOUT", "ANALYST", "AUDITOR", "EXECUTOR"] | None = Field(
+        default=None, description="Defaults to the issuer's role (agents) or the narrowest "
+                                  "role covering the scopes (root, workspace key, humans)"
+    )
+
+
+class TokenRevokeRequest(StrictModel):
+    reason: str = Field(min_length=1, max_length=500)
+    taint_writes_since: datetime | None = None
+    keep_self: bool = Field(
+        default=False,
+        description="Revoke only what this token delegated (every generation below it); "
+                    "the token itself keeps working",
+    )
+
+
+class DelegatedRevokeRequest(StrictModel):
+    reason: str = Field(default="delegation taken back from the console",
+                        min_length=1, max_length=500)
+
+
+class TokenRenewRequest(StrictModel):
+    ttl_seconds: int = Field(ge=60)
+
+
+class AgentIntroduction(StrictModel):
+    """What an agent says about itself on its first handshake."""
+
+    name: str = Field(min_length=1, max_length=64,
+                      description="Who you are, e.g. Claude Code, Grok, Codex")
+    function: str = Field(min_length=1, max_length=64,
+                          description="What you do here, e.g. code, review, deploy, audit")
+    maker: str | None = Field(default=None, max_length=64, description="e.g. Anthropic")
+    model: str | None = Field(default=None, max_length=64)
+    runs_on: str | None = Field(default=None, max_length=64,
+                                description="e.g. a laptop CLI, a cloud session, a bot")
+    note: str | None = Field(default=None, max_length=500)
+
+
+class RunnerHelloRequest(StrictModel):
+    host: dict[str, Any] = Field(
+        description="What this computer can do: os, arch, hostname (kept only as a digest), "
+                    "runner_version, runtimes [{id, version, available, models, usage: "
+                    "{plan, windows: [{name, used_percent, resets_at}]}}], max_concurrency, "
+                    "repos [owner/name], capabilities_report {mcp_pinning, runtime}. "
+                    "Unknown fields and anything that looks like an email or a key are "
+                    "dropped.")
+
+
+class RunnerHeartbeatRequest(StrictModel):
+    running: list[str] | None = Field(default=None, max_length=64,
+                                      description="Task keys running on this host now")
+    runtimes: list[dict[str, Any]] | None = Field(
+        default=None, max_length=8, description="Fresh runtime list, e.g. new quota windows")
+    max_concurrency: int | None = Field(default=None, ge=1, le=64)
+
+
+class PlacementReportRequest(StrictModel):
+    outcome: Literal["finished", "failed"]
+    note: str | None = Field(default=None, max_length=500)
+
+
+class PlacementMoveRequest(StrictModel):
+    host_id: str | None = Field(default=None, max_length=128)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class PlacementWithdrawRequest(StrictModel):
+    note: str | None = Field(default=None, max_length=500)
+
+
+class HostRevokeRequest(StrictModel):
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class AgentRegisterRequest(StrictModel):
+    agent_id: str | None = Field(
+        default=None, min_length=3, max_length=40,
+        description="Default: derived from the token label (lower case); an unnamed token "
+                    "may pass introduction instead and the platform names it")
+    introduction: AgentIntroduction | None = Field(
+        default=None,
+        description="First handshake: say who you are and what you do; the platform derives "
+                    "agent_id ({subject}-{function}), display name and a permanent address")
+    display_name: str | None = Field(default=None, max_length=64,
+                                     description="Default: the token label, case kept")
+    role: str | None = Field(default=None, max_length=32, description="Default: the token role")
+    capabilities: list[str] = Field(default_factory=list, max_length=20)
+    description: str | None = Field(default=None, max_length=500)
+    reach: dict[str, Any] | None = Field(
+        default=None, description="How to poke you: {webhook: bool, note}; the default "
+                                  "subscription id is filled in")
+
+
+class AgentUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    fields: dict[str, Any] = Field(min_length=1)
+    expected_version: int | None = Field(default=None, ge=1)
+    source: Literal["api", "console"] = "api"
+
+
+class AgentStatusRequest(StrictModel):
+    status: Literal["active", "idle"]
+    note: str | None = Field(default=None, max_length=200)
+
+
+class AgentGenerationRequest(StrictModel):
+    display_name: str | None = Field(
+        default=None, max_length=64,
+        description="Optional new human-facing name for this identity")
+
+
+class AgentMergeRequest(StrictModel):
+    target: str = Field(min_length=3, max_length=40)
+    sources: list[str] = Field(min_length=1, max_length=50)
+    dry_run: bool = True
+
+
+class LegacyMergeRequest(StrictModel):
+    legacy: str = Field(min_length=1, max_length=128)
+    agent_id: str = Field(min_length=3, max_length=40)
+
+
+class MemberInviteRequest(StrictModel):
+    email: str = Field(min_length=3, max_length=320)
+    role: Literal["owner", "admin", "member", "guest"]
+    expires_at: datetime | None = Field(
+        default=None, description="Guests default to 30 days; others never expire"
+    )
+
+
+class MemberUpdateRequest(StrictModel):
+    role: Literal["owner", "admin", "member", "guest"]
+    expires_at: datetime | None = None
+
+
+class AcceptInviteRequest(StrictModel):
+    code: str = Field(min_length=10, max_length=128)
+    password: str = Field(min_length=8, max_length=256)
+    display_name: str = Field(min_length=1, max_length=128)
+
+
+class SwitchWorkspaceRequest(StrictModel):
+    workspace_id: uuid.UUID
+
+
+class RightsSubject(StrictModel):
+    principal_ref: str | None = Field(default=None, max_length=128)
+    emails: list[str] = Field(default_factory=list, max_length=20)
+    names: list[str] = Field(default_factory=list, max_length=20)
+    phones: list[str] = Field(default_factory=list, max_length=20)
+    other_identifiers: list[str] = Field(default_factory=list, max_length=20)
+
+
+class RightsRequestCreate(StrictModel):
+    subject: RightsSubject
+    type: Literal["access", "copy", "portability", "correction", "deletion", "explanation"]
+    include_subtree: bool = True
+    scope: Literal["customer", "platform"] = "customer"
+    received_at: datetime | None = None
+    notes: str | None = Field(default=None, max_length=5_000)
+
+
+class RightsExportRequest(StrictModel):
+    items: list[str] | None = Field(default=None, max_length=10_000)
+
+
+class RightsEraseRequest(StrictModel):
+    mode: Literal["pseudonymise", "redact", "delete"]
+    items: list[str] | None = Field(default=None, max_length=10_000)
+
+
+class RightsCloseRequest(StrictModel):
+    outcome: Literal["fulfilled", "rejected", "withdrawn"] = "fulfilled"
+    notes: str | None = Field(default=None, max_length=5_000)
+
+
+class ContinuationTried(StrictModel):
+    approach: str = Field(min_length=1, max_length=1_000)
+    result: Literal["worked", "failed", "partial"]
+    note: str | None = Field(default=None, max_length=2_000)
+
+
+class ContinuationRequest(StrictModel):
+    done: list[str] = Field(default_factory=list, max_length=100)
+    tried: list[ContinuationTried] = Field(default_factory=list, max_length=100)
+    avoid: list[str] = Field(default_factory=list, max_length=100)
+    next_steps: list[str] = Field(default_factory=list, max_length=100)
+    open_questions: list[str] = Field(default_factory=list, max_length=100)
+    artifacts: list[DocRef] = Field(default_factory=list, max_length=50)
+    state: dict[str, Any] = Field(default_factory=dict)
+    handoff: bool = False
+    handoff_to: str | None = Field(default=None, max_length=160)
+    brief: dict[str, Any] | None = Field(
+        default=None, description="handoff=true: the L1 brief (summary etc.)")
+    erratum: str | None = Field(
+        default=None, min_length=1, max_length=2_000,
+        description="After your handoff, while the task is in review: an append-only "
+                    "correction to your brief, shown with it (the pack is not rewritten)")
+
+    @field_validator("state")
+    @classmethod
+    def _state_size(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if _serialized_size(value) > 16_384:
+            raise ValueError("state is larger than 16 KB")
+        return value
+
+
+class SubtasksRequest(StrictModel):
+    tasks: list[TaskCreateRequest] = Field(min_length=1, max_length=20)
+    lead: str | None = Field(default=None, max_length=160)
+
+
+class EscalationCreateRequest(StrictModel):
+    question: str = Field(min_length=1, max_length=2_000)
+    topic: EscalationTopic = Field(default="technical", description=_TOPIC_HELP)
+    options: list[EscalationOption] = Field(default_factory=list, max_length=5)
+    recommended_option: str | None = Field(default=None, max_length=64)
+    context_docs: list[DocRef] = Field(default_factory=list, max_length=20)
+    due_at: datetime | None = None
+    default_on_timeout: str | None = Field(default=None, max_length=64)
+    route_to: str | None = Field(default=None, max_length=160)
+
+
+class EscalationResolveRequest(StrictModel):
+    option_id: str | None = Field(default=None, max_length=64)
+    answer: str | None = Field(default=None, max_length=4_000)
+    note: str | None = Field(default=None, max_length=2_000)
+
+
+class LogEntryIn(StrictModel):
+    body: str = Field(min_length=1, max_length=65_536)
+    frontmatter: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str | None = Field(default=None, max_length=128)
+
+
+class AppendEntriesRequest(StrictModel):
+    namespace: str | None = Field(default=None, max_length=64)
+    entries: list[LogEntryIn] = Field(min_length=1, max_length=25)
+
+
+class AlertAckRequest(StrictModel):
+    note: str | None = Field(default=None, max_length=2_000)
+
+
+class ClearTaintRequest(StrictModel):
+    namespace: str | None = Field(default=None, max_length=64)
+    version: int | None = Field(default=None, ge=1, description="must be the current version")
+    reason: str = Field(min_length=1, max_length=2_000)
+
+
+class RecallRequest(StrictModel):
+    namespace: str | None = Field(default=None, max_length=64)
+    versions: list[int] | Literal["all"] = Field(description="versions to recall, or all")
+    reason: str = Field(min_length=1, max_length=2_000)
+    severity: Literal["warn", "block"] = "warn"
+    max_depth: int = Field(default=5, ge=1, le=10)
+
+
+class RecallDismissRequest(StrictModel):
+    namespace: str = Field(default="default", max_length=64)
+    doc_key: str = Field(min_length=1, max_length=256)
+    version: int = Field(ge=1)
+    note: str | None = Field(default=None, max_length=2_000)
+
+
+class TokenBudgetRequest(StrictModel):
+    writes: int | None = Field(default=None, ge=0)
+    embedding_tokens: int | None = Field(default=None, ge=0)
+    queries: int | None = Field(default=None, ge=0)
+
+
+class TaskContextResponse(BaseModel):
+    task: TaskOut
+    lease: LeaseOut | None = None
+    upstream_briefs: list[dict[str, Any]] = Field(default_factory=list)
+    slots: list[SlotOut] = Field(default_factory=list)
+    documents: list[DocumentSummary] = Field(default_factory=list)
+    context: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="context_docs (continuation first), pinned to versions (AG-CO-02/04)",
+    )
+    session_batch_id: uuid.UUID | None = None
+
+
+class SlotOut(BaseModel):
+    id: uuid.UUID
+    canonical_id: str | None = Field(
+        default=None, description="Opaque canonical address (<type>_<ULID>); never changes"
+    )
+    slot_key: str
+    goal: str | None
+    current_state: dict[str, Any]
+    schema_hint: dict[str, Any]
+    blockers: list[Any]
+    namespace: str
+    version: int
+    lease_epoch: int
+    locked_by: str | None
+    lock_expires_at: datetime | None
+    lease_active: bool
+    locked_by_human: bool
+    human_note: str | None
+    tainted: bool = False
+    taint_sources: list[Any] = Field(default_factory=list)
+    updated_by: str
+    updated_at: datetime
+    updated_stamp: dict[str, Any] | None = None
+
+
+class SlotSummary(BaseModel):
+    id: uuid.UUID
+    canonical_id: str | None = Field(
+        default=None, description="Opaque canonical address (<type>_<ULID>); never changes"
+    )
+    slot_key: str
+    namespace: str
+    version: int
+    lease_epoch: int
+    locked_by: str | None
+    lock_expires_at: datetime | None
+    locked_by_human: bool
+    tainted: bool = False
+    taint_sources: list[Any] = Field(default_factory=list)
+    updated_by: str
+    updated_at: datetime
+
+
+class SlotListResponse(BaseModel):
+    items: list[SlotOut]
+
+
+class SlotMutationResponse(BaseModel):
+    slot: SlotOut
+    applied_ops: list[dict[str, Any]] = Field(default_factory=list)
+    session_batch_id: uuid.UUID
+
+
+class DocumentArchiveRequest(StrictModel):
+    reason: str | None = Field(default=None, max_length=4_000)
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+class DocumentRenameRequest(StrictModel):
+    new_alias: str = Field(min_length=1, max_length=256)
+    expected_version: int | None = Field(default=None, ge=1)
+    session_batch_id: uuid.UUID | None = None
+
+
+class ConstitutionAckRequest(StrictModel):
+    version: int = Field(ge=1)
+
+
+class RegisterPartsRequest(StrictModel):
+    part_refs: list[str] = Field(min_length=1, max_length=100)
+    session_batch_id: uuid.UUID | None = None
+
+
+class DocumentPurgeRequest(StrictModel):
+    reason: str = Field(min_length=1, max_length=4_000)
+    confirm: str = Field(min_length=1, max_length=256, description="The document alias")
+
+
+class TombstoneOut(BaseModel):
+    id: str
+    alias: str
+    type: str
+    last_version: int | None = None
+    last_content_hash: str | None = None
+    purged_by: str
+    purged_at: datetime
+    reason: str | None = None
+
+
+class NamespaceRegisterRequest(StrictModel):
+    namespace: str = Field(min_length=1, max_length=64)
+    purpose: str | None = Field(default=None, max_length=4_000)
+    doc_type_default: Literal["collaborative", "log"] = "collaborative"
+    write_policy: Literal["open", "proposal_required", "human_only"] = "open"
+
+
+class DocumentBatchUpsertItem(DocumentUpsertRequest):
+    doc_key: str = Field(
+        pattern=_KEY_PATTERN + "$", min_length=1, max_length=256
+    )
+
+
+class DocumentBatchUpsertRequest(StrictModel):
+    items: list[DocumentBatchUpsertItem] = Field(min_length=1, max_length=BATCH_UPSERT_MAX)
+    atomic: bool | None = Field(
+        default=None,
+        description="true: all or nothing; false: each item on its own (default under "
+                    "2026-11; all or nothing before)",
+    )
+
+    @model_validator(mode="after")
+    def _payload_cap(self) -> DocumentBatchUpsertRequest:
+        content_bytes = sum(
+            len(item.content.encode("utf-8")) for item in self.items
+        )
+        if content_bytes > 16_000_000:
+            raise ValueError("batch content exceeds the 16,000,000 byte cap")
+        return self
+
+
+class DocumentSummary(BaseModel):
+    id: uuid.UUID
+    canonical_id: str | None = Field(
+        default=None, description="Opaque canonical address (<type>_<ULID>); never changes"
+    )
+    alias: str | None = Field(default=None, description="Current human-readable alias")
+    doc_key: str
+    title: str
+    namespace: str
+    version: int
+    frontmatter: dict[str, Any]
+    verification_status: str
+    trust_level: str
+    verified_version: int | None
+    verified_hash: str | None
+    content_hash: str | None
+    embedding_model: str | None
+    locked_by_human: bool
+    human_note: str | None
+    tainted: bool = False
+    taint_sources: list[Any] = Field(default_factory=list)
+    taint_cleared_by: str | None = None
+    content_origin: str = "internal"
+    recall_severity: str | None = Field(
+        default=None, description="warn | block while an open recall reaches this version")
+    doc_type: str = "collaborative"
+    last_human_edit: dict[str, Any] | None = None
+    tenant_alias: str | None = Field(
+        default=None, description="Owning node, on results that may come from shares")
+    lifecycle: str = Field(default="active",
+                           description="active | superseded | expired | cold (computed)")
+    superseded_by: dict[str, Any] | None = None
+    reviews: list[Any] = Field(default_factory=list,
+                               description="Peer reviews bound to versions (AG-CO-06)")
+    score: float | None = None
+    archived_at: datetime | None = None
+    archived_by: str | None = None
+    archive_reason: str | None = None
+    trust: str | None = Field(
+        default=None, description="TRUSTED | UNTRUSTED (review state is verification_status)"
+    )
+    archived: bool = False
+    updated_by: str
+    updated_by_label: str | None = Field(
+        default=None, description="Stored label when updated_by is a typed ref (2026-11)"
+    )
+    updated_at: datetime
+    updated_stamp: dict[str, Any] | None = None
+    stored: bool = True
+    index_state: str | None = Field(
+        default=None, description="pending | indexed | failed | deferred (AG-ST-13)"
+    )
+    indexed_version: int | None = None
+
+
+class DocumentOut(DocumentSummary):
+    content: str | None
+    untrusted_content: str | None = Field(
+        default=None, description="taint_mode=separate: a tainted body, to treat as data")
+    handling: str | None = None
+    entries: list[dict[str, Any]] | None = Field(
+        default=None, description="log documents: the latest 100 entries")
+    entries_total: int | None = None
+    created_by: str
+    created_by_label: str | None = None
+    created_at: datetime
+    created_stamp: dict[str, Any] | None = None
+    agent_view: str
+
+
+class DocumentListResponse(BaseModel):
+    items: list[dict[str, Any]] = Field(
+        description="Document metadata (DocumentSummary fields, or the requested fields)"
+    )
+    next_cursor: str | None = None
+    namespace: str | None = None
+    count: int = 0
+    total: int = 0
+    order: str | None = Field(default=None, description="doc_key_asc | updated_at_asc")
+    snapshot_count: int | None = Field(
+        default=None, description="Exact count for this filter when the first page was read"
+    )
+    as_of: datetime | None = Field(default=None, description="When the first page was read")
+
+
+class DocumentMutationResponse(BaseModel):
+    document: DocumentOut
+    session_batch_id: uuid.UUID
+    noop: bool = Field(default=False, description="Same content as the current version")
+    content_bytes: int | None = None
+    chunk_count: int | None = None
+    usage: dict[str, Any] | None = Field(
+        default=None, description="embedding_tokens spent by this request, quota_remaining"
+    )
+    read_with: dict[str, Any] | None = Field(
+        default=None,
+        description="How another agent reads this version back: the uri and the flags "
+                    "its default trust filter needs")
+    rebased: bool | None = Field(
+        default=None,
+        description="Section patches: true when a newer version was merged because only "
+                    "other sections had changed (re-read before relying on the rest)")
+
+
+class DocumentBatchUpsertResult(BaseModel):
+    ok: bool = True
+    document: DocumentOut
+    session_batch_id: uuid.UUID
+
+
+class DocumentBatchUpsertResponse(BaseModel):
+    items: list[DocumentBatchUpsertResult]
+    results: list[dict[str, Any]] = Field(
+        default_factory=list, description="One entry per request item, in order (AG-ST-07)")
+    succeeded: int = 0
+    failed: int = 0
+
+
+class DocumentNormalizeResponse(BaseModel):
+    converted: bool
+    document: DocumentOut
+
+
+class MatchedChunk(BaseModel):
+    chunk_index: int
+    heading_path: str | None = None
+    snippet: str
+
+
+class DocumentQueryHit(DocumentSummary):
+    created_by: str | None = None
+    is_own: bool = False
+    matched_chunks: list[MatchedChunk] = Field(default_factory=list)
+
+
+class DocumentQueryResponse(BaseModel):
+    items: list[DocumentQueryHit]
+    total: int
+    next_cursor: str | None = None
+    excluded: dict[str, int] = Field(
+        default_factory=dict,
+        description="Hits hidden by the default filters (unverified_by_others, archived, tainted)",
+    )
+    index_lag: dict[str, int] | None = Field(
+        default=None,
+        description="pending_jobs and oldest_pending_age_ms: recent writes may not be searchable",
+    )
+
+
+class DereferenceBatchKey(StrictModel):
+    namespace: str | None = Field(default=None, max_length=64)
+    doc_key: str = Field(min_length=1, max_length=256)
+    version: int | None = Field(default=None, ge=1)
+
+
+class DereferenceBatchRequest(StrictModel):
+    uris: list[str] = Field(default_factory=list, max_length=BATCH_DEREFERENCE_MAX)
+    keys: list[DereferenceBatchKey] = Field(default_factory=list,
+                                            max_length=BATCH_DEREFERENCE_MAX)
+    fields: list[str] | None = Field(default=None, max_length=50)
+
+    @model_validator(mode="after")
+    def _some(self) -> DereferenceBatchRequest:
+        total = len(self.uris) + len(self.keys)
+        if total == 0:
+            raise ValueError("pass uris or keys")
+        if total > BATCH_DEREFERENCE_MAX:
+            raise ValueError(f"at most {BATCH_DEREFERENCE_MAX} uris and keys together")
+        return self
+    include_unverified: bool = False
+    include_tainted: bool = False
+    taint_mode: Literal["annotate", "separate", "exclude"] = "annotate"
+
+
+class DereferenceBatchItem(BaseModel):
+    uri: str
+    ok: bool
+    document: DocumentOut | None = None
+    error: dict[str, Any] | None = None
+
+
+class DereferenceBatchResponse(BaseModel):
+    items: list[DereferenceBatchItem]
+    results: list[dict[str, Any]] = Field(
+        default_factory=list, description="One entry per uri, then per key, in order")
+
+
+class DereferenceResponse(BaseModel):
+    uri: str
+    document: DocumentOut
+    content_total_bytes: int | None = None
+    content_truncated: bool = False
+    expanded_content: str | None = None
+    parts: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class LinkOut(BaseModel):
+    id: uuid.UUID
+    source_id: uuid.UUID
+    target_id: uuid.UUID
+    source_type: str | None = None
+    target_type: str | None = None
+    relation_type: LinkType
+    confidence: float
+    metadata: dict[str, Any]
+    created_at: datetime
+
+
+class LinkListResponse(BaseModel):
+    items: list[LinkOut]
+
+
+class TimelineItemOut(BaseModel):
+    id: uuid.UUID
+    agent_signature: str
+    platform: str
+    event_type: str
+    payload: dict[str, Any]
+    namespace: str
+    token_cost: int
+    latency_ms: int
+    created_at: datetime
+
+
+class TimelineListResponse(BaseModel):
+    items: list[TimelineItemOut]
+
+
+class WorkspaceOutput(BaseModel):
+    task_key: str
+    title: str
+    status: str
+    assigned_role: str | None = None
+    artifact_uri: str | None = None
+    handoff_summary: str | None = None
+    reviewed_by: str | None = None
+
+
+class WorkspaceMapResponse(BaseModel):
+    workspace: WorkspaceInfo
+    role: str
+    counts: dict[str, int]
+    task_statuses: list[str]
+    roles: list[str]
+    tasks: list[TaskSummary]
+    slots: list[SlotSummary]
+    documents: list[DocumentSummary]
+    outputs: list[WorkspaceOutput] = Field(default_factory=list)
+    artifact_uri_scheme: str = "doc://<doc_key>"
+    namespace_counts: dict[str, dict[str, int]] | list[dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Under 2026-11 a list of {namespace, documents, archived, unverified, "
+        "tainted, last_updated_at} (exact counts)",
+    )
+    incremental: bool = False
+    since: str | None = None
+    next_cursor: str | None = None
+    sync_cursor: str | None = Field(
+        default=None, description="Event cursor (seq) for since= or poll_events(cursor=)"
+    )
+    next_page_cursor: str | None = Field(
+        default=None, description="More documents in the map; pass as page_cursor"
+    )
+    changes: list[dict[str, Any]] | None = Field(
+        default=None,
+        description="since=<event cursor>: each changed document once, latest state, op "
+        "upsert|archive|restore|purge",
+    )
+    timeline: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class QuotaUsage(BaseModel):
+    used: int
+    limit: int
+    percentage: float
+
+
+class WorkspaceStatsResponse(BaseModel):
+    workspace: WorkspaceInfo
+    documents: int
+    slots: int
+    tasks: int
+    agent_tokens: int
+    timeline_events: int
+    audit_entries: int
+    escalated_tasks: int
+    tokens_logged: int
+    avg_latency_ms: float
+    last_activity_at: datetime | None
+    document_quota: QuotaUsage
+    slot_quota: QuotaUsage
+    embedding_provider: str
+    embedding_model: str
+    embedding_dimensions: int
+    pending_proposals: int = 0
+    pending_external_actions: int = 0
+    webhook_rules: int = 0
+    tainted_documents: int = 0
+    tokens_used_30d: int = 0
+    document_namespaces: dict[str, int] = Field(default_factory=dict)
+
+
+class AdminWorkspaceOut(WorkspaceInfo):
+    documents: int
+    slots: int
+    tasks: int
+    timeline_events: int
+    last_activity_at: datetime | None
+    # v3.35: private workspaces show counts only; their content needs the
+    # owner's support access (open until ``support_access_until``).
+    private: bool = True
+    support_access_until: datetime | None = None
+
+
+class WorkspaceCreatedResponse(BaseModel):
+    workspace: WorkspaceInfo
+    api_key: str = Field(description="Shown exactly once; store it securely.")
+    root_key: str | None = Field(
+        default=None,
+        description="The root token's secret, shown once: it only manages tokens "
+                    "(issue, revoke, renew). Keep it with a human, never with an agent.",
+    )
+
+
+class ApiKeyRotatedResponse(BaseModel):
+    workspace: WorkspaceInfo
+    api_key: str = Field(description="Shown exactly once; store it securely.")
+
+
+class AgentTokenOut(BaseModel):
+    id: uuid.UUID
+    canonical_id: str | None = Field(
+        default=None, description="Opaque canonical address (<type>_<ULID>); never changes"
+    )
+    agent_signature: str
+    agent_id: str | None = Field(
+        default=None, description="Stable machine identity shared by token generations")
+    generation: int = 1
+    role_scope: str
+    allowed_namespaces: list[str]
+    is_active: bool
+    created_at: datetime
+    last_seen_at: datetime | None
+    expires_at: datetime | None = None
+    revoked_at: datetime | None = None
+    scope_add: list[str] = Field(default_factory=list)
+    scope_remove: list[str] = Field(default_factory=list)
+    can_issue: bool = False
+    max_descendants: int = 0
+    per_minute_limit: int | None = None
+    monthly_token_budget: int | None = None
+    # Who issued it: a person in the console (depth 1) or an agent delegating
+    # part of its own grant (issue_child_token, depth 2+).
+    issued_by: Literal["human", "agent"] = "human"
+    issued_by_agent: str | None = None
+    depth: int = 1
+    parent_token_id: str | None = None
+    # Tokens issued below this one by agents (every generation), for the console.
+    delegated_active: int = 0
+    delegated_total: int = 0
+
+
+class AgentTokenCreatedResponse(BaseModel):
+    token: AgentTokenOut
+    api_key: str = Field(description="Shown exactly once; store it securely.")
+
+
+class AgentTokenListResponse(BaseModel):
+    items: list[AgentTokenOut]
+    # Counts across the whole workspace, whatever the filter.
+    human_issued: int = 0
+    delegated_active: int = 0
+    delegated_total: int = 0
+    # Keys of computers (they said runner hello), left out of items unless
+    # include_computers: they are managed with their computer.
+    computer_keys: int = 0
+
+
+class AuditDiffOut(BaseModel):
+    id: uuid.UUID
+    session_batch_id: uuid.UUID
+    agent_signature: str
+    actor_auth_kind: str | None = None
+    actor_token_id: uuid.UUID | None = None
+    actor_user_id: uuid.UUID | None = None
+    target_table: str
+    target_record_id: uuid.UUID
+    operation: str
+    before_diff: dict[str, Any]
+    after_diff: dict[str, Any]
+    created_at: datetime
+
+
+class AuditBatchOut(BaseModel):
+    session_batch_id: uuid.UUID
+    agent_signature: str
+    entry_count: int
+    targets: list[str]
+    first_at: datetime
+    last_at: datetime
+
+
+class AuditListResponse(BaseModel):
+    batches: list[AuditBatchOut]
+    diffs: list[AuditDiffOut]
+    total_batches: int = 0
+    next_cursor: str | None = None
+
+
+class BatchUndoResponse(BaseModel):
+    batch_id: uuid.UUID
+    undo_batch_id: uuid.UUID
+    restored: int
+    warnings: list[str] = Field(default_factory=list)
+
+
+class DocumentVerifyRequest(StrictModel):
+    expected_version: int = Field(ge=1)
+    note: str | None = Field(default=None, max_length=4_000)
+    session_batch_id: uuid.UUID | None = None
+    force: bool = False
+
+
+class DocumentStatusRequest(StrictModel):
+    expected_version: int = Field(ge=1)
+    note: str | None = Field(default=None, max_length=4_000)
+    session_batch_id: uuid.UUID | None = None
+    force: bool = False
+
+
+class DocumentVersionSummary(BaseModel):
+    version: int
+    parent_version: int | None
+    content_hash: str
+    author: str
+    session_batch_id: uuid.UUID | None
+    change_summary: str | None
+    verification_status: str
+    trust_level: str
+    tainted: bool = False
+    taint_sources: list[Any] = Field(default_factory=list)
+    created_at: datetime
+    stamp: dict[str, Any] | None = Field(
+        default=None, description="Lineage stamp fixed when this version was written"
+    )
+    redacted: bool = Field(
+        default=False, description="Personal data was redacted from this version (AG-TC-07)"
+    )
+    redaction_hash: str | None = None
+
+
+class DocumentVersionOut(DocumentVersionSummary):
+    id: uuid.UUID
+    document_id: uuid.UUID
+    title: str
+    content: str
+    frontmatter: dict[str, Any]
+    namespace: str
+
+
+class DocumentVersionListResponse(BaseModel):
+    versions: list[DocumentVersionSummary]
+
+
+class ErrorBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    code: str
+    message: str
+    error_class: str | None = Field(
+        default=None,
+        alias="class",
+        description="retry_after | retry_backoff | refresh_and_retry | fix_request | "
+        "reauth | abandon | escalate_human (see docs/ERROR_CODES.md)",
+    )
+    action: str | None = None
+    retryable: bool | None = None
+    retry_after_ms: int | None = None
+    details: Any | None = None
+
+
+class ErrorResponse(BaseModel):
+    error: ErrorBody
+
+
+TaskContextResponse.model_rebuild()
+
+
+# ------------------------------------------------------- v3.2 proposals / arena
+
+
+class ProposalCreateRequest(StrictModel):
+    content: RawText = Field(min_length=1, max_length=settings.max_proposal_content_chars)
+    title: str | None = Field(default=None, max_length=256)
+    frontmatter: dict[str, Any] = Field(default_factory=dict)
+    base_version: int = Field(ge=1)
+    mode: Literal["single", "arena"] = "single"
+    note: str | None = Field(default=None, max_length=4_000)
+    agent: str | None = None
+    session_batch_id: uuid.UUID | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+    @model_validator(mode="after")
+    def _size(self) -> ProposalCreateRequest:
+        if _serialized_size(self.frontmatter) > settings.max_state_bytes:
+            raise ValueError("frontmatter is too large")
+        return self
+
+
+class ProposalVoteRequest(StrictModel):
+    score: int = Field(ge=0, le=5)
+    comment: str | None = Field(default=None, max_length=4_000)
+
+
+class ProposalApplyRequest(StrictModel):
+    expected_document_version: int | None = Field(default=None, ge=1)
+    note: str | None = Field(default=None, max_length=4_000)
+    session_batch_id: uuid.UUID | None = None
+    rebase: bool = True
+
+
+class ProposalRejectRequest(StrictModel):
+    note: str | None = Field(default=None, max_length=4_000)
+
+
+class ProposalVoteOut(BaseModel):
+    voter: str
+    score: int
+    comment: str | None
+    created_at: datetime
+
+
+class ProposalOut(BaseModel):
+    id: uuid.UUID
+    doc_key: str
+    namespace: str = "default"
+    title: str
+    content: str
+    frontmatter: dict[str, Any]
+    base_version: int
+    base_content_hash: str
+    mode: str
+    status: str
+    created_by: str
+    reviewed_by: str | None
+    review_note: str | None
+    applied_version: int | None
+    applied_by: str | None
+    tainted: bool
+    taint_sources: list[Any]
+    conflict_details: dict[str, Any] | None
+    created_at: datetime
+    updated_at: datetime
+    votes: list[ProposalVoteOut] = Field(default_factory=list)
+    vote_score: float = 0
+    vote_count: int = 0
+
+
+class ProposalListResponse(BaseModel):
+    items: list[ProposalOut]
+
+
+class ProposalApplyResponse(BaseModel):
+    proposal: ProposalOut
+    document: DocumentOut
+    rebased: bool = False
+
+
+# ------------------------------------------------------------- v3.2 policies
+
+
+class PolicyCreateRequest(StrictModel):
+    name: str = Field(min_length=1, max_length=128)
+    resource_type: Literal["document", "slot", "task"] = "document"
+    pattern: str = Field(min_length=1, max_length=256)
+    priority: int = Field(default=0, ge=-100, le=100)
+    require_proposal: bool = False
+    allowed_roles: list[RoleName] = Field(default_factory=list)
+    json_schema: dict[str, Any] = Field(default_factory=dict)
+    max_content_bytes: int | None = Field(default=None, ge=1, le=10_000_000)
+    require_verified_sources: bool = False
+    active: bool = True
+
+    @model_validator(mode="after")
+    def _schema_size(self) -> PolicyCreateRequest:
+        if _serialized_size(self.json_schema) > 65_536:
+            raise ValueError("json_schema is too large")
+        return self
+
+
+class PolicyUpdateRequest(StrictModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    priority: int | None = Field(default=None, ge=-100, le=100)
+    require_proposal: bool | None = None
+    allowed_roles: list[RoleName] | None = None
+    json_schema: dict[str, Any] | None = None
+    max_content_bytes: int | None = Field(default=None, ge=1, le=10_000_000)
+    require_verified_sources: bool | None = None
+    active: bool | None = None
+
+
+class PolicyOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    resource_type: str
+    pattern: str
+    priority: int
+    require_proposal: bool
+    allowed_roles: list[str]
+    json_schema: dict[str, Any]
+    max_content_bytes: int | None
+    require_verified_sources: bool
+    active: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class PolicyListResponse(BaseModel):
+    items: list[PolicyOut]
+
+
+# ----------------------------------------------------------- v3.2 human auth
+
+
+class HumanUserCreateRequest(StrictModel):
+    email: str = Field(min_length=3, max_length=320)
+    display_name: str = Field(min_length=1, max_length=128)
+    role: Literal["OWNER", "REVIEWER", "VIEWER"] = "VIEWER"
+    password: str | None = Field(default=None, min_length=8, max_length=256)
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if "@" not in value or value.startswith("@") or value.endswith("@"):
+            raise ValueError("a valid email is required")
+        return value
+
+
+class HumanUserUpdateRequest(StrictModel):
+    display_name: str | None = Field(default=None, min_length=1, max_length=128)
+    role: Literal["OWNER", "REVIEWER", "VIEWER"] | None = None
+    is_active: bool | None = None
+    password: str | None = Field(default=None, min_length=8, max_length=256)
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> HumanUserUpdateRequest:
+        if (
+            self.display_name is None
+            and self.role is None
+            and self.is_active is None
+            and self.password is None
+        ):
+            raise ValueError("at least one user field is required")
+        return self
+
+
+class HumanUserOut(BaseModel):
+    id: uuid.UUID
+    email: str
+    display_name: str
+    role: str
+    is_active: bool
+    created_at: datetime
+    last_login_at: datetime | None
+
+
+class HumanUserCreatedResponse(BaseModel):
+    user: HumanUserOut
+    temporary_password: str
+
+
+class HumanUserListResponse(BaseModel):
+    items: list[HumanUserOut]
+
+
+class HumanLoginRequest(StrictModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=1, max_length=256)
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, value: str) -> str:
+        return value.strip().lower()
+
+
+class HumanRegisterRequest(StrictModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=256)
+    display_name: str = Field(min_length=1, max_length=128)
+    workspace_name: str | None = Field(default=None, min_length=1, max_length=128)
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if "@" not in value or value.startswith("@") or value.endswith("@"):
+            raise ValueError("a valid email is required")
+        return value
+
+
+class GoogleLoginRequest(StrictModel):
+    credential: str = Field(min_length=20, max_length=16_384)
+    display_name: str | None = Field(default=None, max_length=128)
+    workspace_name: str | None = Field(default=None, max_length=128)
+
+
+class GoogleLinkRequest(StrictModel):
+    credential: str = Field(min_length=20, max_length=16_384)
+
+
+class PasswordChangeRequest(StrictModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=8, max_length=256)
+    display_name: str | None = Field(default=None, max_length=128)
+    workspace_name: str | None = Field(default=None, max_length=128)
+
+
+class AuthConfigResponse(BaseModel):
+    signup_enabled: bool
+    google_enabled: bool
+    google_client_id: str | None = None
+
+
+class HumanSessionOut(BaseModel):
+    token: str = Field(description="Shown exactly once; store it securely.")
+    expires_at: datetime
+    user: HumanUserOut
+    workspace: WorkspaceInfo
+
+
+class HumanMeResponse(BaseModel):
+    user: HumanUserOut
+    workspace: WorkspaceInfo
+    role: str
+
+
+# --------------------------------------------------------- v3.2 budget/usage
+
+
+class BudgetUpdateRequest(StrictModel):
+    monthly_token_budget: int = Field(ge=0)
+    monthly_cost_budget_usd: float = Field(ge=0)
+    max_requests_per_minute: int = Field(ge=1, le=1_000_000)
+    max_concurrent_leases: int = Field(ge=1, le=100_000)
+
+
+class BudgetLimitsUpdate(StrictModel):
+    embedding_tokens_per_day: int | None = Field(default=None, ge=0)
+    write_rate_per_minute: int | None = Field(default=None, ge=1, le=100_000)
+    write_burst: int | None = Field(default=None, ge=1, le=100_000)
+    query_rate_per_minute: int | None = Field(default=None, ge=1, le=100_000)
+
+
+class BudgetOut(BaseModel):
+    workspace_id: uuid.UUID
+    monthly_token_budget: int
+    monthly_cost_budget_usd: float
+    max_requests_per_minute: int
+    max_concurrent_leases: int
+    updated_at: datetime
+
+
+class UsageOut(BaseModel):
+    tokens_used: int
+    cost_usd_used: float
+    entries: int
+    tokens_limit: int
+    cost_usd_limit: float
+    requests_limit_per_minute: int
+    max_concurrent_leases: int
+    period_days: int
+
+
+# ----------------------------------------------------------- v3.2 webhooks
+
+
+class WebhookRuleCreateRequest(StrictModel):
+    name: str = Field(min_length=1, max_length=128)
+    url: str = Field(min_length=8, max_length=2_048)
+    secret: str | None = Field(default=None, min_length=16, max_length=256)
+    event_types: list[str] = Field(default_factory=lambda: ["*"], max_length=100)
+    tables: list[str] = Field(default_factory=list, max_length=20)
+    namespaces: list[str] = Field(default_factory=list, max_length=20)
+    active: bool = True
+
+    @field_validator("event_types")
+    @classmethod
+    def _event_types(cls, value: list[str]) -> list[str]:
+        cleaned = [item.strip().upper() for item in value if item.strip()]
+        if not cleaned:
+            raise ValueError("at least one event type is required")
+        return list(dict.fromkeys(cleaned))
+
+class WebhookRuleUpdateRequest(StrictModel):
+    name: str | None = Field(default=None, min_length=1, max_length=128)
+    url: str | None = Field(default=None, min_length=8, max_length=2_048)
+    secret: str | None = Field(default=None, min_length=16, max_length=256)
+    event_types: list[str] | None = None
+    tables: list[str] | None = None
+    namespaces: list[str] | None = None
+    active: bool | None = None
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> WebhookRuleUpdateRequest:
+        if not any(
+            value is not None
+            for value in (
+                self.name,
+                self.url,
+                self.secret,
+                self.event_types,
+                self.tables,
+                self.namespaces,
+                self.active,
+            )
+        ):
+            raise ValueError("at least one rule field is required")
+        return self
+
+
+class WebhookRuleOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    url: str
+    secret_set: bool
+    secret: str | None = Field(
+        default=None, description="Only in the create response, when the server generated it")
+    event_types: list[str]
+    tables: list[str]
+    namespaces: list[str]
+    active: bool
+    last_event_id: int
+    consecutive_failures: int
+    dead_deliveries: int = Field(default=0, description="Deliveries that ended DEAD (last 7 days)")
+    last_error: str | None = None
+    disabled_at: datetime | None = None
+    wake_for: list[str] = Field(default_factory=list,
+                                description="An agent's wake webhook: the refs it wakes")
+    created_at: datetime
+    updated_at: datetime
+
+
+class WebhookRuleListResponse(BaseModel):
+    items: list[WebhookRuleOut]
+
+
+class WebhookDeliveryOut(BaseModel):
+    id: uuid.UUID
+    rule_id: uuid.UUID
+    event_id: int
+    status: str
+    attempts: int
+    response_status: int | None
+    last_error: str | None
+    next_attempt_at: datetime | None
+    created_at: datetime
+    delivered_at: datetime | None
+
+
+class WebhookDeliveryListResponse(BaseModel):
+    items: list[WebhookDeliveryOut]
+
+
+# ----------------------------------------------------- v3.2 external actions
+
+
+class ExternalActionCreateRequest(StrictModel):
+    action_type: str = Field(
+        min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$"
+    )
+    target_url: str = Field(min_length=8, max_length=2_048)
+    method: Literal["POST", "PUT", "PATCH", "DELETE"] = "POST"
+    headers: dict[str, str] = Field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str = Field(min_length=8, max_length=128)
+    compensation_payload: dict[str, Any] | None = None
+    namespace: Namespace = Field(
+        default="default", pattern=_NAMESPACE_PATTERN + "$"
+    )
+    derived_from: list[DocRef] = Field(default_factory=list, max_length=50)
+    session_batch_id: uuid.UUID | None = None
+    agent: str | None = None
+
+    @field_validator("agent")
+    @classmethod
+    def _agent(cls, value: str | None) -> str | None:
+        return _clean_agent(value)
+
+    @model_validator(mode="after")
+    def _size(self) -> ExternalActionCreateRequest:
+        if _serialized_size(self.payload) > settings.max_state_bytes:
+            raise ValueError("payload is too large")
+        if _serialized_size(self.compensation_payload or {}) > settings.max_state_bytes:
+            raise ValueError("compensation_payload is too large")
+        return self
+
+
+class ExternalActionRejectRequest(StrictModel):
+    note: str | None = Field(default=None, max_length=4_000)
+
+
+class ExternalActionCompensateRequest(StrictModel):
+    payload: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def _size(self) -> ExternalActionCompensateRequest:
+        if _serialized_size(self.payload or {}) > settings.max_state_bytes:
+            raise ValueError("compensation payload is too large")
+        return self
+
+
+class ExternalActionOut(BaseModel):
+    id: uuid.UUID
+    action_type: str
+    target_url: str
+    method: str
+    payload: dict[str, Any] | None = None
+    headers: dict[str, str] | None = None
+    idempotency_key: str
+    status: str
+    attempts: int
+    max_attempts: int
+    last_error: str | None
+    response_status: int | None
+    approved_by: str | None
+    approved_at: datetime | None
+    next_attempt_at: datetime | None
+    completed_at: datetime | None
+    compensates_action_id: uuid.UUID | None
+    compensation_payload: dict[str, Any] | None
+    namespace: str
+    session_batch_id: uuid.UUID | None
+    created_by: str
+    created_at: datetime
+    updated_at: datetime
+    requires_human_review: bool = True
+    tainted_inputs: list[Any] = Field(default_factory=list)
+
+
+class ExternalActionListResponse(BaseModel):
+    items: list[ExternalActionOut]
+
+
+# ------------------------------------------------------------- v3.2 taint
+
+
+class DocumentTaintRequest(StrictModel):
+    tainted: bool
+    sources: list[Any] = Field(default_factory=list)
+    note: str | None = Field(default=None, max_length=4_000)
+    expected_version: int | None = Field(default=None, ge=1)
+
+
+# ------------------------------------------------------------- v3.27 Phase 3
+
+
+class DocumentSupersedeRequest(StrictModel):
+    old: DocRef
+    new: DocRef
+    reason: str = Field(default="", max_length=2_000)
+
+
+class WatermarkSetRequest(StrictModel):
+    cursor: str = Field(min_length=1, max_length=200)
+
+
+class PeerReviewRequest(StrictModel):
+    output: DocRef
+    reviewer: str = Field(min_length=3, max_length=160)
+    kind: Literal["review", "red_team", "second_opinion"] = "review"
+    rubric: str = Field(default="", max_length=4_000)
+    independent: bool = True
+    due_at: datetime | None = None
+
+
+class PeerReviewFinding(StrictModel):
+    severity: Literal["info", "minor", "major", "critical"]
+    location: str = Field(default="", max_length=500)
+    note: str = Field(min_length=1, max_length=4_000)
+
+
+class PeerReviewSubmitRequest(StrictModel):
+    verdict: Literal["pass", "pass_with_notes", "fail"]
+    findings: list[PeerReviewFinding] = Field(default_factory=list, max_length=100)
+    summary: str = Field(default="", max_length=2_000)
+
+
+class ResourceDefineRequest(StrictModel):
+    resource_key: str = Field(min_length=1, max_length=128)
+    capacity: int = Field(default=1, ge=1, le=100)
+    description: str | None = Field(default=None, max_length=2_000)
+    max_hold_seconds: int = Field(default=900, ge=1, le=3600)
+
+
+class ResourceAcquireRequest(StrictModel):
+    resource_key: str = Field(min_length=1, max_length=128)
+    ttl_seconds: int = Field(default=300, ge=1, le=3600)
+    wait_seconds: int = Field(default=0, ge=0, le=25)
+    queue: bool = True
+    queue_ticket: str | None = Field(default=None, max_length=40)
+    agent: str | None = None
+
+
+# ------------------------------------------------------------- v3.28 R3.2
+
+
+class RetrievalEvalRequest(StrictModel):
+    dataset: str = Field(default="v1", max_length=64)
+    k: list[int] = Field(default_factory=lambda: [10, 50], min_length=1, max_length=5)
+
+
+class RetrievalGateRequest(StrictModel):
+    baseline: dict[str, Any]
+    result: dict[str, Any]
+    metric: str = Field(default="recall@50", max_length=32)
+    max_drop: float = Field(default=0.03, ge=0, le=1)
+
+
+class AttestationSubject(StrictModel):
+    token_id: str | None = Field(default=None, max_length=40)
+    doc_id: str | None = Field(default=None, max_length=256)
+    version: int | None = Field(default=None, ge=1)
+
+
+class AttestationRequest(StrictModel):
+    subject: AttestationSubject
+    audience: str = Field(min_length=1, max_length=256)
+    ttl_seconds: int = Field(default=900, ge=1, le=900)
+
+
+class ReindexRequest(StrictModel):
+    mode: Literal["repair", "full"] = Field(
+        default="repair",
+        description="repair: only documents whose index is wrong; full: every document",
+    )
+    confirm: str | None = Field(
+        default=None, max_length=16, description="REBUILD, required for mode=full"
+    )
+
+
+class InboxAckRequest(StrictModel):
+    up_to_event_seq: int = Field(ge=0, description="Acknowledge everything up to this seq")
+
+
+# ----------------------------------------------------- quality control 1.0
+
+GateKind = Literal["CI", "TESTS", "ACCEPTANCE", "SPEC_LINT", "CUSTOM"]
+
+
+class AcceptanceUpdateRequest(StrictModel):
+    acceptance: list[AcceptanceItem] = Field(max_length=50)
+    expected_version: int | None = Field(default=None, ge=1)
+
+    @field_validator("acceptance")
+    @classmethod
+    def _acceptance(cls, value: list[AcceptanceItem]) -> list[AcceptanceItem]:
+        return _unique_acceptance(value)
+
+
+class GateResultRequest(StrictModel):
+    task_key: str | None = Field(default=None, max_length=128,
+                                 description="The task (key or canonical id)")
+    task_id: str | None = Field(default=None, max_length=64)
+    claim_id: uuid.UUID | None = None
+    gate_kind: GateKind
+    status: Literal["PASS", "FAIL", "ERROR", "SKIPPED"]
+    source: Literal["RUNNER", "AGENT_CLAIM"] = "AGENT_CLAIM"
+    evidence: dict[str, Any] = Field(
+        default_factory=dict,
+        description="{run_url, commit_sha, summary, counts:{passed,failed}}; ACCEPTANCE "
+                    "also carries items:[{item_id, result}]")
+
+    @model_validator(mode="after")
+    def _one_unit(self) -> GateResultRequest:
+        task = self.task_key or self.task_id
+        if bool(task) == bool(self.claim_id):
+            raise ValueError("name exactly one of task_key / task_id or claim_id")
+        if len(json.dumps(self.evidence, default=str)) > 16_000:
+            raise ValueError("evidence is limited to 16 KB")
+        return self
+
+
+class ChangeClaimRequest(StrictModel):
+    external_ref: str = Field(min_length=1, max_length=2_000)
+    commit_sha: str = Field(min_length=7, max_length=64, pattern=r"^[0-9a-fA-F]+$")
+    related_doc_key: str | None = Field(default=None, max_length=256)
+    related_task_key: str | None = Field(default=None, max_length=128)
+
+
+class ChangeClaimVerifyRequest(StrictModel):
+    verdict: Literal["VERIFIED", "REFUTED"]
+    evidence: dict[str, Any] = Field(default_factory=dict)
+
+
+class SampleVerdictRequest(StrictModel):
+    verdict: Literal["OK", "DEFECT"]
+    root_gate: Literal["CI", "TESTS", "ACCEPTANCE", "AUDIT", "SPEC", "NONE"] | None = None
+    severity: Literal["S1", "S2", "S3"] = "S3"
+    description: str | None = Field(default=None, max_length=8_000)
+
+
+class AutonomyTierRequest(StrictModel):
+    scope_type: Literal["NAMESPACE", "REPO_PATH"]
+    scope_key: str = Field(min_length=1, max_length=512)
+    tier: int = Field(ge=0, le=2)
+
+
+class CircuitCloseRequest(StrictModel):
+    note: str = Field(min_length=1, max_length=2_000)
+
+
+class EscapeCreateRequest(StrictModel):
+    task_key: str | None = Field(default=None, max_length=128)
+    claim_id: uuid.UUID | None = None
+    source: Literal["PROD_INCIDENT", "HUMAN_SAMPLE", "EXTERNAL_REPORT"] = "PROD_INCIDENT"
+    severity: Literal["S1", "S2", "S3"]
+    description: str = Field(min_length=1, max_length=8_000)
+    root_gate: Literal["CI", "TESTS", "ACCEPTANCE", "AUDIT", "SPEC", "NONE"] | None = None
+
+
+class EscapeResolveRequest(StrictModel):
+    status: Literal["FIXED", "WAIVED"]
+    fix_ref: str | None = Field(default=None, max_length=2_000)
+    waive_reason: str | None = Field(default=None, max_length=2_000)
+    root_gate: Literal["CI", "TESTS", "ACCEPTANCE", "AUDIT", "SPEC", "NONE"] | None = None
+
+
+class PoisonTaskRequest(StrictModel):
+    task: TaskCreateRequest
+    defect_description: str = Field(min_length=1, max_length=8_000)
+    expected_gate: Literal["CI", "TESTS", "ACCEPTANCE", "AUDIT", "SPEC"]
+
+
+# ---------------------------------------------------------- v3.34 growth
+
+
+class ProductEventRequest(StrictModel):
+    """Console-side product moments (the upgrade fake door)."""
+
+    name: Literal["upgrade_viewed", "upgrade_intent"]
+    source: str | None = Field(default=None, max_length=32)
+    plan: str | None = Field(default=None, max_length=32)
+
+
+class CliIdentityRequest(StrictModel):
+    """An identity the terminal asks for; the first is its own agent, the rest extras."""
+
+    name: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+    role_scope: Literal["COMMANDER", "SCOUT", "ANALYST", "AUDITOR", "EXECUTOR"] = "EXECUTOR"
+    why: str | None = Field(default=None, max_length=200)
+
+
+class CliSessionCreateRequest(StrictModel):
+    public_key: str = Field(min_length=40, max_length=64,
+                            description="The CLI's X25519 public key, base64 (32 bytes)")
+    client_label: str | None = Field(default=None, max_length=64)
+    clients: list[Literal["claude-code", "cursor", "claude-desktop", "other"]] = Field(
+        default_factory=list, max_length=4)
+    identities: list[CliIdentityRequest] = Field(
+        default_factory=list, max_length=3,
+        description="What `veynod up` asks for: the computer's agent first, then extras "
+                    "such as its -review AUDITOR. One approval mints every ticked one.")
+
+    @field_validator("identities")
+    @classmethod
+    def _distinct_names(cls, value: list[CliIdentityRequest]) -> list[CliIdentityRequest]:
+        names = [item.name.lower() for item in value]
+        if len(names) != len(set(names)):
+            raise ValueError("identity names must differ")
+        return value
+
+
+class CliSessionPollRequest(StrictModel):
+    device_code: str = Field(min_length=20, max_length=128)
+
+
+class CliIdentityApproval(StrictModel):
+    """A ticked extra identity: its place in the terminal's list and the name to give it."""
+
+    index: int = Field(ge=1, le=2)
+    agent_signature: str = Field(min_length=1, max_length=100)
+
+
+class CliSessionApproveRequest(StrictModel):
+    agent_signature: str = Field(default="claude-code", min_length=1, max_length=100)
+    role_scope: RoleName = "EXECUTOR"
+    allowed_namespaces: list[str] = Field(default_factory=lambda: ["*"])
+    also: list[CliIdentityApproval] = Field(
+        default_factory=list, max_length=2,
+        description="The extra identities the terminal asked for that the owner ticked; "
+                    "each keeps the role the terminal asked for.")
+
+    @field_validator("also")
+    @classmethod
+    def _distinct_indexes(cls, value: list[CliIdentityApproval]) -> list[CliIdentityApproval]:
+        if len({item.index for item in value}) != len(value):
+            raise ValueError("each extra identity is ticked once")
+        return value
+
+    @field_validator("allowed_namespaces")
+    @classmethod
+    def _namespaces(cls, value: list[str]) -> list[str]:
+        return _clean_namespaces(value)
+
+
+class SupportAccessRequest(StrictModel):
+    hours: int = Field(default=24, ge=1, le=168)
+    note: str = Field(default="", max_length=500)
+    allow_write: bool = False
+
+
+
+class DiagramPolicyRequest(StrictModel):
+    """A diagram's own rules (v3.66): how far the Loop may go on it."""
+
+    mode: Literal["manual", "semi", "full"] | None = Field(
+        default=None, description="null follows the workspace's automation mode")

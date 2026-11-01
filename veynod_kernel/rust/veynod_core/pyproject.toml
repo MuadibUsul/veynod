@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "veynod_core"
+version = "0.1.0"
+description = "Veynod Kernel Rust core (PyO3 extension)"
+requires-python = ">=3.10"
+
+[tool.maturin]
+module-name = "veynod_core"
+features = ["pyo3/extension-module"]

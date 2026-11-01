@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Veynod Client</title>
+    <link rel="stylesheet" href="theme.css?v=2" />
+    <style>
+      body { padding-top: 28px; }
+      .facts-card { min-height: 100%; }
+      .activity { max-height: 330px; overflow-y: auto; padding-right: 2px; }
+      .activity .line { font-size: 12px; }
+      .tasks { max-height: 330px; overflow-y: auto; padding-right: 2px; }
+      .task-key { font-family: var(--mono); font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="top">
+        <div class="brand">
+          <div class="mark">V</div>
+          <div class="brand-copy">
+            <h1>Veynod Client</h1>
+            <div class="sub">This computer · the board stays the source of truth</div>
+          </div>
+        </div>
+        <div class="row end">
+          <span id="connection" class="pill"><span class="dot"></span> checking…</span>
+          <button id="refresh" class="ghost">Refresh</button>
+          <button id="setup" class="ghost">Setup</button>
+          <button id="inbox" class="ghost" title="Inbox &amp; approvals">Inbox</button>
+          <button id="console" class="primary">Open console</button>
+        </div>
+      </header>
+
+      <div id="page-error" class="error"></div>
+
+      <div class="grid two" style="margin-bottom: 10px">
+        <section class="card facts-card">
+          <div class="section-head"><h2>This computer</h2><span id="facts-state" class="sub"></span></div>
+          <dl id="facts" class="facts"></dl>
+        </section>
+        <section class="card facts-card">
+          <div class="section-head"><h2>Connection</h2><span id="health-state" class="sub"></span></div>
+          <div id="connection-detail"></div>
+        </section>
+      </div>
+
+      <section class="card" style="margin-bottom: 10px">
+        <div class="section-head">
+          <h2>Wake queue <span id="queue-count" class="sub"></span></h2>
+          <span class="sub">Idle sends now · busy waits its turn · urgent checks the lease first</span>
+        </div>
+        <div class="composer">
+          <select id="q-agent" aria-label="Agent"></select>
+          <select id="q-runtime" aria-label="Runtime">
+            <option value="codex">codex</option>
+            <option value="claude">claude</option>
+          </select>
+          <input id="q-cwd" placeholder="Project folder" aria-label="Project folder" />
+          <input id="q-task" placeholder="task_key (optional)" aria-label="Task key" />
+          <input id="q-fencing" placeholder="fencing" aria-label="Fencing token" />
+          <input id="q-prompt" placeholder="Prompt" aria-label="Prompt" />
+          <label class="check"><input id="q-urgent" type="checkbox" /> urgent</label>
+          <button id="q-add" class="primary">Queue wake</button>
+        </div>
+        <div id="queue" class="stack" style="margin-top: 10px"></div>
+      </section>
+
+      <div class="grid two">
+        <section class="card">
+          <div class="section-head"><h2>Open tasks <span id="tasks-count" class="sub"></span></h2><span class="sub">read-only</span></div>
+          <div id="tasks" class="tasks"></div>
+        </section>
+        <section class="card">
+          <div class="section-head"><h2>Activity <span class="sub">receipts &amp; guard decisions</span></h2></div>
+          <div id="activity" class="activity"></div>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+      const $ = (id) => document.getElementById(id);
+      const esc = (value) => String(value ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+      const when = (value) => { try { return new Date(value).toLocaleString(); } catch { return String(value || ""); } };
+      const stateClass = (state) => ["started", "delivered", "queued"].includes(state) ? "good" : ["pending", "accepted"].includes(state) ? "warn" : ["fallback", "refused"].includes(state) ? "bad" : "";
+      let settings = null;
+
+      async function loadSettings() {
+        try {
+          settings = await invoke("local_settings");
+          $("q-agent").innerHTML = (settings.agents || []).map((agent) => `<option value="${esc(agent)}">${esc(agent)}</option>`).join("");
+          if (settings.runtime) $("q-runtime").value = settings.runtime;
+          if (settings.cwd) $("q-cwd").value = settings.cwd;
+          const osName = settings.os === "windows" ? "Windows" : settings.os === "macos" ? "macOS" : (settings.os || "?");
+          const arch = settings.arch === "x86_64" ? "x64" : settings.arch === "aarch64" ? "ARM64" : (settings.arch || "?");
+          const facts = [
+            ["System", `${osName} · ${arch}`],
+            ["Client", `v${settings.version || "?"}`],
+            ["Server", settings.host || "https://veynod.com"],
+            ["Runtime", settings.runtime || "not set"],
+            ["Project", settings.cwd || "not set"],
+            ["Auto-wake", settings.auto_wake === false ? "off" : "on"],
+            ["Agents", (settings.agents || []).length ? settings.agents.join(", ") : "none"],
+          ];
+          $("facts").innerHTML = facts.map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value)}</dd>`).join("");
+        } catch (error) {
+          $("page-error").textContent = String(error);
+        }
+      }
+
+      async function loadConnection() {
+        try {
+          const health = await invoke("server_health");
+          $("health-state").textContent = health.version ? `v${health.version}` : "";
+          $("connection").className = "pill ok";
+          $("connection").innerHTML = `<span class="dot"></span> Gateway ${health.version ? "v" + esc(health.version) : "online"}`;
+          $("connection-detail").innerHTML = [
+            ["Gateway", health.status || "ok"],
+            ["Version", health.version || "unknown"],
+            ["Last backup", health.last_backup_at ? when(health.last_backup_at) : "not reported"],
+            ["Restore drill", health.last_restore_drill_at ? when(health.last_restore_drill_at) : "not reported"],
+          ].map(([key, value]) => `<div class="line"><div class="line-main">${esc(key)}</div><span class="line-meta">${esc(value)}</span></div>`).join("");
+        } catch (error) {
+          $("health-state").textContent = "";
+          $("connection").className = "pill bad";
+          $("connection").innerHTML = '<span class="dot"></span> Gateway unreachable';
+          $("connection-detail").innerHTML = `<div class="error">${esc(error)}</div>`;
+        }
+      }
+
+      async function loadStatus() {
+        try {
+          const data = await invoke("local_status");
+          if (!data.configured) {
+            $("tasks").innerHTML = '<div class="empty">No agent key on this computer yet. Open Setup from the tray.</div>';
+            $("tasks-count").textContent = "";
+            return;
+          }
+          const tasks = (data.tasks.items || []).filter((task) => !["DONE", "FAILED", "CANCELLED"].includes(task.status));
+          $("tasks-count").textContent = tasks.length ? `· ${tasks.length}` : "";
+          $("tasks").innerHTML = tasks.length
+            ? tasks.slice(0, 40).map((task) => `
+              <div class="line">
+                <div class="line-main">
+                  <strong class="task-key">${esc(task.task_key)}</strong>
+                  <span class="tag ${task.status === "REVIEWING" ? "warn" : task.status === "IN_PROGRESS" ? "good" : ""}">${esc(task.status)}</span>
+                  <div class="line-meta">${esc((task.title || "").slice(0, 120))}${task.assignee ? " · " + esc(task.assignee) : ""}${task.claimed_by ? " · " + esc(task.claimed_by) : ""}</div>
+                </div>
+                ${task.lease_active ? '<span class="line-meta">lease</span>' : ""}
+              </div>`).join("")
+            : '<div class="empty">No open tasks.</div>';
+        } catch (error) {
+          $("tasks").innerHTML = `<div class="error">${esc(error)}</div>`;
+        }
+      }
+
+      async function loadQueue() {
+        try {
+          const data = await invoke("wake_queue");
+          const active = (data.items || []).filter((item) => !["delivered", "started"].includes(item.state));
+          $("queue-count").textContent = active.length ? `· ${active.length} waiting` : "";
+          const rows = (data.items || []).slice(-20).map((item) => `
+            <div class="line">
+              <div class="line-main">
+                <strong class="task-key">${esc(item.task_key || item.input_id)}</strong>
+                <span class="tag ${stateClass(item.state)}">${esc(item.state)}</span>
+                <span class="line-meta">${esc(item.runtime)} · ${esc(item.landed || "not delivered")}${item.fallback_task ? " · fallback " + esc(item.fallback_task) : ""}</span>
+                ${item.error ? `<div class="error">${esc(item.error)}</div>` : ""}
+              </div>
+              <span class="line-meta">${esc(when(item.started_at || item.delivered_at || item.created_at))}</span>
+            </div>`).join("");
+          $("queue").innerHTML = rows || '<div class="empty">The queue is empty. A wake is a prompt with a task key and an idempotency key.</div>';
+
+          const receipts = (data.receipts || []).slice(-12).map((item) => `
+            <div class="line">
+              <div class="line-main"><span class="tag ${item.stage === "started" ? "good" : item.failed || item.stage === "refused" ? "bad" : ""}">${esc(item.stage || "event")}</span>
+                <span class="line-meta">${esc(item.task_key || item.input_id || "")}${item.landed ? " · " + esc(item.landed) : ""}${item.error ? " · " + esc(item.error) : ""}</span></div>
+              <span class="line-meta">${esc(when(item.at))}</span>
+            </div>`).join("");
+          const audit = (data.audit || []).slice(-8).map((item) => `
+            <div class="line">
+              <div class="line-main"><span class="tag ${item.decision === "allowed" ? "good" : "bad"}">${esc(item.decision || item.kind || "audit")}</span>
+                <span class="line-meta">${esc(item.kind || "")}${item.task_key ? " · " + esc(item.task_key) : ""}${item.snapshot?.fencing_token != null ? " · fence " + esc(item.snapshot.fencing_token) : ""}</span></div>
+              <span class="line-meta">${esc(when(item.at))}</span>
+            </div>`).join("");
+          $("activity").innerHTML = (receipts + audit) || '<div class="empty">No wake activity yet.</div>';
+        } catch (error) {
+          $("activity").innerHTML = `<div class="error">${esc(error)}</div>`;
+        }
+      }
+
+      $("q-add").addEventListener("click", async () => {
+        const cwd = $("q-cwd").value.trim();
+        if (!cwd) { $("q-cwd").focus(); return; }
+        try {
+          const fencing = $("q-fencing").value.trim();
+          await invoke("wake_enqueue", {
+            runtime: $("q-runtime").value,
+            cwd,
+            taskKey: $("q-task").value.trim() || null,
+            urgent: $("q-urgent").checked,
+            agent: $("q-agent").value || null,
+            expectedFencingToken: fencing ? Number(fencing) : null,
+            prompt: $("q-prompt").value.trim() || null,
+          });
+          $("q-prompt").value = "";
+          loadQueue();
+        } catch (error) {
+          $("activity").innerHTML = `<div class="error">${esc(error)}</div>`;
+        }
+      });
+
+      $("refresh").addEventListener("click", () => { loadSettings(); loadConnection(); loadStatus(); loadQueue(); });
+      $("setup").addEventListener("click", () => invoke("open_setup"));
+      $("inbox").addEventListener("click", () => invoke("open_inbox"));
+      $("console").addEventListener("click", () => invoke("open_dashboard"));
+      loadSettings();
+      loadConnection();
+      loadStatus();
+      loadQueue();
+    </script>
+  </body>
+</html>

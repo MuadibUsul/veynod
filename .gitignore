@@ -1,0 +1,61 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+credentials.json
+
+# Runtime / benchmark artifacts
+.run/
+**/.run/
+backups/
+**/backups/
+*.log
+*.dump
+*.tar
+*.tar.gz
+seo-*.tar
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+**/.pytest_cache/
+.ruff_cache/
+**/.ruff_cache/
+.hypothesis/
+**/.hypothesis/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+*.tsbuildinfo
+
+# Node / Next
+node_modules/
+**/node_modules/
+.next/
+**/.next/
+out/
+**/dashboard/out/
+**/out/
+
+# Rust
+target/
+**/target/
+
+# Local databases
+pgdata/
+**/pgdata/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp

@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>Veynod · Setup</title>
+    <link rel="stylesheet" href="theme.css?v=2" />
+    <style>
+      body { padding-top: 32px; }
+      .setup { max-width: 860px; margin: 0 auto; }
+      .runtimes { margin-top: 10px; }
+      .runtime-detail { margin-top: 10px; }
+      .runtime-detail .line { font-size: 13px; }
+    </style>
+  </head>
+  <body>
+    <div class="shell setup">
+      <header class="top">
+        <div class="brand">
+          <div class="mark">V</div>
+          <div class="brand-copy">
+            <h1>Set up Veynod</h1>
+            <div class="sub">One client on this computer. The console stays the source of truth.</div>
+          </div>
+        </div>
+        <div class="row end">
+          <span id="system" class="pill">Checking this computer…</span>
+        </div>
+      </header>
+
+      <div class="stack">
+        <section class="card">
+          <div class="step-head">
+            <div class="step">
+              <div class="step-no">1</div>
+              <div class="step-copy">
+                <h2>Check the local runtimes</h2>
+                <p class="sub">Veynod looks for Claude Code and Codex through OAR. This only checks what is installed; it changes nothing.</p>
+              </div>
+            </div>
+            <button id="check" class="ghost">Check</button>
+          </div>
+          <ul id="runtimes" class="list runtimes"></ul>
+          <div id="env-error" class="error"></div>
+        </section>
+
+        <section class="card">
+          <div class="step-head">
+            <div class="step">
+              <div class="step-no">2</div>
+              <div class="step-copy">
+                <h2>Choose a runtime and a project</h2>
+                <p class="sub">Read the runtime's plan and models, then prove a wake reaches it. Nothing is sent to the agent until you queue a wake.</p>
+              </div>
+            </div>
+            <button id="describe" class="ghost" disabled>Read quota</button>
+          </div>
+          <div class="row">
+            <select id="runtime" aria-label="Runtime"><option value="">Checking runtimes…</option></select>
+            <input id="cwd" placeholder="Project folder, e.g. C:\work\project" style="flex: 1; min-width: 240px" />
+            <label class="check"><input id="auto-wake" type="checkbox" checked /> 任务指派后自动唤起</label>
+            <button id="wake" class="primary" disabled>Test wake</button>
+          </div>
+          <div id="runtime-details" class="runtime-detail"></div>
+          <div id="wake-result" class="note" style="margin-top: 9px"></div>
+          <div id="runtime-error" class="error"></div>
+        </section>
+
+        <section class="card">
+          <div class="step-head">
+            <div class="step">
+              <div class="step-no">3</div>
+              <div class="step-copy">
+                <h2>Connect this computer to Veynod</h2>
+                <p class="sub">Paste an agent key from the Veynod console. It is stored only on this computer, under your user profile.</p>
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <input id="key" type="password" autocomplete="off" placeholder="agt_…" style="flex: 1; min-width: 260px" />
+            <button id="connect" class="primary" disabled>Test and connect</button>
+          </div>
+          <div class="row" style="margin-top: 9px">
+            <span class="sub">Server</span>
+            <input id="host" value="https://veynod.com" style="width: 260px" />
+            <span class="sub">Change only for a staging or local console.</span>
+          </div>
+          <div id="agent-state" class="note" style="margin-top: 9px"></div>
+          <div id="connect-error" class="error"></div>
+        </section>
+
+        <section class="card">
+          <div class="step-head">
+            <div class="step">
+              <div class="step-no">4</div>
+              <div class="step-copy">
+                <h2>Start working</h2>
+                <p class="sub">The console opens in this window. Closing it keeps Veynod in the tray; the client home shows the wake queue and this computer's state.</p>
+              </div>
+            </div>
+            <div class="row end">
+              <button id="inbox" class="ghost">Inbox &amp; approvals</button>
+              <button id="open" class="primary">Open the console</button>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+      const $ = (id) => document.getElementById(id);
+      const settingsMode = new URLSearchParams(location.search).has("settings");
+      let saved = null;
+
+      function showError(id, message) { $(id).textContent = message || ""; }
+      function text(value) { return String(value ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch])); }
+
+      async function persistSettings() {
+        if (!invoke) return;
+        const cwd = $("cwd").value.trim();
+        const runtime = $("runtime").value;
+        try {
+          await invoke("save_local_settings", {
+            runtime: runtime || null,
+            cwd: cwd || null,
+            autoWake: $("auto-wake").checked,
+            host: $("host").value.trim() || null,
+          });
+        } catch (error) {
+          showError("runtime-error", String(error));
+        }
+      }
+
+      async function boot() {
+        if (!invoke) {
+          showError("connect-error", "This page must run inside the Veynod desktop app.");
+          return;
+        }
+        try {
+          const info = await invoke("client_info");
+          const osName = info.os === "windows" ? "Windows" : info.os === "macos" ? "macOS" : info.os;
+          const arch = info.arch === "x86_64" ? "x64" : info.arch === "aarch64" ? "ARM64" : info.arch;
+          $("system").textContent = `${osName} · ${arch} · v${info.version}`;
+          const settings = await invoke("local_settings");
+          saved = settings;
+          $("cwd").value = settings.cwd || "";
+          $("auto-wake").checked = settings.auto_wake !== false;
+          $("host").value = settings.host || "https://veynod.com";
+          const state = await invoke("setup_state");
+          if (state.configured && !settingsMode) {
+            await invoke("open_dashboard");
+          } else {
+            $("check").click();
+          }
+        } catch (error) {
+          showError("env-error", String(error));
+        }
+      }
+
+      $("check").addEventListener("click", async () => {
+        showError("env-error", "");
+        $("runtimes").innerHTML = "";
+        $("system").className = "pill";
+        $("system").textContent = "Checking runtimes…";
+        try {
+          const items = await invoke("local_runtimes");
+          $("runtimes").innerHTML = items.length
+            ? items.map((item) => `
+              <li>
+                <span><span class="${item.available ? "ok" : "bad"}">${item.available ? "●" : "○"}</span> <strong>${text(item.id)}</strong></span>
+                <span class="line-meta">${text(item.available ? [item.command || item.via, item.version].filter(Boolean).join(" · ") : (item.reason || item.kind || "not found").replaceAll("_", " "))}</span>
+              </li>`).join("")
+            : '<li><span>No supported runtime found</span></li>';
+          const select = $("runtime");
+          select.innerHTML = items.filter((item) => item.available)
+            .map((item) => `<option value="${text(item.id)}">${text(item.id)}</option>`).join("")
+            || '<option value="">No runtime found</option>';
+          if (saved && saved.runtime && [...select.options].some((option) => option.value === saved.runtime)) {
+            select.value = saved.runtime;
+          }
+          $("describe").disabled = select.options.length === 0;
+          $("wake").disabled = select.options.length === 0 || !$("cwd").value.trim();
+          $("system").className = "pill ok";
+          $("system").textContent = `${items.filter((item) => item.available).length} runtime(s) ready`;
+          $("key").focus();
+        } catch (error) {
+          $("system").className = "pill bad";
+          $("system").textContent = "Runtime check failed";
+          showError("env-error", String(error));
+        }
+      });
+
+      $("describe").addEventListener("click", async () => {
+        const runtime = $("runtime").value;
+        if (!runtime) return;
+        showError("runtime-error", "");
+        $("runtime-details").innerHTML = '<div class="line"><span class="line-meta">reading quota…</span></div>';
+        try {
+          const value = await invoke("describe_runtime", { runtime });
+          if (!value.ok) {
+            showError("runtime-error", value.reason || value.kind || "runtime unavailable");
+            $("runtime-details").innerHTML = "";
+            return;
+          }
+          const rows = [];
+          if (value.usage) {
+            rows.push(`<div class="line"><div class="line-main"><strong>${text(runtime)}</strong><div class="line-meta">plan ${text(value.usage.plan || "unknown")}${value.usage.rate_limited ? " · currently rate limited" : ""}</div></div></div>`);
+            for (const window of value.usage.windows || []) {
+              const left = Math.max(0, Math.round((1 - Number(window.used_ratio || 0)) * 100));
+              rows.push(`<div class="line"><div class="line-main">${text(window.label)}</div><span class="line-meta">${left}% left${window.resets_at ? " · resets " + new Date(window.resets_at).toLocaleString() : ""}</span></div>`);
+            }
+          }
+          if (value.models && value.models.length) {
+            rows.push(`<div class="line"><div class="line-main">Models</div><span class="line-meta">${text(value.models.map((item) => item.display_name).join(", "))}</span></div>`);
+          }
+          $("runtime-details").innerHTML = rows.join("") || '<div class="empty">No quota information returned.</div>';
+        } catch (error) {
+          $("runtime-details").innerHTML = "";
+          showError("runtime-error", String(error));
+        }
+      });
+
+      $("cwd").addEventListener("input", () => {
+        $("wake").disabled = !$("cwd").value.trim() || !$("runtime").value;
+      });
+      $("runtime").addEventListener("change", () => {
+        $("wake").disabled = !$("cwd").value.trim();
+        persistSettings();
+      });
+      $("cwd").addEventListener("change", persistSettings);
+      $("auto-wake").addEventListener("change", persistSettings);
+      $("host").addEventListener("change", persistSettings);
+
+      $("wake").addEventListener("click", async () => {
+        const runtime = $("runtime").value;
+        const cwd = $("cwd").value.trim();
+        if (!runtime || !cwd) return;
+        showError("runtime-error", "");
+        $("wake-result").textContent = "waking…";
+        try {
+          const value = await invoke("test_wake", { runtime, cwd });
+          $("wake-result").textContent = value.ok
+            ? `Delivered: ${value.landed} · session ${value.status || "unknown"}`
+            : `Not delivered: ${value.reason || "unknown"}`;
+          if (value.ok) await persistSettings();
+        } catch (error) {
+          $("wake-result").textContent = "";
+          showError("runtime-error", String(error));
+        }
+      });
+
+      $("key").addEventListener("input", () => {
+        $("connect").disabled = $("key").value.trim().length === 0;
+      });
+
+      $("connect").addEventListener("click", async () => {
+        showError("connect-error", "");
+        $("connect").disabled = true;
+        $("agent-state").textContent = "checking the key…";
+        const host = $("host").value.trim() || "https://veynod.com";
+        try {
+          const me = await invoke("test_agent", { key: $("key").value.trim(), host });
+          await invoke("save_agent", { key: $("key").value.trim(), host });
+          await persistSettings();
+          $("agent-state").textContent = `Connected as ${me.agent_id || me.agent_signature || "agent"}`;
+          $("key").value = "";
+          setTimeout(async () => {
+            await invoke("open_dashboard");
+            if (settingsMode) setTimeout(() => window.close(), 500);
+          }, 600);
+        } catch (error) {
+          $("agent-state").textContent = "";
+          showError("connect-error", String(error));
+          $("connect").disabled = false;
+        }
+      });
+
+      $("open").addEventListener("click", () => invoke && invoke("open_dashboard"));
+      $("inbox").addEventListener("click", () => invoke && invoke("open_inbox"));
+      boot();
+    </script>
+  </body>
+</html>

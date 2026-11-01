@@ -1,0 +1,746 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>AgentGraph — service descriptor</title>
+<style>
+  :root {
+    --page: #05070b;
+    --text: #eef2f8;
+    --muted: #8796aa;
+    --faint: #718198;
+    --string: #dce6f6;
+    --key: #94a6c0;
+    --num: #c3cee0;
+    --accent: #c7d2fe;
+    --accent-strong: #f0f4ff;
+    --mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: var(--page); }
+  body {
+    min-width: 320px;
+    min-height: 100svh;
+    overflow: hidden;
+    color: var(--text);
+    font-family: var(--mono);
+    background: var(--page);
+  }
+
+  #flow {
+    position: fixed;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    opacity: .96;
+    pointer-events: none;
+    filter: blur(.25px) saturate(1.12) brightness(1.08);
+    -webkit-mask-image: radial-gradient(ellipse 58% 52% at 39% 54%, rgba(0,0,0,.68), #000 78%);
+    mask-image: radial-gradient(ellipse 58% 52% at 39% 54%, rgba(0,0,0,.68), #000 78%);
+  }
+
+  .frost {
+    position: fixed;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse 72% 66% at 46% 47%, transparent 24%, rgba(4,6,10,.28) 66%, rgba(4,6,10,.64) 100%),
+      linear-gradient(180deg, rgba(4,6,10,.18), rgba(4,6,10,.44));
+    -webkit-backdrop-filter: blur(1.6px) saturate(110%);
+    backdrop-filter: blur(1.6px) saturate(110%);
+  }
+  .frost::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(118deg, rgba(199,210,254,.035) 0%, transparent 27%, transparent 65%, rgba(103,232,249,.018) 100%);
+    mix-blend-mode: screen;
+  }
+  .frost::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    opacity: .035;
+    mix-blend-mode: screen;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.72' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E");
+  }
+
+  .brand {
+    position: absolute;
+    left: 4.5vw;
+    top: 4.5vh;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    opacity: .82;
+    user-select: none;
+  }
+  .brand-mark { display: block; width: 14px; height: 14px; flex: none; }
+  .brand-name {
+    color: #e4ebf7;
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: .01em;
+  }
+
+  .meta {
+    position: absolute;
+    right: 4.5vw;
+    top: 4.5vh;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 7px;
+    text-align: right;
+    opacity: .78;
+    user-select: none;
+  }
+  .meta-label {
+    color: var(--faint);
+    font-size: 8.5px;
+    letter-spacing: .18em;
+    text-transform: uppercase;
+  }
+  .meta-version {
+    color: #a8b4c5;
+    font-size: 10px;
+    letter-spacing: .08em;
+  }
+
+  .descriptor {
+    position: absolute;
+    left: 19.1vw;
+    top: 38.2vh;
+    width: 61.8vw;
+    z-index: 2;
+    isolation: isolate;
+    font-size: 17px;
+    --line: 33.15px;
+  }
+  .descriptor::before {
+    content: "";
+    position: absolute;
+    inset: -8vh -7vw -8vh -7vw;
+    z-index: -1;
+    pointer-events: none;
+    background: radial-gradient(ellipse at 34% 50%, rgba(9,12,20,.62) 0%, rgba(9,12,20,.34) 45%, transparent 74%);
+    -webkit-backdrop-filter: blur(9px) saturate(110%);
+    backdrop-filter: blur(9px) saturate(110%);
+    -webkit-mask-image: radial-gradient(ellipse at 38% 50%, #000 0 40%, transparent 76%);
+    mask-image: radial-gradient(ellipse at 38% 50%, #000 0 40%, transparent 76%);
+  }
+  .json {
+    margin: 0;
+    color: var(--string);
+    font: inherit;
+    font-size: 17px;
+    line-height: 1.95;
+    letter-spacing: -.012em;
+    white-space: pre;
+    tab-size: 2;
+    text-shadow: 0 2px 24px rgba(0,0,0,.72);
+  }
+  .tok-key { color: var(--key); }
+  .tok-str { color: var(--string); }
+  .tok-num, .tok-bool { color: var(--num); }
+  .entry-key { color: var(--accent); }
+  .entry {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--accent-strong);
+    text-decoration: none;
+    outline-offset: 5px;
+    text-shadow: 0 0 24px rgba(129,140,248,.38);
+    transition: color 140ms ease, text-shadow 140ms ease;
+  }
+  .entry .tok-str {
+    color: inherit;
+    padding: 0 4px 2px;
+    margin: 0 -4px;
+    border-bottom: 2px solid rgba(199,210,254,.82);
+    background: linear-gradient(180deg, transparent 44%, rgba(99,102,241,.24) 44%);
+    transition: border-color 140ms ease, background 140ms ease;
+  }
+  .entry-arrow { font-size: 17px; transform: translateY(-1px); }
+  .entry:hover { color: #ffffff; text-shadow: 0 0 30px rgba(165,180,252,.55); }
+  .entry:hover .tok-str {
+    border-color: #ffffff;
+    background: linear-gradient(180deg, transparent 36%, rgba(129,140,248,.36) 36%);
+  }
+  .entry:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 5px;
+    border-radius: 2px;
+  }
+
+  .foot {
+    position: absolute;
+    bottom: 4.5vh;
+    z-index: 2;
+    color: var(--faint);
+    font-size: 8.5px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    opacity: .78;
+    user-select: none;
+  }
+  .foot-left { left: 4.5vw; }
+  .foot-right { right: 4.5vw; }
+
+  @media (max-width: 800px) {
+    body { overflow: auto; }
+    #flow { opacity: .74; filter: blur(.7px) saturate(1.04); }
+    .frost { -webkit-backdrop-filter: blur(1.2px); backdrop-filter: blur(1.2px); }
+    .brand { left: 24px; top: 22px; }
+    .meta { right: 24px; top: 21px; gap: 5px; }
+    .descriptor {
+      left: 24px;
+      top: 22vh;
+      width: calc(100% - 48px);
+      font-size: 13px;
+      --line: 26px;
+    }
+    .json { font-size: 13px; line-height: 2; }
+    .entry-arrow { font-size: 13px; }
+    .foot { bottom: 24px; }
+    .foot-left { left: 24px; }
+    .foot-right { right: 24px; }
+  }
+  @media (max-width: 390px) {
+    .brand { left: 18px; top: 18px; }
+    .brand-name { font-size: 11px; }
+    .meta { right: 18px; top: 18px; }
+    .meta-label { display: none; }
+    .descriptor {
+      left: 18px;
+      top: 20vh;
+      width: calc(100% - 36px);
+      font-size: 11.5px;
+      --line: 23px;
+    }
+    .json { font-size: 11.5px; line-height: 2; }
+    .entry-arrow { font-size: 11.5px; }
+    .foot { bottom: 18px; font-size: 7.5px; letter-spacing: .1em; }
+    .foot-left { left: 18px; }
+    .foot-right { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #flow { opacity: .55; }
+    .entry { transition: none !important; }
+  }
+</style>
+</head>
+<body>
+  <canvas id="flow" aria-hidden="true"></canvas>
+  <div class="frost" aria-hidden="true"></div>
+
+  <div class="brand" aria-label="AgentGraph">
+    <svg class="brand-mark" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M3.2 12.2 8 3.2l4.8 9" stroke="#a5b4fc" stroke-opacity=".52" stroke-width="1"/>
+      <circle cx="3.2" cy="12.2" r="1.45" fill="#a5b4fc"/>
+      <circle cx="8" cy="3.2" r="1.45" fill="#a5b4fc"/>
+      <circle cx="12.8" cy="12.2" r="1.45" fill="#a5b4fc"/>
+    </svg>
+    <span class="brand-name">AgentGraph</span>
+  </div>
+
+  <div class="meta" aria-label="Service descriptor version 3.2.1">
+    <span class="meta-label">Service descriptor</span>
+    <span class="meta-version">v3.2.1</span>
+  </div>
+
+  <div class="descriptor">
+    <pre class="json" aria-label="AgentGraph service descriptor JSON">{
+  &quot;name&quot;: &quot;AgentGraph&quot;,
+  &quot;version&quot;: &quot;<span class="tok-num">3.2</span>.<span class="tok-num">1</span>&quot;,
+  &quot;rest&quot;: &quot;/v<span class="tok-num">1</span>&quot;,
+  &quot;mcp&quot;: &quot;/mcp/&quot;,
+  &quot;health&quot;: &quot;/healthz&quot;,
+  &quot;agent_docs&quot;: &quot;/v<span class="tok-num">1</span>/agent-docs&quot;,
+  &quot;first_call&quot;: &quot;get_orientation&quot;,
+  &quot;primitives&quot;: <span class="tok-num">40</span>,
+  <span class="tok-key entry-key">"dashboard"</span>: <a class="entry" href="/dashboard/" aria-label="Open the AgentGraph human console"><span class="tok-str">"/dashboard/"</span><span class="entry-arrow" aria-hidden="true">↗</span></a>
+}</pre>
+  </div>
+
+  <div class="foot foot-left" aria-hidden="true">GET / &middot; 200 OK</div>
+  <div class="foot foot-right" aria-hidden="true">40 primitives</div>
+
+<script>
+(() => {
+  "use strict";
+
+  const canvas = document.getElementById("flow");
+  const ctx = canvas.getContext("2d", { alpha: true });
+  if (!ctx) return;
+
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const DPR = Math.min(window.devicePixelRatio || 1, 2);
+  const TAU = Math.PI * 2;
+  const PALETTE = {
+    indigo: [129, 140, 248],
+    iris: [165, 180, 252],
+    cyan: [103, 232, 249]
+  };
+
+  const rand = (min, max) => min + Math.random() * (max - min);
+  const rgba = (rgb, alpha) => `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${alpha})`;
+
+  let width = 0;
+  let height = 0;
+  let nodes = [];
+  let edges = [];
+  let pulses = [];
+  let ripples = [];
+  let streams = [];
+  let glints = [];
+  let core = null;
+  let clock = 0;
+  let last = 0;
+  let spawnAccumulator = 0;
+  let nextId = 0;
+
+  function makeGlow(rgb) {
+    const sprite = document.createElement("canvas");
+    sprite.width = sprite.height = 128;
+    const sctx = sprite.getContext("2d");
+    const gradient = sctx.createRadialGradient(64, 64, 0, 64, 64, 64);
+    gradient.addColorStop(0, rgba(rgb, .92));
+    gradient.addColorStop(.22, rgba(rgb, .38));
+    gradient.addColorStop(.58, rgba(rgb, .10));
+    gradient.addColorStop(1, rgba(rgb, 0));
+    sctx.fillStyle = gradient;
+    sctx.fillRect(0, 0, 128, 128);
+    return sprite;
+  }
+
+  const glowIndigo = makeGlow(PALETTE.indigo);
+  const glowIris = makeGlow(PALETTE.iris);
+  const glowCyan = makeGlow(PALETTE.cyan);
+
+  function distanceSquared(a, b) {
+    const dx = a.x - b.x;
+    const dy = a.y - b.y;
+    return dx * dx + dy * dy;
+  }
+
+  function addEdge(a, b, long, backbone) {
+    if (!a || !b || a === b) return;
+    const key = a.id < b.id ? `${a.id}:${b.id}` : `${b.id}:${a.id}`;
+    if (addEdge.seen.has(key)) return;
+    addEdge.seen.add(key);
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const bend = length * (long ? .10 : .055) * (Math.random() < .5 ? -1 : 1);
+    edges.push({
+      a,
+      b,
+      cx: (a.x + b.x) / 2 + (-dy / length) * bend,
+      cy: (a.y + b.y) / 2 + (dx / length) * bend,
+      long: Boolean(long),
+      backbone: Boolean(backbone),
+      phase: rand(0, TAU),
+      alpha: backbone ? .085 : long ? .028 : .110 + Math.min(a.depth, b.depth) * .100
+    });
+  }
+  addEdge.seen = new Set();
+
+  function pointOnEdge(edge, t) {
+    const mt = 1 - t;
+    return {
+      x: mt * mt * edge.a.x + 2 * mt * t * edge.cx + t * t * edge.b.x,
+      y: mt * mt * edge.a.y + 2 * mt * t * edge.cy + t * t * edge.b.y
+    };
+  }
+
+  function pointOnStream(stream, t) {
+    const mt = 1 - t;
+    return {
+      x: mt * mt * mt * stream.p0.x + 3 * mt * mt * t * stream.p1.x + 3 * mt * t * t * stream.p2.x + t * t * t * stream.p3.x,
+      y: mt * mt * mt * stream.p0.y + 3 * mt * mt * t * stream.p1.y + 3 * mt * t * t * stream.p2.y + t * t * t * stream.p3.y
+    };
+  }
+
+  function build() {
+    nodes = [];
+    edges = [];
+    pulses = [];
+    ripples = [];
+    streams = [];
+    glints = [];
+    nextId = 0;
+    addEdge.seen = new Set();
+
+    const count = width < 700 ? 54 : width < 1100 ? 84 : 112;
+    const clusters = [
+      [.10, .15], [.38, .10], [.89, .16],
+      [.09, .80], [.48, .90], [.90, .78]
+    ];
+    for (let i = 0; i < count; i += 1) {
+      const depth = Math.random();
+      const cluster = clusters[i % clusters.length];
+      const clustered = Math.random() > .16;
+      const spread = Math.min(width, height) * .115;
+      const angle = rand(0, TAU);
+      const radius = Math.sqrt(Math.random()) * spread;
+      const x = clustered
+        ? cluster[0] * width + Math.cos(angle) * radius * 1.35
+        : rand(0, width);
+      const y = clustered
+        ? cluster[1] * height + Math.sin(angle) * radius
+        : rand(0, height);
+      nodes.push({
+        id: nextId++,
+        x,
+        y,
+        vx: rand(-.075, .075) * (.35 + depth),
+        vy: rand(-.055, .055) * (.35 + depth),
+        r: .7 + depth * 1.7,
+        depth,
+        hue: Math.random() < .22 ? "cyan" : (Math.random() < .16 ? "iris" : "indigo"),
+        energy: rand(0, .22),
+        phase: rand(0, TAU),
+        hub: clustered && (i < clusters.length || i % 23 === 0),
+        core: false,
+        dead: false
+      });
+    }
+
+    core = {
+      id: nextId++,
+      x: width * .87,
+      y: height * .52,
+      vx: 0,
+      vy: 0,
+      r: 2.4,
+      depth: 1,
+      hue: "iris",
+      energy: .35,
+      phase: 0,
+      hub: true,
+      core: true,
+      dead: false
+    };
+    nodes.push(core);
+
+    for (const a of nodes) {
+      if (a.core) continue;
+      const nearest = nodes
+        .filter((b) => b !== a && !b.core)
+        .sort((b, c) => distanceSquared(a, b) - distanceSquared(a, c))
+        .slice(0, 3);
+      for (const b of nearest) addEdge(a, b, false);
+      if (a.hub) addEdge(a, core, true, true);
+    }
+
+    const hubs = nodes.filter((node) => node.hub && !node.core);
+    for (let i = 0; i < hubs.length; i += 1) {
+      addEdge(hubs[i], hubs[(i + 1) % hubs.length], true, true);
+    }
+
+    for (let i = 0; i < 18; i += 1) {
+      const a = nodes[Math.floor(rand(0, nodes.length))];
+      const b = nodes[Math.floor(rand(0, nodes.length))];
+      addEdge(a, b, true);
+    }
+    for (let i = 0; i < 10; i += 1) {
+      const a = nodes[Math.floor(rand(0, nodes.length))];
+      addEdge(a, core, true, true);
+    }
+
+    streams = [
+      { p0: [-.10, .24], p1: [.28, .13], p2: [.62, .82], p3: [1.10, .70] },
+      { p0: [-.10, .76], p1: [.34, .94], p2: [.66, .18], p3: [1.10, .34] },
+      { p0: [-.10, .52], p1: [.32, .32], p2: [.68, .74], p3: [1.10, .54] }
+    ].map((stream) => ({
+      p0: { x: stream.p0[0] * width, y: stream.p0[1] * height },
+      p1: { x: stream.p1[0] * width, y: stream.p1[1] * height },
+      p2: { x: stream.p2[0] * width, y: stream.p2[1] * height },
+      p3: { x: stream.p3[0] * width, y: stream.p3[1] * height }
+    }));
+
+    glints = [];
+    for (const stream of streams) {
+      for (let i = 0; i < 3; i += 1) {
+        glints.push({
+          stream,
+          t: rand(0, 1),
+          speed: rand(.025, .055),
+          size: rand(1.2, 2.2),
+          hue: Math.random() < .25 ? "cyan" : "iris"
+        });
+      }
+    }
+
+    for (let i = 0; i < 34; i += 1) spawnPulse(true);
+  }
+
+  function pickEdge() {
+    if (!edges.length) return null;
+    const convergence = edges.filter(
+      (edge) => edge.a.core || edge.b.core || edge.a.hub || edge.b.hub
+    );
+    const pool = Math.random() < .62 && convergence.length ? convergence : edges;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  function spawnPulse(seeded) {
+    const limit = width < 700 ? 56 : 96;
+    if (pulses.length >= limit) return;
+    const edge = pickEdge();
+    if (!edge) return;
+    pulses.push({
+      a: edge.a,
+      b: edge.b,
+      cx: edge.cx,
+      cy: edge.cy,
+      t: seeded ? Math.random() : 0,
+      speed: Math.random() < .10 ? rand(.75, 1.15) : rand(.26, .58),
+      size: rand(1.1, 2.1),
+      hue: Math.random() < .18 ? "cyan" : "iris",
+      dead: false
+    });
+  }
+
+  function emitRipple(node) {
+    const isCore = Boolean(node.core);
+    ripples.push({
+      x: node.x,
+      y: node.y,
+      radius: isCore ? 18 : 3,
+      maxRadius: isCore ? Math.max(width, height) * .34 : rand(36, 72),
+      alpha: isCore ? .26 : .18,
+      decay: isCore ? .16 : .32,
+      dead: false
+    });
+  }
+
+  function update(dt) {
+    for (const node of nodes) {
+      if (node.core) {
+        node.energy = Math.min(1.35, node.energy + dt * .018);
+        node.phase += dt * .22;
+        if (node.energy > 1.22) {
+          node.energy = .42;
+          emitRipple(node);
+        }
+        continue;
+      }
+      node.x += node.vx * dt * 32;
+      node.y += node.vy * dt * 32;
+      if (node.x < -24) node.x = width + 24;
+      if (node.x > width + 24) node.x = -24;
+      if (node.y < -24) node.y = height + 24;
+      if (node.y > height + 24) node.y = -24;
+      node.phase += dt * (.35 + node.depth * .55);
+      node.energy *= Math.pow(.986, dt * 60);
+      if (node.energy < .02) node.energy = .02;
+    }
+
+    for (const pulse of pulses) {
+      pulse.t += pulse.speed * dt;
+      if (pulse.t >= 1) {
+        pulse.dead = true;
+        const target = pulse.b;
+        target.energy = Math.min(1.55, target.energy + (target.hub ? .16 : .10));
+        if (target.core) {
+          target.energy = Math.min(1.5, target.energy + .05);
+        } else if (target.energy > 1.06 && Math.random() < .65) {
+          emitRipple(target);
+          target.energy = .48;
+          for (let i = 0; i < 2; i += 1) spawnPulse(false);
+        }
+      }
+    }
+    pulses = pulses.filter((pulse) => !pulse.dead);
+
+    spawnAccumulator += dt;
+    while (spawnAccumulator > .12) {
+      spawnAccumulator -= .12;
+      spawnPulse(false);
+    }
+
+    for (const glint of glints) {
+      glint.t += glint.speed * dt;
+      if (glint.t > 1) glint.t -= 1;
+    }
+
+    for (const ripple of ripples) {
+      ripple.radius += (ripple.maxRadius > 100 ? 58 : 34) * dt;
+      ripple.alpha -= ripple.decay * dt;
+      if (ripple.alpha <= 0 || ripple.radius > ripple.maxRadius) ripple.dead = true;
+    }
+    ripples = ripples.filter((ripple) => !ripple.dead);
+  }
+
+  function drawGlow(sprite, x, y, size, alpha) {
+    if (alpha <= .002) return;
+    ctx.globalAlpha = Math.min(1, alpha);
+    ctx.drawImage(sprite, x - size / 2, y - size / 2, size, size);
+    ctx.globalAlpha = 1;
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, width, height);
+    ctx.globalCompositeOperation = "lighter";
+
+    for (const stream of streams) {
+      ctx.strokeStyle = rgba(PALETTE.indigo, .028);
+      ctx.lineWidth = .8;
+      ctx.beginPath();
+      ctx.moveTo(stream.p0.x, stream.p0.y);
+      ctx.bezierCurveTo(stream.p1.x, stream.p1.y, stream.p2.x, stream.p2.y, stream.p3.x, stream.p3.y);
+      ctx.stroke();
+    }
+
+    for (const glint of glints) {
+      const point = pointOnStream(glint.stream, glint.t);
+      const tail = pointOnStream(glint.stream, Math.max(0, glint.t - .025));
+      const tint = glint.hue === "cyan" ? PALETTE.cyan : PALETTE.iris;
+      ctx.strokeStyle = rgba(tint, .10);
+      ctx.lineWidth = glint.size * .8;
+      ctx.beginPath();
+      ctx.moveTo(tail.x, tail.y);
+      ctx.lineTo(point.x, point.y);
+      ctx.stroke();
+      drawGlow(glint.hue === "cyan" ? glowCyan : glowIris, point.x, point.y, 14 + glint.size * 7, .10 + glint.size * .02);
+    }
+
+    if (core) {
+      const corePulse = .5 + .5 * Math.sin(clock * .55 + core.phase);
+      drawGlow(glowIris, core.x, core.y, 420 + core.energy * 160, .10 + core.energy * .14 + corePulse * .024);
+      ctx.strokeStyle = rgba(PALETTE.iris, .075 + core.energy * .05);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(core.x, core.y, 46 + corePulse * 6, 0, TAU);
+      ctx.stroke();
+      ctx.strokeStyle = rgba(PALETTE.cyan, .032 + corePulse * .022);
+      ctx.beginPath();
+      ctx.arc(core.x, core.y, 92 + corePulse * 12, 0, TAU);
+      ctx.stroke();
+    }
+
+    for (const edge of edges) {
+      const shimmer = .75 + .25 * Math.sin(clock * .5 + edge.phase);
+      ctx.strokeStyle = rgba(PALETTE.indigo, edge.alpha * shimmer);
+      ctx.lineWidth = edge.backbone ? 1.1 : edge.long ? .8 : 1.0;
+      ctx.beginPath();
+      ctx.moveTo(edge.a.x, edge.a.y);
+      ctx.quadraticCurveTo(edge.cx, edge.cy, edge.b.x, edge.b.y);
+      ctx.stroke();
+    }
+
+    for (const ripple of ripples) {
+      ctx.strokeStyle = rgba(PALETTE.iris, Math.max(0, ripple.alpha));
+      ctx.lineWidth = ripple.maxRadius > 100 ? 1 : .8;
+      ctx.beginPath();
+      ctx.arc(ripple.x, ripple.y, ripple.radius, 0, TAU);
+      ctx.stroke();
+    }
+
+    for (const node of nodes) {
+      if (node.core) continue;
+      const sprite = node.hue === "cyan" ? glowCyan : node.hue === "iris" ? glowIris : glowIndigo;
+      const base = .075 + node.depth * .12;
+      const energy = node.energy * .24;
+      drawGlow(sprite, node.x, node.y, 11 + node.r * 10 + node.energy * 28, base + energy);
+      ctx.fillStyle = rgba(PALETTE[node.hue], .24 + node.depth * .30 + node.energy * .25);
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, node.r, 0, TAU);
+      ctx.fill();
+      if (node.hub) {
+        ctx.strokeStyle = rgba(PALETTE.iris, .035 + node.energy * .06);
+        ctx.lineWidth = .8;
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, 7 + node.energy * 8, 0, TAU);
+        ctx.stroke();
+      }
+    }
+
+    for (const pulse of pulses) {
+      const eased = pulse.t * pulse.t * (3 - 2 * pulse.t);
+      const point = pointOnEdge(pulse, eased);
+      const tail = pointOnEdge(pulse, Math.max(0, eased - .09));
+      const x = point.x;
+      const y = point.y;
+      const tx = tail.x;
+      const ty = tail.y;
+      const tint = pulse.hue === "cyan" ? PALETTE.cyan : PALETTE.iris;
+      const fade = Math.sin(Math.min(1, pulse.t) * Math.PI);
+      ctx.strokeStyle = rgba(tint, .16 + fade * .34);
+      ctx.lineWidth = pulse.size * 1.15;
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      drawGlow(pulse.hue === "cyan" ? glowCyan : glowIris, x, y, 16 + pulse.size * 10, .20 + fade * .46);
+      ctx.fillStyle = rgba(tint, .42 + fade * .38);
+      ctx.beginPath();
+      ctx.arc(x, y, pulse.size * .9, 0, TAU);
+      ctx.fill();
+    }
+
+    if (core) {
+      ctx.fillStyle = rgba(PALETTE.iris, .35 + core.energy * .2);
+      ctx.beginPath();
+      ctx.arc(core.x, core.y, core.r, 0, TAU);
+      ctx.fill();
+    }
+
+    ctx.globalCompositeOperation = "source-over";
+  }
+
+  function frame(timestamp) {
+    if (!last) last = timestamp;
+    const dt = Math.min((timestamp - last) / 1000, .05);
+    last = timestamp;
+    if (!document.hidden) {
+      clock += dt;
+      update(dt);
+      draw();
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function resize() {
+    width = window.innerWidth;
+    height = window.innerHeight;
+    canvas.width = Math.floor(width * DPR);
+    canvas.height = Math.floor(height * DPR);
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    build();
+    if (reduceMotion.matches) draw();
+  }
+
+  let resizeTimer = 0;
+  window.addEventListener("resize", () => {
+    window.clearTimeout(resizeTimer);
+    resizeTimer = window.setTimeout(resize, 140);
+  }, { passive: true });
+
+  document.addEventListener("visibilitychange", () => { last = 0; });
+
+  resize();
+  if (reduceMotion.matches) {
+    draw();
+  } else {
+    requestAnimationFrame(frame);
+  }
+})();
+</script>
+</body>
+</html>

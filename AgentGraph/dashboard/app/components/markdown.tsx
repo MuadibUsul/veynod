@@ -1,0 +1,133 @@
+"use client";
+
+import { useMemo } from "react";
+import type { AnchorHTMLAttributes } from "react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
+
+const schema = {
+  ...defaultSchema,
+  tagNames: [
+    ...(defaultSchema.tagNames ?? []),
+    "table",
+    "thead",
+    "tbody",
+    "tfoot",
+    "tr",
+    "th",
+    "td",
+    "caption",
+    "colgroup",
+    "col",
+    "figure",
+    "figcaption",
+  ],
+  attributes: {
+    ...(defaultSchema.attributes ?? {}),
+    a: [...(defaultSchema.attributes?.a ?? []), "href", "title"],
+    img: [...(defaultSchema.attributes?.img ?? []), "src", "alt", "title"],
+    table: [...(defaultSchema.attributes?.table ?? []), "headerRow", "header-row"],
+    th: [
+      ...(defaultSchema.attributes?.th ?? []),
+      "colSpan",
+      "rowSpan",
+      "colspan",
+      "rowspan",
+      "align",
+    ],
+    td: [
+      ...(defaultSchema.attributes?.td ?? []),
+      "colSpan",
+      "rowSpan",
+      "colspan",
+      "rowspan",
+      "align",
+    ],
+  },
+};
+
+function AnchorLink({
+  href,
+  children,
+  ...props
+}: AnchorHTMLAttributes<HTMLAnchorElement>) {
+  const external = typeof href === "string" && /^https?:\/\//i.test(href);
+  return (
+    <a
+      {...props}
+      href={href}
+      target={external ? "_blank" : undefined}
+      rel={external ? "noopener noreferrer" : undefined}
+      referrerPolicy="no-referrer"
+    >
+      {children}
+    </a>
+  );
+}
+
+const baseComponents: Components = {
+  a: AnchorLink,
+  img: ({ src, alt }) => {
+    // Same-origin paths only: "//host" and "/\host" are protocol-relative.
+    const safe = typeof src === "string" && /^\/(?![/\\])/.test(src);
+    if (!safe) {
+      return (
+        <a href={typeof src === "string" ? src : undefined} target="_blank" rel="noopener noreferrer">
+          {alt || "External image blocked"}
+        </a>
+      );
+    }
+    return <img src={src} alt={alt || ""} loading="lazy" referrerPolicy="no-referrer" />;
+  },
+};
+
+export function MarkdownContent({
+  content,
+  onDocLink,
+  docTitle,
+}: {
+  content: string;
+  /** Open a doc://<key> reference in the console instead of navigating away. */
+  onDocLink?: (docKey: string) => void;
+  docTitle?: (docKey: string) => string | undefined;
+}) {
+  const components = useMemo<Components>(() => {
+    if (!onDocLink) return baseComponents;
+    return {
+      ...baseComponents,
+      a: (props) => {
+        const { href, children } = props;
+        if (typeof href === "string" && href.startsWith("doc://")) {
+          const key = href.replace(/^doc:\/\/+/, "");
+          return (
+            <a
+              href={href}
+              title={docTitle?.(key)}
+              onClick={(event) => {
+                event.preventDefault();
+                onDocLink(key);
+              }}
+            >
+              {children}
+            </a>
+          );
+        }
+        return <AnchorLink href={href} {...props}>{children}</AnchorLink>;
+      },
+    };
+  }, [onDocLink, docTitle]);
+
+  return (
+    <div className="markdown-body">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, schema]]}
+        components={components}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}

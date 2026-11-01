@@ -1,0 +1,13 @@
+{
+  "name": "veynod-client-sidecar",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "OAR bridge for the Veynod client: runtime inventory and session control",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@botiverse/oar": "0.75.0"
+  }
+}

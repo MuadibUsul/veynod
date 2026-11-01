@@ -1,0 +1,12 @@
+# Runs the deploy gate every two minutes. The webhook queues a merge at once;
+# this timer is what picks the queue up and also polls main if a webhook is lost.
+[Unit]
+Description=Veynod deploy gate timer
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=2min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

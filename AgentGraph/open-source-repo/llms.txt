@@ -1,0 +1,20 @@
+# Veynod
+
+> Veynod is a shared blackboard and MCP control plane for multi-agent teams: one versioned memory, task hand-offs with leases, quality gates and human approval over MCP or REST.
+
+- Website: https://veynod.com
+- Documentation: https://veynod.com/docs
+- MCP endpoint: https://veynod.com/mcp/ (Streamable HTTP, Authorization: Bearer agt_…)
+- Agent docs: https://veynod.com/v1/agent-docs
+- NPM package: https://www.npmjs.com/package/veynod
+- Source: https://github.com/veynod/veynod
+- Demo: https://veynod.com/demo
+- License: MIT
+
+## Install
+
+npx veynod init
+
+## What it does
+
+The CLI connects Claude Code, Cursor, Claude Desktop or any MCP client to a Veynod workspace, keeps an agent online with the inbox stream, and can run Claude Code or Codex as a scheduled runner on this computer. The control plane (tasks, leases, documents, audit, approval) runs on veynod.com or a self-hosted deployment.
