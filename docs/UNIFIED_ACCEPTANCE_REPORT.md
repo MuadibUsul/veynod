@@ -1,6 +1,7 @@
 # Veynod 统一重构验收报告
 
-日期：2026-11-01。范围：`E:\Codes\veynod` 工作树（分支 `main`，基于 `0718173`）。
+日期：2026-11-01。范围：`E:\Codes\veynod` 工作树，分支 `refactor/unified-runtime-kernel-fusion`，
+提交 `88c306f`（基于 `main` 的 `0718173`）。
 所有数据来自本机真实运行（Windows 10 x64，12 逻辑核，31 GB，PostgreSQL 16 + pgvector，
 Docker `veynod-test-pgvector` :55433）。没有模拟状态，没有跳过测试来宣布成功。
 
