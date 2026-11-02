@@ -1,0 +1,43 @@
+flowchart LR
+  U[API / MCP / UI]
+  D[(AgentGraph diagrams / diagram_chunks)]
+  P[(AgentGraph collab_tasks)]
+  S[Scheduler]
+  PL[(runner_placements)]
+  HR[AgentGraph Host Runner]
+  HW[Host Git worktree / branch / PR]
+  DR[Diagram submit / CI record / gate / queue / merge record]
+  R[(Agent Runtime agent_runs)]
+  RW[Runtime worker + KernelToolRuntime]
+  K[(Kernel dag_tasks + leases)]
+  KW[Kernel CLI Runner]
+  KS[(patch_submissions)]
+  GW[Gate worker / sandbox / worktree pool]
+  MC[Merge coordinator / Git CAS]
+  KO[(Kernel event log + outbox)]
+  EI[(AgentGraph event_inbox)]
+  KP[Product task projection]
+
+  U -->|freeze / dispatch| D
+  D -->|creates DG task, context includes allowed_write_paths| P
+  P -->|READY without active_run_id| S
+  S --> PL --> HR --> HW
+  HR -->|MCP/API calls| DR --> D
+  U -->|task run / code run| R
+  P -->|active_run_id correlation| R
+  R --> RW
+  RW -->|model-supplied write_set_symbols| K
+  K -->|pull task bundle + lease| KW
+  RW -->|pull bundle + lease / submit diff| KS
+  KW -->|submit diff| KS
+  KS --> GW --> MC
+  MC -->|actual repository merge| KO
+  KO --> EI --> KP --> P
+  R -->|run events via inbox| EI
+
+  D -.->|no proven WorkScope binding| K
+  KP -.->|no Diagram projection in dispatcher| D
+  MC -.->|no direct Diagram unlock| D
+
+  classDef gap stroke:#c33,stroke-width:2px,stroke-dasharray:5 5;
+  class D,K,EI gap;
