@@ -96,7 +96,8 @@ async def test_end_to_end_lightweight_path(client):
         "diagram_key": "bad-one", "title": "x",
         "chunks": [{"chunk_key": "a", "title": "a"}]})
     assert bad.status_code == 422
-    assert bad.json()["error"]["details"]["chunks"]["a"]["missing"] == ["icd", "done_criteria"]
+    assert bad.json()["error"]["details"]["chunks"]["a"]["missing"] == [
+        "icd", "done_criteria", "allowed_write_paths"]
     cyclic = await client.post("/v1/diagrams", headers=architect["headers"], json={
         "diagram_key": "cyclic", "title": "x",
         "chunks": [_chunk("a", deps=["b"]), _chunk("b", deps=["a"])]})
@@ -185,10 +186,14 @@ async def test_end_to_end_lightweight_path(client):
                      "timeline.chunk_blocked", "timeline.chunk_gated",
                      "timeline.chunk_merged", "timeline.chunk_unblocked"):
         assert expected in types, (expected, types)
+    # This workspace has no repository, so every dispatch also reports that it
+    # could not be bound to a Kernel worktree (the legacy path is what runs).
+    assert "timeline.chunk_kernel_unbound" in types
     one = (await client.get(f"/v1/diagrams/{key}/replay", headers=ws["key"],
                             params={"chunk": "api"})).json()
     assert [e["type"] for e in one["events"]] == [
-        "timeline.chunk_dispatched", "timeline.chunk_gated", "timeline.chunk_trust_charged",
+        "timeline.chunk_dispatched", "timeline.chunk_kernel_unbound",
+        "timeline.chunk_gated", "timeline.chunk_trust_charged",
         "timeline.chunk_gated", "timeline.chunk_merged"]
     assert any(e["type"] == "task.claimed" for e in one["task_events"])
 

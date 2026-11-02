@@ -24,6 +24,27 @@ from tests.test_scheduler import _host, _task, _task_row, _workspace
 
 pytestmark = pytest.mark.integration
 
+# This module is about the hub identity pair, not about Kernel delivery, so it
+# runs with the Kernel path off: "a builder alone cannot finish a task" is only
+# true while a separate reviewer is still what finishes it.
+LEGACY_DELIVERY = {"KERNEL_DELIVERY_DEFAULT": "false", "KERNEL_PROVISION_ON_CREATE": "false"}
+
+
+@pytest.fixture(scope="module")
+async def api_base_url():
+    from tests.conftest import run_server
+
+    async with run_server(LEGACY_DELIVERY, ".server-up-hub.log") as base_url:
+        yield base_url
+
+
+@pytest.fixture(scope="module")
+async def client(api_base_url):
+    import httpx
+
+    async with httpx.AsyncClient(base_url=api_base_url, timeout=60) as http:
+        yield http
+
 
 def _checks(body: dict) -> dict:
     return {item["id"]: item for item in body["checks"]}
@@ -111,6 +132,9 @@ def _home(tmp: Path, host: str, builder: dict, reviewer: dict, script: Path) -> 
     config.write_text(json.dumps({
         "version": 1, "host": host, "run_tasks": True, "runtime": "custom",
         "exec": f'"{sys.executable}" "{script}"', "slots": 1, "repos": [],
+        # One hub drives both identities; without this the review twin is folded
+        # away when the Kernel gate does the reviewing.
+        "legacy_review": True,
         "identities": identities}))
     config.chmod(0o600)
     return home
@@ -211,6 +235,7 @@ async def test_veynod_up_connects_both_identities_in_one_approval_then_the_loop_
         up = await asyncio.create_subprocess_exec(
             "node", str(CLI), "up", "--run-tasks", "--yes", "--name", name, "--host", api_base_url,
             "--client", "print", "--no-open", "--no-service", "--runtime", "custom",
+            "--legacy-review",
             "--exec", f'"{sys.executable}" "{script}"',
             env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         hub = None

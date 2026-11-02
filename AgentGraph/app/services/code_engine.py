@@ -716,6 +716,12 @@ async def sync_kernel_task_event(
                 continue
             action = lifecycle_action(str(kernel.get("status") or ""), _status(task))
             if action is None:
+                # The Product Task may already be REVIEWING (an earlier event
+                # delivered it); the chunk still has to learn about the commit.
+                if str(kernel.get("status") or "") == "COMMITTED":
+                    stats["diagram"] = stats.get("diagram", 0) + await _project_chunk(
+                        session, kernel_task_id, kernel
+                    )
                 stats["skipped"] += 1
                 continue
             before = _status(task)
@@ -726,7 +732,42 @@ async def sync_kernel_task_event(
                 stats[action] += 1
             else:
                 stats["skipped"] += 1
+            if action == "commit":
+                stats["diagram"] = stats.get("diagram", 0) + await _project_chunk(
+                    session, kernel_task_id, kernel
+                )
     return stats
+
+
+async def _project_chunk(
+    session: AsyncSession, kernel_task_id: str, kernel: dict[str, Any]
+) -> int:
+    """Deliver the Kernel commit to the Diagram chunk that owns this node.
+
+    The chunk is the plan object; without this the graph showed `dispatched`
+    forever and downstream chunks never unlocked, so a human had to hand-merge
+    an already committed change.
+    """
+    from app.services import diagrams
+
+    commit_sha = str(kernel.get("result_commit_sha") or "")
+    if not commit_sha:
+        return 0
+    chunk_id = await session.scalar(
+        text("SELECT id FROM diagram_chunks WHERE kernel_task_id = CAST(:t AS UUID)"),
+        {"t": str(kernel_task_id)},
+    )
+    if chunk_id is None:
+        return 0
+    result = await diagrams.project_kernel_commit(
+        session,
+        int(chunk_id),
+        commit_sha,
+        dedupe_key=f"kernel:{kernel_task_id}:{commit_sha}",
+        task_status=str(kernel.get("status") or ""),
+    )
+    await session.commit()
+    return 1 if result.get("projected") else 0
 
 
 async def _project_one_kernel_workspace(

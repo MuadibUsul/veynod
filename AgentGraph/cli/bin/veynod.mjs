@@ -348,6 +348,8 @@ export function parseArgs(argv) {
     else if (arg === "--no-heartbeat") options.heartbeat = false;
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--runner") options.runner = true;
+    else if (arg === "--nerve") options.nerve = true;
+    else if (arg === "--agent") options.agent = value();
     else if (arg === "--runtime") options.runtime = value();
     else if (arg === "--slots") options.slots = Number(value());
     else if (arg === "--repo") options.repos.push(...value().split(",").map((item) => item.trim()).filter(Boolean));
@@ -833,8 +835,40 @@ export function startHeartbeat(host, key, { every = HEARTBEAT_MS, say = () => {}
   return stop;
 }
 
+/**
+ * `listen --nerve`: the WebSocket messenger instead of the SSE follower.
+ *
+ * The messenger answers each poke in milliseconds and runs the worker in its
+ * own process group, so a wedged orientation cannot take the socket with it.
+ * The SSE follower above stays the default: a host that has not upgraded yet
+ * must keep working.
+ */
+async function listenNerve(options) {
+  const { Messenger } = await import("./veynod-messenger.mjs");
+  const runner = new URL("./runner.mjs", import.meta.url);
+  const releasePid = options.managePid
+    ? acquireListenPid({ dir: options.stateDir || listenStateDir() })
+    : () => {};
+  const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
+  const messenger = new Messenger({
+    host: options.host, key: options.key, agentId: options.agent,
+    runner: fileURLToPath(runner), say,
+  });
+  const stop = () => {
+    messenger.stop();
+    releasePid();
+    process.exit(0);
+  };
+  process.once("SIGTERM", stop);
+  process.once("SIGINT", stop);
+  messenger.start();
+  // Stay alive until a signal; the messenger owns its own timers.
+  await new Promise(() => {});
+}
+
 async function listen(options) {
   if (!options.key) throw new Error("listen needs an agent key: --key, --key-file or VEYNOD_KEY");
+  if (options.nerve) return listenNerve(options);
   const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
   const releasePid = options.managePid
     ? acquireListenPid({ dir: options.stateDir || listenStateDir() })

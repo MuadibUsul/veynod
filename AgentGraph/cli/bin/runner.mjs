@@ -442,6 +442,43 @@ function cachedDiff(cwd) {
   return String(execFileSync("git", ["diff", "--cached", "--binary", "HEAD"], { cwd, encoding: "utf8" }));
 }
 
+/**
+ * Symbols the diff actually touched, as `path::Class::method` (or the file when
+ * the change is module-level).  Sending the lease write set instead made the
+ * Kernel's submission-time AST check vacuous: it compared the lease with
+ * itself.  Parsing the hunks keeps that layer meaningful; the gate still
+ * re-derives the symbols independently.
+ */
+const NL = String.fromCharCode(10);
+
+export function touchedSymbolsFromDiff(diff) {
+  const out = new Set();
+  let file = "";
+  let context = "";
+  for (const line of String(diff || "").split(NL)) {
+    const header = /^\+\+\+ b\/(.+)$/.exec(line);
+    if (header) {
+      file = header[1].trim();
+      context = "";
+      out.add(file);
+      continue;
+    }
+    if (!file) continue;
+    const def = /^\+\s*(?:async\s+)?(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(line);
+    if (def) {
+      const name = def[1];
+      const isClass = /class\s/.test(line);
+      const symbol = context && !isClass ? `${file}::${context}::${name}` : `${file}::${name}`;
+      out.add(symbol);
+      if (isClass) context = name;
+      continue;
+    }
+    const indent = /^([-+ ])(\s*)(?:async\s+)?def\s+([A-Za-z_][A-Za-z0-9_]*)/.exec(line);
+    if (indent && indent[3]) out.add(`${file}::${indent[3]}`);
+  }
+  return [...out];
+}
+
 export async function settleGate(read, { waitMs = 0, intervalMs = 250, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
   const started = Date.now();
   let gate = await read();
@@ -941,7 +978,7 @@ export async function runRunner(options, {
               method: "POST",
               body: {
                 git_diff: diff,
-                touched_symbols: leaseBook.get(slot)?.write_set || ["lease"],
+                touched_symbols: touchedSymbolsFromDiff(diff),
                 local_test_passed: true,
               },
             });
@@ -1013,4 +1050,79 @@ export async function runRunner(options, {
     await Promise.allSettled([...running.values()]);
     await beat(); // leave the board knowing this computer runs nothing
   }
+}
+
+// ------------------------------------------------------------------ one task
+/**
+ * Run exactly one poke and exit (the messenger's worker mode).
+ *
+ * The messenger owns the socket and the two receipts; this process only does
+ * the work for one placement and reports it. `follow` is faked so the normal
+ * runner path is reused unchanged: deliver the poke, wait until the platform
+ * closes the placement, then resolve.
+ */
+export async function runOnePoke(options, poke, {
+  followPoke = null,
+  say = () => {},
+  sleepMs = 1_000,
+  maxWaitMs = 30 * 60 * 1_000,
+  now = Date.now,
+} = {}) {
+  const deadline = now() + maxWaitMs;
+  const fakeFollow = async ({ onPoke }) => {
+    // The second receipt: the messenger's watchdog stops once the platform has
+    // accepted this placement for work. That is the earliest point a wedge in
+    // orientation becomes visible here rather than as a silent hang.
+    if (process.send) process.send({ type: "IPC_ORIENTATION_READY", task_key: poke.task_key });
+    await onPoke(poke);
+    if (followPoke) {
+      await followPoke(poke, { deadline, now, sleepMs });
+      return;
+    }
+    // Without a watcher, wait for the placement to stop being open.
+    while (now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, sleepMs));
+      const placement = await callApi(fetch, options.host, options.key,
+        `/v1/runner/placements/${encodeURIComponent(poke.note?.match(/\bp-\S+/)?.[0] || "")}`)
+        .catch(() => null);
+      if (placement && !OPEN_PLACEMENT.has(placement.status)) return;
+      if (placement === null) return;
+    }
+  };
+  return runRunner(options, { follow: fakeFollow, say, sleepMs });
+}
+
+/** `runner.mjs --task KEY --placement ID [--agent AGENT]` */
+export function onePokeFromArgs(argv) {
+  const args = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index];
+    if (!flag.startsWith("--")) continue;
+    args[flag.slice(2)] = argv[index + 1]?.startsWith("--") ? true : argv[++index];
+  }
+  if (!args.task || !args.placement) {
+    throw new Error("usage: runner.mjs --task KEY --placement ID [--agent AGENT]");
+  }
+  return {
+    kind: "task.placed",
+    task_key: args.task,
+    note: `placement ${args.placement}`,
+    agent_id: args.agent,
+  };
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"))) {
+  const poke = onePokeFromArgs(process.argv.slice(2));
+  const host = process.env.VEYNOD_HOST || "http://127.0.0.1:8000";
+  const key = process.env.VEYNOD_AGENT_TOKEN || process.env.VEYNOD_KEY;
+  if (!key) {
+    process.stderr.write("runner.mjs needs VEYNOD_AGENT_TOKEN\n");
+    process.exit(2);
+  }
+  runOnePoke({ host, key, agent: process.env.VEYNOD_AGENT_ID, slots: 1 }, poke)
+    .then(() => process.exit(0))
+    .catch((error) => {
+      process.stderr.write(`runner failed: ${error.message}\n`);
+      process.exit(1);
+    });
 }

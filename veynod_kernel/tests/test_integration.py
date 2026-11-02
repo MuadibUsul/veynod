@@ -287,6 +287,9 @@ def gate_worker(db_url: str, workers: int = 2, extra_env: dict[str, str] | None 
         "VN_GATE_SANDBOX": "local",
         "VN_ALLOW_LOCAL_GATE_IN_PROD": "true",
         "PYTHONUNBUFFERED": "1",
+        # The gate worker imports the shared `contracts` package from the
+        # repository root, one level above this package.
+        "PYTHONPATH": str(ROOT.parent),
     }
     if extra_env:
         worker_env.update(extra_env)

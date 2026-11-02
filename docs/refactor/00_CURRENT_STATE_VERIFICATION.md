@@ -1,110 +1,318 @@
-# Phase 0：现状验证与架构盘点
+# Phase 0：当前状态核验（HEAD `b8355c0`）
 
-审计基准：本地分支 `production/qualification`，HEAD `d37b7813d865abe50cf2c9e0f5ebb856e36af4de`；审计日期 2026-11-02。仅审计和新增文档，没有修改业务代码。结论分为 **代码已证实**、**测试已执行**、**NOT VERIFIED / UNKNOWN**。规范是目标与审查线索，未作为实现证据。
+审计时间：2026-11-02。审计对象：本地 `codex/phase2-diagram-kernel` HEAD `b8355c0`（含 Phase 0、Phase 1 两个提交）。
+方式：逐条读调用链 + 真实进程/数据库探针；不改业务代码。
 
-## 1. 基准、范围与证据边界
+**证据分级**：`[代码]` 已读实代码；`[测试]` 已执行；`[运行]` 真实进程/数据库实测；
+`[未验证]` 无证据，不猜测；`[与既有文档冲突]` 既有 Phase 0/1 报告与本轮实测不一致。
 
-用户指定的 `docs/refactor/Veynod_Next_Generation_Architecture_Refactor_Spec_v1.0.md` 在本地不存在；完整阅读的是仓库根目录同名未跟踪文件 `Veynod_Next_Generation_Architecture_Refactor_Spec_v1.0.md`（1851 行）。它自身写明审查基准为 `88626e3`（第 14–20 行），并要求 Phase 0 的五个交付物（第 1341–1369 行）。该文件目前未纳入 Git HEAD，不能算当前产品实现。
+**相对规范的基准**：规范自身写明基准 `88626e3`。当前 HEAD 是它的后代（+`c1130f6`、+`b8355c0`），
+规范 §0 要求"以代码与可复现结果为准，并列出差异"。差异见 §1。
 
-`git rev-parse HEAD` 得到 `d37b781`；审计前 `git status --short` 仅显示上述规范为未跟踪文件。`git fetch --no-tags origin 88626e3...` 仅获取对象用于只读 diff，未检出或合并。`git log d37b781...88626e3` 表明规范基准比本地 HEAD 多一个提交：`88626e3 Kernel worktree lease is the default coding path (#88)`。`git diff --stat d37b781 88626e3` 显示 33 文件、2290 插入、128 删除；新增 `AgentGraph/app/services/kernel_delivery.py`、`v3_79_kernel_delivery_leases.sql`、`scripts/smoke_kernel_worktree_gate.py`、`veynod_kernel/tests/test_lease_worktree.py`，并大改 Host Runner、Scheduler 与 Kernel Worktree Pool。**这些能力不属于本报告的当前 HEAD**。当前 HEAD 的最新相关迁移为 AgentGraph `v3_78_event_inbox_nullable.sql`、Runtime `010_lease_epoch.sql`、Kernel `v4_016_runtime_task_key.sql`（各目录文件清单）。
+> 本文取代 `c1130f6` 版本的 Phase 0 报告。那份报告的基准是 `d37b781`，**早于** `88626e3`
+> 的 Host→Kernel 路径改造，其"当前 HEAD/迁移版本"章节已过期 `[与既有文档冲突]`。
 
-2026-11-02 本轮 `git ls-remote origin refs/heads/main` 返回 `88626e3cda38b9915e277d9a9065efa980b1826f`，因此 GitHub main 不等于本地 HEAD。本轮尝试只读 SSH `deploy@104.207.82.85`，返回 `Permission denied (publickey)`；**VPS 当前源码、镜像 SHA、运行配置和是否为本地 HEAD 均 NOT VERIFIED**。仓库清单 `deploy/vps/docker-compose.unified.yml:35,74,129-133` 只能证明拟部署配置含 `VN_GATE_SANDBOX: local` 与 Runtime Worker 默认 2，不能证明线上实际值。此前会话曾观察 VPS 为 `88626e3`，但没有在本轮重新取得可引用运行证据，不将其当作当前事实。
+---
 
-## 2. 当前真实架构与数据关系
+## 0. 结论摘要
 
-[当前真实架构图](01_CURRENT_ARCHITECTURE.mmd)；[状态所有权矩阵](02_STATE_OWNERSHIP_MATRIX.md)；[执行路径清单](03_EXECUTION_PATH_INVENTORY.md)；[风险登记](04_GAP_AND_RISK_REGISTER.md)。
+**Diagram 与 Kernel 至今没有接上**，这是本阶段最大的断层：
 
-服务与入口清单：AgentGraph FastAPI 挂 REST、MCP、管理与事件路由（`AgentGraph/app/main.py:357-398`），MCP 暴露 `create_task`、`agent_claim_and_read`、`loop`、`diagram`（`AgentGraph/app/mcp_server/server.py:803-880,1071-1126,2027-2117`），Runner REST 暴露 hello/heartbeat/placements/schedule（`AgentGraph/app/api/v1_routes.py:1476-1621`）；Runtime FastAPI 提供 Run 与事件接口（`agent_runtime/api.py:86-178,348-375`），独立 Worker 通过 `worker_main.py:83-180` 启动；Kernel FastAPI 挂 syscall 与管理路由（`veynod_kernel/app/main.py:5-12`），另有 Gate Worker、Merge Coordinator 和独立 CLI Runner。仓库的 `contracts` 包已有 `IdentityChain`、`attempt_id`、`EventEnvelope` 与 5 个通过的单元测试（`contracts/identifiers.py:15-27,72-77`；`contracts/events.py:58-84`；`contracts/tests/test_contracts.py:21-66`）；对 `AgentGraph/app`、`agent_runtime`、`veynod_kernel/app` 的导入搜索没有发现服务请求路径使用该包，因此不能把包中的统一 ID/事件定义视为跨服务已接线。
+* `AgentGraph/app/services/diagrams.py` 全文 **零次**出现 `kernel`（`grep -n kernel` 无输出）`[代码]`。
+* 派发创建的 chunk 任务走 `_create_task_core(..., commit=False)`（`diagrams.py:765`），
+  绕过 `create_task()` 里的自动 provision（`tasks.py:517-521`）`[代码]`。
+* 因此 Diagram chunk **不会创建 Kernel 任务、不会拿 Kernel lease**，交付仍靠
+  "模型自己开 PR + 人工 `diagram(action=merge)`" `[代码]`。
 
-```mermaid
-flowchart LR
-  D[Diagram Chunk] -->|task_key| P[Product Task]
-  P -->|Scheduler: active_run_id 为空| H[Host Placement / Runner]
-  P -->|显式 start_run| R[Runtime Run]
-  H -->|本地 Worktree、分支、PR| DG[Diagram Gate / Merge 记录]
-  R -->|KernelToolRuntime 创建任务| K[Kernel Task / Lease]
-  K -->|Patch| G[Kernel Gate Worker]
-  G --> M[Merge Coordinator / Git]
-  M --> E[Kernel Events / AgentGraph Inbox]
-  E -->|Product Task 投影| P
-  DG -->|仅 Diagram merge 解锁| D
-  E -.->|无 Diagram 投影| D
+而 Phase 1 建立的 WorkScope 只在 **非 Diagram 路径**（`/v1/tasks/{key}/run` → Runtime、
+或 `POST /v1/tasks` 建带 repo 的任务 → 自动 provision）上生效。两条路径互不相交。
+
+更严重的是这两条路径**互相抢同一份工作**，且有一个新引入的重复 provision 直接让第二个 Kernel
+任务领不到租约（§2.3，实测）。
+
+---
+
+## 1. 与规范基准的差异（`88626e3` → HEAD）
+
+| 提交 | 内容 | 对本次审计的影响 |
+|---|---|---|
+| `88626e3` | #88 "Kernel worktree lease is the default coding path"：新增 `kernel_delivery.py`(691)、`v3_79_kernel_delivery_leases.sql`、runner 改走 `/kernel/lease`+`/kernel/submit`、scheduler 跳过 kernel-owned 的 review/merge | 引入第三条交付路径（Host→Kernel），且**只对 Host 生效** |
+| `d1bde6f` | #87 inbox SSE 抗断连、`deploy/proxy/*` | 与交付链无关 |
+| `c1130f6` | Phase 0 文档 | 审计基准 `d37b781`，早于 `88626e3`，当前状态章节已过期 |
+| `b8355c0` | Phase 1：`contracts/work_scope.py`、`v4_017_work_scope.sql`、Kernel 双层 diff 校验、`task_lifecycle` 传 scope | WorkScope 只在 runtime/runtime-task 链上接线 |
+
+旧报告称"当前 HEAD 最新迁移为 v3_78 / 010 / v4_016"，实际现在是 **v3_79 / 010 / v4_017** `[代码]`。
+
+---
+
+## 2. 逐项核实
+
+### 2.1 Diagram Chunk 的真实数据关系
+
+`[代码]` `diagrams.py:723-782` 建任务时写入 `task_key = DG-<diagram>-<chunk>`（`:723`）、
+`input_context.diagram/chunk/allowed_write_paths/...`（`:748-757`），并回填
+`diagram_chunks.task_key`（`:654`）。
+
+`[代码]` `diagram_chunks.task_key` 是 `TEXT` + 索引，**无外键**；删除任务不级联。
+
+`[代码]` 派发后 chunk 状态只能是 `dispatched` / `blocked`（`:642`、`:652`）。
+
+**没有** `chunk → kernel_task_id` 字段；Kernel 侧也**没有** `chunk_id` 列（`v4_017` 只加
+`work_scope/scope_hash/lease_scope*`）。
+
+### 2.2 交付链：三条并存
+
+| # | 入口 | 执行者 | 有 Kernel? | WriteScope? | 谁判定通过 | 谁写 Git |
+|---|---|---|---|---|---|---|
+| A | Diagram `dispatch` → Host placement | `runner.mjs` 起模型 CLI | 否 | 否（仅文本上下文） | 模型自报 `diagram.review` + 人 `merge` | 外部 PR squash merge |
+| B | `POST /v1/tasks`（带 repo）→ 自动 provision → Host `/kernel/lease` | `runner.mjs` 写代码 | 是 | 是 | Kernel Gate + MergeCoordinator | Kernel |
+| C | `POST /v1/tasks/{key}/run` → Runtime → `KernelToolRuntime.create_task` | Runtime Worker | 是 | 是 | Kernel Gate + MergeCoordinator | Kernel |
+
+`[代码]` A 的判定完全在 AgentGraph：`gate()` 取 `body["result"]`（`diagrams.py:853`）、
+`record_ci()` 取 `body["exit_code"]`（`:1100`）、`merge()` 接受任意 `artifact` 字符串（`:1537`）。
+`[代码]` B/C 的判定在 Kernel：`verification_gate` 跑 5 阶段，`merge_coordinator` 做 CAS 合并。
+
+`[代码]` A 的解锁只由 `merge()` 末尾 `_release_waiting()` 触发（`:1553`）；
+`_release_waiting` 全仓库只有这一个调用点（定义 `:1647`）。
+
+### 2.3 B 与 C 对同一任务重复 provision（**新增 P0，实测**）
+
+`[代码]` 两处 provision 用**不同的幂等键**：
+
+* `kernel_delivery.provision_product_task` → `request_key = "product:<task_key>"`（`:504`）
+* `KernelToolRuntime._do_create_task` → `request_key = "<task_key>:<model tool key>"`（`tools/kernel.py:419`）
+
+`[运行]` 真实 Kernel（临时库 `veynod_probe` + 真 git 仓库）复现：
+
+```
+host create: 201
+host lease:  200 leased=True          # 节点 1 已被 host 租走
+runtime create: 201 same task? False  # 节点 2 新建
+runtime pull(any): 200 leased=False
+k tasks: [('71664752','LEASED'), ('55f98b1b','READY')]
+targeted pull on 2nd: leased=False    # 定向也拿不到
 ```
 
-Diagram `freeze`/`dispatch` 将 Chunk 建成 `DG-*` Product Task，写 `diagram_chunks.task_key`、`input_context.allowed_write_paths`、`context_slice.write_scope`（`AgentGraph/app/services/diagrams.py:544-657,723-782`）。Product Task 与 Runtime Run 用 `collab_tasks.active_run_id` 关联（`AgentGraph/app/services/task_lifecycle.py:326-344`；`AgentGraph/sql/migrations/v3_75_unified_runtime.sql:16-21`）；Runtime 自己的 `kernel_tasks` 记录 `run_id` 到 Kernel Task（`agent_runtime/migrations/009_kernel_tasks.sql:8-18`；`agent_runtime/tools/kernel.py:438-449`）。Host `runner_placements` 用 Product Task ID/Key 关联（`AgentGraph/sql/migrations/v3_61_runner_placements.sql:13-40`）。`diagram_chunks.task_key` 是普通文本和索引，不是对 Product Task 的强外键（`AgentGraph/sql/migrations/v3_51_diagrams.sql:37-65`）。**没有代码证据证明 Chunk ↔ Kernel Task 一对一、同一执行 attempt 或冻结 WorkScope 的强制绑定。**
+原因：`pull_task_bundle` 的 SQL 要求 `NOT (t.write_locks && active_w)`（`scheduler.py:646`），
+两个节点写集相同，节点 1 处于 `LEASED`，节点 2 永远冲突；Runtime 工具租不到就 `pause`，Run 停住。
 
-当前两个主要执行路径并存：
+**结论**：任何带 repo 的任务一旦被自动 provision（默认
+`kernel_provision_on_create = True`，`config.py:118`）又走 `POST /run`，
+会产生一个永远领不到租约的孤儿 Kernel 任务。
 
-1. **Diagram → Product Task → Scheduler → Host Runner。** Scheduler 在 `READY`、无 assignee/claim、`active_run_id IS NULL` 时提供 work placement（`scheduler.py:392-497`），还为 Diagram 安排 review/merge step（`scheduler.py:555-812`）。Host Runner 建本地 Git Worktree，调用模型 CLI；提示模型 claim、commit/push、开 PR、调用 Diagram gate/merge（`AgentGraph/cli/bin/runner.mjs:200-257,397-445,623-684`）。Product Lease 在 `tasks.claim_task` 发放（`tasks.py:678-746`）。这条路径没有 Kernel Task、Kernel Lease 或 Kernel Patch 提交的强制步骤。
-2. **Product Task `/run` 或 Code Engine → Runtime → Kernel。** API 进入 `task_lifecycle.start_run`（`AgentGraph/app/api/agent_run_routes.py:59-74`；`AgentGraph/app/services/agent_runtime.py:208-231`；`task_lifecycle.py:234-394`）。Runtime Worker 领取 Run、调用 `KernelToolRuntime` 建 Kernel Task、领取 Bundle/Lease、提交 v2 Patch（`agent_runtime/worker.py:46-90`；`agent_runtime/tools/kernel.py:410-585`）。Kernel 校验 Lease 写集与实际 diff，Gate Worker 在 Worktree 验证，Merge Coordinator 执行实际 Git 合并（`veynod_kernel/app/mcp_server/syscalls.py:764-895`；`app/services/verification_gate.py:483-530,1017-1118`；`app/services/merge_coordinator.py:214-352`）。Kernel 事件进入 AgentGraph 持久 inbox 后投影 Product Task（`AgentGraph/app/services/event_dispatch.py:57-165,340-388`）。
+### 2.4 任务所有权：Product Task 的两种认领互不互斥
 
-此外，`AgentGraph/app/services/code_engine.py:308-350` 保留 `CODE_ENGINE_LEGACY_DIRECT` 的直接 Kernel 路径；Kernel 原生 CLI Runner 独立建 Worktree 并提交 v2 Patch（`veynod_kernel/cli/bin/runner.mjs:465-506,560-675`）；Kernel v1 同步提交开关默认 `reject`，显式 `sync` 才启用（`veynod_kernel/app/config.py:263-269`；`veynod_kernel/app/mcp_server/syscalls.py:990-1023`）。这些入口的生产使用量 **UNKNOWN**。
+`[代码]` Host 侧 `claim_task`（`tasks.py:678-746`）检查 role/capabilities/assignee，
+**不检查 `active_run_id`**。
+`[代码]` Scheduler 排任务时排除 `active_run_id IS NOT NULL`（`scheduler.py:413`），
+只影响"新放置"，不影响已在 host 上的 claimed 任务。
+`[代码]` Runtime 侧 `start_run`（`task_lifecycle.py:265`）**不检查** `claimed_by` /
+`lease_owner` / 已有 `kernel_delivery`。
 
-## 3. 六个关键边界的核实
+于是：Host 已 claim 并持 lease → 再 `POST /run` → Runtime 也跑同一任务，
+产物分别是"Host 的 PR + 模型自报 gate"和"Kernel 的 commit"，互不感知。
 
-| 边界 | 当前结论 | 证据 |
-|---|---|---|
-| 任务所有权 | **分裂**。Scheduler 的选取条件排除活动 Run，但 `start_run` 不检查既有 Host placement/Product Lease，`claim_task` 不检查 `active_run_id`；单个 Runtime Run 约束不能排除 Host claim。并发实际发生次数 UNKNOWN。 | `AgentGraph/app/services/scheduler.py:405-416`；`task_lifecycle.py:234-265,310-344`；`tasks.py:678-746` |
-| Write Scope | **未端到端强制**。Diagram 路径进 Product Task 文本上下文；Kernel Task 的 `write_set_symbols` 来自 Runtime 工具参数；Kernel 对自己 Lease 的写集执行有效 diff 边界检查。 | `AgentGraph/app/services/diagrams.py:749-778`；`agent_runtime/tools/kernel.py:417-429`；`veynod_kernel/app/mcp_server/syscalls.py:774-788` |
-| Lease | **三个域**：Product Task/Placement Lease、Runtime Run Lease、Kernel Task Lease，各自 fencing/生命周期。未见单一 attempt ID 把三者互斥绑定。 | `AgentGraph/app/services/tasks.py:698-740`、`scheduler.py:362-389`；`agent_runtime/store.py:676-754`；`veynod_kernel/app/mcp_server/syscalls.py:774-788` |
-| Gate | **重复**。Diagram Gate/CI 保存调用者报送结果；Kernel Gate 实际在 Worktree 执行验证。二者无共享不可伪造 evidence 引用。 | `AgentGraph/app/services/diagrams.py:850-895,1100-1159`；`veynod_kernel/app/services/verification_gate.py:483-530` |
-| Merge | **语义不同**。Diagram `merge` 用传入 artifact 更新 DB 并解锁；Host merge prompt 要求外部 PR squash merge；Kernel Merge Coordinator 才执行受 fence 约束的 Git 合并。 | `AgentGraph/app/services/diagrams.py:1514-1557`；`AgentGraph/cli/bin/runner.mjs:217-226`；`veynod_kernel/app/services/merge_coordinator.py:214-352` |
-| 事件回写 | **到 Product Task，未到 Diagram**。Kernel outbox/inbox 有持久化、重试和 dead 状态；Kernel 分支仅 `code_engine.sync_kernel_task_event`，Runtime 分支仅 `task_lifecycle.project_run_event`，没有 Diagram 投影；下游只由 Diagram merge 解锁。 | `veynod_kernel/app/services/event_bus.py:61-75`；`AgentGraph/app/services/event_dispatch.py:340-388`；`AgentGraph/app/services/diagrams.py:1647-1668` |
+### 2.5 Kernel lease 没有客户端侧过期判断，且 release 不留 Kernel
 
-特别注意 Diagram `submit` 用请求体给的文件名和 commit 计算白名单，支持无仓库的内容摘要（`diagrams.py:941-1005`）；`record_ci` 接受请求体里的 exit code（`diagrams.py:1100-1159`）；`queue_check` 接受请求体里的 pass（`diagrams.py:1466-1512`）；`merge` 接受任意非空 artifact 并将 Chunk 标记 merged（`diagrams.py:1514-1557`）。这证明 Diagram 的记录链不是 Kernel 的可信执行证据。`AgentGraph/tests/test_loop_steps.py:97-118` 使用字符串 `"abc123"` 完成两个 Chunk 的 merge 状态流，测试本身不进行 Kernel/Git 合并。
+`[代码]` `open_lease` 复用租约只看 `lease == "held"` + 有 `kernel_task_id` + 有 token
+（`kernel_delivery.py:589-596`），**不看 `expires_at`**；`expires_at` 只写不读（`:399`）。
+过期租约被当有效继续用，直到 submit 时 Kernel 409。
 
-## 4. 目标架构差异图
+`[代码]` `release_task`（`tasks.py:869`）改回 READY 并 `_clear_lease()`，
+**不调用任何 Kernel release**；`kernel_delivery.py` 没有 release 函数（`grep release` 0 命中）。
+Host 释放后 Kernel 节点仍 `LEASED` 到超时，期间同写集全部冲突。
+`[代码]` `_take_back`（`scheduler.py:154`，掉线/超时）同样只 orphan Product lease。
 
-下图右侧是规范要求的目标关系，**不是当前实现**；虚线代表 Phase 1 以后才可建立的契约。目标依据规范 `WorkScope` 章节（第 707–752 行）、Kernel 事件与 Diagram 投影章节（第 884–1069 行）、Phase 0/1/2 任务（第 1341–1430 行）。
+### 2.6 WorkScope 确实传到 Kernel，但**只对 B 生效**
 
-```mermaid
-flowchart LR
-  subgraph NOW[当前 HEAD d37b781]
-    D1[Diagram paths] -->|文本上下文| P1[Product Task]
-    P1 --> H1[Host PR / Diagram merge]
-    P1 --> R1[Runtime]
-    R1 -->|模型给 write_set| K1[Kernel]
-    K1 -->|只回 Product| P1
-  end
-  subgraph TARGET[目标架构，尚未实现]
-    D2[冻结 Diagram + WorkScope] --> O2[单一任务 / attempt 所有权]
-    O2 --> S2[Scheduler 分配]
-    S2 --> R2[分布式 Runner / Runtime]
-    R2 --> K2[Kernel Lease + Patch + 唯一 Gate/Merge]
-    K2 --> E2[持久事件与证据]
-    E2 --> P2[Product Task 与 Diagram 幂等投影]
-    P2 -->|提交确认后| D2
-  end
-  D1 -.->|范围契约| D2
-  H1 -.->|迁移为受控适配器| K2
-  K1 -.->|提交事件绑定| E2
+`[代码]` `task_lifecycle.start_run`（`:269`）与 `kernel_delivery.work_scope_for`（`:68-80`）
+从 `input_context.diagram + allowed_write_paths` 生成 scope；Kernel 用 `v4_017` 触发器
+冻结 `work_scope`，`syscalls._validate_submission` 与 `verification_gate._check_ast_scope`
+（`:765-800`）双层校验。`[测试]` 该链 19+11+4 通过、1 个真实 Worktree 集成测试通过（Phase 1 报告）。
+
+**但** `[代码]` `diagrams.py` 从不调 `kernel_delivery`，chunk 走 A 链，所以
+`allowed_write_paths` 在 A 链上只用于 `diagram.submit` 的文件名 fnmatch（`:946-948`），没进 Kernel。
+
+空写集另有一处相反规则 `[运行]`：
+
+```
+work_scope_for(empty) → {"paths": {"include": [], "exclude": []}}
+WorkScope.from_dict(...) → ValueError: WorkScope requires a nonempty paths.include
 ```
 
-差异不是增加服务数量，而是补齐跨域不可绕过的身份、写域、执行尝试和提交证据。现有 Kernel fencing、Worktree Gate、持久 outbox/inbox 可复用，见 `veynod_kernel/app/services/gate_worker.py:75-150`、`merge_coordinator.py:214-352`、`event_bus.py:61-75` 与 `AgentGraph/app/services/event_dispatch.py:57-165`。
+`[代码]` `_incomplete()`（`:133-139`）只要求 `icd` 与 `done_criteria`，**不要求**
+`allowed_write_paths`；`_lock_conflicts` 空集合直接 `return []`（`:667-668`）。
+合法 chunk 因此可派发，再在 Kernel 侧 422。
 
-## 5. 重复实现、状态冲突与安全风险
+### 2.7 Gate / Merge 的重复权威
 
-完整登记和优先级见 [04_GAP_AND_RISK_REGISTER.md](04_GAP_AND_RISK_REGISTER.md)。最关键的可达冲突为：Diagram 标记 `merged` 但 Kernel 未 COMMITTED，或 Kernel 已 COMMITTED 而 Diagram 仍 `dispatched`，因为二者没有投影联结（`diagrams.py:1533-1555`；`event_dispatch.py:340-360`）。Diagram 允许空写入路径，文件锁检查直接放行空集合（`diagrams.py:100-139,664-683`）；Host 路径依赖模型遵守分支/PR 提示（`AgentGraph/cli/bin/runner.mjs:247-257`）。部署清单将 Gate Sandbox 设为 `local`，仅靠环境净化而非容器隔离（`deploy/vps/docker-compose.unified.yml:35,74`；`veynod_kernel/app/services/gate_sandbox.py:59-75,115-132,275-284`）；实际线上值未验证。
+| 事实 | 位置 |
+|---|---|
+| A 链 gate 由调用者自报 | `diagrams.py:853-877` `[代码]` |
+| A 链 merge 只更新 DB 行并解锁 | `diagrams.py:1537-1555` `[代码]` |
+| B/C 链 merge 由 Kernel 做 Git CAS | `merge_coordinator.py:214-352` `[代码]` |
+| Kernel commit 事件**只**投影 Product Task，不投影 Diagram | `event_dispatch.py:340-350`；`task_lifecycle.py` 全文无 `diagram` `[代码]` |
+| Diagram 后继解锁**只**认 `state = merged` | `_waiting_on` `diagrams.py:615-620` `[代码]` |
 
-## 6. 本轮测试基线与不能证明的事项
+即使 B 链已把代码合进 Git，Diagram 仍 `dispatched`、下游永不解锁，除非有人再手工 merge，
+那又会在已合并仓库上再解一次锁。
 
-| 层级 | 执行命令 / 结果 | 解释 |
+### 2.8 Scheduler 的 review/merge 跳过只覆盖一半（**导致现成测试失败**）
+
+`[代码]` `_place_steps` 用 `kernel_owns_steps(task)` 跳过 review/merge（`scheduler.py:747-752`），
+该函数读 `correlation.kernel_delivery.status`（`kernel_delivery.py:137-146`）。
+`[代码]` 但写集为空时 provision 写的是 `status="needs_write_set"`（`:494-498`），
+`_NOT_WIRED` 只有 `{"", "legacy", "unbound", "unconfigured"}`（`:37`）——**不含**它。
+
+`[运行]`：
+
+```
+FAILED tests/test_loop_steps.py::test_a_plain_task_in_review_goes_to_a_reviewer_and_moves_when_it_stalls
+FAILED tests/test_loop_steps.py::test_no_reviewer_is_said_in_plain_words
+2 failed, 23 passed
+```
+
+带 repo 的任务在 `create_task` 时自动 provision，没有 `write_set_symbols` 就落 `needs_write_set`，
+review/merge 被永久跳过，而它其实一个 Kernel 节点都还没建出来。
+
+### 2.9 Host Runner 的 `touched_symbols` 是噪音
+
+`[代码]` `runner.mjs:944` 传 `touched_symbols: leaseBook.get(slot)?.write_set || ["lease"]`，
+即租约写集本身而不是本次 diff 触及的符号；`_validate_submission`（`syscalls.py:774-788`）
+用它做 AST 越权检查，对 Host 路径几乎恒真；真正兜底的是
+`verification_gate._check_ast_scope`（`[代码]`）。不是漏洞，但提交层自证失效。
+
+### 2.10 生产落后 HEAD，且缺 Phase 1 的列
+
+`[运行]` VPS `VEYNOD_TAG=88626e3`；Kernel 库 `v4_014`；`dag_tasks` 上
+`work_scope/scope_hash` 计数 = **0**；产品库有 **63** 个 `diagram_chunks`。
+线上既无 WorkScope 链也无 Phase 2 代码。`[未验证]` 那 63 个 chunk 当前如何推进。
+
+---
+
+## 3. 架构断层图
+
+```mermaid
+flowchart TB
+  subgraph NOW["当前 HEAD b8355c0"]
+    D1["Diagram Chunk<br/>allowed_write_paths"]
+    P1["Product Task (DG-*)"]
+    H1["Host Runner"]
+    R1["Runtime / KernelToolRuntime"]
+    K1["Kernel Task + Lease<br/>WorkScope 冻结"]
+    Q1["人工 diagram.review<br/>人工 diagram.merge"]
+    DB1[("collab_tasks / diagram_chunks")]
+    D1 -->|"dispatch: 只传文本"| P1
+    P1 -->|"placement"| H1
+    P1 -->|"/run, 可并发"| R1
+    H1 -->|"kernel/lease, kernel/submit"| K1
+    R1 -->|"create_task: 另一把幂等键"| K1
+    H1 -->|"模型自报 gate"| Q1
+    Q1 -->|"只更新状态"| DB1
+    K1 -->|"commit 事件"| DB1
+    DB1 -.->|"无投影"| D1
+    K1 -.->|"不解锁"| D1
+    H1 -.->|"重复 provision 冲突"| K1
+  end
+```
+
+| 目标（规范 §5.3/§13/§19） | 当前 |
+|---|---|
+| Chunk 1:1 绑定唯一 Kernel Task | 无字段、无约束、无代码 |
+| Chunk 合并由 Kernel Commit 事件投影 | 无投影，`_waiting_on` 只认人工 `merged` |
+| 一个 Attempt 一个 Lease，旧 Lease 被 fence | 无 `attempt_id`；Host 与 Runtime 各有自己的 lease |
+| 旧 Diagram gate/merge 对 Kernel-owned chunk 拒绝 | 未实现 |
+| 无证据不推进 | A 链靠自报；B 链有证据但不回图 |
+
+---
+
+## 4. 缺陷登记
+
+修复状态见文末 §7。下表是审计时的原始登记。
+
+| ID | 级别 | 缺陷 | 证据 |
+|---|---|---|---|
+| G01 | **P0** | Diagram chunk 完全绕过 Kernel，写域只在文本上下文 | §2.1/§2.2/§2.6 `[代码]` |
+| G02 | **P0** | Host 自动 provision 与 Runtime `create_task` 键不同，第二个节点写集冲突 | §2.3 `[运行]` |
+| G03 | **P0** | Review/merge 放置被 `needs_write_set` 误判 Kernel-owned 而跳过 | §2.8 `[代码]+[运行]` |
+| G04 | **P1** | Kernel commit 不投影 Diagram，下游只由人工 merge 解锁 | §2.7 `[代码]` |
+| G05 | **P1** | Product Task 可被 Host claim 与 Runtime Run 同时持有 | §2.4 `[代码]` |
+| G06 | **P1** | Kernel lease 无过期判断；release/orphan 不释放 Kernel 租约 | §2.5 `[代码]` |
+| G07 | **P1** | 空 `allowed_write_paths` 可派发但 Kernel 拒绝，规则相反 | §2.6 `[运行]` |
+| G08 | P2 | 无 `chunk_id` 关联列；`diagram_chunks.task_key` 无外键 | §2.1 `[代码]` |
+| G09 | P2 | Host `touched_symbols` 恒等于写集，提交层自证失效 | §2.9 `[代码]` |
+| G10 | P2 | 生产落后 HEAD 且缺 `v4_017` 列 | §2.10 `[运行]` |
+
+---
+
+## 5. 测试基线（本轮实跑）
+
+| 命令 | 结果 |
+|---|---|
+| `pytest contracts/tests agent_runtime/tests veynod_kernel/tests/test_work_scope_boundary.py veynod_kernel/tests/test_submission_protocol_unit.py -q` | **36 passed, 42 skipped** |
+| `pytest AgentGraph/tests/test_diagrams.py AgentGraph/tests/test_loop_steps.py -q` | **23 passed, 2 failed**（失败即 G03） |
+| 真实 Kernel 探针（临时库 + 真 git） | 复现 G02 |
+
+`[代码]` 没有测试同时走"派发 → Kernel lease → Kernel commit → Diagram 解锁"；
+`grep 'kernel/lease' AgentGraph/tests/*.py` = **0 命中**。
+
+---
+
+## 6. 最小重构任务清单（按依赖排序）
+
+1. **G02**：runtime 与 host 共用 `request_key = product:<task_key>`，或 `start_run`
+   先复用 `correlation.kernel_delivery`。验证：同一任务两次 provision 只有一个 Kernel 任务（把探针转成测试）。
+2. **G03**：`needs_write_set` 归入 `_NOT_WIRED`，或只在真正拿到 lease 后才算 owned。验证：`test_loop_steps` 恢复全绿。
+3. **G07**：`_incomplete()` 要求非空 `allowed_write_paths`；空集合时 `work_scope_for` 返回 None 走旧写集。验证：空路径 chunk 可派发也可提交。
+4. **G08**：加 `diagram_chunks.kernel_task_id` + 唯一约束，配合 `v4_017` 的 scope 冻结形成 1:1。验证：同 chunk 二次 provision 409。
+5. **G01**：`dispatch` 调 `provision_product_task`，失败即不派发。验证：真实 chunk → Kernel lease 集成测试。
+6. **G04**：commit 事件写 `chunk.state=merged` 并调 `_release_waiting`，幂等键 `(chunk_id, commit_sha)`；人工 merge 对 Kernel-owned chunk 改为校验。验证：重复事件不重复解锁。
+7. **G05**：`claim_task` 拒绝有 `active_run_id` 的任务，`start_run` 拒绝有 `claimed_by` 的任务。验证：双向并发抢占测试。
+8. **G06**：`open_lease` 比对 `expires_at`；release/orphan 调 Kernel release。验证：过期触发重领、释放后可再租。
+9. **G10**：部署 HEAD 并应用 `v4_017`；核对 63 个历史 chunk。
+
+1–3 可并行，4–6 必须按序，7–8 依赖 1/4，9 最后。
+
+
+---
+
+## 7. 修复状态（2026-11-02，同分支）
+
+G01–G07、G09 与 G06 已修复，**未提交**，细节见 [HANDOFF.md](HANDOFF.md)。
+
+| ID | 状态 | 修复要点 |
 |---|---|---|
-| Kernel 单元/组件 | `python -m pytest -q veynod_kernel/tests/test_submission_protocol_unit.py veynod_kernel/tests/test_merge_coordinator.py veynod_kernel/tests/test_security_config.py`：15 passed | 覆盖提交键/环境净化、merge fence、Git/DB 崩溃协调等；不是全链路容量验证。 |
-| 跨域契约单元 | `python -m pytest -q contracts/tests/test_contracts.py`：5 passed | 只验证契约对象自身；服务请求路径未见接线。 |
-| Runtime 选定测试 | `python -m pytest -q agent_runtime/tests/test_kernel_tool.py agent_runtime/tests/test_fencing.py agent_runtime/tests/test_multi_kernel_events.py`：2 passed，16 skipped | 多数依赖外部条件，不能证明跨服务链路。 |
-| Diagram 集成 | `python -m pytest -q AgentGraph/tests/test_diagrams.py AgentGraph/tests/test_loop_steps.py`：25 skipped | 本机未具备所需测试数据库条件；代码内的 fake artifact 仍可作为测试意图证据。 |
-| Host Runner Node | `node --test AgentGraph/cli/test/runner.test.mjs`：22 tests，19 passed，3 failed | 失败点分别是 Codex CLI 探测预期、Windows CRLF、Windows scratch 路径转义；不能称 Runner 测试通过。 |
+| G01 | 已修 | `dispatch` 绑定 Kernel 节点（`lease=False`），失败写 `CHUNK_KERNEL_UNBOUND` |
+| G02 | 已修 | runtime 与 host 共用 `request_key = product:<task_key>`；实测 1 个节点、第二次复用 |
+| G03 | 已修 | `needs_write_set`/`lease_denied`/`admission` 不再算 Kernel-owned；`test_loop_steps` 恢复全绿 |
+| G04 | 已修 | `project_kernel_commit` 投影 merged + 解锁，`(chunk, commit)` 去重；人工 merge 降级为校验 |
+| G05 | 已修 | `claim_task` 拒 `active_run_id`；`start_run` 拒已 claim 的 IN_PROGRESS |
+| G06 | 已修 | `open_lease` 拒过期租约；`release_task`/`_take_back` 释放 Kernel 租约 |
+| G07 | 已修 | 空写路径在 `_incomplete` 拦截，`work_scope_for` 空集合回落 legacy |
+| G08 | 已修 | 迁移 `v3_80`：`kernel_task_id` 等列、唯一索引、投影去重表、scope 约束 |
+| G09 | 已修 | runner 从 diff 解析真实 `touched_symbols` |
+| G10 | **未修** | 生产仍是 `88626e3`，缺 `v4_017`/`v3_80` |
+| G11 | 部分 | 本文已按 HEAD 重写；`01/02/03/04` 附属文档仍是旧基准 |
 
-本轮没有运行整个仓库测试、真实多 Runner E2E、真实 Diagram→Kernel→Diagram 测试或 1000 并发压测。`scripts/capacity_unified.py:1-13` 有分级脚本；`docs/UNIFIED_ACCEPTANCE_REPORT.md:248` 自述未重测 1000 Runner 且历史 P99 54 秒为 FAIL。**1000 个已建任务与 1000 个同时活跃执行者不是同一指标**，本报告对企业 1000 Agent 目标的当前可胜任性判定为 **NOT VERIFIED，现有已确认 P0 断层阻止直接按目标架构使用**。
+验证：`test_diagrams`/`test_loop_steps`/`test_kernel_delivery_scope`/`test_task_lifecycle` = 38 passed；
+kernel 安全/守卫/scope 子集 = 9 passed；真实探针见 HANDOFF §3。全量回归见 §8。
 
-## 7. 按依赖排序的最小重构任务清单（待审核，不在 Phase 0 实施）
+---
 
-1. **选定实施基准并补齐运行证据。** 决定以 `d37b781` 还是已在 GitHub 的 `88626e3` 为下一阶段代码基准；获取 VPS 镜像 digest、迁移版本、关键环境开关。依赖：无；验证：Git SHA、镜像 digest、数据库迁移 ledger 与只读配置输出。此步必须先于任务设计，因为 `88626e3` 已改变 Host 执行路径。
-2. **定义统一关联与 WorkScope 契约。** 固化 `diagram_id/chunk_id/product_task_id/attempt_id/run_id/kernel_task_id`、范围版本/哈希、路径规范化、空范围规则与不可变状态；迁移旧记录时显式标记未知。依赖 1；验证：契约测试、拒绝扩大写集的负面测试。对应 G01/G05。
-3. **建立单一活动 attempt 所有权。** 在 Product Task 上用原子占有/释放覆盖 Scheduler placement、Host claim、`start_run` 与取消/超时，保留 fencing；旧入口必须遵守同一 CAS。依赖 2；验证：并发抢占、重试、断线恢复测试。对应 G02。
-4. **打通 Diagram→Kernel 写域与执行链。** 将冻结 WorkScope 经服务端传到 Kernel Task/Lease，Kernel 校验每个 Patch/文件；Host Runner 通过 Kernel 协议执行，旧 PR 路径作为显式受控迁移适配器。依赖 2、3；验证：真实 Worktree 越权 diff 拒绝与多 Runner 同域冲突测试。对应 G01/G06。
-5. **统一 Gate/Merge 所有权与事件投影。** 只以 Kernel 持久 Gate/commit evidence 作为代码完成事实，Diagram 的旧 gate/merge 改为只读或受控映射；建立幂等 Kernel event→Product/Diagram 投影，提交后解锁下游、可重放与对账。依赖 3、4；验证：重复事件、乱序、Git-first/DB-first 崩溃、旧入口并发测试。对应 G03/G04。
-6. **加强 Gate 隔离和分级容量验收。** 使用受限执行环境，验证文件/网络/资源隔离；按 10、50、100、250、500、1000 真实多 Runner 分级运行，并区分已建、已领取、活跃推理、活跃写入、Gate 队列和已提交。依赖 4、5；验证：安全负面测试、故障注入、P95/P99、吞吐、排队、恢复和成本报告。对应 G07/G08/G11。
+## 8. 后续一轮（同分支，仍未提交）
 
-本清单是 **Phase 0 建议**。Phase 1 未启动；须先审核本报告和代码基准选择。
+在上面 9 项之外，`docs/veynod_im.md` 与 `phase-2/PLAN.md` 的剩余项也已落地：
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| Phase 2 端到端 | 已过 | `test_phase2_chunk_delivery.py` 3 passed：真实 Kernel + gate worker + bare 仓库，冻结→派发绑定→lease→五阶段门禁→commit→chunk merged→下游解锁；重复事件与对账都不重复合并 |
+| Phase 2 对账器 | 已做 | `diagram_reconcile.py`，以 Kernel evidence 为准补投投影 |
+| G01 投影缺 `doc_key` | 已修 | `project_kernel_commit` 的 `_event` 会 KeyError；查询与 dict 都补了 |
+| nerve 通道 | 已做 | `contracts/nerve_protocol.py`、`nerve_hub.py`、`/v1/ws/nerve`、`veynod-messenger.mjs`、`v3_81`；200 ms / 5000 ms 双勾，17 个测试 |
+| 状态写入收敛 | 已做 | `transition_task_fenced` / `end_task_lease_fenced`（epoch CAS） |
+| 后台循环剥离 | 已做 | `ENABLE_INLINE_BACKGROUND_LOOPS` + `app/worker.py` |
+
+细节与偏离见 [IM_IMPLEMENTATION.md](IM_IMPLEMENTATION.md)、[phase-2/RESULT.md](phase-2/RESULT.md)。
+
+G10 仍是唯一的未修项：生产没有这些迁移与代码。
+

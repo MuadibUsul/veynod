@@ -62,7 +62,72 @@ class LifecycleError(RuntimeError):
         self.status_code = status_code
 
 
-# ---------------------------------------------------------------- collisions
+# ------------------------------------------------------------------ transitions
+async def transition_task_fenced(
+    session: AsyncSession,
+    *,
+    workspace_id: Any,
+    task_key: str,
+    new_status: TaskStatus | str,
+    expected_epoch: int | None = None,
+    expected_status: tuple[TaskStatus | str, ...] | None = None,
+    clear_lease: bool = False,
+    **fields: Any,
+) -> dict[str, Any] | None:
+    """Move one task's status under a compare-and-set, and report what happened.
+
+    This is the guard the delivery paths call instead of writing
+    ``UPDATE collab_tasks SET status`` by hand. ``expected_epoch`` is the
+    lease epoch the caller believes it holds: a holder whose lease was taken
+    over (epoch moved on) writes nowhere and gets ``None`` back, so the
+    successor's state cannot be overwritten by a late writer.
+
+    ``fields`` are extra column assignments (``review_feedback``,
+    ``claimed_by``, ...) and go in the same statement, so a transition and its
+    bookkeeping never split.
+    """
+    clauses = ["workspace_id = :ws", "task_key = :k"]
+    params: dict[str, Any] = {"ws": workspace_id, "k": task_key,
+                              "s": TaskStatus(new_status).value}
+    if expected_epoch is not None:
+        clauses.append("lease_epoch = :e")
+        params["e"] = int(expected_epoch)
+    if expected_status is not None:
+        allowed = [TaskStatus(item).value for item in expected_status]
+        clauses.append("status = ANY(CAST(:from AS task_status[]))")
+        params["from"] = allowed
+    assignments = ["status = :s", "version = version + 1", "updated_at = NOW()"]
+    if clear_lease:
+        assignments += ["claimed_by = NULL", "lease_owner = NULL", "lease_expires_at = NULL"]
+    for index, (column, value) in enumerate(fields.items()):
+        assignments.append(f"{column} = :f{index}")
+        params[f"f{index}"] = value
+    row = (await session.execute(
+        text(f"UPDATE collab_tasks SET {', '.join(assignments)} "
+             f"WHERE {' AND '.join(clauses)} "
+             "RETURNING task_key, status::text, version, lease_epoch"),
+        params,
+    )).mappings().one_or_none()
+    return dict(row) if row is not None else None
+
+
+async def end_task_lease_fenced(
+    session: AsyncSession, *, workspace_id: Any, task_key: str, epoch: int | None,
+    reason: str,
+) -> bool:
+    """End the active Product lease of a task, at the epoch the caller holds."""
+    clause, params = "", {"ws": workspace_id, "k": task_key, "r": reason[:2000]}
+    if epoch is not None:
+        clause, params["e"] = " AND t.lease_epoch = :e", int(epoch)
+    ended = (await session.execute(text(
+        "UPDATE leases l SET state = 'released', ended_at = NOW(), end_reason = :r "
+        "FROM collab_tasks t WHERE l.resource_kind = 'task' "
+        "AND l.resource_id = t.id AND l.state = 'active' "
+        "AND t.workspace_id = :ws AND t.task_key = :k" + clause), params)).rowcount
+    return bool(ended)
+
+
+# ------------------------------------------------------------------ collisions
 async def _once(
     session: AsyncSession,
     *,
@@ -262,6 +327,16 @@ async def start_run(
     existing = (task.correlation or {}).get("run_id")
     if task.active_run_id and existing:
         return await read_run(session, principal, task_key)
+    # One execution owner: a task already claimed on a computer (with a live
+    # product lease) belongs to that attempt.  A Run would provision a second
+    # Kernel node for the same write set and stall behind the host's lease.
+    if task.claimed_by and task.lease_owner and (
+        task.status is TaskStatus.IN_PROGRESS
+    ):
+        raise LifecycleError(
+            f"{task_key} is claimed by {task.claimed_by}; "
+            "release it before starting a Run", 409
+        )
 
     binding = await kernel_binding_for(
         session, principal.workspace.id, task.project, task.repo

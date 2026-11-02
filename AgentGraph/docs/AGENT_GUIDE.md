@@ -287,6 +287,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `rate_limited` | 429 | `retry_after` |
 | `sse_capacity` | 429 | `retry_after` |
 | `overloaded` | 503 | `retry_after` |
+| `kernel_not_committed` | 409 | `retry_backoff` |
 | `internal_error` | 500 | `retry_backoff` |
 | `embedding_failed` | 502 | `retry_backoff` |
 | `kernel_cancel_failed` | 502 | `retry_backoff` |
@@ -354,6 +355,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `still_draft` | 409 | `fix_request` |
 | `task_exists` | 409 | `fix_request` |
 | `task_not_done` | 409 | `fix_request` |
+| `task_owned_by_run` | 409 | `fix_request` |
 | `tenant_has_children` | 409 | `fix_request` |
 | `terminal_state_immutable` | 409 | `fix_request` |
 | `upload_incomplete` | 409 | `fix_request` |

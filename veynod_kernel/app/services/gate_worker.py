@@ -51,6 +51,7 @@ class GateWorker:
         self._stopping = True
 
     async def run_forever(self) -> None:
+        logger.info("worker %s polling for submissions", self.worker_id)
         while not self._stopping:
             record = await self.claim()
             if record is None:
@@ -117,6 +118,9 @@ class GateWorker:
             )
             row = result.mappings().first()
             await session.commit()
+            if row is not None:
+                logger.info("worker %s claimed submission %s",
+                            self.worker_id, row["submission_id"])
             return dict(row) if row else None
 
     async def renew(self, record: Mapping[str, Any]) -> bool:

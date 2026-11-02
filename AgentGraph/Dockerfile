@@ -23,6 +23,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY sql ./sql
 COPY scripts ./scripts
+# The shared WorkScope/identity contracts live at the repository root.
+COPY contracts ./contracts
 COPY --from=dashboard /dashboard/out ./dashboard/out
 
 RUN mkdir -p /backups && chown -R app:app /app /backups && chmod 700 /backups

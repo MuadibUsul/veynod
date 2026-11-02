@@ -187,6 +187,16 @@ REGISTRY: dict[str, ErrorSpec] = {
     "runner_hello_required": _spec(
         409, FIX_REQUEST, "Call POST /v1/runner/hello with this host, then retry."
     ),
+    "task_owned_by_run": _spec(
+        409,
+        FIX_REQUEST,
+        "A Runtime run holds this task; use POST /v1/tasks/{key}/run or stop the run first.",
+    ),
+    "kernel_not_committed": _spec(
+        409,
+        RETRY_BACKOFF,
+        "The Kernel has not committed this chunk yet; wait for the commit projection.",
+    ),
     "alias_taken": _spec(409, FIX_REQUEST, "Choose another alias."),
     "alias_tombstoned": _spec(409, FIX_REQUEST, "Choose another alias; tombstones never reuse."),
     "idempotency_key_reused": _spec(

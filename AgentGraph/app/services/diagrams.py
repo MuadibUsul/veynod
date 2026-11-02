@@ -30,18 +30,22 @@ from __future__ import annotations
 import fnmatch
 import hashlib
 import json
+import logging
 import re
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Principal, can, ensure_namespace
 from app.config import get_settings
 from app.errors import ApiError, Forbidden, NotFound
+from app.models import Workspace
 from app.services.common import append_event
+
+logger = logging.getLogger("agentgraph.diagrams")
 
 settings = get_settings()
 LAYERS = ("interface", "implementation")
@@ -130,12 +134,19 @@ def _clean_chunk(raw: dict[str, Any]) -> dict[str, Any]:
 
 
 def _incomplete(chunk: dict[str, Any]) -> list[str]:
-    """M-06: a chunk without a contract or checkable criteria cannot be dispatched."""
+    """M-06: a chunk that cannot be dispatched as an isolated unit.
+
+    ``allowed_write_paths`` is required because it is the only thing that turns
+    a chunk into a Kernel WorkScope; without it the Kernel cannot lock or
+    validate anything (and would reject the task with 422).
+    """
     missing = []
     if not chunk["icd"]:
         missing.append("icd")
     if not chunk["done_criteria"]:
         missing.append("done_criteria")
+    if not chunk["allowed_write_paths"]:
+        missing.append("allowed_write_paths")
     return missing
 
 
@@ -152,9 +163,11 @@ def _validate_graph(chunks: list[dict[str, Any]]) -> None:
         if missing or unknown:
             problems[chunk["chunk_key"]] = {"missing": missing, "unknown_dependencies": unknown}
     if problems:
-        raise ApiError(422, "chunk_incomplete",
-                       "every chunk needs an icd and done_criteria, and known dependencies",
-                       details={"chunks": problems})
+        raise ApiError(
+            422, "chunk_incomplete",
+            "every chunk needs an icd, done_criteria and allowed_write_paths, "
+            "and known dependencies",
+            details={"chunks": problems})
     # No cycles: a chunk that waits on itself would never dispatch.
     graph = {chunk["chunk_key"]: chunk["depends_on"] for chunk in chunks}
     state: dict[str, int] = {}
@@ -620,6 +633,47 @@ def _waiting_on(chunk: dict[str, Any], chunks: dict[str, dict[str, Any]]) -> tup
         f"{dep} ({chunks[dep]['state'] if dep in chunks else 'missing'})" for dep in waiting)
 
 
+async def _provision_kernel_node(
+    session: AsyncSession, principal: Principal, diagram: dict[str, Any],
+    chunk: dict[str, Any], task_key: str,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Bind a dispatched chunk to the one Kernel node that will deliver it.
+
+    Returns ``(kernel_task_id, kernel_workspace_id, scope_hash, error)``.  The
+    error is returned (not raised) so the chunk stays visible with its reason
+    and the operator can see why nothing will execute.
+    """
+    from app.models import CollabTask
+    from app.services import kernel_delivery
+
+    task = (
+        await session.execute(
+            select(CollabTask).where(
+                CollabTask.workspace_id == principal.workspace.id,
+                CollabTask.task_key == task_key,
+            )
+        )
+    ).scalar_one_or_none()
+    if task is None:
+        return None, None, None, "task disappeared before provisioning"
+    try:
+        # Bind only: the lease belongs to the side that will actually execute.
+        record = await kernel_delivery.provision_product_task(
+            session, task, lease=False
+        )
+    except Exception as exc:  # noqa: BLE001 - report, never lose the chunk
+        logger.exception("kernel provisioning failed for chunk %s", chunk["chunk_key"])
+        return None, None, None, str(exc)[:500]
+    if record is None:
+        return None, None, None, "no Kernel binding for this repository"
+    if not record.get("kernel_task_id"):
+        return None, record.get("kernel_workspace_id"), record.get("scope_hash"), str(
+            record.get("error") or "Kernel node was not created"
+        )[:500]
+    return (record.get("kernel_task_id"), record.get("kernel_workspace_id"),
+            record.get("scope_hash"), None)
+
+
 async def _dispatch_one(session: AsyncSession, principal: Principal, diagram: dict[str, Any],
                         chunk: dict[str, Any], chunks: dict[str, dict[str, Any]],
                         upgrade: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -648,12 +702,29 @@ async def _dispatch_one(session: AsyncSession, principal: Principal, diagram: di
                 "block_reason": reason, **detail}
     task_key, context_slice = await _create_task(session, principal, diagram, chunk, chunks,
                                                  upgrade)
+    # The chunk becomes a Kernel work unit here: a leased worktree plus a frozen
+    # WriteScope.  Without that binding the "delivery" was a pull request and a
+    # human row flip.  Failing closed keeps the chunk dispatched-but-unplaced
+    # instead of silently falling back to the old path.
+    kernel_task_id, kernel_workspace, scope_hash, kernel_error = (
+        await _provision_kernel_node(session, principal, diagram, chunk, task_key)
+    )
     await session.execute(text(
         "UPDATE diagram_chunks SET state = 'dispatched', block_reason = NULL, block_kind = NULL, "
-        "task_key = :t, context_slice = CAST(:cs AS jsonb), updated_at = NOW() WHERE id = :id"),
-        {"t": task_key, "cs": json.dumps(context_slice), "id": chunk["id"]})
+        "task_key = :t, context_slice = CAST(:cs AS jsonb), kernel_task_id = :kt, "
+        "kernel_workspace_id = :kw, scope_hash = :sh, updated_at = NOW() WHERE id = :id"),
+        {"t": task_key, "cs": json.dumps(context_slice), "id": chunk["id"],
+         "kt": kernel_task_id, "kw": kernel_workspace,
+         "sh": scope_hash})
     await _event(session, principal, diagram, "CHUNK_DISPATCHED", chunk_key=chunk["chunk_key"],
                  task_key=task_key, version=diagram["version"])
+    if kernel_error:
+        # Dispatched but not deliverable: visible in the timeline rather than a
+        # silent fallback to the old pull-request path.
+        await _event(session, principal, diagram, "CHUNK_KERNEL_UNBOUND",
+                     chunk_key=chunk["chunk_key"], task_key=task_key, error=kernel_error)
+        return {"chunk_key": chunk["chunk_key"], "state": "dispatched",
+                "task_key": task_key, "kernel_error": kernel_error}
     return {"chunk_key": chunk["chunk_key"], "state": "dispatched", "task_key": task_key}
 
 
@@ -1236,18 +1307,19 @@ async def _break_circuit(session: AsyncSession, principal: Principal, diagram: d
 async def _cancel_task(session: AsyncSession, principal: Principal, task_key: str,
                        reason: str) -> bool:
     """Withdraw a chunk's task (and end its lease) unless it already finished."""
-    row = (await session.execute(text(
-        "UPDATE collab_tasks SET status = 'CANCELLED', claimed_by = NULL, lease_owner = NULL, "
-        "lease_expires_at = NULL, review_feedback = :r, version = version + 1, "
-        "updated_at = NOW() WHERE workspace_id = :ws AND task_key = :k AND status NOT IN "
-        "('DONE', 'CANCELLED') RETURNING canonical_id"),
-        {"ws": principal.workspace.id, "k": task_key, "r": reason[:2000]})).first()
-    if row is None:
+    from app.services.task_lifecycle import end_task_lease_fenced, transition_task_fenced
+
+    moved = await transition_task_fenced(
+        session, workspace_id=principal.workspace.id, task_key=task_key,
+        new_status="CANCELLED",
+        expected_status=("TODO", "READY", "IN_PROGRESS", "REVIEWING", "HANDOFF"),
+        clear_lease=True, review_feedback=reason[:2000],
+    )
+    if moved is None:
         return False
-    await session.execute(text(
-        "UPDATE leases SET state = 'released', ended_at = NOW(), end_reason = 'revoked' "
-        "WHERE resource_kind = 'task' AND resource_ref = :ref AND state = 'active'"),
-        {"ref": row[0]})
+    await end_task_lease_fenced(
+        session, workspace_id=principal.workspace.id, task_key=task_key,
+        epoch=moved["lease_epoch"], reason="revoked")
     return True
 
 
@@ -1538,14 +1610,29 @@ async def merge(session: AsyncSession, principal: Principal, key: str, chunk_key
         raise ApiError(409, "merge_without_deliverable", "a merge records what the chunk "
                        "delivered: pass artifact (a commit or a doc:// link), or merge an "
                        "accepted submission", details={"chunk_key": chunk_key})
+    kernel_task_id = chunk.get("kernel_task_id")
+    if kernel_task_id:
+        # The Kernel already merged and projected it; an accepted submission that
+        # never reached a commit would otherwise be recorded as delivered.
+        shipped = chunk.get("merged_commit_sha")
+        if not shipped:
+            raise ApiError(
+                409, "kernel_not_committed",
+                "this chunk is delivered by the Kernel: wait for its commit "
+                "(the commit event marks it merged itself)",
+                details={"chunk_key": chunk_key, "kernel_task_id": str(kernel_task_id)})
+        artifact = shipped
     record = {"by": me, "at": _now().isoformat(), "artifact": artifact,
               "note": body.get("note"), "task_status": task["status"] if task else None,
               "via_queue": status == "verified",
+              "kernel_task_id": str(kernel_task_id) if kernel_task_id else None,
               "delivered": await _delivered(session, principal, body, submission, artifact)}
     await session.execute(text(
         "UPDATE diagram_chunks SET state = 'merged', merge = CAST(:m AS jsonb), "
+        "merged_commit_sha = COALESCE(:sha, merged_commit_sha), "
         "block_reason = NULL, queued_at = NULL, updated_at = NOW() WHERE id = :id"),
-        {"m": json.dumps(record), "id": chunk["id"]})
+        {"m": json.dumps(record), "id": chunk["id"],
+         "sha": (artifact[:64] if isinstance(artifact, str) else None)})
     await _event(session, principal, diagram, "CHUNK_MERGED", chunk_key=chunk_key,
                  task_key=chunk["task_key"], merged_by=me, artifact=body.get("artifact"),
                  delivered_docs=[doc["uri"] for doc in record["delivered"]["docs"]],
@@ -1666,6 +1753,78 @@ async def _release_waiting(session: AsyncSession, principal: Principal,
                          **(trigger or {}), targets=diagram.get("watchers") or [])
             released.append(outcome)
     return released
+
+
+async def project_kernel_commit(
+    session: AsyncSession, chunk_id: int, commit_sha: str, *,
+    dedupe_key: str, task_status: str | None = None,
+) -> dict[str, Any]:
+    """A Kernel commit is the delivery fact for a chunk.
+
+    Called from the Kernel event projection (and safe to replay).  It marks the
+    chunk merged with the real commit, then unlocks whatever waited on it — the
+    same unlock path a human merge used, so there is exactly one.
+
+    Returns ``{"projected": bool, "unblocked": [...]}``.
+    """
+    chunk_row = (
+        await session.execute(text(
+            "SELECT c.*, d.diagram_key, d.watchers, d.baseline, d.id AS d_id, "
+            "d.namespace, d.doc_key, d.status AS diagram_status, d.workspace_id AS ws "
+            "FROM diagram_chunks c JOIN diagrams d ON d.id = c.diagram_id "
+            "WHERE c.id = :id"), {"id": chunk_id},
+        )
+    ).mappings().first()
+    if chunk_row is None:
+        return {"projected": False, "reason": "chunk_gone", "unblocked": []}
+    chunk = dict(chunk_row)
+    already = chunk.get("merged_commit_sha")
+    if chunk["state"] == "merged" and already == commit_sha:
+        return {"projected": False, "reason": "already_merged", "unblocked": []}
+
+    inserted = await session.execute(text(
+        "INSERT INTO diagram_chunk_projections "
+        "(dedupe_key, chunk_id, task_key, action, commit_sha) "
+        "VALUES (:k, :id, :t, 'chunk.merged', :sha) ON CONFLICT DO NOTHING "
+        "RETURNING dedupe_key"),
+        {"k": dedupe_key[:400], "id": chunk_id, "t": chunk.get("task_key"),
+         "sha": commit_sha[:64]})
+    if inserted.first() is None:
+        return {"projected": False, "reason": "duplicate_event", "unblocked": []}
+
+    workspace = await session.get(Workspace, chunk["ws"])
+    if workspace is None:
+        return {"projected": False, "reason": "workspace_gone", "unblocked": []}
+    from app.auth import principal_for_admin
+
+    principal = principal_for_admin(workspace)
+    diagram = {"diagram_key": chunk["diagram_key"], "baseline": chunk["baseline"],
+               "watchers": chunk["watchers"], "namespace": chunk["namespace"],
+               "doc_key": chunk["doc_key"]}
+    record = {
+        "by": "kernel",
+        "at": _now().isoformat(),
+        "artifact": commit_sha,
+        "via": "kernel_merge",
+        "task_status": task_status,
+        "kernel_task_id": str(chunk["kernel_task_id"]) if chunk.get("kernel_task_id") else None,
+    }
+    await session.execute(text(
+        "UPDATE diagram_chunks SET state = 'merged', merge = CAST(:m AS jsonb), "
+        "merged_commit_sha = :sha, block_reason = NULL, queued_at = NULL, "
+        "updated_at = NOW() WHERE id = :id"),
+        {"m": json.dumps(record), "sha": commit_sha[:64], "id": chunk_id})
+    await _event(session, principal, diagram, "CHUNK_MERGED",
+                 chunk_key=chunk["chunk_key"], task_key=chunk.get("task_key"),
+                 merged_by="kernel", artifact=commit_sha, commit_sha=commit_sha,
+                 targets=diagram.get("watchers") or [])
+    chunks = {row["chunk_key"]: row for row in await _chunks(session, chunk["d_id"])}
+    chunks[chunk["chunk_key"]] = {**chunk, "state": "merged"}
+    unblocked = await _release_waiting(
+        session, principal, {**diagram, "id": chunk["d_id"]},
+        trigger={"upstream": chunk["chunk_key"], "merge_commit": commit_sha},
+    )
+    return {"projected": True, "unblocked": unblocked}
 
 
 # ------------------------------------------------------------------ changes
@@ -1949,10 +2108,11 @@ async def _withdraw(session: AsyncSession, principal: Principal, task_key: str,
         "SELECT status::text FROM collab_tasks WHERE workspace_id = :ws AND task_key = :k"),
         {"ws": principal.workspace.id, "k": task_key})
     if status in ("TODO", "READY"):
-        await session.execute(text(
-            "UPDATE collab_tasks SET status = 'CANCELLED', version = version + 1, "
-            "updated_at = NOW() WHERE workspace_id = :ws AND task_key = :k"),
-            {"ws": principal.workspace.id, "k": task_key})
+        from app.services.task_lifecycle import transition_task_fenced
+
+        await transition_task_fenced(
+            session, workspace_id=principal.workspace.id, task_key=task_key,
+            new_status="CANCELLED", expected_status=(status,), clear_lease=True)
         return {"task_key": task_key, "withdrawn": True}
     # Already claimed: left to its holder and the person who revoked.
     return {"task_key": task_key, "withdrawn": False, "status": status,
@@ -2070,7 +2230,14 @@ async def view(session: AsyncSession, principal: Principal, key: str) -> dict[st
             "review_reject_count": chunk["review_reject_count"],
             "escalation_count": chunk["escalation_count"],
             "graph_mutation_signal": chunk["graph_mutation_signal"],
-            "queue_check": chunk["queue_check"]})
+            "queue_check": chunk["queue_check"],
+            # The Kernel node that delivers this chunk, and the commit that did.
+            # Read-only: dispatch binds them, the commit projection fills the sha.
+            "id": chunk["id"],
+            "kernel_task_id": chunk.get("kernel_task_id"),
+            "kernel_workspace_id": chunk.get("kernel_workspace_id"),
+            "scope_hash": chunk.get("scope_hash"),
+            "merged_commit_sha": chunk.get("merged_commit_sha")})
     pending = (await session.execute(text(
         "SELECT change_key, summary, source, created_at FROM diagram_changes WHERE "
         "diagram_id = :d AND status = 'pending' ORDER BY id"), {"d": diagram["id"]})
