@@ -215,6 +215,42 @@ class SubmissionService:
             "snapshot_id": task_row["snapshot_id"],
             "correlation": json.dumps(correlation or {}, default=str),
         }
+
+        # One open submission per task.  Two workers can briefly hold the same
+        # Run (lease handover), and a Kernel Runner can race the Runtime: the
+        # second submit must never queue a competing patch for the same task.
+        open_row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT * FROM patch_submissions
+                    WHERE task_id = :task_id
+                      AND status IN ('QUEUED', 'RUNNING')
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ),
+                {"task_id": task_id},
+            )
+        ).mappings().first()
+        if open_row is not None:
+            await session.rollback()
+            if open_row["patch_sha256"] == digest:
+                payload = _status_payload(open_row)
+                payload["derived_idempotency_key"] = derived
+                payload["deduplicated"] = True
+                payload["deduplicated_by_open_submission"] = True
+                return payload
+            raise SubmissionConflict(
+                "submission_in_progress",
+                (
+                    "This task already has submission "
+                    f"{open_row['submission_id']} awaiting the gate; wait for "
+                    "its result before submitting a different patch."
+                ),
+                _status_payload(open_row),
+            )
+
         inserted = await self._insert(session, params)
         if inserted is not None:
             await session.commit()

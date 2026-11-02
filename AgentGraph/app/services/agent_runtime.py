@@ -114,6 +114,15 @@ class AgentRuntimeClient:
         payload = await self._request("GET", f"/v1/runs/{run_id}/external")
         return list(payload) if isinstance(payload, list) else []
 
+    async def run_events(
+        self, run_id: str, after_seq: int = 0, limit: int = 200
+    ) -> list[dict[str, Any]]:
+        payload = await self._request(
+            "GET",
+            f"/v1/runs/{run_id}/events?after_seq={int(after_seq)}&limit={int(limit)}",
+        )
+        return list(payload) if isinstance(payload, list) else []
+
     async def steps(self, run_id: str, limit: int = 200) -> list[dict[str, Any]]:
         payload = await self._request(
             "GET", f"/v1/runs/{run_id}/steps?limit={int(limit)}"

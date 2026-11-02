@@ -23,6 +23,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Principal, principal_for_admin
@@ -239,14 +240,15 @@ async def start_run(
     goal: str | None = None,
 ) -> dict[str, Any]:
     """Start the one active Agent Run for this product task."""
+    # Unlocked pre-check only: the authoritative single-run decision is made
+    # under the row lock *after* the two Runtime HTTP calls, so the task row is
+    # never held while a remote service is slow.
     task = (
         await session.execute(
-            select(CollabTask)
-            .where(
+            select(CollabTask).where(
                 CollabTask.workspace_id == principal.workspace.id,
                 CollabTask.task_key == task_key,
             )
-            .with_for_update()
         )
     ).scalar_one_or_none()
     if task is None:
@@ -287,53 +289,96 @@ async def start_run(
     run_id = str(created.get("run_id") or "")
     if not run_id:
         raise LifecycleError("Agent Runtime did not return run_id", 502)
-    started = await client.start_run(run_id)
 
-    before = task_snapshot(task)
-    correlation = dict(task.correlation or {})
-    correlation.update(
-        {
-            "run_id": run_id,
-            "trace_id": trace_id,
-            "kernel_workspace_id": (binding or {}).get("workspace_id"),
-            "product_task_id": task.task_key,
-            "updated_at": utcnow().isoformat(),
-        }
-    )
-    task.correlation = correlation
-    task.active_run_id = UUID(run_id)
-    # The product status is not forced to IN_PROGRESS: that state carries a
-    # human/agent lease by invariant (chk_in_progress_requires_lease).  The Run
-    # is the execution truth until it completes and this module projects it.
-    task.version += 1
-    task.updated_at = utcnow()
-    await session.flush()
-    await record_audit(
-        session,
-        workspace_id=principal.workspace.id,
-        session_batch_id=uuid4(),
-        agent_signature=principal.agent_signature,
-        target_table="collab_tasks",
-        target_record_id=task.id,
-        operation="UPDATE",
-        before=before,
-        after=task_snapshot(task),
-    )
-    await append_event(
-        session,
-        workspace_id=principal.workspace.id,
-        agent=principal.agent_signature,
-        event_type="TASK_RUN_STARTED",
-        payload={
-            "task_key": task.task_key,
-            "run_id": run_id,
-            "trace_id": trace_id,
-            "kernel_workspace_id": correlation.get("kernel_workspace_id"),
-            "runtime_status": started.get("status"),
-        },
-        namespace=task.namespace,
-    )
-    await session.commit()
+    async def _discard(reason: str) -> None:
+        """Never leave a started Run with no product task pointing at it."""
+        try:
+            await client.cancel_run(run_id, reason)
+        except Exception:  # noqa: BLE001 - compensation is best effort
+            logger.exception("could not cancel orphan run %s", run_id)
+
+    try:
+        started = await client.start_run(run_id)
+    except Exception:
+        await _discard("run activation failed")
+        raise
+
+    try:
+        # Re-lock only after the remote calls: the row lock is held for the
+        # local transaction, not for the duration of two HTTP round trips.
+        task = (
+            await session.execute(
+                select(CollabTask)
+                .where(CollabTask.id == task.id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if task is None:
+            await _discard("product task disappeared")
+            raise LifecycleError(f"{task_key} not found", 404)
+        winner = (task.correlation or {}).get("run_id")
+        if task.active_run_id or winner:
+            # A concurrent call bound this task first; ours is a duplicate.
+            await _discard("duplicate run for the same product task")
+            await session.rollback()
+            return await read_run(session, principal, task_key)
+
+        before = task_snapshot(task)
+        correlation = dict(task.correlation or {})
+        correlation.update(
+            {
+                "run_id": run_id,
+                "trace_id": trace_id,
+                "kernel_workspace_id": (binding or {}).get("workspace_id"),
+                "product_task_id": task.task_key,
+                "updated_at": utcnow().isoformat(),
+            }
+        )
+        task.correlation = correlation
+        task.active_run_id = UUID(run_id)
+        # The product status is not forced to IN_PROGRESS: that state carries a
+        # human/agent lease by invariant (chk_in_progress_requires_lease).  The
+        # Run is the execution truth until it completes and this module projects it.
+        task.version += 1
+        task.updated_at = utcnow()
+        await session.flush()
+        await record_audit(
+            session,
+            workspace_id=principal.workspace.id,
+            session_batch_id=uuid4(),
+            agent_signature=principal.agent_signature,
+            target_table="collab_tasks",
+            target_record_id=task.id,
+            operation="UPDATE",
+            before=before,
+            after=task_snapshot(task),
+        )
+        await append_event(
+            session,
+            workspace_id=principal.workspace.id,
+            agent=principal.agent_signature,
+            event_type="TASK_RUN_STARTED",
+            payload={
+                "task_key": task.task_key,
+                "run_id": run_id,
+                "trace_id": trace_id,
+                "kernel_workspace_id": correlation.get("kernel_workspace_id"),
+                "runtime_status": started.get("status"),
+            },
+            namespace=task.namespace,
+        )
+        await session.commit()
+    except IntegrityError:
+        # The partial unique index on active_run_id is the final backstop for
+        # two concurrent starts: keep the winner, drop ours.
+        await session.rollback()
+        await _discard("duplicate run for the same product task")
+        return await read_run(session, principal, task_key)
+    except Exception:
+        await session.rollback()
+        await _discard("binding the run to the product task failed")
+        raise
+
     return {
         "task_key": task.task_key,
         "run_id": run_id,
@@ -368,6 +413,222 @@ async def read_run(
         "kernel_workspace_id": correlation.get("kernel_workspace_id"),
         "kernel_task_id": correlation.get("kernel_task_id"),
     }
+
+
+async def _kernel_task_id_for(session: AsyncSession, task: CollabTask) -> str | None:
+    correlation = task.correlation or {}
+    task_id = correlation.get("kernel_task_id")
+    if task_id:
+        return str(task_id)
+    run_id = correlation.get("run_id")
+    if not run_id:
+        return None
+    try:
+        externals = await _client().externals(str(run_id))
+    except AgentRuntimeError:
+        return None
+    for item in reversed(externals):
+        if item.get("kernel_task_id"):
+            return str(item["kernel_task_id"])
+    return None
+
+
+async def cancel_kernel_task(
+    session: AsyncSession, task: CollabTask, reason: str
+) -> bool:
+    """Propagate a user cancellation into the Kernel before the task is closed."""
+    task_id = await _kernel_task_id_for(session, task)
+    if not task_id:
+        return False
+    binding = await kernel_binding_for(
+        session, task.workspace_id, task.project, task.repo
+    )
+    if binding is None:
+        return False
+    if not settings.kernel_service_key:
+        logger.warning(
+            "KERNEL_SERVICE_KEY is not configured; kernel task %s not cancelled",
+            task_id,
+        )
+        return False
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(
+                binding["base_url"].rstrip("/")
+                + f"/v1/runtime/tasks/{task_id}/cancel",
+                headers={
+                    "X-Veynod-Service-Key": settings.kernel_service_key,
+                    "X-Workspace-Id": binding["workspace_id"],
+                },
+                json={"reason": reason[:4000]},
+            )
+        if response.status_code >= 400:
+            logger.warning(
+                "kernel cancel for %s returned %s: %s",
+                task_id,
+                response.status_code,
+                response.text[:300],
+            )
+            return False
+        return True
+    except Exception:  # noqa: BLE001 - cancellation of the run still proceeds
+        logger.exception("could not cancel kernel task %s", task_id)
+        return False
+
+
+async def trace_view(
+    session: AsyncSession, principal: Principal, task_key: str
+) -> dict[str, Any]:
+    """One task_key -> every fact about it, from all three planes.
+
+    This is the operator entry point: no querying three databases by hand.
+    Sections are additive; a plane that is unreachable reports its error in
+    place instead of failing the whole view.
+    """
+    task = await load_task_row(session, principal.workspace.id, task_key)
+    if task is None:
+        raise LifecycleError(f"{task_key} not found", 404)
+    correlation = dict(task.correlation or {})
+    run_id = correlation.get("run_id")
+    binding = await kernel_binding_for(
+        session, task.workspace_id, task.project, task.repo
+    )
+    view: dict[str, Any] = {
+        "task": {
+            "task_key": task.task_key,
+            "title": task.title,
+            "status": task.status.value,
+            "version": task.version,
+            "project": task.project,
+            "repo": task.repo,
+            "updated_at": task.updated_at.isoformat() if task.updated_at else None,
+        },
+        "correlation": correlation,
+        "ids": {
+            "tenant_id": str(principal.tenant_id),
+            "workspace_id": str(principal.workspace.id),
+            "project": task.project,
+            "task_key": task.task_key,
+            "run_id": run_id,
+            "trace_id": correlation.get("trace_id"),
+            "kernel_base_url": (binding or {}).get("base_url"),
+            "kernel_workspace_id": correlation.get("kernel_workspace_id")
+            or (binding or {}).get("workspace_id"),
+            "kernel_task_id": correlation.get("kernel_task_id"),
+            "submission_id": correlation.get("submission_id"),
+            "commit_sha": correlation.get("commit_sha"),
+        },
+        "run": None,
+        "kernel": None,
+        "timeline": [],
+    }
+    timeline: list[dict[str, Any]] = []
+    if run_id:
+        client = _client()
+        try:
+            run = await client.get_run(str(run_id))
+            steps = await client.steps(str(run_id))
+            externals = await client.externals(str(run_id))
+            events = await client.run_events(str(run_id))
+            view["run"] = {
+                "run_id": str(run_id),
+                "status": run.get("status"),
+                "version": run.get("version"),
+                "usage": run.get("usage") or {},
+                "budget": run.get("budget") or {},
+                "last_error": run.get("last_error"),
+                "steps": steps[-40:],
+                "externals": externals,
+                "event_count": len(events),
+            }
+            for event in events[-100:]:
+                timeline.append(
+                    {
+                        "at": event.get("created_at"),
+                        "source": "runtime",
+                        "type": event.get("event_type"),
+                        "detail": (event.get("payload") or {}).get("to")
+                        or (event.get("payload") or {}).get("tool"),
+                    }
+                )
+        except AgentRuntimeError as exc:
+            view["run"] = {"error": str(exc)}
+    kernel_task_id = correlation.get("kernel_task_id")
+    if not kernel_task_id and view.get("run"):
+        for item in reversed(view["run"].get("externals") or []):
+            if item.get("kernel_task_id"):
+                kernel_task_id = item["kernel_task_id"]
+                break
+    if kernel_task_id:
+        from app.services import code_engine
+
+        try:
+            evidence = await code_engine._engine(
+                (binding or {}).get("base_url")
+            ).evidence(str(kernel_task_id))  # noqa: SLF001
+            view["kernel"] = {
+                "kernel_task_id": kernel_task_id,
+                "submission": evidence.get("submission"),
+                "merge_intent": evidence.get("merge_intent"),
+                "delivery": evidence.get("delivery"),
+                "gate_results": evidence.get("gate_results"),
+                "evidence_complete": evidence.get("evidence_complete"),
+            }
+            submission = evidence.get("submission") or {}
+            if submission.get("created_at"):
+                timeline.append(
+                    {
+                        "at": submission.get("created_at"),
+                        "source": "kernel",
+                        "type": f"submission.{submission.get('status')}",
+                        "detail": submission.get("submission_id"),
+                    }
+                )
+            delivery = evidence.get("delivery") or {}
+            if delivery.get("created_at"):
+                timeline.append(
+                    {
+                        "at": delivery.get("created_at"),
+                        "source": "kernel",
+                        "type": "delivery.commit",
+                        "detail": delivery.get("commit_sha"),
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001 - the view stays useful
+            view["kernel"] = {"error": str(exc)}
+    rows = (
+        await session.execute(
+            text(
+                """
+                SELECT event_type, payload, created_at
+                FROM timeline_streams
+                WHERE workspace_id = :workspace_id
+                  AND payload->>'task_key' = :task_key
+                ORDER BY created_at DESC
+                LIMIT 100
+                """
+            ),
+            {
+                "workspace_id": str(principal.workspace.id),
+                "task_key": task.task_key,
+            },
+        )
+    ).mappings().all()
+    for row in rows:
+        payload = row["payload"] if isinstance(row["payload"], dict) else {}
+        timeline.append(
+            {
+                "at": row["created_at"].isoformat() if row["created_at"] else None,
+                "source": "product",
+                "type": row["event_type"],
+                "detail": payload.get("run_id") or payload.get("reason"),
+            }
+        )
+    timeline.sort(key=lambda item: str(item.get("at") or ""))
+    view["timeline"] = timeline[-200:]
+    return view
 
 
 async def load_task_row(
@@ -470,8 +731,13 @@ async def execution_view(
     if kernel_task_id:
         from app.services import code_engine
 
+        binding = await kernel_binding_for(
+            session, task.workspace_id, task.project, task.repo
+        )
         try:
-            evidence = await code_engine._engine().evidence(str(kernel_task_id))  # noqa: SLF001
+            evidence = await code_engine._engine(
+                (binding or {}).get("base_url")
+            ).evidence(str(kernel_task_id))  # noqa: SLF001
         except Exception as exc:  # noqa: BLE001 - the view stays readable
             evidence = {"error": str(exc)}
         view["code"] = {
@@ -533,6 +799,7 @@ async def project_run(
 
     admin = principal_for_admin(workspace)
     if action == "cancel":
+        await cancel_kernel_task(session, task, "Agent Run was cancelled.")
         await _cancel(session, workspace, task, admin, "Agent Run was cancelled.")
         return action
     if action == "fail":
@@ -664,8 +931,13 @@ async def collect_evidence(
         return None
     from app.services import code_engine
 
+    binding = await kernel_binding_for(
+        session, task.workspace_id, task.project, task.repo
+    )
     try:
-        evidence = await code_engine._engine().evidence(str(kernel_task_id))  # noqa: SLF001
+        evidence = await code_engine._engine(
+            (binding or {}).get("base_url")
+        ).evidence(str(kernel_task_id))  # noqa: SLF001
     except Exception as exc:  # noqa: BLE001 - a missing row is not a PASS
         logger.warning(
             "kernel evidence unavailable for %s: %s", kernel_task_id, exc
@@ -908,6 +1180,7 @@ async def cancel_run(
         except AgentRuntimeError as exc:
             logger.warning("could not cancel runtime run %s: %s", run_id, exc)
     if task.status not in TERMINAL:
+        await cancel_kernel_task(session, task, reason)
         admin = principal_for_admin(principal.workspace)
         await _cancel(session, principal.workspace, task, admin, reason)
         await session.commit()
@@ -1004,8 +1277,10 @@ async def project_run_event(
 
 __all__ = [
     "LifecycleError",
+    "cancel_kernel_task",
     "cancel_run",
     "execution_view",
+    "trace_view",
     "load_task_row",
     "collect_evidence",
     "kernel_binding_for",

@@ -1,0 +1,145 @@
+{
+  "profile": "fast",
+  "workers": 4,
+  "gate_workers": 2,
+  "gate_commands": "stubbed (VN_TEST_CMD=true)",
+  "note": "levels 10-100 from the first run, 250 from the second; each run resets the stack",
+  "levels": [
+    {
+      "level": 10,
+      "completed": 10,
+      "failed": 0,
+      "stuck": 0,
+      "delivered": 10,
+      "error_rate": 0.0,
+      "throughput_per_s": 0.25,
+      "create_ms": {
+        "p50": 250.0,
+        "p95": 484.0
+      },
+      "run_start_ms": {
+        "p50": 531.0,
+        "p95": 719.0
+      },
+      "e2e_s": {
+        "p50": 38.937,
+        "p95": 39.968,
+        "p99": 39.968,
+        "max": 39.968
+      }
+    },
+    {
+      "level": 25,
+      "completed": 25,
+      "failed": 0,
+      "stuck": 0,
+      "delivered": 25,
+      "error_rate": 0.0,
+      "throughput_per_s": 0.249,
+      "create_ms": {
+        "p50": 266.0,
+        "p95": 375.0
+      },
+      "run_start_ms": {
+        "p50": 687.0,
+        "p95": 922.0
+      },
+      "e2e_s": {
+        "p50": 95.968,
+        "p95": 100.047,
+        "p99": 100.328,
+        "max": 100.328
+      }
+    },
+    {
+      "level": 50,
+      "completed": 50,
+      "failed": 0,
+      "stuck": 0,
+      "delivered": 50,
+      "error_rate": 0.0,
+      "throughput_per_s": 0.236,
+      "create_ms": {
+        "p50": 265.0,
+        "p95": 500.0
+      },
+      "run_start_ms": {
+        "p50": 796.0,
+        "p95": 1282.0
+      },
+      "e2e_s": {
+        "p50": 195.75,
+        "p95": 210.938,
+        "p99": 211.5,
+        "max": 211.5
+      }
+    },
+    {
+      "level": 100,
+      "completed": 100,
+      "failed": 0,
+      "stuck": 0,
+      "delivered": 100,
+      "error_rate": 0.0,
+      "throughput_per_s": 0.24,
+      "create_ms": {
+        "p50": 282.0,
+        "p95": 500.0
+      },
+      "run_start_ms": {
+        "p50": 735.0,
+        "p95": 1015.0
+      },
+      "e2e_s": {
+        "p50": 393.266,
+        "p95": 416.25,
+        "p99": 417.265,
+        "max": 417.406
+      }
+    },
+    {
+      "level": 250,
+      "completed": 250,
+      "failed": 0,
+      "stuck": 0,
+      "delivered": 250,
+      "error_rate": 0.0,
+      "throughput_per_s": 0.225,
+      "create_ms": {
+        "p50": 282.0,
+        "p95": 500.0,
+        "p99": 641.0,
+        "max": 656.0,
+        "mean": 325.064
+      },
+      "run_start_ms": {
+        "p50": 766.0,
+        "p95": 1031.0,
+        "p99": 1219.0,
+        "max": 1344.0,
+        "mean": 778.816
+      },
+      "e2e_s": {
+        "p50": 1048.765,
+        "p95": 1106.594,
+        "p99": 1111.079,
+        "max": 1111.563,
+        "mean": 1049.346
+      },
+      "wall_s": 1367.3,
+      "resources": {
+        "rss_mb": 317.0,
+        "cpu_percent": 0.0
+      },
+      "db": {
+        "submissions": 250,
+        "deliveries": 250,
+        "dag_tasks": 250,
+        "runs": 250,
+        "stuck_runs": 0,
+        "wakeups": 250,
+        "steps": 2250
+      }
+    }
+  ]
+}

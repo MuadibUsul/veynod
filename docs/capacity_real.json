@@ -1,0 +1,96 @@
+{
+  "profile": "real",
+  "workers": 4,
+  "gate_workers": 2,
+  "gate_commands": "real",
+  "levels": [
+    {
+      "level": 10,
+      "completed": 10,
+      "failed": 0,
+      "stuck": 0,
+      "delivered": 10,
+      "error_rate": 0.0,
+      "throughput_per_s": 0.227,
+      "create_ms": {
+        "p50": 266.0,
+        "p95": 484.0,
+        "p99": 484.0,
+        "max": 484.0,
+        "mean": 306.2
+      },
+      "run_start_ms": {
+        "p50": 578.0,
+        "p95": 828.0,
+        "p99": 828.0,
+        "max": 828.0,
+        "mean": 600.0
+      },
+      "e2e_s": {
+        "p50": 42.813,
+        "p95": 44.047,
+        "p99": 44.047,
+        "max": 44.047,
+        "mean": 42.806
+      },
+      "wall_s": 53.8,
+      "resources": {
+        "rss_mb": 291.6,
+        "cpu_percent": 0.0
+      },
+      "db": {
+        "submissions": 10,
+        "deliveries": 10,
+        "dag_tasks": 10,
+        "runs": 10,
+        "stuck_runs": 0,
+        "wakeups": 10,
+        "steps": 90
+      }
+    },
+    {
+      "level": 25,
+      "completed": 25,
+      "failed": 0,
+      "stuck": 0,
+      "delivered": 25,
+      "error_rate": 0.0,
+      "throughput_per_s": 0.206,
+      "create_ms": {
+        "p50": 281.0,
+        "p95": 422.0,
+        "p99": 422.0,
+        "max": 422.0,
+        "mean": 291.88
+      },
+      "run_start_ms": {
+        "p50": 657.0,
+        "p95": 1031.0,
+        "p99": 3375.0,
+        "max": 3375.0,
+        "mean": 766.88
+      },
+      "e2e_s": {
+        "p50": 116.703,
+        "p95": 120.907,
+        "p99": 121.188,
+        "max": 121.188,
+        "mean": 115.838
+      },
+      "wall_s": 144.4,
+      "resources": {
+        "rss_mb": 296.2,
+        "cpu_percent": 0.0
+      },
+      "db": {
+        "submissions": 35,
+        "deliveries": 35,
+        "dag_tasks": 35,
+        "runs": 35,
+        "stuck_runs": 0,
+        "wakeups": 35,
+        "steps": 315
+      }
+    }
+  ]
+}

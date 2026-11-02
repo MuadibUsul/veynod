@@ -38,6 +38,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git openssh-client ca-certificates libatomic1 nodejs npm && \
     npm install -g pyright@1.1.380 && npm cache clean --force && \
+    git config --system --add safe.directory '*' && \
     rm -rf /var/lib/apt/lists/*
 
 COPY veynod_kernel/requirements.txt ./requirements.txt

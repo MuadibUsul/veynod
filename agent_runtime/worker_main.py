@@ -38,7 +38,7 @@ from .pool import RuntimeWorkerPool
 from .quota import QuotaPolicy
 from .store import RunStore
 from .tools import KernelToolConfig, KernelToolRuntime
-from .wakeups import KernelEventSource, KernelEventWatcher
+from .wakeups import KernelEventSource, KernelEventWatcher, parse_service_keys
 
 logger = logging.getLogger("agent_runtime.worker_main")
 
@@ -98,21 +98,33 @@ async def main() -> int:
         tools = KernelToolRuntime(kernel_config, store=store)
         service_key = kernel_config.service_key
         kernel_url = os.environ.get("KERNEL_URL", "").strip()
-        if service_key and kernel_url:
+        # Per-instance service keys next to the single-instance default; the
+        # watcher discovers every Kernel a live Run is bound to.
+        per_instance = parse_service_keys(
+            os.environ.get("RUNTIME_KERNEL_SERVICE_KEYS")
+        )
+        if service_key or per_instance:
             watcher = KernelEventWatcher(
                 store,
-                KernelEventSource(
-                    base_url=kernel_url,
-                    service_key=service_key,
-                    interval_seconds=float(
-                        os.environ.get("RUNTIME_KERNEL_EVENT_INTERVAL_SECONDS", "2")
-                    ),
+                (
+                    KernelEventSource(
+                        base_url=kernel_url,
+                        service_key=service_key,
+                        interval_seconds=float(
+                            os.environ.get(
+                                "RUNTIME_KERNEL_EVENT_INTERVAL_SECONDS", "2"
+                            )
+                        ),
+                    )
+                    if kernel_url and service_key
+                    else None
                 ),
+                service_keys=per_instance,
             )
         else:
             logger.warning(
-                "KERNEL_SERVICE_KEY/KERNEL_URL missing: deferred Runs will only "
-                "resume through the deadline sweep"
+                "KERNEL_SERVICE_KEY/RUNTIME_KERNEL_SERVICE_KEYS missing: deferred "
+                "Runs will only resume through the deadline sweep"
             )
     else:
         allowlist = frozenset(
@@ -173,10 +185,17 @@ async def main() -> int:
         watcher is not None,
     )
     await worker.start()
-    metrics_server = await _metrics_server(
-        int(os.environ.get("RUNTIME_WORKER_METRICS_PORT", "8031")),
-        worker,
-    )
+    # A taken metrics port must not stop execution: the pool is the product,
+    # the port is an observation nicety (two workers on one host is normal).
+    metrics_server = None
+    metrics_port = int(os.environ.get("RUNTIME_WORKER_METRICS_PORT", "8031"))
+    try:
+        metrics_server = await _metrics_server(metrics_port, worker)
+    except OSError:
+        logger.warning(
+            "metrics port %s is busy; worker continues without /metrics",
+            metrics_port,
+        )
     watcher_task = (
         asyncio.create_task(watcher.run_forever(), name="runtime-kernel-wakeups")
         if watcher is not None
@@ -211,8 +230,9 @@ async def main() -> int:
         except asyncio.CancelledError:
             pass
         await worker.stop()
-        metrics_server.close()
-        await metrics_server.wait_closed()
+        if metrics_server is not None:
+            metrics_server.close()
+            await metrics_server.wait_closed()
         await model.close()
         await tools.close()
         await store.close()

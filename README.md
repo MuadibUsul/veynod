@@ -175,6 +175,7 @@ Kernel/Runtime 控制台不再是产品入口：`/dashboard/code/`、`/dashboard
 | POST | `/v1/tasks/{key}/run/cancel` | 取消 Run 与任务 |
 | GET | `/v1/tasks/{key}/execution` | 任务详情的统一执行视图（Loop/Code/Verification/Delivery） |
 | GET/POST | `/v1/projects`、`/v1/projects/{p}/repositories` | 项目与仓库（Kernel workspace）绑定 |
+| GET | `/v1/tasks/{key}/trace` | 一个 task_key → 三个平面的事实 + 合并时间线（运维诊断入口） |
 | GET | `/healthz/deep` | 数据库 + Runtime + Kernel 的联合健康 |
 
 Kernel 内部接口（用户不可见）：6 个 syscall、`/v2/syscalls/submit_patch`、
@@ -199,8 +200,25 @@ cd AgentGraph && TEST_DATABASE_URL=... .venv/Scripts/python.exe -m pytest tests 
 python scripts/e2e_unified.py
 ```
 
-最近一次全链路结果见 [docs/UNIFIED_ACCEPTANCE_REPORT.md](docs/UNIFIED_ACCEPTANCE_REPORT.md)：
-任务从创建到 REVIEWING，5 阶段门禁全 PASS，代码已原子合入，证据完整。
+生产资格（本轮加固）见：
+[PRODUCTION_QUALIFICATION_REPORT.md](docs/PRODUCTION_QUALIFICATION_REPORT.md)、
+[CAPACITY_BASELINE.md](docs/CAPACITY_BASELINE.md)、
+[CHAOS_TEST_MATRIX.md](docs/CHAOS_TEST_MATRIX.md)、
+[SECURITY_QUALIFICATION_REPORT.md](docs/SECURITY_QUALIFICATION_REPORT.md)、
+[PRODUCTION_OPERATIONS.md](docs/PRODUCTION_OPERATIONS.md)。
+
+```bash
+python scripts/chaos_suite.py            # 9 个真实故障场景（SIGKILL / 重启 / 断连）
+python scripts/capacity_unified.py --levels 10,25,50,100 --profile fast
+python scripts/verify_rust_core.py       # Rust 镜像里跑通完整门禁与合并
+python scripts/restore_drill.py --source-prefix veynod_chaos_
+python scripts/e2e_unified.py --real-model
+```
+
+本轮关键保证：Run 写入使用 lease epoch fencing（旧 Worker 无法覆盖新 Worker）；
+Worker 在工具调用中死亡后 Run 可被接管恢复；一个任务在门禁中不会排队第二个提交；
+用户取消会传播到 Kernel。多任务同仓库部署请设置 `VN_FAST_FORWARD_MERGE=true`
+（树合并 + CAS，见 ADR-020）。
 
 ---
 

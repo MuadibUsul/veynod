@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # Veynod Kernel code engine (headless; one code workspace per deployment).
     kernel_url: str = "http://127.0.0.1:8001"
     kernel_admin_key: str = "dev-admin"
+    # Internal service identity used to cancel a task in the Kernel (the same
+    # key the Runtime uses).  Never handed to a model or a browser.
+    kernel_service_key: str = ""
+    # Multi-instance: {"http://kernel-b:8001": "<admin key>"}.  The default
+    # kernel_admin_key is used for any instance not listed here.
+    kernel_admin_keys: str = ""
     kernel_workspace_id: str | None = None
     kernel_repo_path: str | None = None
 

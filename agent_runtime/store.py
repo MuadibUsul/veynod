@@ -54,6 +54,19 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _check_fence(row: Any, fence: int | None, run_id: Any) -> None:
+    """Reject a write from a worker whose lease was taken over.
+
+    ``lease_epoch`` is incremented on every claim, so the epoch a worker holds
+    is a fencing token: once another worker claims the Run, the old worker's
+    epoch no longer matches and every fenced write fails with LeaseLost.
+    """
+    if fence is None:
+        return
+    if row["lease_token_hash"] is None or int(row["lease_epoch"]) != int(fence):
+        raise LeaseLost(f"run {run_id} lease was taken over (fencing)")
+
+
 class RunStore:
     def __init__(self, database_url: str, schema: str = "agent_runtime") -> None:
         if not _SCHEMA_RE.match(schema):
@@ -559,6 +572,7 @@ class RunStore:
         reason: str = "",
         actor: str = "runtime",
         idempotency_key: str | None = None,
+        fence: int | None = None,
     ) -> dict[str, Any]:
         destination = target.value if isinstance(target, RunState) else str(target)
         command = f"transition:{destination}"
@@ -574,7 +588,8 @@ class RunStore:
                 await session.execute(
                     text(
                         f"""
-                        SELECT status, version FROM {self.schema}.agent_runs
+                        SELECT status, version, lease_epoch, lease_token_hash
+                        FROM {self.schema}.agent_runs
                         WHERE run_id = :run_id
                         FOR UPDATE
                         """
@@ -584,6 +599,7 @@ class RunStore:
             ).mappings().first()
             if row is None:
                 raise RunNotFound(f"run {run_id} not found")
+            _check_fence(row, fence, run_id)
             current = str(row["status"])
             version = int(row["version"])
             validate_transition(current, destination)
@@ -661,15 +677,22 @@ class RunStore:
         state: dict[str, Any],
         *,
         idempotency_key: str | None = None,
+        fence: int | None = None,
     ) -> dict[str, Any]:
         async with self._sessions() as session:
-            await session.execute(
-                text(
-                    f"SELECT run_id FROM {self.schema}.agent_runs "
-                    "WHERE run_id = :run_id FOR UPDATE"
-                ),
-                {"run_id": str(run_id)},
-            )
+            locked = (
+                await session.execute(
+                    text(
+                        f"SELECT run_id, lease_epoch, lease_token_hash "
+                        f"FROM {self.schema}.agent_runs "
+                        "WHERE run_id = :run_id FOR UPDATE"
+                    ),
+                    {"run_id": str(run_id)},
+                )
+            ).mappings().first()
+            if locked is None:
+                raise RunNotFound(f"run {run_id} not found")
+            _check_fence(locked, fence, run_id)
             if idempotency_key:
                 existing = (
                     await session.execute(
@@ -766,9 +789,24 @@ class RunStore:
         payload: dict[str, Any] | None = None,
         *,
         idempotency_key: str | None = None,
+        fence: int | None = None,
     ) -> dict[str, Any]:
         step_id = uuid4()
         async with self._sessions() as session:
+            if fence is not None:
+                locked = (
+                    await session.execute(
+                        text(
+                            f"SELECT lease_epoch, lease_token_hash "
+                            f"FROM {self.schema}.agent_runs "
+                            "WHERE run_id = :run_id FOR UPDATE"
+                        ),
+                        {"run_id": str(run_id)},
+                    )
+                ).mappings().first()
+                if locked is None:
+                    raise RunNotFound(f"run {run_id} not found")
+                _check_fence(locked, fence, run_id)
             row = (
                 await session.execute(
                     text(
@@ -895,8 +933,32 @@ class RunStore:
         result: dict[str, Any] | None = None,
         error: str | None = None,
         usage: dict[str, Any] | None = None,
+        fence: int | None = None,
     ) -> dict[str, Any]:
         async with self._sessions() as session:
+            if fence is not None:
+                owner = await session.scalar(
+                    text(
+                        f"SELECT run_id FROM {self.schema}.invocations "
+                        "WHERE invocation_id = :invocation_id"
+                    ),
+                    {"invocation_id": str(invocation_id)},
+                )
+                if owner is None:
+                    raise RunNotFound(f"invocation {invocation_id} not found")
+                locked = (
+                    await session.execute(
+                        text(
+                            f"SELECT lease_epoch, lease_token_hash "
+                            f"FROM {self.schema}.agent_runs "
+                            "WHERE run_id = :run_id FOR UPDATE"
+                        ),
+                        {"run_id": str(owner)},
+                    )
+                ).mappings().first()
+                if locked is None:
+                    raise RunNotFound(f"run {owner} not found")
+                _check_fence(locked, fence, str(owner))
             row = (
                 await session.execute(
                     text(
@@ -926,14 +988,19 @@ class RunStore:
         return self._invocation_dict(row)
 
     async def add_usage(
-        self, run_id: UUID | str, **deltas: float
+        self,
+        run_id: UUID | str,
+        *,
+        fence: int | None = None,
+        **deltas: float,
     ) -> dict[str, Any]:
         async with self._sessions() as session:
             row = (
                 await session.execute(
                     text(
                         f"""
-                        SELECT usage FROM {self.schema}.agent_runs
+                        SELECT usage, lease_epoch, lease_token_hash
+                        FROM {self.schema}.agent_runs
                         WHERE run_id = :run_id
                         FOR UPDATE
                         """
@@ -943,6 +1010,7 @@ class RunStore:
             ).mappings().first()
             if row is None:
                 raise RunNotFound(f"run {run_id} not found")
+            _check_fence(row, fence, run_id)
             usage = _loads(row["usage"], {})
             for key, delta in deltas.items():
                 usage[key] = float(usage.get(key, 0) or 0) + float(delta)
@@ -1043,6 +1111,11 @@ class RunStore:
         return {str(row["status"]): int(row["n"]) for row in rows}
 
     # ---------------------------------------------------------------- leases
+    # A worker can die between "I am calling a tool" and "the tool returned".
+    # Those runs are not RUNNING, but they are recoverable: the lease expired
+    # and nothing else will ever pick them up unless a claim normalises them.
+    RECOVERABLE = frozenset({"RUNNING", "WAITING_TOOL", "WAITING_MODEL", "CHECKPOINTING"})
+
     async def claim_run(
         self, worker_id: str, lease_seconds: int = 60
     ) -> dict[str, Any] | None:
@@ -1053,8 +1126,8 @@ class RunStore:
                 await session.execute(
                     text(
                         f"""
-                        SELECT run_id FROM {self.schema}.agent_runs
-                        WHERE status = 'RUNNING'
+                        SELECT run_id, status, version FROM {self.schema}.agent_runs
+                        WHERE status = ANY(CAST(:recoverable AS TEXT[]))
                           AND (
                               lease_expires_at IS NULL
                               OR lease_expires_at < NOW()
@@ -1063,37 +1136,69 @@ class RunStore:
                         FOR UPDATE SKIP LOCKED
                         LIMIT 1
                         """
-                    )
+                    ),
+                    {"recoverable": sorted(self.RECOVERABLE)},
                 )
             ).mappings().first()
             if row is None:
                 await session.commit()
                 return None
             run_id = row["run_id"]
-            await session.execute(
-                text(
-                    f"""
-                    UPDATE {self.schema}.agent_runs
-                    SET lease_owner = :worker_id,
-                        lease_token_hash = :token_hash,
-                        lease_expires_at =
-                            NOW() + (:lease_seconds * INTERVAL '1 second'),
-                        heartbeat_at = NOW(),
-                        updated_at = NOW()
-                    WHERE run_id = :run_id
-                    """
-                ),
-                {
-                    "worker_id": worker_id,
-                    "token_hash": token_hash,
-                    "lease_seconds": max(5, lease_seconds),
-                    "run_id": run_id,
-                },
-            )
+            previous_status = str(row["status"])
+            recovered = previous_status != "RUNNING"
+            epoch = (
+                await session.execute(
+                    text(
+                        f"""
+                        UPDATE {self.schema}.agent_runs
+                        SET lease_owner = :worker_id,
+                            lease_token_hash = :token_hash,
+                            lease_epoch = lease_epoch + 1,
+                            lease_expires_at =
+                                NOW() + (:lease_seconds * INTERVAL '1 second'),
+                            heartbeat_at = NOW(),
+                            updated_at = NOW(),
+                            status = CASE
+                                WHEN :recovered THEN 'RUNNING'
+                                ELSE status
+                            END,
+                            version = CASE
+                                WHEN :recovered THEN version + 1
+                                ELSE version
+                            END
+                        WHERE run_id = :run_id
+                        RETURNING lease_epoch, version
+                        """
+                    ),
+                    {
+                        "worker_id": worker_id,
+                        "token_hash": token_hash,
+                        "lease_seconds": max(5, lease_seconds),
+                        "run_id": run_id,
+                        "recovered": recovered,
+                    },
+                )
+            ).mappings().one()
+            if recovered:
+                await self._publish(
+                    session,
+                    UUID(str(run_id)),
+                    "AgentRunStateChanged",
+                    {
+                        "run_id": str(run_id),
+                        "from": previous_status,
+                        "to": "RUNNING",
+                        "version": int(epoch["version"]),
+                        "reason": "recovered after the previous worker was lost",
+                        "actor": "claim",
+                    },
+                )
             await session.commit()
         return {
             "run": await self.get_run(run_id),
             "lease_token": token,
+            "lease_epoch": int(epoch["lease_epoch"]),
+            "recovered_from": previous_status if recovered else None,
         }
 
     async def assert_lease(self, run_id: UUID | str, token: str) -> None:
@@ -1181,10 +1286,25 @@ class RunStore:
         kernel_task_id: str | None = None,
         deadline_seconds: int = 3600,
         step_id: UUID | str | None = None,
+        fence: int | None = None,
     ) -> dict[str, Any]:
         """Persist a deferred tool call; the Run must leave RUNNING after this."""
         external_id = uuid4()
         async with self._sessions() as session:
+            if fence is not None:
+                locked = (
+                    await session.execute(
+                        text(
+                            f"SELECT lease_epoch, lease_token_hash "
+                            f"FROM {self.schema}.agent_runs "
+                            "WHERE run_id = :run_id FOR UPDATE"
+                        ),
+                        {"run_id": str(run_id)},
+                    )
+                ).mappings().first()
+                if locked is None:
+                    raise RunNotFound(f"run {run_id} not found")
+                _check_fence(locked, fence, run_id)
             await session.execute(
                 text(
                     f"""
@@ -1755,24 +1875,44 @@ class RunStore:
 
     async def list_kernel_workspaces(self) -> list[str]:
         """Workspaces that currently have a live Run bound to a Kernel."""
+        sources = await self.list_kernel_sources()
+        return sorted({source["workspace_id"] for source in sources})
+
+    async def list_kernel_sources(self) -> list[dict[str, str]]:
+        """Distinct (Kernel instance, workspace) pairs a live Run is bound to.
+
+        A Run carries its binding (``kernel`` JSON): the base URL and the
+        workspace it executes in.  The event watcher must poll exactly those
+        instances, never a process-wide default, or a second Kernel's events
+        are never consumed.
+        """
         async with self._sessions() as session:
             rows = (
                 await session.execute(
                     text(
                         f"""
-                        SELECT DISTINCT kernel->>'workspace_id' AS workspace_id
+                        SELECT DISTINCT
+                               kernel->>'base_url' AS base_url,
+                               kernel->>'workspace_id' AS workspace_id
                         FROM {self.schema}.agent_runs
                         WHERE status NOT IN (
                             'COMPLETED', 'FAILED', 'CANCELLED',
                             'TIMED_OUT', 'BUDGET_EXCEEDED'
                         )
+                          AND kernel->>'base_url' IS NOT NULL
+                          AND kernel->>'base_url' <> ''
                           AND kernel->>'workspace_id' IS NOT NULL
+                        ORDER BY base_url, workspace_id
                         """
                     )
                 )
             ).all()
             await session.commit()
-        return [str(row[0]) for row in rows if row[0]]
+        return [
+            {"base_url": str(row[0]).rstrip("/"), "workspace_id": str(row[1])}
+            for row in rows
+            if row[0] and row[1]
+        ]
 
     # ------------------------------------------------------------ tool audit
     async def record_tool_audit(

@@ -374,6 +374,7 @@ def kernel(
     settings.database_url = TEST_DB_URL
     settings.auth_mode = "prod"
     settings.admin_api_key = ADMIN_KEY
+    settings.runtime_service_key = "integration-service-key"
     settings.skip_typecheck = True
     settings.skip_lint = True
     settings.test_cmd = "pytest -q --tb=short"
@@ -1056,6 +1057,7 @@ def _submission_world(tmp_path: Path, workers: int):
     settings.database_url = TEST_DB_URL
     settings.auth_mode = "prod"
     settings.admin_api_key = ADMIN_KEY
+    settings.runtime_service_key = "integration-service-key"
     settings.skip_typecheck = True
     settings.skip_lint = True
     settings.test_cmd = "pytest -q --tb=short"

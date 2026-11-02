@@ -132,8 +132,8 @@ async def ensure_databases(names: list[str], fresh: bool = True) -> None:
     import asyncpg
 
     for name in names:
-        if not name.startswith("veynod_e2e_"):
-            raise RuntimeError(f"refusing to reset non-E2E database {name!r}")
+        if not (name.startswith("veynod_e2e_") or name.startswith("veynod_chaos_")):
+            raise RuntimeError(f"refusing to reset non-test database {name!r}")
     dsn = os.environ.get(
         "E2E_PG",
         "postgresql://agentgraph:agentgraph@127.0.0.1:55433/postgres",
@@ -227,7 +227,13 @@ class ScriptedKernelModel:
                     },
                     reason="the deterministic gate committed the patch",
                 )
-            task_id = checkpoint.get("kernel_task_id") or ""
+            task_id = result.get("task_id") or checkpoint.get("kernel_task_id") or ""
+            if not task_id:
+                return ModelAction(
+                    kind="finish",
+                    output={"evidence": result},
+                    reason="the gate failed and no task id is available",
+                )
             return ModelAction(
                 kind="tool",
                 tool="get_task_evidence",
@@ -652,6 +658,20 @@ def main() -> int:
         execution = http(
             "GET", api_url + f"/v1/tasks/{task_key}/execution", headers=auth
         )
+        runtime_headers = {"X-Runtime-Key": runtime_key}
+        run_state = http(
+            "GET", runtime_url + f"/v1/runs/{started['run_id']}", headers=runtime_headers
+        )
+        run_steps = http(
+            "GET",
+            runtime_url + f"/v1/runs/{started['run_id']}/steps?limit=200",
+            headers=runtime_headers,
+        )
+        tool_errors = sum(
+            1
+            for step in run_steps
+            if step.get("kind") == "TOOL" and step.get("status") == "FAILED"
+        )
         report = {
             "task_status": status,
             "run_id": started["run_id"],
@@ -663,6 +683,10 @@ def main() -> int:
                 "evidence_complete"
             ),
             "delivery": execution.get("delivery"),
+            "usage": run_state.get("usage") or {},
+            "model_calls": int((run_state.get("usage") or {}).get("model_calls") or 0),
+            "steps": len(run_steps),
+            "tool_errors": tool_errors,
         }
         print(json.dumps(report, indent=2, default=str))
 
