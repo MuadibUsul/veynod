@@ -266,6 +266,13 @@ async def start_run(
     binding = await kernel_binding_for(
         session, principal.workspace.id, task.project, task.repo
     )
+    from app.services.kernel_delivery import work_scope_for
+
+    work_scope = work_scope_for(task)
+    if work_scope is not None:
+        # The Runtime may use its configured default Kernel endpoint when no
+        # project binding exists. The frozen scope must survive that fallback.
+        binding = {**(binding or {}), "work_scope": work_scope}
     trace_id = uuid4().hex
     client = _client()
     effective_budget = dict(budget or {})

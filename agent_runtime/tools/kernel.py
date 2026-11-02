@@ -414,6 +414,7 @@ class KernelToolRuntime:
         arguments: dict[str, Any],
         idempotency_key: str,
     ) -> ToolResult:
+        work_scope = context.kernel.get("work_scope")
         body = {
             "request_key": (
                 f"{context.product_task_id or context.run_id}:{idempotency_key}"
@@ -424,9 +425,14 @@ class KernelToolRuntime:
             "read_symbols": arguments.get("read_symbols") or [],
             "target_symbols": arguments.get("target_symbols") or [],
             "test_symbols": arguments.get("test_symbols") or [],
-            "write_set_symbols": arguments.get("write_set_symbols") or [],
+            "write_set_symbols": (
+                [] if work_scope is not None
+                else arguments.get("write_set_symbols") or []
+            ),
             "priority": int(arguments.get("priority") or 100),
         }
+        if work_scope is not None:
+            body["work_scope"] = work_scope
         _, payload = await self._request(
             binding,
             "POST",

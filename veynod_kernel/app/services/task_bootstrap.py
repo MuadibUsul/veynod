@@ -22,6 +22,7 @@ from app.services.artifact_store import ensure_artifacts, infer_kind
 from app.services.ast_slicer import get_slicer
 from app.services.git_ops import GitError, GitRepository
 from app.services.task_factory import insert_task
+from contracts.work_scope import WorkScope
 
 
 async def create_dag_task(
@@ -38,6 +39,8 @@ async def create_dag_task(
     depends_on_task_ids: Sequence[UUID] = (),
     priority: int = 0,
     max_retries: int | None = None,
+    work_scope: WorkScope | None = None,
+    runtime_request_key: str | None = None,
 ) -> DagTask:
     repo = GitRepository(workspace.repo_path, workspace.main_branch)
     slicer = get_slicer()
@@ -80,7 +83,17 @@ async def create_dag_task(
         if artifact.kind != ArtifactKind.TEST:
             artifact.kind = ArtifactKind.TEST
 
-    write_symbols = list(write_set_symbols) or list(target_symbols)
+    if work_scope is not None:
+        for symbol in target_symbols:
+            if not work_scope.allows_file(str(symbol).split("::", 1)[0]):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Target symbol is outside the frozen WorkScope.",
+                )
+    write_symbols = (
+        work_scope.kernel_write_locks() if work_scope is not None
+        else list(write_set_symbols) or list(target_symbols)
+    )
     if not write_symbols:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -128,6 +141,9 @@ async def create_dag_task(
         depends_on_task_ids=dependency_ids,
         priority=priority,
         max_retries=max_retries if max_retries is not None else 3,
+        work_scope=work_scope.to_dict() if work_scope is not None else None,
+        scope_hash=work_scope.scope_hash if work_scope is not None else None,
+        runtime_request_key=runtime_request_key,
     )
     await session.commit()
     await scheduler_core_manager.sync_tasks(session, workspace.workspace_id, [task_id])
@@ -149,6 +165,7 @@ def task_json(task: DagTask) -> dict[str, Any]:
         "status": task.status.value,
         "priority": task.priority,
         "write_locks": list(task.write_locks or []),
+        "scope_hash": task.scope_hash,
         "base_commit_sha": task.base_commit_sha,
     }
 

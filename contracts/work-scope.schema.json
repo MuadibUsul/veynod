@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://veynod.com/contracts/work-scope.schema.json",
+  "title": "Veynod WorkScope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["scope_version", "scope_hash", "paths", "symbols", "resources", "protected_paths"],
+  "properties": {
+    "scope_version": {"const": 1},
+    "scope_hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "paths": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["include", "exclude"],
+      "properties": {
+        "include": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"$ref": "#/$defs/pathPattern"}},
+        "exclude": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/pathPattern"}}
+      }
+    },
+    "symbols": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["include", "exclude"],
+      "properties": {
+        "include": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "exclude": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["database_tables", "api_contracts"],
+      "properties": {
+        "database_tables": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "api_contracts": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "protected_paths": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/pathPattern"}}
+  },
+  "$defs": {
+    "pathPattern": {"type": "string", "minLength": 1, "description": "Repository-relative, slash-separated pattern; ** occupies one complete segment. Runtime validation rejects absolute paths and traversal."}
+  }
+}

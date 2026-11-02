@@ -27,6 +27,9 @@ async def insert_task(
     priority: int = 100,
     max_retries: int = 3,
     parent_task_id: UUID | None = None,
+    work_scope: dict | None = None,
+    scope_hash: str | None = None,
+    runtime_request_key: str | None = None,
 ) -> UUID:
     read_ids = list(read_artifact_ids)
     target_ids = list(target_artifact_ids)
@@ -42,14 +45,16 @@ async def insert_task(
                 INSERT INTO dag_tasks (
                     workspace_id, parent_task_id, title, spec_prompt, type, status,
                     priority, in_degree, read_artifact_ids, target_artifact_ids,
-                    test_artifact_ids, write_locks, ancestor_locks, max_retries
+                    test_artifact_ids, write_locks, ancestor_locks, max_retries,
+                    work_scope, scope_hash, runtime_request_key
                 ) VALUES (
                     :workspace_id, :parent_task_id, :title, :spec,
                     CAST(:task_type AS task_type), CAST(:status AS task_status),
                     :priority, :in_degree, CAST(:read_ids AS UUID[]),
                     CAST(:target_ids AS UUID[]), CAST(:test_ids AS UUID[]),
                     CAST(:write_locks AS TEXT[]), CAST(:ancestor_locks AS TEXT[]),
-                    :max_retries
+                    :max_retries, CAST(:work_scope AS JSONB), :scope_hash,
+                    :runtime_request_key
                 )
                 RETURNING task_id
                 """
@@ -69,6 +74,9 @@ async def insert_task(
                 "write_locks": list(write_locks),
                 "ancestor_locks": list(ancestor_locks),
                 "max_retries": max_retries,
+                "work_scope": json.dumps(work_scope) if work_scope is not None else None,
+                "scope_hash": scope_hash,
+                "runtime_request_key": runtime_request_key,
             },
         )
     ).scalar_one()

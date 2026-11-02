@@ -22,11 +22,14 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
+from contracts.idempotency import normalize_key
 
 from app.auth import RunnerIdentity
 from app.config import settings
 from app.database import get_db_session
 from app.models import DagTask, KernelEvent, Workspace
+from contracts.work_scope import WorkScope
 from app.api.runner_routes import require_runner
 from app.engine.task_commands import (
     TaskCancelConflict,
@@ -158,7 +161,17 @@ async def runtime_create_task(
     """
     workspace_id = _workspace_id(None, x_workspace_id)
     workspace = await _workspace(session, workspace_id)
-    request_key = str(body.get("request_key") or "").strip()
+    try:
+        work_scope = (
+            WorkScope.from_dict(body["work_scope"])
+            if body.get("work_scope") is not None else None
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        request_key = normalize_key(body.get("request_key"))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if request_key:
         existing = await session.scalar(
             text(
@@ -174,6 +187,11 @@ async def runtime_create_task(
         if existing is not None:
             task = await session.get(DagTask, existing)
             if task is not None:
+                if task.scope_hash != (work_scope.scope_hash if work_scope else None):
+                    raise HTTPException(
+                        status_code=409,
+                        detail="request_key already belongs to a different WorkScope",
+                    )
                 return task_json(task)
     title = str(body.get("title") or "").strip()
     spec = str(body.get("spec_prompt") or "").strip()
@@ -182,27 +200,39 @@ async def runtime_create_task(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="title and spec_prompt (>=10 chars) are required.",
         )
-    task = await create_dag_task(
-        session,
-        workspace=workspace,
-        title=title[:256],
-        spec_prompt=spec[:20_000],
-        task_type=str(body.get("type") or "IMPLEMENT_BODY"),
-        read_symbols=list(body.get("read_symbols") or []),
-        target_symbols=list(body.get("target_symbols") or []),
-        test_symbols=list(body.get("test_symbols") or []),
-        write_set_symbols=list(body.get("write_set_symbols") or []),
-        priority=int(body.get("priority") or 100),
-    )
-    if request_key:
-        await session.execute(
-            text(
-                "UPDATE dag_tasks SET runtime_request_key = :key "
-                "WHERE task_id = :task_id"
-            ),
-            {"key": request_key[:200], "task_id": task.task_id},
+    try:
+        task = await create_dag_task(
+            session,
+            workspace=workspace,
+            title=title[:256],
+            spec_prompt=spec[:20_000],
+            task_type=str(body.get("type") or "IMPLEMENT_BODY"),
+            read_symbols=list(body.get("read_symbols") or []),
+            target_symbols=list(body.get("target_symbols") or []),
+            test_symbols=list(body.get("test_symbols") or []),
+            write_set_symbols=list(body.get("write_set_symbols") or []),
+            priority=int(body.get("priority") or 100),
+            work_scope=work_scope,
+            runtime_request_key=request_key,
         )
-        await session.commit()
+    except IntegrityError:
+        # The unique index decides simultaneous creates; the loser rereads
+        # the winner after rolling back its artifact/task transaction.
+        await session.rollback()
+        if not request_key:
+            raise
+        task = (
+            await session.execute(
+                select(DagTask).where(
+                    DagTask.workspace_id == workspace_id,
+                    DagTask.runtime_request_key == request_key,
+                )
+            )
+        ).scalar_one_or_none()
+        if task is None:
+            raise
+        if task.scope_hash != (work_scope.scope_hash if work_scope else None):
+            raise HTTPException(status_code=409, detail="request_key already belongs to a different WorkScope")
     return task_json(task)
 
 

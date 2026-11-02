@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://veynod.com/contracts/work-item.schema.json",
+  "title": "Veynod execution identity and ownership v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "tenant_id", "workspace_id", "product_task_key", "attempt_id", "execution_owner", "work_scope"],
+  "properties": {
+    "contract_version": {"const": 1},
+    "tenant_id": {"type": "string", "minLength": 1},
+    "workspace_id": {"type": "string", "format": "uuid"},
+    "diagram_id": {"type": ["integer", "null"], "minimum": 1},
+    "diagram_version": {"type": ["integer", "null"], "minimum": 1},
+    "chunk_key": {"type": ["string", "null"]},
+    "product_task_key": {"type": "string", "minLength": 1},
+    "product_task_id": {"type": ["string", "null"], "format": "uuid"},
+    "attempt_id": {"type": "string", "format": "uuid"},
+    "execution_owner": {"enum": ["unassigned", "host-runner", "agent-runtime", "kernel-runner"]},
+    "placement_id": {"type": ["string", "null"], "minLength": 1},
+    "agent_run_id": {"type": ["string", "null"], "format": "uuid"},
+    "kernel_task_id": {"type": ["string", "null"], "format": "uuid"},
+    "lease_epoch": {"type": "integer", "minimum": 0},
+    "work_scope": {"$ref": "work-scope.schema.json"}
+  }
+}

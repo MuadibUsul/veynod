@@ -65,6 +65,60 @@ def write_set_for(task: Any) -> list[str]:
     return list(seen)
 
 
+def work_scope_for(task: Any) -> dict[str, Any] | None:
+    """Carry the Diagram boundary unchanged; the Kernel canonicalizes it."""
+    context = getattr(task, "input_context", None) or {}
+    if not isinstance(context, dict):
+        return None
+    if isinstance(context.get("diagram"), dict):
+        return {
+            "scope_version": 1,
+            "paths": {
+                "include": context.get("allowed_write_paths") or [],
+                "exclude": [],
+            },
+        }
+    explicit = context.get("work_scope")
+    return explicit if isinstance(explicit, dict) else None
+
+
+def _scope_matches_delivery(task: Any, delivery: dict[str, Any]) -> bool:
+    requested = work_scope_for(task)
+    if requested is None:
+        return True
+    granted = delivery.get("work_scope")
+    if not delivery.get("scope_hash") or not isinstance(granted, dict):
+        return False
+    context = getattr(task, "input_context", None) or {}
+    if isinstance(context.get("diagram"), dict):
+        # Compare exact source strings. A benign normalization difference may
+        # require a new attempt, but a changed frozen scope can never reuse a
+        # broader old lease by accident.
+        return (
+            sorted((granted.get("paths") or {}).get("include") or [])
+            == sorted(requested["paths"]["include"])
+            and not (granted.get("paths") or {}).get("exclude")
+            and not (granted.get("symbols") or {}).get("include")
+            and not (granted.get("symbols") or {}).get("exclude")
+            and not (granted.get("resources") or {}).get("database_tables")
+            and not (granted.get("resources") or {}).get("api_contracts")
+            and not granted.get("protected_paths")
+        )
+    if requested.get("scope_hash"):
+        return requested["scope_hash"] == delivery["scope_hash"]
+    for section, names in (
+        ("paths", ("include", "exclude")),
+        ("symbols", ("include", "exclude")),
+        ("resources", ("database_tables", "api_contracts")),
+    ):
+        for name in names:
+            source = (requested.get(section) or {}).get(name) or []
+            actual = (granted.get(section) or {}).get(name) or []
+            if sorted(source) != sorted(actual):
+                return False
+    return sorted(requested.get("protected_paths") or []) == sorted(granted.get("protected_paths") or [])
+
+
 def public_delivery(record: dict[str, Any] | None) -> dict[str, Any]:
     """Drop anything that could carry a lease token or a credential."""
     if not isinstance(record, dict):
@@ -434,7 +488,8 @@ async def provision_product_task(
     if binding is None:
         return None
     write_set = write_set_for(task)
-    if not write_set:
+    work_scope = work_scope_for(task)
+    if not write_set and work_scope is None:
         record = _blocked(
             "needs_write_set",
             "Set input_context.write_set_symbols before this task can take a Kernel lease.",
@@ -450,9 +505,10 @@ async def provision_product_task(
             "title": str(task.title or task.task_key)[:256],
             "spec_prompt": _spec(task),
             "type": "IMPLEMENT_BODY",
-            "target_symbols": write_set,
+            "target_symbols": [] if work_scope is not None else write_set,
             "test_symbols": _test_symbols(task),
-            "write_set_symbols": write_set,
+            "write_set_symbols": [] if work_scope is not None else write_set,
+            **({"work_scope": work_scope} if work_scope is not None else {}),
             "priority": int(getattr(task, "priority", None) or 100),
         })
         kernel_task_id = str(created.get("task_id") or "")
@@ -498,6 +554,8 @@ async def provision_product_task(
         "kernel_workspace_id": binding["workspace_id"],
         "base_url": binding["base_url"],
         "write_set": granted_set,
+        "work_scope": public.get("work_scope"),
+        "scope_hash": public.get("scope_hash"),
         "worktree": "leased",
         "lease": "held",
         "lease_expires_at": public.get("lease_expires_at"),
@@ -539,6 +597,11 @@ async def open_lease(
         and current.get("write_set")
         and await _load_token(session, task)
     ):
+        if not _scope_matches_delivery(task, current):
+            raise KernelDeliveryError(
+                "The frozen WorkScope changed or this lease predates WorkScope; create a new attempt.",
+                409, "scope_reissue_required",
+            )
         return public_delivery(current)
     record = await provision_product_task(session, task, plane=plane)
     if record is None:
@@ -572,6 +635,11 @@ async def submit_diff(
     if not touched_symbols:
         raise KernelDeliveryError("touched_symbols is required", 422, "validation")
     delivery = (getattr(task, "correlation", None) or {}).get("kernel_delivery") or {}
+    if not _scope_matches_delivery(task, delivery if isinstance(delivery, dict) else {}):
+        raise KernelDeliveryError(
+            "A scoped task cannot submit through an unscoped or stale Kernel lease.",
+            409, "scope_reissue_required",
+        )
     kernel_task_id = str(
         (delivery or {}).get("kernel_task_id")
         or (getattr(task, "correlation", None) or {}).get("kernel_task_id")

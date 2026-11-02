@@ -17,6 +17,7 @@ from collections import deque
 from datetime import datetime
 from enum import Enum
 from typing import Annotated, Any, AsyncIterator, Callable, Coroutine
+from contracts.work_scope import WorkScope
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
@@ -277,6 +278,8 @@ class TaskBundleResponse(BaseModel):
         default=None, description="Deterministic gate diagnostics from the previous attempt, if any"
     )
     write_set: list[str] = Field(default_factory=list, description="Strict AST/file paths unlocked for modification")
+    work_scope: dict[str, Any] | None = None
+    scope_hash: str | None = None
     read_only_signatures: list[SlicedArtifactView] = Field(
         default_factory=list,
         description="1-Hop upstream dependency type definitions and signatures (implementation stripped)",
@@ -614,6 +617,8 @@ class ActiveLeaseContext(BaseModel):
     task_id: UUID
     worker_hub_id: str
     write_set: list[str]
+    work_scope: dict[str, Any] | None = None
+    scope_hash: str | None = None
     read_set_artifact_ids: list[UUID]
     status: TaskStatus
 
@@ -794,6 +799,13 @@ async def _validate_submission(
         touched_files = DiffBoundaryInspector.assert_within_write_set(
             req.git_diff, lease.write_set
         )
+        if lease.work_scope is not None:
+            scope = WorkScope.from_dict(lease.work_scope)
+            if lease.scope_hash != scope.scope_hash:
+                raise PermissionError("Kernel lease WorkScope hash does not match its snapshot")
+            scope.assert_files_allowed(touched_files)
+            if any(not scope.allows_symbol(symbol) for symbol in req.touched_symbols):
+                raise PermissionError("submission touches symbols outside the frozen WorkScope")
     except (ValueError, PermissionError) as exc:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)
