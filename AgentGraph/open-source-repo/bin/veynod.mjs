@@ -320,6 +320,8 @@ export function parseArgs(argv) {
     diskMb: Number(process.env.VEYNOD_DISK_MB) || 5120,
     gitBase: process.env.VEYNOD_GIT_BASE || "https://github.com/",
     runTasks: false,
+    legacyReview: process.env.VEYNOD_LEGACY_DUAL === "1",
+    legacyCheckout: process.env.VEYNOD_LEGACY_CHECKOUT === "1",
     yes: false,
     name: "",
     fresh: false,
@@ -353,6 +355,8 @@ export function parseArgs(argv) {
     else if (arg === "--disk-mb") options.diskMb = Number(value());
     else if (arg === "--git-base") options.gitBase = value();
     else if (arg === "--run-tasks") options.runTasks = true;
+    else if (arg === "--legacy-review") options.legacyReview = true;
+    else if (arg === "--legacy-checkout") options.legacyCheckout = true;
     else if (arg === "--yes" || arg === "-y") options.yes = true;
     else if (arg === "--name") options.name = value();
     else if (arg === "--fresh") options.fresh = true;
@@ -372,6 +376,7 @@ export function parseArgs(argv) {
   if (!["", "claude", "codex", "custom"].includes(options.runtime)) {
     throw new Error(`unknown runtime ${options.runtime} (claude, codex or custom)`);
   }
+  options.delivery = options.legacyCheckout ? "legacy" : "kernel";
   options.repos = [...new Set(options.repos)];
   const badRepo = options.repos.find((repo) => !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo));
   if (badRepo) throw new Error(`--repo takes owner/name, not ${badRepo}`);
@@ -1436,7 +1441,8 @@ async function up(options) {
     }
   }
   saveConfig({ host: options.host, run_tasks: plan.run_tasks, runtime: options.runtime, exec: options.exec,
-    slots: options.slots, repos: options.repos, identities });
+    slots: options.slots, repos: options.repos, identities,
+    delivery: options.delivery || "kernel", legacy_review: Boolean(options.legacyReview) });
   out();
   let serviceInstalled;
   if (options.service && isNpxCachePath(script)) {

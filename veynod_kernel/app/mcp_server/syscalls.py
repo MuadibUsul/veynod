@@ -259,6 +259,18 @@ class TaskBundleResponse(BaseModel):
     lease_token: str | None = Field(default=None, description="Cryptographic lease token required for mutations")
     lease_expires_at: datetime | None = None
     base_commit_sha: str | None = Field(default=None, description="Git revision the worker should branch from")
+    worktree_path: str | None = Field(
+        default=None,
+        description="Absolute path of the worktree_pool lease directory. The agent cwd.",
+    )
+    worktree_anchor: str | None = Field(
+        default=None,
+        description="Host-mount anchor (parent of the repository) for rewriting worktree_path.",
+    )
+    worktree_rel: str | None = Field(
+        default=None,
+        description="Path under the anchor. Always contains lease/<task-hash>.",
+    )
     task_type: TaskType | None = None
     specification: str | None = Field(default=None, description="Concise natural language contract requirement")
     last_error_traceback: str | None = Field(

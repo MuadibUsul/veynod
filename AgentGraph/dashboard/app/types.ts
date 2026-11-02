@@ -725,4 +725,18 @@ export type ExecutionView = {
     evidence_complete?: boolean;
   };
   delivery: null | Record<string, unknown>;
+  kernel?: null | {
+    mode?: string;
+    status?: string;
+    kernel_task_id?: string | null;
+    worktree?: string | null;
+    worktree_path?: string | null;
+    lease?: string | null;
+    write_set?: string[];
+    gate?: string | null;
+    merged?: boolean;
+    merge_sha?: string | null;
+    submission_id?: string | null;
+    gate_results?: Array<Record<string, unknown>>;
+  };
 };

@@ -453,7 +453,7 @@ export function ExecutionPanel({ api, taskKey }: { api: ApiRequest; taskKey: str
     let cancelled = false;
     setView(null);
     setError(null);
-    void (async () => {
+    const load = async () => {
       try {
         const payload = await api<ExecutionView>(
           `/v1/tasks/${encodeURIComponent(taskKey)}/execution`,
@@ -462,9 +462,13 @@ export function ExecutionPanel({ api, taskKey }: { api: ApiRequest; taskKey: str
       } catch (exc) {
         if (!cancelled) setError(exc instanceof Error ? exc.message : String(exc));
       }
-    })();
+    };
+    void load();
+    // Gate and merge land after the agent exits. Refresh while this panel is open.
+    const timer = window.setInterval(() => { void load(); }, 4000);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
   }, [api, taskKey]);
 
@@ -484,7 +488,7 @@ export function ExecutionPanel({ api, taskKey }: { api: ApiRequest; taskKey: str
       </div>
     );
   }
-  if (!view.loop && !view.code) {
+  if (!view.loop && !view.code && !view.kernel) {
     return null;
   }
   const loop = view.loop;
@@ -541,6 +545,25 @@ export function ExecutionPanel({ api, taskKey }: { api: ApiRequest; taskKey: str
                   })}
               </ol>
               {loop.last_error && <p className="muted">{loop.last_error}</p>}
+            </div>
+          )}
+          {view.kernel && (
+            <div className="execution-code">
+              <div>
+                <span className="muted">{t("Worktree")}: </span>
+                <span className="mono">{view.kernel.worktree_path || view.kernel.worktree || "idle"}</span>
+              </div>
+              <div>
+                <span className="muted">{t("Lease")}: </span>
+                {view.kernel.lease || "none"}
+                {view.kernel.gate ? ` · ${t("Gate")} ${view.kernel.gate}` : ""}
+              </div>
+              {view.kernel.merge_sha && (
+                <div>
+                  <span className="muted">{t("Merge")}: </span>
+                  <span className="mono">{view.kernel.merge_sha.slice(0, 12)}</span>
+                </div>
+              )}
             </div>
           )}
           {view.code && (

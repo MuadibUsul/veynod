@@ -7,7 +7,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { Worktrees, adapterFor, chooseRuntime, claudeMcpConfig, commandWorks, installSteps, inventory,
-  pinsIdentity, placementOf, promptFor, resolveCommand, runRunner, shimTarget, veynodMcpServer }
+    pinsIdentity, pipelineLines, placementOf, promptFor, resolveCommand, resolveLeaseCwd, runRunner,
+    shimTarget, veynodMcpServer }
   from "../bin/runner.mjs";
 import { parseArgs, servicePlan } from "../bin/veynod.mjs";
 
@@ -169,10 +170,54 @@ test("runner arguments and the runner service plan", () => {
   assert.match(listen.files[0].path, /veynod-listen\.service$/);
 });
 
+function leaseCheckout() {
+  const root = mkdtempSync(join(tmpdir(), "veynod-pool-"));
+  const repo = join(root, "repo");
+  const lease = join(root, ".veynod-worktrees", "lease", "abcd1234abcd1234");
+  execFileSync("git", ["init", "-q", "-b", "main", repo]);
+  execFileSync("git", ["config", "user.email", "t@example.com"], { cwd: repo });
+  execFileSync("git", ["config", "user.name", "t"], { cwd: repo });
+  writeFileSync(join(repo, "README"), "seed\n");
+  execFileSync("git", ["add", "README"], { cwd: repo });
+  execFileSync("git", ["commit", "-q", "-m", "seed"], { cwd: repo });
+  execFileSync("git", ["worktree", "add", "--detach", "--quiet", lease, "HEAD"], { cwd: repo });
+  return { repo, lease };
+}
+
+test("resolveLeaseCwd refuses the shared repository root", () => {
+  const root = mkdtempSync(join(tmpdir(), "veynod-root-"));
+  assert.throws(() => resolveLeaseCwd(
+    { worktree_path: root, worktree_rel: "repo" },
+    { exists: () => true },
+  ), (error) => error.code === "worktree_not_isolated");
+});
+
+test("pipeline log names submission_service, verification_gate and merge_coordinator", () => {
+  const lines = pipelineLines({
+    submission: { submission_id: "sub-1", status: "QUEUED" },
+    gate: {
+      gate_results: [
+        { stage: "STATIC_TYPECHECK", passed: true },
+        { stage: "UNIT_TEST_SUITE", passed: true },
+      ],
+      merged: true,
+      merge_sha: "abc123",
+      merge_mode: "fast-forward",
+    },
+  });
+  assert.deepEqual(lines, [
+    "submission_service id=sub-1 status=QUEUED",
+    "verification_gate STATIC_TYPECHECK=PASS UNIT_TEST_SUITE=PASS",
+    "merge_coordinator sha=abc123 mode=fast-forward",
+  ]);
+});
+
 test("end to end: hello, a placed task runs in its worktree, heartbeats report it", async () => {
   const { base } = origin();
+  const { lease } = leaseCheckout();
   const state = mkdtempSync(join(tmpdir(), "veynod-state-"));
   const calls = [];
+  const said = [];
   let hello = null;
   const server = createServer((req, res) => {
     let body = "";
@@ -191,6 +236,23 @@ test("end to end: hello, a placed task runs in its worktree, heartbeats report i
         res.end(JSON.stringify({ placement_id: "plc_01M630S0A35N82N1TFY7XGSQ88", status: "offered" }));
       } else if (req.url === "/v1/tasks/fix-login") {
         res.end(JSON.stringify({ task_key: "fix-login", repo: "acme/site" }));
+      } else if (req.url === "/v1/tasks/fix-login/kernel/lease" && req.method === "POST") {
+        res.end(JSON.stringify({
+          leased: true, lease: "held", kernel_task_id: "11111111-1111-1111-1111-111111111111",
+          write_set: ["done.txt"], worktree: "leased", worktree_path: lease,
+          worktree_rel: ".veynod-worktrees/lease/abcd1234abcd1234",
+        }));
+      } else if (req.url === "/v1/tasks/fix-login/kernel/submit" && req.method === "POST") {
+        res.end(JSON.stringify({ submission_id: "sub-1", status: "QUEUED", accepted: true }));
+      } else if (req.url === "/v1/tasks/fix-login/kernel/delivery") {
+        res.end(JSON.stringify({
+          gate: "pass", merged: true, merge_sha: "abc123def456", merge_mode: "fast-forward",
+          submission_id: "sub-1",
+          gate_results: [
+            { stage: "STATIC_TYPECHECK", passed: true },
+            { stage: "UNIT_TEST_SUITE", passed: true },
+          ],
+        }));
       } else {
         res.statusCode = 404;
         res.end("{}");
@@ -209,7 +271,7 @@ test("end to end: hello, a placed task runs in its worktree, heartbeats report i
   };
   const exec = 'node -e "require(\'fs\').writeFileSync(\'done.txt\', process.env.VEYNOD_TASK_KEY + \' \' + process.cwd())"';
   const code = await runRunner({ host, key: "ag_test", runtime: "custom", exec, slots: 1, repos: ["acme/site"],
-    gitBase: base }, { follow, version: "0.4.0", every: 50, stateDir: state });
+    gitBase: base }, { follow, version: "0.4.0", every: 50, stateDir: state, say: (line) => said.push(line) });
   server.close();
   assert.equal(code, 0);
 
@@ -222,13 +284,23 @@ test("end to end: hello, a placed task runs in its worktree, heartbeats report i
   assert.deepEqual(beats.at(-1), []);
 
   const reports = calls.filter((call) => call.path === "/v1/runner/placements/plc_01M630S0A35N82N1TFY7XGSQ88/report");
-  assert.deepEqual(reports.map((call) => call.body), [{ outcome: "finished" }]);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].body.outcome, "finished");
+  assert.match(reports[0].body.note, /merge_coordinator abc123def456/);
 
   const receipts = readFileSync(join(state, "runner-receipts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
-  assert.deepEqual(receipts.map((item) => item.stage), ["delivered", "accepted", "started", "finished"]);
+  assert.deepEqual(receipts.map((item) => item.stage), ["delivered", "accepted", "cwd", "started", "pipeline", "pipeline", "pipeline", "finished"]);
   assert.ok(receipts.every((item) => item.placement_id === "plc_01M630S0A35N82N1TFY7XGSQ88"));
-  // The worktree it ran in is gone afterwards.
+  const cwdLine = said.find((line) => line.includes("kernel worktree cwd="));
+  assert.ok(cwdLine && cwdLine.includes(`${lease}`) && cwdLine.includes("pool=worktree_pool"), cwdLine);
+  assert.ok(said.some((line) => line.startsWith("submission_service id=sub-1")));
+  assert.ok(said.some((line) => line.includes("verification_gate STATIC_TYPECHECK=PASS")));
+  assert.ok(said.some((line) => line.includes("merge_coordinator sha=abc123def456 mode=fast-forward")));
+  assert.equal(readFileSync(join(lease, "done.txt"), "utf8").startsWith("fix-login"), true);
+  // The shared checkout and the old runner worktree are not where the agent wrote.
   assert.equal(existsSync(join(state, "runner", "work", "fix-login")), false);
+  const submit = calls.find((call) => call.path === "/v1/tasks/fix-login/kernel/submit");
+  assert.match(submit.body.git_diff, /done\.txt/);
 });
 
 
@@ -406,7 +478,9 @@ test("hello says whether the runner pins its MCP identity", async () => {
     { follow: async () => 0, version: "t", every: 1000, stateDir: state });
   fake.close();
   const hello = fake.calls.find((call) => call.path === "/v1/runner/hello");
-  assert.deepEqual(hello.body.host.capabilities_report, { mcp_pinning: true, runtime: "custom" });
+  assert.deepEqual(hello.body.host.capabilities_report, {
+    mcp_pinning: true, runtime: "custom", delivery: "kernel", leases: [],
+  });
   assert.deepEqual(Object.keys(hello.body), ["host"], "nothing outside host: the hello schema is strict");
 });
 

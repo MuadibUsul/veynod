@@ -94,13 +94,71 @@ def _clean_runtimes(given: Any) -> list[dict[str, Any]]:
     return runtimes
 
 
+def _clean_lease(item: Any) -> dict[str, Any] | None:
+    """Public worktree/lease fields only. A lease token is never stored."""
+    if not isinstance(item, dict):
+        return None
+    task_key = _clean_str(item.get("task_key"), 128)
+    if not task_key:
+        return None
+    entry: dict[str, Any] = {"task_key": task_key}
+    for field, limit in (("kernel_task_id", 64), ("worktree", 32), ("lease", 32), ("gate", 32)):
+        value = _clean_str(item.get(field), limit)
+        if value:
+            entry[field] = value
+    symbols = []
+    for symbol in (item.get("write_set") or [])[:8]:
+        cleaned = _clean_str(symbol, 128)
+        if cleaned:
+            symbols.append(cleaned)
+    if symbols:
+        entry["write_set"] = symbols
+    return entry
+
+
 def _clean_report(given: Any) -> dict[str, Any] | None:
     """The runner's own account of how it runs sessions; anything else is dropped."""
     if not isinstance(given, dict):
         return None
     pinning = given.get("mcp_pinning")
-    return {"mcp_pinning": pinning if isinstance(pinning, bool) else None,
-            "runtime": _clean_str(given.get("runtime"), 32)}
+    delivery = given.get("delivery")
+    if delivery not in ("kernel", "legacy"):
+        delivery = None
+    leases = [lease for lease in (_clean_lease(item) for item in (given.get("leases") or [])[:8])
+              if lease]
+    report: dict[str, Any] = {
+        "mcp_pinning": pinning if isinstance(pinning, bool) else None,
+        "runtime": _clean_str(given.get("runtime"), 32),
+    }
+    if delivery:
+        report["delivery"] = delivery
+    if leases:
+        report["leases"] = leases
+    return report
+
+
+def kernel_card(hosts: list[dict[str, Any]]) -> dict[str, Any]:
+    """What the Computers card shows: host delivery mode and worktree leases."""
+    delivery = "kernel"
+    leases: list[dict[str, Any]] = []
+    for host in hosts:
+        report = host.get("capabilities_report") or {}
+        if not isinstance(report, dict):
+            continue
+        if report.get("delivery") in ("kernel", "legacy"):
+            delivery = report["delivery"]
+        for item in report.get("leases") or []:
+            cleaned = _clean_lease(item)
+            if cleaned:
+                leases.append(cleaned)
+    first = leases[0] if leases else {}
+    return {
+        "delivery": delivery,
+        "worktree": first.get("worktree") or ("leased" if leases else "idle"),
+        "lease": first.get("lease") or ("held" if leases else "none"),
+        "gate": first.get("gate"),
+        "leases": leases,
+    }
 
 
 def _clean_host(given: Any) -> dict[str, Any]:
@@ -232,6 +290,10 @@ async def heartbeat(session: AsyncSession, principal: Principal,
     if body.get("runtimes") is not None:
         params["runtimes"] = json.dumps(_clean_runtimes(body.get("runtimes")))
         sets.append("runtimes = CAST(:runtimes AS jsonb)")
+    if body.get("capabilities_report") is not None:
+        report = _clean_report(body.get("capabilities_report"))
+        params["report"] = json.dumps(report) if report is not None else None
+        sets.append("capabilities_report = CAST(:report AS jsonb)")
     if body.get("max_concurrency") is not None:
         try:
             params["conc"] = max(1, min(64, int(body["max_concurrency"])))
@@ -331,6 +393,7 @@ def computers_out(items: list[dict[str, Any]], roles: dict[str, str]) -> list[di
             "running": [key for seat in seats for key in seat["running"]],
             "last_seen_at": max((seat["last_seen_at"] or "" for seat in seats), default="") or None,
             "seats": seats,
+            "kernel": kernel_card(live),
         })
     out.sort(key=lambda computer: (order.get(computer["state"], 9), computer["name"]))
     return out
@@ -346,6 +409,43 @@ async def _roles(session: AsyncSession, workspace_id: Any, token_ids: list[str])
     return {row["canonical_id"]: row["role"] for row in rows}
 
 
+async def _attach_task_leases(session: AsyncSession, workspace_id: Any,
+                              computers: list[dict[str, Any]]) -> None:
+    """Prefer the product task's Kernel record over the runner's last hello."""
+    keys = [key for computer in computers for key in (computer.get("running") or [])]
+    if not keys:
+        return
+    rows = (await session.execute(text(
+        "SELECT task_key, correlation FROM collab_tasks WHERE workspace_id = :ws "
+        "AND task_key = ANY(CAST(:keys AS text[]))"),
+        {"ws": workspace_id, "keys": keys})).mappings().all()
+    by_key: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        correlation = row["correlation"] if isinstance(row["correlation"], dict) else {}
+        delivery = correlation.get("kernel_delivery") if isinstance(correlation, dict) else None
+        if not isinstance(delivery, dict):
+            continue
+        by_key[row["task_key"]] = {
+            "task_key": row["task_key"],
+            "kernel_task_id": delivery.get("kernel_task_id"),
+            "worktree": delivery.get("worktree") or "unknown",
+            "lease": delivery.get("lease") or "unknown",
+            "gate": delivery.get("gate"),
+            "write_set": list(delivery.get("write_set") or []),
+        }
+    for computer in computers:
+        found = [by_key[key] for key in computer.get("running") or [] if key in by_key]
+        if not found:
+            continue
+        kernel = dict(computer.get("kernel") or {})
+        kernel["leases"] = found
+        kernel["worktree"] = found[0]["worktree"]
+        kernel["lease"] = found[0]["lease"]
+        kernel["gate"] = found[0].get("gate")
+        kernel["delivery"] = kernel.get("delivery") or "kernel"
+        computer["kernel"] = kernel
+
+
 async def computers(session: AsyncSession, workspace_id: Any) -> list[dict[str, Any]]:
     """The workspace's computers (revoked ones left out), each with its seats."""
     rows = (await session.execute(text(
@@ -353,8 +453,10 @@ async def computers(session: AsyncSession, workspace_id: Any) -> list[dict[str, 
         "ORDER BY last_seen_at DESC LIMIT 200"), {"ws": workspace_id})).mappings().all()
     now = _now()
     items = [host_out(dict(row), now) for row in rows]
-    return computers_out(items, await _roles(
+    grouped = computers_out(items, await _roles(
         session, workspace_id, [item["token_id"] for item in items]))
+    await _attach_task_leases(session, workspace_id, grouped)
+    return grouped
 
 
 async def list_hosts(session: AsyncSession, principal: Principal, *,
@@ -372,6 +474,7 @@ async def list_hosts(session: AsyncSession, principal: Principal, *,
     # what it no longer does; one whose every seat is removed is listed on request.
     grouped = [computer for computer in grouped
                if include_revoked or computer["state"] != "revoked"]
+    await _attach_task_leases(session, principal.workspace.id, grouped)
     return {"items": items,
             "counts": {state: sum(1 for item in items if item["state"] == state)
                        for state in ("online", "offline", "paused", "revoked")},

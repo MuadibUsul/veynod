@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import Principal, get_principal
+from app.auth import Principal, can, get_principal, require_permission
 from app.database import get_db
 from app.services import agent_runtime
 
@@ -35,6 +35,102 @@ async def task_execution(
         raise HTTPException(
             status_code=exc.status_code, detail=str(exc)
         ) from exc
+
+
+def _drive(principal: Principal) -> None:
+    require_permission(principal, "task:read")
+    if not principal.is_human and not can(principal, "task:claim"):
+        require_permission(principal, "task:claim")
+
+
+async def _product_task(session, principal: Principal, task_key: str):
+    from app.auth import ensure_namespace
+
+    task = await task_lifecycle.load_task_row(session, principal.workspace.id, task_key)
+    if task is None:
+        raise HTTPException(status_code=404, detail=f"{task_key} not found")
+    ensure_namespace(principal, task.namespace)
+    return task
+
+
+def _delivery_error(exc: Exception) -> None:
+    from app.services.kernel_delivery import KernelDeliveryError
+
+    if isinstance(exc, KernelDeliveryError):
+        raise HTTPException(
+            status_code=exc.status_code,
+            detail={"code": exc.code, "message": str(exc)},
+        ) from exc
+    raise exc
+
+
+@router.post(
+    "/{task_key}/kernel/lease",
+    summary="Create the Kernel task if needed and take a worktree lease",
+)
+async def kernel_lease(
+    task_key: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> Any:
+    """Write-set lock plus a pooled worktree. The lease token stays on the server."""
+    _drive(principal)
+    from app.services import kernel_delivery
+
+    task = await _product_task(session, principal, task_key)
+    try:
+        return await kernel_delivery.open_lease(session, task)
+    except kernel_delivery.KernelDeliveryError as exc:
+        _delivery_error(exc)
+
+
+@router.post(
+    "/{task_key}/kernel/submit",
+    summary="Submit a diff through Kernel submit_patch (gate + merge)",
+)
+async def kernel_submit(
+    task_key: str,
+    body: dict[str, Any],
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> Any:
+    _drive(principal)
+    from app.services import kernel_delivery
+
+    task = await _product_task(session, principal, task_key)
+    symbols = body.get("touched_symbols") or []
+    if isinstance(symbols, str):
+        symbols = [symbols]
+    try:
+        return await kernel_delivery.submit_diff(
+            session,
+            task,
+            git_diff=str(body.get("git_diff") or ""),
+            touched_symbols=[str(item) for item in symbols if str(item).strip()],
+            local_test_passed=bool(body.get("local_test_passed")),
+            idempotency_key=(str(body["idempotency_key"]) if body.get("idempotency_key") else None),
+        )
+    except kernel_delivery.KernelDeliveryError as exc:
+        _delivery_error(exc)
+
+
+@router.get(
+    "/{task_key}/kernel/delivery",
+    summary="Worktree lease, verification gate and merge for this task",
+)
+async def kernel_delivery_view(
+    task_key: str,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> Any:
+    require_permission(principal, "task:read")
+    from app.services import kernel_delivery
+
+    task = await _product_task(session, principal, task_key)
+    try:
+        return await kernel_delivery.refresh_delivery(session, task)
+    except kernel_delivery.KernelDeliveryError as exc:
+        _delivery_error(exc)
 
 
 @router.get(

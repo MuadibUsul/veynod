@@ -1623,6 +1623,13 @@ a.button.small {
   white-space: nowrap;
 }
 
+.station-kernel {
+  margin: 0;
+  color: var(--ds-text-muted);
+  font-family: var(--ds-font-mono);
+  font-size: 11px;
+}
+
 .station-seats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
@@ -1635,8 +1642,9 @@ a.button.small {
   justify-items: center;
   gap: 2px;
   min-width: 0;
-  height: 58px;
-  padding: 0 10px;
+  min-height: 58px;
+  height: auto;
+  padding: 6px 10px;
   border: 1px dashed rgba(255, 255, 255, 0.14);
   border-radius: 9px;
   color: var(--ds-text-muted);

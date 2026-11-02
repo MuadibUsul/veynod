@@ -9,6 +9,7 @@ resets the worktree with checkout/reset/clean, and never re-runs
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import shutil
 import tempfile
@@ -122,6 +123,45 @@ class WorktreePoolManager:
             await pool.close()
 
 
+def lease_worktree_paths(repo_path: str, task_id: UUID) -> tuple[Path, Path, str]:
+    """Isolated agent directory: ``<repo parent>/.veynod-worktrees/lease/<hash>``.
+
+    The hash is the task id. The directory is a sibling of the main checkout,
+    never the repository root the host shares.
+    """
+    digest = hashlib.sha256(str(task_id).encode("utf-8")).hexdigest()[:16]
+    anchor = Path(repo_path).resolve().parent
+    path = anchor / ".veynod-worktrees" / "lease" / digest
+    rel = path.relative_to(anchor).as_posix()
+    return path, anchor, rel
+
+
+async def allocate_lease_worktree(
+    repo: GitRepository, task_id: UUID, rev: str
+) -> tuple[Path, str, str]:
+    """Create or reset the lease worktree the agent must use as cwd.
+
+    Uses the same git worktree plumbing as the gate pool. Returns
+    ``(absolute path, anchor, relative path)``. The relative path always
+    contains ``lease/<hash>``.
+    """
+    path, anchor, rel = lease_worktree_paths(repo.repo_path, task_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sha = rev if rev and rev != "HEAD" else await repo.head_sha()
+    if path.exists():
+        await repo.reset_worktree(path, sha)
+    else:
+        await repo.add_worktree(path, sha)
+    logger.info("worktree_pool lease cwd=%s task=%s", path, task_id)
+    return path, str(anchor), rel
+
+
 worktree_pool_manager = WorktreePoolManager()
 
-__all__ = ["WorkspaceWorktreePool", "WorktreePoolManager", "worktree_pool_manager"]
+__all__ = [
+    "WorkspaceWorktreePool",
+    "WorktreePoolManager",
+    "allocate_lease_worktree",
+    "lease_worktree_paths",
+    "worktree_pool_manager",
+]

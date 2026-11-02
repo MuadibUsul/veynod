@@ -78,19 +78,45 @@ export function readKey(identity) {
  * connect, the clients to wire, the service to install and what the doctor
  * will check. `--dry-run` prints it; the tests read it.
  */
+/** A permanent -review twin only when slots > 1 or the legacy dual path is asked for. */
+export function reviewTwinWanted(options = {}) {
+  if (!options.runTasks && !options.run_tasks) return false;
+  if (options.legacyReview || options.legacy_review || options.delivery === "legacy") return true;
+  return Number(options.slots || 1) > 1;
+}
+
+/**
+ * Identities that get a worker process. slots=1 on the kernel path is exactly
+ * one worker: the -review identity, even if an old config still has it, is not
+ * started and therefore cannot spawn a second Claude.
+ */
+export function hubWorkers(config = {}) {
+  const identities = config.identities || [];
+  if (!config.run_tasks) return identities;
+  if (reviewTwinWanted(config)) return identities;
+  const workers = identities.filter((item) => item.role !== "review");
+  return workers.length ? workers : identities.slice(0, 1);
+}
+
 export function upPlan(options, { home = homedir(), clients = [], name = hostname() } = {}) {
   // Names are agent ids too (a letter, then letters, digits and dashes, at most
-  // 40 long), with room for the `-review` suffix.
+  // 40 long), with room for the `-review` suffix when slots > 1.
   const base = agentName(options.name || name);
   const identities = [{ role: "computer", label: base, wants_role: "EXECUTOR",
     why: "this computer's agent: your MCP clients and the hub use it" }];
-  if (options.runTasks) {
+  const reviewTwin = reviewTwinWanted(options);
+  if (reviewTwin) {
     identities.push({ role: "review", label: `${base}-review`, wants_role: "AUDITOR",
       why: "reviews what this computer built, so the Loop can finish a task here" });
   }
+  const workers = reviewTwin ? identities : identities.filter((item) => item.role !== "review");
   return {
     host: options.host,
     run_tasks: Boolean(options.runTasks),
+    slots: Number(options.slots || 1),
+    delivery: options.delivery || "kernel",
+    review_twin: reviewTwin,
+    workers: workers.length,
     identities,
     clients,
     hub: {
@@ -98,6 +124,7 @@ export function upPlan(options, { home = homedir(), clients = [], name = hostnam
       runtime: options.runtime,
       slots: options.slots,
       repos: options.repos,
+      delivery: options.delivery || "kernel",
     },
     files: [configPath(home), ...identities.map((item) => keyPath(item.label, home))],
   };
@@ -156,7 +183,12 @@ export async function runHub(options, { follow, listen, runRunner, version, say 
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);
   try {
-    const loops = config.identities.map((identity) => {
+    const workers = hubWorkers(config);
+    const slots = Number(config.slots || 1);
+    if (config.run_tasks && !reviewTwinWanted(config)) {
+      say(`slots=${slots} workers=${workers.length} review_twin=absent`);
+    }
+    const loops = workers.map((identity) => {
       releases.push(acquireLock(identity.agent_id, { home }));
       const key = readKey(identity);
       const stateDir = join(veynodDir(home), "hub", safeName(identity.agent_id));
@@ -164,7 +196,8 @@ export async function runHub(options, { follow, listen, runRunner, version, say 
       if (config.run_tasks) {
         return runRunner({ host, key, runtime: config.runtime || "", exec: config.exec || "",
           slots: config.slots || 1, repos: config.repos || [], diskMb: config.disk_mb || 5120,
-          gitBase: config.git_base || "https://github.com/" },
+          gitBase: config.git_base || "https://github.com/",
+          delivery: config.delivery || "kernel" },
         { follow, version, say: tag, stateDir });
       }
       return listen({ host, key, exec: config.exec || "", heartbeat: true }, tag);
@@ -231,11 +264,18 @@ export async function doctor({ home = homedir(), config = loadConfig(home), fetc
       : `Node ${nodeVersion}: below ${NODE_FOR_OAR}, so OAR is unavailable and the runtime's CLI is used.`,
     major >= NODE_FOR_OAR ? null : `Install Node ${NODE_FOR_OAR} or newer for OAR (quota-aware, pinned sessions).`);
   if (config.run_tasks) {
+    const slots = Number(config.slots || 1);
+    const kernelReviews = (config.delivery || "kernel") !== "legacy" && !config.legacy_review && slots <= 1;
     const roles = new Set((config.identities || []).map((item) => item.role));
-    add("reviewer", roles.has("review"), true,
-      roles.has("review") ? "A second identity reviews what this computer builds."
-        : "No reviewer identity: a task built here cannot be reviewed here.",
-      roles.has("review") ? null : "Run `npx veynod up --run-tasks` again and approve the review code.");
+    if (kernelReviews) {
+      add("reviewer", true, true,
+        "slots=1: one worker. Kernel verification_gate and merge_coordinator review this computer's work. review_twin=absent.");
+    } else {
+      add("reviewer", roles.has("review"), true,
+        roles.has("review") ? "A second identity reviews what this computer builds."
+          : "No reviewer identity: a task built here cannot be reviewed here.",
+        roles.has("review") ? null : "Run `npx veynod up --run-tasks --slots 2` or `--legacy-review` to add one.");
+    }
     // No saved runtime means the hub uses whichever is here.
     const wanted = config.runtime ? [config.runtime] : ["claude", "codex"];
     const runtime = config.runtime === "custom" ? "custom" : wanted.find((id) => onPath(run, id));

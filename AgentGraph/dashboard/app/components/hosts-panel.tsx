@@ -35,6 +35,23 @@ type Seat = {
   running: string[];
 };
 
+type KernelLease = {
+  task_key?: string;
+  kernel_task_id?: string;
+  worktree?: string;
+  lease?: string;
+  gate?: string;
+  write_set?: string[];
+};
+
+type KernelCard = {
+  delivery?: string;
+  worktree?: string;
+  lease?: string;
+  gate?: string | null;
+  leases?: KernelLease[];
+};
+
 type Computer = {
   computer_id: string;
   name: string;
@@ -47,6 +64,7 @@ type Computer = {
   state: State;
   last_seen_at: string | null;
   seats: Seat[];
+  kernel?: KernelCard;
 };
 
 const OS_LABEL: Record<string, string> = {
@@ -193,27 +211,34 @@ export function HostsPanel({
             <div className="station-seats">
               {computer.seats.map((seat) => {
                 const busy = seat.running.length > 0;
+                const identity = seat.agent_id || seat.host_id;
+                const runtime = runtimes[0];
                 return (
                   <div key={seat.host_id} className={`station-seat${busy ? " busy" : ""}`}
-                    title={`${seat.agent_id ?? seat.host_id} · ${t(STATE_LABEL[seat.state])}`}>
-                    {busy ? (
-                      <>
-                        <AgentFace id={seat.agent_id ?? seat.host_id} role={seat.seat === "review" ? "AUDITOR" : "EXECUTOR"} size={26} />
-                        <span>
-                          <b>{runtimes[0] ?? t(SEAT_LABEL[seat.seat])}</b>
-                          <small>{seat.running.join(", ")}</small>
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <span>{seat.state === "online" ? t("Empty") : t(STATE_LABEL[seat.state])}</span>
-                        <small>{t(SEAT_LABEL[seat.seat])}</small>
-                      </>
+                    title={`${identity} · ${t(STATE_LABEL[seat.state])}`}>
+                    {busy && (
+                      <AgentFace id={identity} role={seat.seat === "review" ? "AUDITOR" : "EXECUTOR"} size={26} />
                     )}
+                    <span>
+                      <b>{identity}</b>
+                      <small>
+                        {runtime ? runtimeName(runtime) : t(SEAT_LABEL[seat.seat])}
+                        {busy ? ` · ${seat.running.join(", ")}` : seat.state === "online" ? "" : ` · ${t(STATE_LABEL[seat.state])}`}
+                      </small>
+                    </span>
                   </div>
                 );
               })}
             </div>
+            <p className="station-kernel">
+              {t("Worktree")} {computer.kernel?.worktree || "idle"}
+              {" · "}
+              {t("Lease")} {computer.kernel?.lease || "none"}
+              {computer.kernel?.gate ? ` · ${t("Gate")} ${computer.kernel.gate}` : ""}
+              {(computer.kernel?.leases?.[0]?.write_set || []).length
+                ? ` · ${computer.kernel!.leases![0].write_set!.join(", ")}`
+                : ""}
+            </p>
             {left !== null && (
               <div className="station-quota">
                 <span>{t("Quota left")}</span>

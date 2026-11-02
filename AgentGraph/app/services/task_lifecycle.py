@@ -645,6 +645,22 @@ async def load_task_row(
     ).scalar_one_or_none()
 
 
+async def _kernel_panel(session: AsyncSession, task: CollabTask) -> dict[str, Any] | None:
+    """Live gate/merge for the console, including tasks that have no Agent Run."""
+    from app.services.kernel_delivery import kernel_section, refresh_delivery
+
+    delivery = (task.correlation or {}).get("kernel_delivery")
+    kernel_task_id = (task.correlation or {}).get("kernel_task_id") or (
+        (delivery or {}).get("kernel_task_id") if isinstance(delivery, dict) else None
+    )
+    if kernel_task_id:
+        try:
+            delivery = await refresh_delivery(session, task)
+        except Exception as exc:  # noqa: BLE001 - the panel stays readable
+            logger.warning("kernel delivery refresh failed for %s: %s", task.task_key, exc)
+    return kernel_section(delivery if isinstance(delivery, dict) else None)
+
+
 # ---------------------------------------------------------- execution view
 async def execution_view(
     session: AsyncSession, principal: Principal, task_key: str
@@ -676,7 +692,9 @@ async def execution_view(
         "code": None,
         "verification": None,
         "delivery": None,
+        "kernel": None,
     }
+    view["kernel"] = await _kernel_panel(session, task)
     if not run_id:
         return view
     client = _client()
@@ -755,6 +773,11 @@ async def execution_view(
             "evidence_complete": evidence.get("evidence_complete", False),
         }
         view["delivery"] = evidence.get("delivery")
+        from app.services.kernel_delivery import kernel_section
+
+        view["kernel"] = kernel_section(
+            (task.correlation or {}).get("kernel_delivery"), evidence
+        ) or view["kernel"]
     return view
 
 

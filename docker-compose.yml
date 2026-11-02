@@ -201,6 +201,9 @@ services:
       KERNEL_ADMIN_KEY: ${KERNEL_ADMIN_KEY}
       KERNEL_SERVICE_KEY: ${KERNEL_SERVICE_KEY}
       KERNEL_WORKSPACE_ID: ${KERNEL_WORKSPACE_ID:-}
+      # Same runner token the runtime worker uses. The API leases worktrees
+      # with it and never returns the token to a browser or a model.
+      KERNEL_RUNTIME_TOKEN: ${KERNEL_RUNTIME_TOKEN:-}
       KERNEL_REPO_PATH: ${KERNEL_REPO_PATH:-}
       AGENT_RUNTIME_PROJECTION_ENABLED: ${AGENT_RUNTIME_PROJECTION_ENABLED:-false}
       CODE_PROJECTION_ENABLED: ${CODE_PROJECTION_ENABLED:-false}

@@ -74,12 +74,20 @@ for the board. It only connects out:
   and Codex with version, models and quota, how many tasks at once (`--slots`)
   and which repositories it may work on (`--repo`). Then a heartbeat every 30 s
   with what it is running.
-- When the platform places a task here (a `task.placed` poke carrying the
-  placement id), it clones the task's repository once into
-  `~/.veynod/runner/repos`, makes a fresh worktree on branch `veynod/<task>`
-  and starts the runtime there with a prompt to claim and do the task. A
-  pre-push hook refuses pushes of any other branch. The worktree is removed
-  afterwards; above `--disk-mb` (default 5120) finished ones go first.
+- When the platform places a coding task here, the runner asks the Kernel
+  for a worktree lease (`pull_task_bundle`). Claude's cwd is that isolated
+  directory (`…/.veynod-worktrees/lease/<task-hash>`), never the shared
+  checkout. The hub log contains `kernel worktree cwd=… pool=worktree_pool`.
+  On exit the runner submits the diff (`submission_service`); the Kernel
+  `verification_gate` (typecheck, unit tests, AST lock) and
+  `merge_coordinator` (fast-forward) record the result. Those three names
+  are printed in the hub log. `slots=1` starts one worker and does not keep
+  a `-review` Claude. `--slots 2` or `--legacy-review` adds the twin;
+  `--legacy-checkout` is the old local worktree path.
+- `python3 scripts/smoke_kernel_worktree_gate.py` checks the lease path.
+  After deploy: `ps aux | grep claude` shows one process; grep the hub log
+  for `kernel worktree cwd=`, `submission_service id=`, `verification_gate`
+  and `merge_coordinator sha=`.
 - It never claims for the agent. Three failed starts leave the task unclaimed,
   and the platform moves it to another computer.
 - Receipts (delivered, accepted, started, finished or failed) go to
