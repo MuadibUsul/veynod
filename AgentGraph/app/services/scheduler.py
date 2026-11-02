@@ -744,6 +744,12 @@ async def _place_steps(session: AsyncSession, workspace_id: Any, online: list[di
             CollabTask.task_key == task_key))).scalar_one_or_none()
         if task is None:
             continue
+        from app.services.kernel_delivery import kernel_owns_steps
+
+        # Gate + merge coordinator own review and merge. Do not wake a second
+        # computer (the permanent -review seat) for a Kernel delivery.
+        if kernel_owns_steps(task):
+            continue
         open_row = (await session.execute(text(
             "SELECT * FROM runner_placements WHERE task_id = :t AND status IN "
             "('suggested', 'offered', 'claimed', 'unplaced') "
@@ -944,11 +950,17 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
           f"{len(builders)} computer(s) can build (EXECUTOR) with quota left." if builders
           else "No online computer can build tasks.",
           "Connect a computer with `npx veynod up --run-tasks`.")
-    check("reviewer", bool(reviewers), True,
-          f"{len(reviewers)} computer(s) can review." if reviewers
-          else "No online computer can review, so built work waits in review.",
-          "Approve the `-review` identity when `veynod up --run-tasks` asks, or connect an "
-          "AUDITOR computer.")
+    if settings.kernel_delivery_default and not reviewers:
+        check("reviewer", True, False,
+              "Kernel verification_gate and merge_coordinator review code. "
+              "A separate reviewer computer is not required.",
+              None)
+    else:
+        check("reviewer", bool(reviewers), not settings.kernel_delivery_default,
+              f"{len(reviewers)} computer(s) can review." if reviewers
+              else "No online computer can review, so built work waits in review.",
+              "Approve the `-review` identity when `veynod up --run-tasks` asks, or connect an "
+              "AUDITOR computer. With slots=1 the Kernel gate replaces that identity.")
     unpinned = sorted(host["agent_id"] or host["host_id"] for host in online
                       if (host.get("capabilities_report") or {}).get("mcp_pinning") is False)
     check("pinning", not unpinned, False,

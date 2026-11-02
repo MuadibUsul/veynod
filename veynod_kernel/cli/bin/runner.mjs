@@ -557,7 +557,7 @@ async function waitForSubmission(accepted) {
 async function runCycle(bundle) {
   const taskId = String(bundle.task_id);
   const tempRoot = mkdtempSync(join(tmpdir(), `veynod-task-${taskId}-`));
-  const worktree = sandboxDir;
+  let worktree = null;
   const configDir = join(tempRoot, 'config');
   mkdirSync(configDir, { recursive: true });
   const taskFile = join(configDir, 'task-bundle.json');
@@ -588,13 +588,22 @@ async function runCycle(bundle) {
     );
 
     git(['fetch', '--all', '--prune'], config.repoRoot, { allowFailure: true });
-    ensureSandbox(bundle.base_commit_sha);
-    log(`leased ${taskId} (${bundle.task_type}); worktree ${worktree}`);
+    if (!bundle.worktree_path) {
+      throw new Error(
+        'Kernel did not allocate a worktree_pool lease path. Refusing to edit the shared checkout.'
+      );
+    }
+    const isolated = resolve(bundle.worktree_path);
+    if (!isolated.split(/[/\\]/).includes('lease') || isolated === resolve(config.repoRoot)) {
+      throw new Error(`cwd is not a worktree_pool lease directory: ${isolated}`);
+    }
+    log(`kernel worktree cwd=${isolated} pool=worktree_pool lease=held task=${taskId}`);
+    worktree = isolated;
 
     heartbeat = startHeartbeat(bundle);
     const prompt = promptFor(bundle, taskFile, mcpConfig);
     const agentResult = await runAgent(
-      worktree,
+      isolated,
       prompt,
       mcpConfig,
       abort.signal,
@@ -693,11 +702,15 @@ ${patchSha}`
     );
     submissionAttempted = true;
     const accepted = await acceptPatchSubmission(bundle, diff, idempotencyKey);
-    log(
-      `submission accepted id=${accepted.submission_id} status=${accepted.status} ` +
-        `sha=${patchSha.slice(0, 12)}`
-    );
+    log(`submission_service id=${accepted.submission_id} status=${accepted.status} sha=${patchSha.slice(0, 12)}`);
     const final = await waitForSubmission(accepted);
+    const gateSummary = (final.gate_results || [])
+      .map((gate) => `${gate.stage}=${gate.passed ? 'PASS' : 'FAIL'}`)
+      .join(' ');
+    if (gateSummary) log(`verification_gate ${gateSummary}`);
+    if (final.result_commit_sha || final.status === 'COMMITTED') {
+      log(`merge_coordinator sha=${final.result_commit_sha || ''} mode=fast-forward`);
+    }
     log(
       `submission final: ${final.status} task=${final.task_status || '-'} ` +
         `${final.result_commit_sha || ''}`

@@ -49,7 +49,7 @@ npx veynod runner --runtime claude --slots 2 --repo owner/repo
 npx veynod service install --runner
 ```
 
-The runner reports the host, runtime, quota and repos to the Veynod scheduler. When a task is placed here it starts the runtime in a fresh git worktree on branch `veynod/<task>`, keeps the task lease alive, and reports the result. Claude Code and Codex can use [OAR](https://github.com/botiverse/oar) for quota-aware runs; without it the runtime's own CLI is used.
+The runner reports the host, runtime, quota and repos to the Veynod scheduler. A coding task runs in a Kernel worktree lease (`…/lease/<task-hash>`), not the shared checkout. The runner submits the diff; verification_gate and merge_coordinator record the result. With `--slots 1` only one worker starts (no `-review` twin). Claude Code and Codex can use [OAR](https://github.com/botiverse/oar) for quota-aware runs; without it the runtime's own CLI is used.
 
 ## Examples
 

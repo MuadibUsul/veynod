@@ -188,6 +188,9 @@ services:
       KERNEL_ADMIN_KEY: ${KERNEL_ADMIN_KEY}
       KERNEL_SERVICE_KEY: ${KERNEL_SERVICE_KEY}
       KERNEL_WORKSPACE_ID: ${KERNEL_WORKSPACE_ID:-}
+      # Same runner token the runtime worker uses. Stays on the API; the
+      # console and the model never see it. Required for worktree leases.
+      KERNEL_RUNTIME_TOKEN: ${KERNEL_RUNTIME_TOKEN:-}
       EVENT_DISPATCH_ENABLED: "true"
       INTERNAL_VIEWS_ENABLED: "false"
       LOG_LEVEL: ${LOG_LEVEL:-INFO}

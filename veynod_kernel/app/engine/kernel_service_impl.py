@@ -59,6 +59,7 @@ from app.services.artifact_store import ensure_artifacts, infer_kind
 from app.services.ast_slicer import get_slicer
 from app.services.event_bus import EventBus
 from app.services.git_ops import GitRepository
+from app.services.worktree_pool import allocate_lease_worktree
 from app.services.runtime_metrics import get_runtime_metrics
 from app.services.verification_gate import DeterministicVerificationGate
 
@@ -250,6 +251,9 @@ class PostgresKernelEngineService(KernelEngineService):
             )
 
         bundle_started = time.monotonic()
+        repo_path = str(workspace.repo_path)
+        main_branch = workspace.main_branch
+        leased_task_id = task.task_id
         try:
             bundle = await self._build_bundle(task, workspace, raw_token, req.max_context_tokens)
         except Exception:
@@ -264,6 +268,22 @@ class PostgresKernelEngineService(KernelEngineService):
             await self.session.commit()
             raise
         bundle_ms = int((time.monotonic() - bundle_started) * 1000)
+        try:
+            path, anchor, rel = await allocate_lease_worktree(
+                GitRepository(repo_path, main_branch),
+                leased_task_id,
+                bundle.base_commit_sha or "HEAD",
+            )
+            bundle.worktree_path = str(path)
+            bundle.worktree_anchor = anchor
+            bundle.worktree_rel = rel
+        except Exception:
+            # Fail closed at the runner: no path means it must not touch the
+            # shared checkout. The lease itself stays so a retry can allocate.
+            import logging
+            logging.getLogger("app.engine.kernel").exception(
+                "worktree_pool lease allocation failed for %s", leased_task_id
+            )
 
         await self.event_bus.publish(
             workspace_id,

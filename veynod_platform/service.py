@@ -135,6 +135,7 @@ class PlatformService:
                     },
                     "symbol": symbol,
                     "test_symbol": test_symbol,
+                    "write_set_symbols": [symbol],
                 },
                 "acceptance": [
                     {

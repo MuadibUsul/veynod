@@ -111,6 +111,11 @@ class Settings(BaseSettings):
     # Compatibility switch (one release): create Kernel tasks directly from
     # POST /v1/code/runs instead of starting an Agent Run. See ADR-018.
     code_engine_legacy_direct: bool = False
+    # Board tasks with a repository become Kernel tasks (worktree lease +
+    # write-set lock). The hub's shared-checkout path is the opt-out.
+    kernel_provision_on_create: bool = True
+    # verification_gate + merge_coordinator replace a permanent reviewer host.
+    kernel_delivery_default: bool = True
     code_projection_enabled: bool = True
     code_projection_interval_seconds: int = Field(default=30, ge=5, le=3_600)
     code_projection_batch_size: int = Field(default=100, ge=1, le=500)

@@ -18,7 +18,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { arch as osArch, homedir, hostname, platform } from "node:os";
-import { join, win32 } from "node:path";
+import { join, resolve, sep, win32 } from "node:path";
 
 export const RUNNER_HEARTBEAT_MS = 30_000;
 // Leases are at least 60 s and heartbeat at a third of their TTL; renewing every
@@ -257,6 +257,202 @@ export function promptFor({ taskKey, placementId, branch, host, step = "work", d
   ].join("\n");
 }
 
+/** Kernel is the daily path. VEYNOD_LEGACY_CHECKOUT=1 or delivery=legacy opts out. */
+export function kernelDeliveryMode(options = {}, env = process.env) {
+  if (options.delivery === "legacy" || env.VEYNOD_LEGACY_CHECKOUT === "1") return "legacy";
+  return "kernel";
+}
+
+export function isInside(child, parent) {
+  if (!child || !parent) return false;
+  const root = resolve(parent);
+  const path = resolve(child);
+  return path === root || path.startsWith(root.endsWith(sep) ? root : root + sep);
+}
+
+/**
+ * Where an agent may write. Kernel mode refuses the host shared checkout and
+ * refuses to start without a worktree lease and a write-set lock.
+ */
+export function codingWorkspace({ delivery, lease, scratch, hostCheckout, prepareLegacy }) {
+  if (delivery === "legacy") {
+    if (typeof prepareLegacy !== "function") {
+      throw Object.assign(new Error("legacy checkout was requested without a worktree"), { code: "legacy_checkout" });
+    }
+    return prepareLegacy();
+  }
+  const writeSet = Array.isArray(lease?.write_set) ? lease.write_set.filter(Boolean) : [];
+  const held = lease?.leased === true || lease?.lease === "held";
+  if (!lease?.kernel_task_id || !held || writeSet.length === 0) {
+    throw Object.assign(new Error(
+      "Kernel worktree lease and write-set lock are required; refusing to edit the host checkout",
+    ), { code: "kernel_lease_required" });
+  }
+  if (hostCheckout && scratch && isInside(scratch, hostCheckout)) {
+    throw Object.assign(new Error(
+      "refusing to mutate the host shared checkout; the Kernel worktree pool owns this task",
+    ), { code: "shared_checkout_blocked" });
+  }
+  return { dir: scratch, branch: null, kernel: true, writeSet };
+}
+
+/**
+ * slots=1 does not keep a reviewer process. The gate replaces it. A revision
+ * turn runs only after the gate fails; escalation stops for a person.
+ */
+export function reviewAction({ delivery, step, gate }) {
+  if (delivery !== "kernel") return { spawn: step, outcome: null, note: null };
+  if (step === "merge") {
+    if (gate?.merged) {
+      return { spawn: null, outcome: "finished", note: "merge_coordinator merged" };
+    }
+    return { spawn: null, outcome: "failed", note: "merge_coordinator has not merged" };
+  }
+  if (gate?.needs_human || gate?.gate === "escalated") {
+    return { spawn: null, outcome: "failed", note: "needs_human" };
+  }
+  if (gate?.merged || gate?.gate === "pass") {
+    return { spawn: null, outcome: "finished", note: "verification_gate passed" };
+  }
+  if (gate?.gate === "fail" || gate?.status === "gate_failed") {
+    return { spawn: "revision", outcome: null, note: "verification_gate failed" };
+  }
+  return { spawn: null, outcome: "failed", note: "gate_pending" };
+}
+
+export function kernelPrompt({ taskKey, placementId, host, writeSet, revision = false, evidence = "" }) {
+  const locks = (writeSet || []).join(", ") || "(none)";
+  if (revision) {
+    return [
+      `The Kernel verification_gate failed for task ${taskKey} (placement ${placementId}).`,
+      evidence ? `Evidence: ${evidence}` : "Read the gate evidence on the task before changing the diff.",
+      `The write-set lock is ${locks}. Revise only inside it.`,
+      `Submit again with POST ${host}/v1/tasks/${taskKey}/kernel/submit`,
+      `body {git_diff, touched_symbols, local_test_passed: true}. That is submit_patch.`,
+      "verification_gate (typecheck, unit tests, AST lock) and merge_coordinator run on the Kernel.",
+      "Do not edit the host shared checkout, do not push a branch, and do not open a pull request.",
+    ].join("\n");
+  }
+  return [
+    `Veynod placed task ${taskKey} on this computer (placement ${placementId}).`,
+    "Delivery is the Veynod Kernel. Do not edit the host shared checkout and do not push a branch.",
+    `1. Claim it on Veynod (${host}) with agent_claim_and_read("${taskKey}") and read what it asks.`,
+    `2. A worktree lease and write-set lock are already held: ${locks}.`,
+    "   Read code through the Kernel. The six primitives are pull_task_bundle, submit_patch,",
+    "   request_task_split, escalate_contract_defect, inject_dependency_task, query_symbol_signature.",
+    "3. Produce a unified diff that stays inside the write set.",
+    `4. Submit only with POST ${host}/v1/tasks/${taskKey}/kernel/submit`,
+    "   {git_diff, touched_symbols, local_test_passed: true}. The product API calls submit_patch.",
+    "   verification_gate then merge_coordinator record the result on this same task.",
+    "If the contract is wrong, escalate_contract_defect instead of editing outside the write set.",
+    "If you cannot finish, release the task with a reason so another computer can take it.",
+  ].join("\n");
+}
+
+export function publicLease(lease, taskKey) {
+  if (!lease?.kernel_task_id) return null;
+  const writeSet = Array.isArray(lease.write_set) ? lease.write_set.slice(0, 8) : [];
+  return {
+    task_key: taskKey || lease.task_key || "",
+    kernel_task_id: String(lease.kernel_task_id),
+    worktree: lease.worktree || (lease.leased ? "leased" : "none"),
+    lease: lease.lease || (lease.leased ? "held" : "none"),
+    ...(lease.gate ? { gate: lease.gate } : {}),
+    ...(writeSet.length ? { write_set: writeSet } : {}),
+  };
+}
+
+/** Poll until the gate is no longer pending, or the wait elapses. */
+/**
+ * The only cwd a kernel coding task may use: a worktree_pool lease directory
+ * (`.../lease/<task-hash>`), never the shared repository root.
+ */
+export function resolveLeaseCwd(lease, { reposDir = null, hostCheckout = null, exists = existsSync } = {}) {
+  const rel = String(lease?.worktree_rel || "");
+  const anchor = String(lease?.worktree_anchor || "");
+  const given = String(lease?.worktree_path || "");
+  const candidates = [];
+  if (given) candidates.push(given);
+  if (reposDir && anchor && given.startsWith(anchor)) {
+    candidates.push(join(reposDir, given.slice(anchor.length)));
+  }
+  if (reposDir && rel) candidates.push(join(reposDir, rel));
+  let found = null;
+  for (const candidate of candidates) {
+    if (candidate && exists(candidate)) {
+      found = resolve(candidate);
+      break;
+    }
+  }
+  if (!found) {
+    throw Object.assign(new Error(
+      `Kernel worktree_pool path is not on this host (${given || "missing"}). Refusing to edit the shared checkout.`,
+    ), { code: "worktree_missing" });
+  }
+  const parts = found.split(sep);
+  if (!parts.includes("lease") || parts.at(-1) === "lease") {
+    throw Object.assign(new Error(`cwd is not a worktree_pool lease directory: ${found}`), { code: "worktree_not_isolated" });
+  }
+  if (rel && !rel.includes("lease/")) {
+    throw Object.assign(new Error(`worktree_rel is not a lease path: ${rel}`), { code: "worktree_not_isolated" });
+  }
+  if (hostCheckout && resolve(hostCheckout) === found) {
+    throw Object.assign(new Error(`refusing bare edit of the host checkout: ${found}`), { code: "shared_checkout_blocked" });
+  }
+  return found;
+}
+
+/** Greppable lines for submission_service → verification_gate → merge_coordinator. */
+export function pipelineLines({ submission, gate }) {
+  const lines = [];
+  if (submission?.submission_id) {
+    lines.push(`submission_service id=${submission.submission_id} status=${submission.status || "accepted"}`);
+  }
+  const results = gate?.gate_results || [];
+  if (results.length) {
+    lines.push(`verification_gate ${results.map((item) => `${item.stage}=${item.passed === true ? "PASS" : "FAIL"}`).join(" ")}`);
+  } else if (gate?.gate) {
+    lines.push(`verification_gate ${gate.gate}`);
+  }
+  if (gate?.merged || gate?.merge_sha) {
+    lines.push(`merge_coordinator sha=${gate.merge_sha || ""} mode=${gate.merge_mode || "fast-forward"}`);
+  }
+  return lines;
+}
+
+export function combinedMcpConfig({ product, kernelUrl, kernelToken }) {
+  const mcpServers = {};
+  if (product) Object.assign(mcpServers, claudeMcpConfig(product).mcpServers);
+  if (kernelUrl) {
+    const server = {
+      type: "http",
+      url: `${String(kernelUrl).replace(/\/$/, "")}/mcp`,
+    };
+    if (kernelToken) server.headers = { Authorization: `Bearer ${kernelToken}` };
+    // The Kernel MCP server publishes the six syscalls (pull_task_bundle,
+    // submit_patch, request_task_split, escalate_contract_defect,
+    // inject_dependency_task, query_symbol_signature).
+    mcpServers["veynod-kernel"] = server;
+  }
+  return { mcpServers };
+}
+
+function cachedDiff(cwd) {
+  execFileSync("git", ["add", "-A"], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+  return String(execFileSync("git", ["diff", "--cached", "--binary", "HEAD"], { cwd, encoding: "utf8" }));
+}
+
+export async function settleGate(read, { waitMs = 0, intervalMs = 250, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
+  const started = Date.now();
+  let gate = await read();
+  const pending = (item) => item && (item.gate === "pending" || item.status === "gate" || item.gate === "absent" && item.submission_id);
+  while (pending(gate) && Date.now() - started < waitMs) {
+    await sleep(intervalMs);
+    gate = await read();
+  }
+  return gate;
+}
+
 function spawnRun(command, args, { cwd, env, shell = false, signal }) {
   // Resolved here so a Windows npm shim starts without a shell; custom --exec keeps its shell.
   const target = shell ? { command, prefix: [] } : resolveCommand(command);
@@ -305,7 +501,7 @@ export function adapterFor(runtime, { exec = "", importer = (spec) => import(spe
   if (!RUNTIME_IDS.includes(runtime)) throw new Error(`unknown runtime ${runtime} (claude, codex or custom)`);
   return {
     id: runtime,
-    async run({ cwd, prompt, env, pin, configDir }) {
+    async run({ cwd, prompt, env, pin, configDir, mcpConfig }) {
       const oar = await oarRuntime(runtime, importer);
       if (oar) {
         try {
@@ -330,10 +526,11 @@ export function adapterFor(runtime, { exec = "", importer = (spec) => import(spe
       if (runtime !== "claude") return spawner(runtime, ["exec", prompt], { cwd, env });
       const args = ["-p", prompt, "--permission-mode", permissionMode];
       let file = null;
-      if (pin) {
+      const mounted = mcpConfig || (pin ? claudeMcpConfig(pin) : null);
+      if (mounted) {
         mkdirSync(configDir, { recursive: true, mode: 0o700 });
         file = join(configDir, `mcp-${process.pid}-${Date.now()}.json`);
-        writeFileSync(file, JSON.stringify(claudeMcpConfig(pin)), { mode: 0o600 });
+        writeFileSync(file, JSON.stringify(mounted), { mode: 0o600 });
         args.push("--mcp-config", file, "--strict-mcp-config");
       }
       try {
@@ -561,13 +758,25 @@ export async function runRunner(options, {
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const receipt = (fields) => appendFileSync(receipts, `${JSON.stringify({ at: new Date().toISOString(), ...fields })}\n`);
 
+  const deliveryMode = kernelDeliveryMode(options);
+  const hostCheckout = options.hostCheckout || process.env.VEYNOD_HOST_CHECKOUT || null;
+  const reposDir = options.reposDir || process.env.VEYNOD_REPOS_DIR || process.env.REPOS_DIR || "";
+  const kernelUrl = options.kernelUrl || process.env.VEYNOD_KERNEL_URL || process.env.KERNEL_URL || "";
+  const kernelToken = process.env.KERNEL_RUNTIME_TOKEN || process.env.VEYNOD_AGENT_TOKEN || "";
+  const leaseBook = new Map();
+  const reportFields = () => ({
+    mcp_pinning: mcpPinning,
+    runtime: adapter.id,
+    delivery: deliveryMode,
+    leases: [...leaseBook.values()],
+  });
   const mcpPinning = await pinsIdentity(adapter.id, { importer });
   if (!mcpPinning) say(`warning: ${adapter.id} without OAR cannot pin Veynod's MCP to this runner's key; install OAR (Node 24+)`);
   const hello = await callApi(fetchImpl, options.host, options.key, "/v1/runner/hello", {
     // Inside `host`: the request schema is strict, and servers that do not read the
     // report yet drop unknown host fields instead of refusing the hello.
     method: "POST", body: { host: { ...hostReport({ runtimes, slots, repos, version }),
-      capabilities_report: { mcp_pinning: mcpPinning, runtime: adapter.id } } },
+      capabilities_report: reportFields() } },
   });
   say(`runner ${hello.host_id} (${hello.agent_id ?? "unnamed"}) ready: ${slots} slot(s), ${runtimes.filter((item) => item.available).map((item) => item.id).join(", ") || "no runtime"}`);
 
@@ -587,7 +796,7 @@ export async function runRunner(options, {
         }
       }
       await callApi(fetchImpl, options.host, options.key, "/v1/runner/heartbeat", {
-        method: "POST", body: { running: [...running.keys()], runtimes },
+        method: "POST", body: { running: [...running.keys()], runtimes, capabilities_report: reportFields() },
       });
     } catch (error) {
       say(`heartbeat: ${error.message}`);
@@ -620,6 +829,11 @@ export async function runRunner(options, {
     return () => clearInterval(timer);
   };
 
+  async function readGate(taskKey) {
+    return callApi(fetchImpl, options.host, options.key,
+      `/v1/tasks/${encodeURIComponent(taskKey)}/kernel/delivery`);
+  }
+
   async function work({ taskKey, placementId, step, diagramKey, chunkKey }) {
     const slot = taskKey ?? placementId;
     let repo = null;
@@ -639,36 +853,116 @@ export async function runRunner(options, {
       }
       receipt({ task_key: taskKey, placement_id: placementId, step, stage: "accepted" });
       let agenda = [];
-      if (step === "supervise") {
-        agenda = placement.detail?.agenda ?? [];
-      } else {
-        const task = await callApi(fetchImpl, options.host, options.key, `/v1/tasks/${encodeURIComponent(taskKey)}`);
+      let cwd;
+      let prompt;
+      let skipAgent = false;
+      let task = null;
+      if (step !== "supervise" && taskKey) {
+        task = await callApi(fetchImpl, options.host, options.key, `/v1/tasks/${encodeURIComponent(taskKey)}`);
         repo = task.repo || null;
-        // Reviews and merges get their own checkout so they never touch the builder's.
+      }
+      // Coding tasks go through the Kernel. A task with no repository never
+      // touches a checkout, so it keeps an empty scratch directory.
+      const kernelCoding = deliveryMode === "kernel" && step !== "supervise" && Boolean(repo);
+      if (kernelCoding && (step === "review" || step === "merge")) {
+        // No second Claude. The gate and merge coordinator already ran,
+        // unless the gate failed and this same worker must revise once.
+        const gate = await readGate(taskKey);
+        const action = reviewAction({ delivery: deliveryMode, step, gate });
+        for (const line of pipelineLines({ gate })) say(line);
+        if (action.spawn !== "revision") {
+          skipAgent = true;
+          result = { ok: action.outcome === "finished", reason: action.note };
+          receipt({ task_key: taskKey, placement_id: placementId, step, stage: result.ok ? "finished" : "failed",
+            reason: action.note, review_twin: false });
+          say(`${slot} (${step}): ${action.note} review_twin=absent`);
+        }
+      }
+      if (kernelCoding && !skipAgent) {
+        const lease = await callApi(fetchImpl, options.host, options.key,
+          `/v1/tasks/${encodeURIComponent(taskKey)}/kernel/lease`, { method: "POST", body: {} });
+        cwd = resolveLeaseCwd(lease, { reposDir, hostCheckout });
+        const published = publicLease({ ...lease, task_key: taskKey }, taskKey);
+        if (published) leaseBook.set(slot, published);
+        say(`kernel worktree cwd=${cwd} pool=worktree_pool lease=${lease.lease || "held"} task=${lease.kernel_task_id}`);
+        receipt({ task_key: taskKey, placement_id: placementId, step, stage: "cwd", cwd,
+          pool: "worktree_pool", kernel_task_id: lease.kernel_task_id, review_twin: false });
+        prompt = kernelPrompt({
+          taskKey, placementId, host: options.host, writeSet: lease.write_set,
+          revision: step === "review",
+        });
+      } else if (skipAgent) {
+        cwd = null;
+      } else if (step === "supervise") {
+        agenda = placement.detail?.agenda ?? [];
+      } else if (deliveryMode === "legacy" && repo) {
+        // Opt-out only: a local worktree. The default path never reaches here.
         const treeKey = step === "work" ? taskKey : `${step}-${taskKey}`;
-        if (repo) tree = worktrees.prepare(treeKey, repo, new Set([...running.keys()].map(repoSlug)));
+        tree = worktrees.prepare(treeKey, repo, new Set([...running.keys()].map(repoSlug)));
         if (tree) tree.key = treeKey;
       }
-      // Work without a repository gets an empty directory of its own, never the
-      // service's working directory.
-      if (!tree) {
-        scratch = join(stateDir, "runner", "scratch", repoSlug(`${step}-${slot}`));
-        rmSync(scratch, { recursive: true, force: true });
-        mkdirSync(scratch, { recursive: true });
+      if (!cwd && !skipAgent) {
+        // Work without a repository gets an empty directory of its own, never the
+        // service's working directory. Kernel coding tasks already have cwd.
+        if (!tree) {
+          scratch = join(stateDir, "runner", "scratch", repoSlug(`${step}-${slot}`));
+          rmSync(scratch, { recursive: true, force: true });
+          mkdirSync(scratch, { recursive: true });
+        }
+        cwd = tree?.dir ?? scratch;
+        prompt = promptFor({ taskKey, placementId, branch: tree?.branch, host: options.host,
+          step, diagramKey, chunkKey, agenda });
       }
-      const cwd = tree?.dir ?? scratch;
-      const prompt = promptFor({ taskKey, placementId, branch: tree?.branch, host: options.host,
-        step, diagramKey, chunkKey, agenda });
       const env = { VEYNOD_KEY: options.key, VEYNOD_HOST: options.host, VEYNOD_TASK_KEY: taskKey ?? "",
-        VEYNOD_PLACEMENT_ID: placementId, VEYNOD_STEP: step };
-      if (step === "work" && taskKey) stopLease = keepLease(taskKey);
-      for (let attempt = 1; attempt <= WAKE_ATTEMPTS; attempt += 1) {
-        receipt({ task_key: taskKey, placement_id: placementId, step, stage: "started", attempt, runtime: adapter.id });
-        result = await adapter.run({ cwd, prompt, env, pin, configDir });
+        VEYNOD_PLACEMENT_ID: placementId, VEYNOD_STEP: step, VEYNOD_CWD: cwd,
+        VEYNOD_DELIVERY: deliveryMode };
+      const mcpConfig = kernelCoding ? combinedMcpConfig({
+        product: pin, kernelUrl, kernelToken,
+      }) : null;
+      if (step === "work" && taskKey && !skipAgent) stopLease = keepLease(taskKey);
+      if (!skipAgent) for (let attempt = 1; attempt <= WAKE_ATTEMPTS; attempt += 1) {
+        receipt({ task_key: taskKey, placement_id: placementId, step, stage: "started", attempt, runtime: adapter.id, cwd });
+        result = await adapter.run({ cwd, prompt, env, pin, configDir, mcpConfig });
         if (result.ok) break;
         if (attempt < WAKE_ATTEMPTS) await sleep(Math.min(30_000, sleepMs * attempt));
       }
-      receipt({ task_key: taskKey, placement_id: placementId, step, stage: result.ok ? "finished" : "failed", reason: result.reason });
+      if (kernelCoding && taskKey && !skipAgent) {
+        let diff = "";
+        try {
+          diff = cachedDiff(cwd);
+        } catch (error) {
+          result = { ok: false, reason: error.message };
+        }
+        if (result.ok && !String(diff).trim()) {
+          result = { ok: false, reason: "no_kernel_submission" };
+        } else if (result.ok) {
+          const submitted = await callApi(fetchImpl, options.host, options.key,
+            `/v1/tasks/${encodeURIComponent(taskKey)}/kernel/submit`, {
+              method: "POST",
+              body: {
+                git_diff: diff,
+                touched_symbols: leaseBook.get(slot)?.write_set || ["lease"],
+                local_test_passed: true,
+              },
+            });
+          const gate = await settleGate(() => readGate(taskKey), {
+            waitMs: Number(options.gateWaitMs ?? process.env.VEYNOD_GATE_WAIT_MS ?? 0),
+          });
+          const lines = pipelineLines({ submission: submitted, gate });
+          for (const line of lines) {
+            say(line);
+            receipt({ task_key: taskKey, placement_id: placementId, step, stage: "pipeline", line });
+          }
+          if (gate?.needs_human || gate?.gate === "escalated") {
+            result = { ok: false, reason: "needs_human" };
+          } else if (gate?.gate === "fail" || gate?.status === "gate_failed") {
+            result = { ok: false, reason: "verification_gate failed" };
+          } else if (gate?.merged || gate?.gate === "pass" || submitted?.submission_id) {
+            result = { ok: true, reason: gate?.merge_sha ? `merge_coordinator ${gate.merge_sha}` : "submitted_to_kernel_gate" };
+          }
+        }
+      }
+      receipt({ task_key: taskKey, placement_id: placementId, step, stage: result.ok ? "finished" : "failed", reason: result.reason, cwd });
       say(`${slot} (${step}): ${result.ok ? "finished" : `failed (${result.reason})`}`);
     } catch (error) {
       result = { ok: false, reason: error.code || error.message };
@@ -676,6 +970,7 @@ export async function runRunner(options, {
       say(`${slot} (${step}): ${error.message}`);
     } finally {
       stopLease();
+      leaseBook.delete(slot);
       if (tree) {
         try {
           worktrees.remove(tree.key, repo);

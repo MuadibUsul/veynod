@@ -514,6 +514,17 @@ async def create_task(
     task = await _create_task_core(
         session, principal, request, agent=agent, batch=batch, commit=True
     )
+    if settings.kernel_provision_on_create and task.repo and (task.kind or "work") == "work":
+        from app.services import kernel_delivery
+
+        try:
+            await kernel_delivery.provision_product_task(session, task)
+        except Exception:
+            logger.exception("kernel provision failed for %s", task.task_key)
+            await session.rollback()
+            fresh = await session.get(CollabTask, task.id)
+            if fresh is not None:
+                task = fresh
     return task_out(task)
 
 
