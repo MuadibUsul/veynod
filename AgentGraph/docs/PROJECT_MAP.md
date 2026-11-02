@@ -107,7 +107,7 @@ Veynod 是一个给多 agent 团队用的**共享黑板 + MCP 控制面**：人�
 | `scripts/gen_agent_guide.py` | 生成 `docs/AGENT_GUIDE.md`（改动 API 后必须重跑，测试会校验） |
 | `deploy/deploy-gate/` | 门的 systemd 单元 |
 
-生产机：`/home/deploy/veynod`（非 git 检出，靠 tar 覆盖），容器 `veynod-api` / `veynod-db-1`，卷 `veynod_pgdata`，Caddy 配置在 `/opt/caddy/Caddyfile`。
+生产机：`/home/deploy/veynod`（非 git 检出，靠 tar 覆盖），容器 `veynod-api` / `veynod-db-1`，卷 `veynod_pgdata`，Caddy 配置在 `/opt/caddy/Caddyfile`。收件箱 SSE 不要被缓冲或在 60 秒空闲时切断：把仓库根目录 `deploy/proxy/Caddyfile` 里 `@sse` 那段并进生产 Caddyfile（nginx / Traefik 片段在同目录）。`listen` 的 systemd 单元仍是 `Restart=always`。
 
 ### 文档与测试
 

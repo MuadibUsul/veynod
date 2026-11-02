@@ -1,0 +1,27 @@
+# Merge into /opt/caddy/Caddyfile on the production host (veynod.com).
+# The live file has been `encode` + one `reverse_proxy`. That buffers and
+# idle-cuts inbox SSE. Match the stream paths first and do not gzip them.
+# flush_interval -1 disables the proxy buffer. HTTP/1.1 with an empty
+# Connection header keeps the upstream connection. Read/write timeouts are
+# 3600s, matching the server's max lifetime (plus up to 300s of jitter).
+
+veynod.com {
+	@sse path /v1/inbox/stream /v1/stream /v1/admin/workspaces/*/stream
+	handle @sse {
+		reverse_proxy 127.0.0.1:8000 {
+			header_up -Connection
+			flush_interval -1
+			transport http {
+				versions 1.1
+				read_timeout 3600s
+				write_timeout 3600s
+				response_header_timeout 0s
+			}
+		}
+	}
+
+	handle {
+		encode gzip
+		reverse_proxy 127.0.0.1:8000
+	}
+}

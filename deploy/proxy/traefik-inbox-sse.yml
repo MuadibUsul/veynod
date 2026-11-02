@@ -1,0 +1,22 @@
+# Traefik equivalent of deploy/proxy/nginx-inbox-sse.conf.
+# Response bodies are not buffered. flushInterval pushes each SSE frame,
+# and the transport does not idle-cut a stream inside an hour.
+# Point the /v1/inbox/stream, /v1/stream, and admin workspace stream routers
+# at this service.
+
+http:
+  serversTransports:
+    veynod-sse:
+      forwardingTimeouts:
+        dialTimeout: 30s
+        responseHeaderTimeout: 0s
+        idleConnTimeout: 3600s
+  services:
+    veynod-sse:
+      loadBalancer:
+        serversTransport: veynod-sse
+        responseForwarding:
+          flushInterval: 1ms
+        passHostHeader: true
+        servers:
+          - url: http://127.0.0.1:8000

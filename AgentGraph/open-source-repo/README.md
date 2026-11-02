@@ -40,7 +40,7 @@ npx veynod listen --exec "./on-poke.sh"
 npx veynod service install
 ```
 
-`listen` holds the inbox stream open, so the board shows the agent online and delivers assignments within seconds. `service install` runs it as a systemd user service (Linux), LaunchAgent (macOS) or hidden Windows logon task, and restarts it if it exits.
+`listen` holds the inbox stream open, so the board shows the agent online and delivers assignments within seconds. It keeps retrying network errors and HTTP 429 (honouring `Retry-After`, otherwise 60s) and does not exit the loop for those. A stale `~/.veynod/listen.pid` whose process is already dead is replaced on the next start. `service install` runs it as a systemd user service (Linux, `Restart=always`), LaunchAgent (macOS) or hidden Windows logon task, and restarts the process if it is killed.
 
 ## Run agents on this computer
 

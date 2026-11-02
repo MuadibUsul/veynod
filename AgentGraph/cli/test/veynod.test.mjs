@@ -19,9 +19,15 @@ import {
   manualCommand,
   mergeServer,
   openSealed,
+  acquireListenPid,
+  follow,
+  isPlannedClose,
+  nextReconnect,
   parseArgs,
   parseCsv,
+  parseRetryAfter,
   parseSse,
+  processAlive,
   selectedClients,
   sealForTest,
   servicePlan,
@@ -100,11 +106,14 @@ test("a failed Claude Code add restores the previous config", () => {
 
 test("parseSse splits frames and keeps the partial tail", () => {
   const [events, rest] = parseSse(
-    "retry: 3000\nevent: connected\ndata: {}\n\n: keep-alive\n\nid: 7\nevent: poke\ndata: {\"a\":1}\n\nid: 8\nev");
-  assert.deepEqual(events.map((item) => item.event), ["connected", "message", "poke"]);
-  assert.equal(events[2].id, "7");
-  assert.deepEqual(JSON.parse(events[2].data), { a: 1 });
+    "retry: 3000\nevent: connected\ndata: {}\n\n: keep-alive\n\n: ping\n\nid: 7\nevent: poke\ndata: {\"a\":1}\n\nid: 8\nev");
+  assert.deepEqual(events.map((item) => item.event), ["connected", "poke"]);
+  assert.equal(events[1].id, "7");
+  assert.deepEqual(JSON.parse(events[1].data), { a: 1 });
   assert.equal(rest, "id: 8\nev");
+  assert.equal(isPlannedClose({ event: "planned-close", data: "{\"reason\":\"max_lifetime\"}" }), true);
+  assert.equal(isPlannedClose({ event: "closed", data: "{\"reason\":\"max_lifetime\"}" }), true);
+  assert.equal(isPlannedClose({ event: "closed", data: "{\"reason\":\"credential_revoked\"}" }), false);
 });
 
 test("listen options parse", () => {
@@ -276,4 +285,166 @@ test("a blocked service command is printed so it can be run by hand", () => {
   assert.ok(line.includes(`/TR "wscript.exe //B //Nologo ""${launcher}"""`));
   assert.ok(line.endsWith(" /F"));
   assert.equal(manualCommand("systemctl", ["--user", "daemon-reload"]), "systemctl --user daemon-reload");
+});
+
+function framesResponse(frames, { status = 200, headers = {}, advanceMs = 0, clock } = {}) {
+  const encoder = new TextEncoder();
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: { get: (name) => headers[String(name).toLowerCase()] ?? null },
+    json: async () => ({}),
+    body: {
+      async *[Symbol.asyncIterator]() {
+        if (clock && advanceMs) clock.t += advanceMs;
+        for (const frame of frames) yield encoder.encode(frame);
+      },
+    },
+  };
+}
+
+async function withState(run) {
+  const previous = process.env.VEYNOD_STATE_DIR;
+  process.env.VEYNOD_STATE_DIR = mkdtempSync(join(tmpdir(), "veynod-listen-"));
+  try {
+    return await run(process.env.VEYNOD_STATE_DIR);
+  } finally {
+    if (previous === undefined) delete process.env.VEYNOD_STATE_DIR;
+    else process.env.VEYNOD_STATE_DIR = previous;
+  }
+}
+
+test("reconnect math: 429 uses Retry-After, short streams climb, stable and planned close reset", () => {
+  assert.equal(parseRetryAfter("2"), 2_000);
+  assert.equal(parseRetryAfter(""), null);
+  const limited = nextReconnect({ attempt: 0, connectedAt: 0 }, { reason: "429", retryAfterMs: 2_000, random: () => 0 });
+  assert.equal(limited.delayMs, 2_000);
+  assert.equal(limited.reset, false);
+  const missing = nextReconnect({ attempt: 3, connectedAt: 0 }, { reason: "429", retryAfterMs: null, random: () => 0 });
+  assert.equal(missing.delayMs, 60_000);
+  const climbed = nextReconnect({ attempt: 2, connectedAt: 0 }, { reason: "network", now: 5_000, random: () => 0 });
+  assert.equal(climbed.attempt, 3);
+  assert.equal(climbed.delayMs, 4_000);
+  const young = nextReconnect({ attempt: 4, connectedAt: 1_000 }, { reason: "ended", now: 10_000, random: () => 0 });
+  assert.equal(young.reset, false);
+  assert.equal(young.attempt, 5);
+  const stable = nextReconnect({ attempt: 4, connectedAt: 1_000 }, { reason: "ended", now: 70_000, random: () => 0 });
+  assert.equal(stable.reset, true);
+  assert.equal(stable.attempt, 0);
+  assert.equal(stable.delayMs, 1_000);
+  const planned = nextReconnect({ attempt: 9, connectedAt: 0 }, { reason: "planned-close", random: () => 0 });
+  assert.equal(planned.reset, true);
+  assert.equal(planned.delayMs, 250);
+  const capped = nextReconnect({ attempt: 20, connectedAt: 0 }, { reason: "network", random: () => 0.99 });
+  assert.equal(capped.delayMs, 60_000);
+  const hook = nextReconnect({ attempt: 4, connectedAt: 0 }, { reason: "hook", random: () => 0 });
+  assert.equal(hook.attempt, 4);
+  assert.equal(hook.delayMs, 1_000);
+});
+
+test("processAlive treats ESRCH as dead and EPERM as alive", () => {
+  const fail = (code) => () => {
+    const error = new Error(code);
+    error.code = code;
+    throw error;
+  };
+  assert.equal(processAlive(5, fail("ESRCH")), false);
+  assert.equal(processAlive(5, fail("EPERM")), true);
+  assert.equal(processAlive(5, () => {}), true);
+  assert.equal(processAlive(0, () => {}), false);
+});
+
+test("stale listen.pid is replaced and a live one is kept", () => {
+  const dir = mkdtempSync(join(tmpdir(), "veynod-pid-"));
+  writeFileSync(join(dir, "listen.pid"), "4242\n");
+  const release = acquireListenPid({ dir, pid: 7, alive: (pid) => pid !== 4242 });
+  assert.equal(readFileSync(join(dir, "listen.pid"), "utf8").trim(), "7");
+  release();
+  assert.equal(existsSync(join(dir, "listen.pid")), false);
+  writeFileSync(join(dir, "listen.pid"), "99\n");
+  assert.throws(() => acquireListenPid({ dir, pid: 7, alive: () => true }), /already running/);
+  assert.equal(readFileSync(join(dir, "listen.pid"), "utf8").trim(), "99");
+});
+
+test("follow keeps retrying 429 and does not reset after a short 200", async () => {
+  await withState(async () => {
+    const delays = [];
+    let calls = 0;
+    await assert.rejects(follow({ host: "http://veynod.test", key: "agt_retry" }, () => {}, {
+      random: () => 0,
+      sleepImpl: async (ms) => { delays.push(ms); },
+      fetchImpl: async () => {
+        calls += 1;
+        if (calls === 1) return framesResponse([], { status: 429, headers: { "retry-after": "2" } });
+        if (calls === 2) return framesResponse([], { status: 429 });
+        if (calls === 3) return framesResponse(["event: connected\ndata: {}\n\n"]);
+        if (calls === 4) return framesResponse(["event: connected\ndata: {}\n\n"]);
+        throw Object.assign(new Error("stop"), { fatal: true });
+      },
+    }), /stop/);
+    // Two 429s climb the counter. The following short 200s must not restart at 1s.
+    assert.deepEqual(delays, [2_000, 60_000, 4_000, 8_000]);
+  });
+});
+
+test("pings are ignored, a planned close reconnects quickly, and the cursor is kept", async () => {
+  await withState(async (stateDir) => {
+    const delays = [];
+    const headersSeen = [];
+    let calls = 0;
+    await assert.rejects(follow({ host: "http://veynod.test", key: "agt_cursor", onPoke: async () => {} }, () => {}, {
+      random: () => 0,
+      sleepImpl: async (ms) => { delays.push(ms); },
+      fetchImpl: async (_url, init) => {
+        calls += 1;
+        headersSeen.push(init.headers["Last-Event-ID"] ?? null);
+        if (calls === 1) {
+          return framesResponse([
+            "event: connected\ndata: {}\n\n",
+            ": ping\n\n",
+            ": ping\n\n",
+            'id: 9\nevent: poke\ndata: {"event_seq":9,"kind":"mention"}\n\n',
+            'event: planned-close\ndata: {"reason":"max_lifetime","reconnect":true}\n\n',
+            'event: closed\ndata: {"reason":"max_lifetime"}\n\n',
+          ]);
+        }
+        throw Object.assign(new Error("stop"), { fatal: true });
+      },
+    }), /stop/);
+    assert.deepEqual(delays, [250]);
+    assert.deepEqual(headersSeen, [null, "9"]);
+    const [name] = readdirSync(stateDir);
+    const saved = JSON.parse(readFileSync(join(stateDir, name), "utf8"));
+    assert.equal(saved.last_seq, 9);
+    assert.equal(saved.last_event_id, "9");
+  });
+});
+
+test("a stable stream resets backoff; 401 still leaves the loop", async () => {
+  await withState(async () => {
+    const clock = { t: 1_000_000 };
+    const delays = [];
+    let calls = 0;
+    await assert.rejects(follow({ host: "http://veynod.test", key: "agt_stable" }, () => {}, {
+      random: () => 0,
+      now: () => clock.t,
+      sleepImpl: async (ms) => { delays.push(ms); },
+      fetchImpl: async () => {
+        calls += 1;
+        if (calls === 1) return framesResponse(["event: connected\ndata: {}\n\n"]);
+        if (calls === 2) return framesResponse(["event: connected\ndata: {}\n\n: ping\n\n"], { advanceMs: 70_000, clock });
+        throw Object.assign(new Error("stop"), { fatal: true });
+      },
+    }), /stop/);
+    assert.deepEqual(delays, [1_000, 1_000]);
+    await assert.rejects(follow({ host: "http://veynod.test", key: "agt_auth" }, () => {}, {
+      fetchImpl: async () => ({
+        ok: false,
+        status: 401,
+        json: async () => ({ error: { message: "refused token" } }),
+        body: null,
+      }),
+      sleepImpl: async () => { throw new Error("retried"); },
+    }), /refused token/);
+  });
 });

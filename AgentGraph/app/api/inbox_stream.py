@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import time
 from collections import OrderedDict
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -42,7 +43,28 @@ router = APIRouter(prefix="/v1", tags=["Realtime"])
 
 REPLAY_LIMIT = 500
 RESCAN = 50  # seqs re-read behind the cursor: transactions commit out of order
-HEARTBEAT_SECONDS = 15
+# Comment heartbeat. Often enough that a proxy idle timeout (commonly 60s)
+# cannot mistake a quiet inbox for a dead upstream. Clients must ignore it.
+HEARTBEAT_SECONDS = 20
+LIFETIME_JITTER_SECONDS = 300
+SSE_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
+
+def inbox_lifetime_seconds(base: float, *, roll: Callable[[], float] | None = None) -> float:
+    """Configured max lifetime plus 0–300s so agents do not reconnect together."""
+    sample = roll() if roll is not None else random.random()
+    sample = min(1.0, max(0.0, float(sample)))
+    return float(base) + sample * LIFETIME_JITTER_SECONDS
+
+
+def planned_close_frame(reason: str = "max_lifetime") -> str:
+    """A close the client can tell from a failure. ``closed`` still follows."""
+    payload = json.dumps({"reason": reason, "reconnect": True})
+    return f"retry: 3000\nevent: planned-close\ndata: {payload}\n\n"
 
 
 async def _pending(principal: Principal, names: list[str], after: int,
@@ -108,37 +130,42 @@ async def _identities(principal: Principal) -> tuple[str, list[str], int]:
 
 async def _poke_stream(principal: Principal, last_event_id: int | None,
                        revalidate) -> AsyncIterator[str]:
-    owner, names, acked = await _identities(principal)
-    me = owner
-    await pokes.presence_open(principal, me)
-    sent: OrderedDict[int, None] = OrderedDict()
-    cursor = last_event_id if last_event_id is not None else acked
-    started = checked = touched = time.monotonic()
-
-    async def emit(rows: list[dict[str, Any]], *, replay: bool) -> AsyncIterator[str]:
-        nonlocal cursor
-        for row in rows:
-            seq = int(row["seq"])
-            if seq in sent:
-                continue
-            sent[seq] = None
-            while len(sent) > 2_000:
-                sent.popitem(last=False)
-            cursor = max(cursor, seq)
-            frame = _frame(row, replay=replay)
-            # Recorded as the frame is handed to the connection: a client that
-            # hangs up right after reading must not leave the receipt unwritten.
-            message = _message_of(row)
-            if message and message.get("message_id"):
-                from app.services import messaging
-
-                await messaging.record_stream_delivery(
-                    principal.workspace.id, message["message_id"], me)
-            else:
-                await pokes.record_delivery(principal.workspace.id, seq, me, "stream")
-            yield frame
-
+    opened = False
     try:
+        owner, names, acked = await _identities(principal)
+        me = owner
+        sent: OrderedDict[int, None] = OrderedDict()
+        cursor = last_event_id if last_event_id is not None else acked
+        started = checked = touched = time.monotonic()
+        lifetime = inbox_lifetime_seconds(settings.sse_max_lifetime_seconds)
+
+        async def emit(rows: list[dict[str, Any]], *, replay: bool) -> AsyncIterator[str]:
+            nonlocal cursor
+            for row in rows:
+                seq = int(row["seq"])
+                if seq in sent:
+                    continue
+                sent[seq] = None
+                while len(sent) > 2_000:
+                    sent.popitem(last=False)
+                cursor = max(cursor, seq)
+                frame = _frame(row, replay=replay)
+                # Recorded as the frame is handed to the connection: a client that
+                # hangs up right after reading must not leave the receipt unwritten.
+                message = _message_of(row)
+                if message and message.get("message_id"):
+                    from app.services import messaging
+
+                    await messaging.record_stream_delivery(
+                        principal.workspace.id, message["message_id"], me)
+                else:
+                    await pokes.record_delivery(principal.workspace.id, seq, me, "stream")
+                yield frame
+
+        # Unsubscribe (subscribe's own finally), drop the SSE slot, and close
+        # presence on every exit, including client hang-up and max lifetime.
+        await pokes.presence_open(principal, me)
+        opened = True
         async with event_bus.subscribe() as queue:
             yield ("retry: 3000\nevent: connected\n"
                    f"data: {json.dumps({'agent': me, 'resume_after': cursor})}\n\n")
@@ -146,7 +173,11 @@ async def _poke_stream(principal: Principal, last_event_id: int | None,
                 yield frame
             while True:
                 now = time.monotonic()
-                if now - started >= settings.sse_max_lifetime_seconds:
+                remaining = lifetime - (now - started)
+                if remaining <= 0:
+                    # planned-close first so new clients reconnect on purpose.
+                    # closed stays for clients that only understand that event.
+                    yield planned_close_frame("max_lifetime")
                     yield _closing_frame("max_lifetime")
                     return
                 if now - checked >= settings.sse_revalidate_seconds:
@@ -161,12 +192,13 @@ async def _poke_stream(principal: Principal, last_event_id: int | None,
                     await pokes.presence_touch(principal)
                 workspace = str(principal.workspace.id)
                 try:
-                    payloads = [await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_SECONDS)]
+                    payloads = [await asyncio.wait_for(
+                        queue.get(), timeout=min(HEARTBEAT_SECONDS, remaining))]
                     # Drain bursts: one query answers many notifications.
                     while not queue.empty():
                         payloads.append(queue.get_nowait())
                 except asyncio.TimeoutError:
-                    yield ": keep-alive\n\n"
+                    yield ": ping\n\n"
                 else:
                     if not any(_in_workspace(item, workspace) for item in payloads):
                         continue
@@ -177,8 +209,9 @@ async def _poke_stream(principal: Principal, last_event_id: int | None,
                     yield frame
     finally:
         _release_sse(principal)
-        # A hang-up cancels this task; the shielded close still runs to the end.
-        await asyncio.shield(pokes.presence_close(principal))
+        if opened:
+            # A hang-up cancels this task; the shielded close still runs to the end.
+            await asyncio.shield(pokes.presence_close(principal))
 
 
 @router.get("/inbox/stream",
@@ -194,5 +227,4 @@ async def inbox_stream(request: Request,
         _poke_stream(principal, _parse_last_event_id(request, last_event_id),
                      _key_revalidator(extract_bearer_token(request) or "", principal)),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive",
-                 "X-Accel-Buffering": "no"})
+        headers=SSE_HEADERS)
