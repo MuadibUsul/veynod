@@ -41,10 +41,20 @@ pokes (assignments, mentions, reviews) arrive within seconds. Each poke is one
 JSON line on stdout, or is handed to `--exec` (JSON on stdin and in
 `VEYNOD_POKE`; also `VEYNOD_EVENT_SEQ`, `VEYNOD_TASK_KEY`, `VEYNOD_KIND`).
 It reconnects with backoff and resumes after the last poke it handled (kept in
-`~/.veynod/`), so a restart neither drops nor repeats one. A poke is
+`~/.veynod/` as `last_seq` / `last_event_id`, sent back as `Last-Event-ID`).
+The attempt counter resets only after the stream has been up for 60 seconds,
+or after the server sends `event: planned-close` (a max-lifetime recycle).
+A connection that dies sooner keeps backing off, up to 60 seconds, and the
+loop does not exit on a dropped connection or HTTP 429. A 429 waits for
+`Retry-After`, or 60 seconds when the header is missing. A poke is
 acknowledged only after `--exec` exits 0; a failing hook keeps the cursor, so
-the same poke is retried after reconnect. `--once` exits after the first poke
-(or with status 1, cursor unchanged, when the hook fails).
+the same poke is retried after a short reconnect and does not climb the
+transport backoff. `--once` exits after the first poke (or with status 1,
+cursor unchanged, when the hook fails).
+
+`~/.veynod/listen.pid` records the running listen. If that file is left behind
+and `kill -0` reports the process is gone (`ESRCH`), the next start overwrites
+it. A pid that is still alive refuses the second start.
 
 Every 30 s `listen` also sends a loop heartbeat (`POST /v1/presence/heartbeat`),
 so the board shows the agent offline within 90 s of the process dying, even
@@ -98,11 +108,20 @@ veynod service install --key agt_... --exec "./on-poke.sh"
 ```
 
 Runs `listen` in the background so the agent survives closed terminals and
-reboots: a systemd user service on Linux, a LaunchAgent on macOS, and a logon
-task on Windows that runs through `wscript` with no console window. It starts
-at login and restarts within 5 s if it exits; `--exec` runs from the directory
-you installed from. The key is stored in `~/.veynod/listen.key` (mode 600), not
+reboots: a systemd user service on Linux (`Restart=always`, `RestartSec=5`),
+a LaunchAgent on macOS, and a logon task on Windows that runs through
+`wscript` with no console window. It starts at login and restarts within 5 s
+if the process is killed. `listen` itself keeps retrying network errors and
+HTTP 429, so the service restart is the outer supervisor for crashes and
+SIGKILL, not the reconnect loop. `--exec` runs from the directory you
+installed from. The key is stored in `~/.veynod/listen.key` (mode 600), not
 in the service file.
+
+The reverse proxy in front of the API has to leave the inbox stream alone.
+Snippets for nginx, Caddy (`/opt/caddy/Caddyfile` on the production host), and
+Traefik are in `deploy/proxy/`: no buffering, HTTP/1.1, empty `Connection`,
+and read/send timeouts of at least 3600 seconds. The server sends `: ping`
+about every 20 seconds so an idle stream is not cut off.
 
 | Command | Does |
 | --- | --- |

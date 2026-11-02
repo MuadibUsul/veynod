@@ -408,10 +408,15 @@ ${bold("What listen does")}
   (assignments, mentions, reviews) arrive within seconds. Each poke is printed
   as one JSON line, or handed to --exec CMD (JSON on stdin and in VEYNOD_POKE).
   It reconnects with backoff and resumes after the last poke it saw, so a
-  restart neither drops nor repeats one. The key comes from --key, --key-file
-  or VEYNOD_KEY. --once exits after the first poke (for scripts). Every 30 s it
-  also sends a loop heartbeat, so the board shows the agent offline within
-  90 s of this process dying, even when a proxy keeps the stream half-open.
+  restart neither drops nor repeats one. The attempt counter resets only after
+  the stream has stayed up for 60s, or after a planned close from the server.
+  HTTP 429 waits for Retry-After (60s when the header is missing) and the loop
+  does not exit on 429 or a dropped connection. The key comes from --key,
+  --key-file or VEYNOD_KEY. --once exits after the first poke (for scripts).
+  A stale ~/.veynod/listen.pid (the process is gone) is replaced on start.
+  Every 30 s it also sends a loop heartbeat, so the board shows the agent
+  offline within 90 s of this process dying, even when a proxy keeps the
+  stream half-open.
 
 ${bold("What runner does")}
   Makes this computer run agents for the board. It tells the platform what the
@@ -586,6 +591,8 @@ async function init(options) {
 
 export function parseSse(buffer) {
   // Returns [events, rest]: complete "\n\n"-terminated frames and the remainder.
+  // Comment lines (": ping") are heartbeats, not events. Emitting them as an
+  // empty message made listen throw on JSON.parse and reconnect every beat.
   const events = [];
   let rest = buffer.replace(/\r\n/g, "\n");
   let cut;
@@ -593,6 +600,7 @@ export function parseSse(buffer) {
     const block = rest.slice(0, cut);
     rest = rest.slice(cut + 2);
     const event = { event: "message", data: "", id: null };
+    let fieldSeen = false;
     for (const line of block.split("\n")) {
       if (!line || line.startsWith(":")) continue;
       const at = line.indexOf(":");
@@ -601,8 +609,10 @@ export function parseSse(buffer) {
       if (field === "event") event.event = value;
       else if (field === "data") event.data += (event.data ? "\n" : "") + value;
       else if (field === "id") event.id = value;
+      else continue;
+      fieldSeen = true;
     }
-    events.push(event);
+    if (fieldSeen) events.push(event);
   }
   return [events, rest];
 }
@@ -620,7 +630,8 @@ function cursorFile(host, key) {
 
 function loadCursor(path) {
   try {
-    return Number(JSON.parse(readFileSync(path, "utf8")).last_seq) || null;
+    const saved = JSON.parse(readFileSync(path, "utf8"));
+    return Number(saved.last_seq ?? saved.last_event_id) || null;
   } catch {
     return null;
   }
@@ -628,8 +639,137 @@ function loadCursor(path) {
 
 function saveCursor(path, seq) {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  writeFileSync(`${path}.tmp`, JSON.stringify({ last_seq: seq }), { mode: 0o600 });
+  const body = JSON.stringify({ last_seq: seq, last_event_id: String(seq) });
+  writeFileSync(`${path}.tmp`, body, { mode: 0o600 });
   renameSync(`${path}.tmp`, path);
+}
+
+// Reconnect policy. A short-lived HTTP 200 used to reset the delay to 1s, so
+// a proxy that cut the stream every minute never backed off. Reset only after
+// the stream has been live for a minute, or when the server planned the close.
+export const RECONNECT_CAP_MS = 60_000;
+export const STABLE_MS = 60_000;
+export const PLANNED_JITTER_MS = 3_000;
+export const DEFAULT_RETRY_AFTER_MS = 60_000;
+
+export function parseRetryAfter(header, now = Date.now()) {
+  if (header == null || String(header).trim() === "") return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const when = Date.parse(String(header));
+  if (Number.isFinite(when)) return Math.max(0, when - now);
+  return null;
+}
+
+async function readRetryAfterMs(response, now) {
+  const raw = typeof response.headers?.get === "function"
+    ? response.headers.get("retry-after")
+    : response.headers?.["retry-after"];
+  const header = parseRetryAfter(raw, now);
+  if (header != null) return header;
+  if (typeof response.json !== "function") return null;
+  try {
+    const body = await response.json();
+    const ms = body?.error?.retry_after_ms;
+    if (typeof ms === "number" && Number.isFinite(ms)) return Math.max(0, ms);
+  } catch {
+    // A 429 with an empty body still waits the default.
+  }
+  return null;
+}
+
+export function isPlannedClose(event) {
+  if (!event) return false;
+  if (event.event === "planned-close") return true;
+  if (event.event !== "closed" || !event.data) return false;
+  try {
+    const data = JSON.parse(event.data);
+    return data?.reason === "max_lifetime" || data?.planned === true;
+  } catch {
+    return false;
+  }
+}
+
+export function nextReconnect({ attempt = 0, connectedAt = 0 } = {}, {
+  reason = "network", now = Date.now(), retryAfterMs = null, random = Math.random,
+} = {}) {
+  if (reason === "hook") {
+    return { attempt, delayMs: 1_000 + Math.floor(random() * 500), reset: false };
+  }
+  const lived = connectedAt > 0 ? Math.max(0, now - connectedAt) : 0;
+  if (reason === "planned-close") {
+    return { attempt: 0, delayMs: 250 + Math.floor(random() * PLANNED_JITTER_MS), reset: true };
+  }
+  if (lived >= STABLE_MS) {
+    return { attempt: 0, delayMs: 1_000 + Math.floor(random() * 500), reset: true };
+  }
+  if (reason === "429") {
+    const base = retryAfterMs == null ? DEFAULT_RETRY_AFTER_MS : Math.max(0, retryAfterMs);
+    const jitter = Math.floor(random() * 1_000);
+    return { attempt: attempt + 1, delayMs: Math.min(RECONNECT_CAP_MS, base + jitter), reset: false };
+  }
+  const next = attempt + 1;
+  const exp = Math.min(RECONNECT_CAP_MS, 1_000 * 2 ** Math.min(next - 1, 16));
+  return {
+    attempt: next,
+    delayMs: Math.min(RECONNECT_CAP_MS, exp + Math.floor(random() * 500)),
+    reset: false,
+  };
+}
+
+function listenStateDir() {
+  return process.env.VEYNOD_STATE_DIR || join(defaultHome(), ".veynod");
+}
+
+export function processAlive(pid, kill = (id, signal) => process.kill(id, signal)) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM: the process exists but we may not signal it. ESRCH: it is gone.
+    return error?.code === "EPERM";
+  }
+}
+
+/** Claim listen.pid. A dead pid (kill -0 -> ESRCH) is overwritten. */
+export function acquireListenPid({ dir, pid = process.pid, alive = processAlive } = {}) {
+  if (!dir) throw new Error("listen pid directory is required");
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const path = join(dir, "listen.pid");
+  const release = () => {
+    try {
+      if (Number(readFileSync(path, "utf8").trim()) === pid) unlinkSync(path);
+    } catch {
+      // already gone
+    }
+  };
+  for (let i = 0; i < 2; i += 1) {
+    try {
+      writeFileSync(path, `${pid}\n`, { flag: "wx", mode: 0o600 });
+      return release;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      let held = NaN;
+      try {
+        held = Number(readFileSync(path, "utf8").trim());
+      } catch {
+        held = NaN;
+      }
+      if (Number.isInteger(held) && held !== pid && alive(held)) {
+        throw Object.assign(
+          new Error(`another listen (pid ${held}) is already running (${path})`),
+          { code: "listen_running" },
+        );
+      }
+      try {
+        unlinkSync(path);
+      } catch (unlinkError) {
+        if (unlinkError.code !== "ENOENT") throw unlinkError;
+      }
+    }
+  }
+  throw new Error(`could not claim ${path}`);
 }
 
 function runHook(command, poke) {
@@ -691,42 +831,83 @@ export function startHeartbeat(host, key, { every = HEARTBEAT_MS, say = () => {}
 async function listen(options) {
   if (!options.key) throw new Error("listen needs an agent key: --key, --key-file or VEYNOD_KEY");
   const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
+  const releasePid = options.managePid
+    ? acquireListenPid({ dir: options.stateDir || listenStateDir() })
+    : () => {};
   const stopHeartbeat = options.heartbeat ? startHeartbeat(options.host, options.key, { say }) : () => {};
+  let released = false;
+  const release = () => {
+    if (released) return;
+    released = true;
+    stopHeartbeat();
+    releasePid();
+  };
+  const onStop = () => {
+    release();
+    process.exit(0);
+  };
+  if (options.managePid) {
+    process.once("SIGTERM", onStop);
+    process.once("SIGINT", onStop);
+  }
   try {
     return await follow(options, say);
   } finally {
-    stopHeartbeat();
+    if (options.managePid) {
+      process.removeListener("SIGTERM", onStop);
+      process.removeListener("SIGINT", onStop);
+    }
+    release();
   }
 }
 
-export async function follow(options, say = () => {}) {
+export async function follow(options, say = () => {}, deps = {}) {
+  const fetchImpl = deps.fetchImpl || fetch;
+  const sleepImpl = deps.sleepImpl || sleep;
+  const now = deps.now || Date.now;
+  const random = deps.random || Math.random;
   const statePath = cursorFile(options.host, options.key);
   let lastSeq = loadCursor(statePath);
-  let delay = 1000;
+  // Not reset on HTTP 200. A stream that dies before STABLE_MS keeps climbing.
+  let attempt = 0;
   for (;;) {
     const controller = new AbortController();
+    let connectedAt = 0;
     try {
       const headers = { Authorization: `Bearer ${options.key}`, Accept: "text/event-stream" };
       if (lastSeq) headers["Last-Event-ID"] = String(lastSeq);
-      const response = await fetch(`${options.host}/v1/inbox/stream`, { headers, signal: controller.signal });
+      const response = await fetchImpl(`${options.host}/v1/inbox/stream`, { headers, signal: controller.signal });
       if (response.status === 401 || response.status === 403) {
         const body = await response.json().catch(() => ({}));
         throw Object.assign(new Error(body?.error?.message || `refused (${response.status})`), { fatal: true });
       }
-      if (!response.ok || !response.body) throw new Error(`stream answered ${response.status}`);
+      if (!response.ok || !response.body) {
+        const retryAfterMs = response.status === 429 ? await readRetryAfterMs(response, now()) : null;
+        throw Object.assign(new Error(`stream answered ${response.status}`), {
+          reason: response.status === 429 ? "429" : "http",
+          retryAfterMs,
+        });
+      }
+      connectedAt = now();
       say(`${green("online")} ${options.host}${lastSeq ? ` (resuming after ${lastSeq})` : ""}`);
-      delay = 1000;
       const decoder = new TextDecoder();
       let buffer = "";
+      let endReason = "ended";
       for await (const chunk of response.body) {
         buffer += decoder.decode(chunk, { stream: true });
         const [events, rest] = parseSse(buffer);
         buffer = rest;
         for (const event of events) {
-          if (event.event === "closed") throw new Error(`server closed the stream: ${event.data}`);
+          if (isPlannedClose(event)) {
+            endReason = "planned-close";
+            break;
+          }
+          if (event.event === "closed") {
+            throw Object.assign(new Error(`server closed the stream: ${event.data}`), { reason: "closed" });
+          }
           // Pokes and direct messages both reach the hook; "message" frames carry the
-          // conversation pointer in poke.message.
-          if (event.event !== "poke" && event.event !== "message") continue;
+          // conversation pointer in poke.message. Comment heartbeats have no data.
+          if ((event.event !== "poke" && event.event !== "message") || !event.data) continue;
           const poke = JSON.parse(event.data);
           const seq = Number(event.id || poke.event_seq);
           if (lastSeq && seq <= lastSeq) continue; // seen before a reconnect
@@ -740,7 +921,7 @@ export async function follow(options, say = () => {}) {
                 process.stderr.write(`  ${red("✗")} ${message}; cursor kept at ${lastSeq ?? "start"}\n`);
                 return 1;
               }
-              throw new Error(message);
+              throw Object.assign(new Error(message), { reason: "hook" });
             }
           } else {
             process.stdout.write(`${JSON.stringify(poke)}\n`);
@@ -752,14 +933,29 @@ export async function follow(options, say = () => {}) {
             return 0;
           }
         }
+        if (endReason === "planned-close") break;
       }
-      throw new Error("stream ended");
+      throw Object.assign(
+        new Error(endReason === "planned-close" ? "server planned close" : "stream ended"),
+        { reason: endReason },
+      );
     } catch (error) {
       if (error.fatal) throw error;
       if (error.name === "AbortError" && options.once) return 0;
-      say(`${red("offline")} ${error.message}; retrying in ${Math.round(delay / 1000)}s`);
-      await sleep(delay + Math.floor(Math.random() * 500));
-      delay = Math.min(delay * 2, 60_000);
+      const decision = nextReconnect(
+        { attempt, connectedAt },
+        {
+          reason: error.reason || "network",
+          now: now(),
+          retryAfterMs: error.retryAfterMs ?? null,
+          random,
+        },
+      );
+      attempt = decision.attempt;
+      const seconds = Math.max(1, Math.round(decision.delayMs / 1000));
+      const label = error.reason === "planned-close" ? dim("reconnecting") : red("offline");
+      say(`${label} ${error.message}; retrying in ${seconds}s`);
+      await sleepImpl(decision.delayMs);
     }
   }
 }
@@ -836,6 +1032,9 @@ export function servicePlan(action, {
         "[Service]",
         `WorkingDirectory=${systemdQuote(cwd)}`,
         `ExecStart=${[node, ...args].map(systemdQuote).join(" ")}`,
+        ...(mode === "listen"
+          ? ["# listen retries network errors and HTTP 429 itself; this covers crashes and SIGKILL."]
+          : []),
         "Restart=always",
         "RestartSec=5",
         "Environment=NO_COLOR=1",
@@ -1343,7 +1542,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
   if (options.command === "listen" && !options.help) {
     try {
-      return await listen(options);
+      return await listen({ ...options, managePid: true });
     } catch (error) {
       process.stderr.write(`\n  ${red("✗")} ${error.message}\n\n`);
       return 1;

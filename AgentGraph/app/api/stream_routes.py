@@ -237,14 +237,24 @@ def _sse_key(principal: Principal) -> str:
     )
 
 
+# Clients that miss the header wait this long (listen defaults to the same).
+SSE_RETRY_AFTER_SECONDS = "60"
+
+
 async def _acquire_sse(principal: Principal) -> None:
     global _sse_total
     key = _sse_key(principal)
     async with _sse_lock:
         if _sse_total >= settings.sse_max_connections:
-            raise ApiError(429, "sse_capacity", "too many event streams; retry later")
+            raise ApiError(
+                429, "sse_capacity", "too many event streams; retry later",
+                headers={"Retry-After": SSE_RETRY_AFTER_SECONDS},
+            )
         if _sse_by_principal.get(key, 0) >= settings.sse_max_connections_per_principal:
-            raise ApiError(429, "sse_capacity", "too many event streams for this principal")
+            raise ApiError(
+                429, "sse_capacity", "too many event streams for this principal",
+                headers={"Retry-After": SSE_RETRY_AFTER_SECONDS},
+            )
         _sse_total += 1
         _sse_by_principal[key] = _sse_by_principal.get(key, 0) + 1
 
