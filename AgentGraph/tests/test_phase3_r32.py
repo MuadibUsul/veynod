@@ -186,9 +186,13 @@ async def test_scheduled_exports(r32):
                           "tenant_id = $1 AND purpose = 'scheduled' ORDER BY created_at",
                           ws["tenant_id"])
 
-    # One run exports every tenant in turn; in a full-suite database this
-    # one is created last, so allow for the whole queue ahead of it.
-    for _ in range(360):
+    # One run exports every tenant in turn; in a full-suite database this one is
+    # created last, so the queue ahead of it is every earlier test's workspace.
+    # The run also only starts on its interval tick, so this waits in minutes,
+    # not seconds — a fixed 180 s was short once the suite passed 1,500
+    # workspaces.
+    deadline = time.monotonic() + 600
+    while time.monotonic() < deadline:
         rows = await scheduled()
         if rows and rows[0]["status"] == "done":
             break

@@ -83,11 +83,17 @@ async def test_seq_is_gap_free_under_concurrent_writes(client, workspace):
     namespace = f"burst{uuid.uuid4().hex[:4]}"
 
     async def batch(start):
-        response = await client.post("/v1/documents/batch", headers=workspace["headers"], json={
-            "items": [{"doc_key": f"b-{start + index:04d}", "namespace": namespace,
-                       "content": f"burst {start + index}", "expected_version": 0}
-                      for index in range(25)],
-        })
+        body = {"items": [{"doc_key": f"b-{start + index:04d}", "namespace": namespace,
+                           "content": f"burst {start + index}", "expected_version": 0}
+                          for index in range(25)]}
+        # Admission control answers 503 while other suite traffic holds the
+        # pool; 40 parallel batches hit it. Honour Retry-After and resend.
+        for attempt in range(20):
+            response = await client.post("/v1/documents/batch",
+                                         headers=workspace["headers"], json=body)
+            if response.status_code != 503:
+                break
+            await asyncio.sleep((attempt + 1) * 0.25)
         assert response.status_code == 200, response.text
 
     await asyncio.gather(*(batch(start) for start in range(0, 1000, 25)))
