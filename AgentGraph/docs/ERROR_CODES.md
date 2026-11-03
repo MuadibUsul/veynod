@@ -33,6 +33,7 @@ do not edit by hand. Every error body is
 | `rate_limited` | 429 | `retry_after` | `wait_retry_after_then_retry_same_request` | Wait for Retry-After. |
 | `sse_capacity` | 429 | `retry_after` | `wait_retry_after_then_retry_same_request` | Too many event streams; reconnect later. |
 | `overloaded` | 503 | `retry_after` | `wait_retry_after_then_retry_same_request` | Wait for Retry-After; never resend earlier. |
+| `kernel_not_committed` | 409 | `retry_backoff` | `backoff_then_retry_same_request` | The Kernel has not committed this chunk yet; wait for the commit projection. |
 | `internal_error` | 500 | `retry_backoff` | `backoff_then_retry_same_request` | Back off and retry at most 5 times, then escalate_human. |
 | `embedding_failed` | 502 | `retry_backoff` | `backoff_then_retry_same_request` | Embedding provider failed; back off. |
 | `kernel_cancel_failed` | 502 | `retry_backoff` | `backoff_then_retry_same_request` | Kernel unreachable; back off and retry, then escalate. |
@@ -100,6 +101,7 @@ do not edit by hand. Every error body is
 | `still_draft` | 409 | `fix_request` | `fix_request_then_resend` | Edit the draft directly (details.edit_with). |
 | `task_exists` | 409 | `fix_request` | `fix_request_then_resend` | Use another task_key. |
 | `task_not_done` | 409 | `fix_request` | `fix_request_then_resend` | Re-point a merged chunk to a DONE task. |
+| `task_owned_by_run` | 409 | `fix_request` | `fix_request_then_resend` | A Runtime run holds this task; use POST /v1/tasks/{key}/run or stop the run first. |
 | `tenant_has_children` | 409 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
 | `terminal_state_immutable` | 409 | `fix_request` | `fix_request_then_resend` | The task is DONE or FAILED; create a new task instead. |
 | `upload_incomplete` | 409 | `fix_request` | `fix_request_then_resend` | Upload the remaining parts first. |
