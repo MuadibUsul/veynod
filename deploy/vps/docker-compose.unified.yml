@@ -64,7 +64,8 @@ services:
     # the sandbox containers, which the security guard forces to non-root.
     user: "${VN_GATE_DOCKER_USER}"
     # The docker CLI reaches the host socket through the docker group.
-    group_add: ["docker"]
+    # Numeric: this daemon does not resolve group names for --group-add.
+    group_add: ["${VN_GATE_DOCKER_GROUP_GID:?set to the host docker group gid (stat -c %g /var/run/docker.sock)}"]
     command:
       - python
       - -m

@@ -91,7 +91,9 @@ services:
     # When sandboxing with Docker, worktrees must be owned by the non-root
     # sandbox user; the docker CLI needs the host docker group for the socket.
     user: ${VN_GATE_DOCKER_USER:-}
-    group_add: ["docker"]
+    # Numeric gid: the daemon does not resolve group names for --group-add.
+    # 0 keeps a root container unchanged; set it when running as a non-root user.
+    group_add: ["${VN_GATE_DOCKER_GROUP_GID:-0}"]
     command:
       - python
       - -m
