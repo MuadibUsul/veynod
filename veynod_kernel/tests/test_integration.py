@@ -1354,11 +1354,20 @@ def test_async_submission_fails_durably_when_lease_expires_before_processing(
                 assert final is not None and final["final"], final
                 assert final["status"] == "FAILED", final
                 assert final["error_code"] == "lease_expired", final
-                current = client.get(
-                    f"/v1/runner/tasks/{task_id}",
-                    headers={"Authorization": f"Bearer {token}"},
-                ).json()
-                assert current["status"] == "READY", current
+                # The submission and the task are finalized by two separate
+                # transactions: `_finalize` commits the FAILED record, and
+                # `release_task` only then returns the task to READY. Asserting
+                # straight after the record reads the gap between them.
+                release_deadline = time.monotonic() + 10
+                while True:
+                    current = client.get(
+                        f"/v1/runner/tasks/{task_id}",
+                        headers={"Authorization": f"Bearer {token}"},
+                    ).json()
+                    if current["status"] == "READY":
+                        break
+                    assert time.monotonic() < release_deadline, current
+                    time.sleep(0.05)
     finally:
         shutil.rmtree(base, ignore_errors=True)
 
@@ -1847,3 +1856,40 @@ def test_cells_and_repository_placement(tmp_path: Path) -> None:
             json={"cell_id": cell_id, "expected_epoch": epoch},
         )
         assert stale.status_code == 409, stale.text
+
+
+# ---------------------------------------------------------------------------
+# A file-level target is mutable for the implementation task that owns it
+# ---------------------------------------------------------------------------
+def test_implement_body_may_add_a_function_to_its_file_level_target(
+    tmp_path: Path,
+) -> None:
+    """The whole-file signature is the bodiless skeleton, so appending a function
+    to the target file changes it. IMPLEMENT_BODY was not in the allowed-to-
+    change set, so `protected` applied to the task's own target and the gate
+    rejected the work it had just been asked to do.
+    """
+    with kernel(tmp_path, CALC_FILES) as harness:
+        harness.artifact("src/calc.py", "stub")
+        harness.artifact("tests/test_calc.py::test_add", "test")
+        task = harness.create_task(
+            title="Add multiply to calc",
+            spec_prompt="Add multiply(a, b) to src/calc.py.",
+            target_symbols=["src/calc.py"],
+            test_symbols=["tests/test_calc.py::test_add"],
+            write_set_symbols=["src/calc.py"],
+        )
+        bundle = harness.pull()
+        diff = _patch(
+            harness.base,
+            harness.bare,
+            harness.head,
+            "src/calc.py",
+            '    """Add two integers."""\n    ...',
+            '    """Add two integers."""\n    return a + b\n\n\ndef multiply'
+            "(a: int, b: int) -> int:\n    return a * b",
+        )
+        result = harness.submit(task["task_id"], bundle["lease_token"], diff, ["src/calc.py"])
+        assert result["new_status"] == "COMMITTED", result
+        stages = {gate["stage"]: gate for gate in result["gate_results"]}
+        assert stages["CONTRACT_HASH_GUARD"]["passed"] is True, stages["CONTRACT_HASH_GUARD"]

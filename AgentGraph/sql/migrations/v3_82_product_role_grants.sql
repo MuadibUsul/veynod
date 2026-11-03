@@ -1,12 +1,30 @@
--- The product roles were never granted the newer tables.
+-- The product role was never granted the tables another role created.
 --
--- RLS-era migrations grant `agentgraph_app` per table as they create it; these
--- tables came in without it, and the omission only shows when the app role
--- first touches one: `permission denied for table kernel_delivery_leases` on
--- the first real lease, `kernel_bindings` on the first lease after a binding
--- existed, and the same for the projection tables the promotion path writes.
+-- v3_2 set `ALTER DEFAULT PRIVILEGES` so new tables reach `agentgraph_app`
+-- automatically — but default privileges are recorded per creating role, and
+-- it recorded them for `agentgraph` only. Migrations apply as `veynod`, so
+-- every table they create (kernel_bindings, kernel_delivery_leases, the
+-- projection tables, projects, event_inbox …) is owned by `veynod` and got no
+-- grant. Nothing notices until the app role first touches one:
+-- `permission denied for table kernel_delivery_leases` on the first real
+-- lease, `kernel_bindings` on the one before it.
 --
--- Existence-guarded, so this also runs on a database that predates a table.
+-- So this does both halves. The default privileges are registered for the
+-- role that actually creates tables, which fixes it for every future one; the
+-- loop repairs what already exists. Both are guarded, so the file also runs on
+-- a database that predates a table or the role.
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'veynod')
+       AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agentgraph_app') THEN
+        EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE veynod IN SCHEMA public '
+                'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO agentgraph_app';
+        EXECUTE 'ALTER DEFAULT PRIVILEGES FOR ROLE veynod IN SCHEMA public '
+                'GRANT USAGE, SELECT ON SEQUENCES TO agentgraph_app';
+    END IF;
+END
+$$;
 
 DO $$
 DECLARE

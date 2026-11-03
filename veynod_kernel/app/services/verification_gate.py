@@ -104,11 +104,22 @@ def _workspace_merge_lock(workspace_id) -> asyncio.Lock:
     return lock
 
 
+# Types whose pinned targets may change. `protected` means "pinned and not
+# allowed to change", so leaving a type out freezes its own targets — which is
+# what froze every file-level artifact: a file's signature is its whole
+# bodiless skeleton, so adding a function to the target file changed the hash
+# and the gate refused the task's own work.
+#
+# The contract-defining types stay listed because they legitimately change a
+# contract, and the gate holds them to it. An implementation type is handed
+# the file to change, so its target must be mutable — that is what pinning it
+# for is.
 _ALLOWED_TO_CHANGE = {
     TaskType.DESIGN_CONTRACT,
     TaskType.REVISE_CONTRACT,
     TaskType.WRITE_TEST,
     TaskType.FIX_INTEGRATION,
+    TaskType.IMPLEMENT_BODY,
 }
 _TESTS_REQUIRED = {TaskType.IMPLEMENT_BODY, TaskType.FIX_INTEGRATION}
 
