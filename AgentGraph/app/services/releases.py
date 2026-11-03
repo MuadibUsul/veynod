@@ -10,6 +10,7 @@ orientation's ``platform_changes`` for an agent coming back after a release.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -851,23 +852,44 @@ async def record_release(primitives: list[str]) -> bool:
             return False  # another replica recorded it first
         workspaces = (await session.execute(text("SELECT id FROM workspaces"))).scalars().all()
     notes = notes_for(version)
-    for workspace_id in workspaces:
-        try:
-            async with async_session_factory() as session:
-                await write_changelog(session, workspace_id)
-                await append_event(
-                    session, workspace_id=workspace_id, agent="platform",
-                    event_type="PLATFORM_RELEASED",
-                    payload={"details": {
-                        "from": previous["version"] if previous else None, "to": version,
-                        "schema_version": CURRENT_SCHEMA_VERSION,
-                        "added_primitives": added, "removed_primitives": removed,
-                        "summary": notes["summary"],
-                        "changelog": {"namespace": "system", "doc_key": CHANGELOG_KEY}}},
-                    namespace="system")
-                await session.commit()
-        except Exception:  # noqa: BLE001 - one workspace must not stop the others
-            logger.exception("could not announce the release in a workspace")
+    # Workspaces are independent and each is its own session, so they go out a
+    # batch at a time. One at a time held startup open for as long as there were
+    # workspaces — over 1,500 in a long-lived test database, and that pushed the
+    # whole announcement past the 45 s a starting server gets.
+    announcing = (version, previous["version"] if previous else None, added, removed, notes)
+    for start in range(0, len(workspaces), ANNOUNCE_BATCH):
+        await asyncio.gather(*(
+            _announce_in_workspace(workspace_id, *announcing)
+            for workspace_id in workspaces[start:start + ANNOUNCE_BATCH]
+        ))
     logger.info("release %s recorded and announced in %s workspace(s)", version,
                 len(workspaces))
     return True
+
+
+ANNOUNCE_BATCH = 100
+
+
+async def _announce_in_workspace(workspace_id: Any, version: str, previous_version: str | None,
+                                 added: list[str], removed: list[str],
+                                 notes: dict[str, Any]) -> None:
+    """Write the changelog and the PLATFORM_RELEASED event into one workspace."""
+    from app.database import CURRENT_SCHEMA_VERSION
+    from app.services.common import append_event
+
+    try:
+        async with async_session_factory() as session:
+            await write_changelog(session, workspace_id)
+            await append_event(
+                session, workspace_id=workspace_id, agent="platform",
+                event_type="PLATFORM_RELEASED",
+                payload={"details": {
+                    "from": previous_version, "to": version,
+                    "schema_version": CURRENT_SCHEMA_VERSION,
+                    "added_primitives": added, "removed_primitives": removed,
+                    "summary": notes["summary"],
+                    "changelog": {"namespace": "system", "doc_key": CHANGELOG_KEY}}},
+                namespace="system")
+            await session.commit()
+    except Exception:  # noqa: BLE001 - one workspace must not stop the others
+        logger.exception("could not announce the release in a workspace")

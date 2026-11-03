@@ -129,12 +129,20 @@ async def lifespan(app: FastAPI):
         if scaffolded:
             logger.info("scaffolded conventions for %s workspace(s)", scaffolded)
     # Release discipline: record this build once and announce it everywhere.
+    # Announcing walks every workspace, which on a large install costs far more
+    # than the rest of startup; the recording half is quick, so it runs here and
+    # the fan-out continues in the background.
     from app.services.releases import record_release
+    import asyncio
 
-    try:
-        await record_release(list(ROOT_PRIMITIVES))
-    except Exception:  # noqa: BLE001 - announcing must not stop the service
-        logger.exception("could not record the release")
+    async def _announce_release() -> None:
+        try:
+            await record_release(list(ROOT_PRIMITIVES))
+        except Exception:  # noqa: BLE001 - announcing must not stop the service
+            logger.exception("could not record the release")
+
+    app.state.announce_release = asyncio.create_task(
+        _announce_release(), name="announce-release")
     # Every active agent token is in the directory (memory seed spec, R-03).
     from app.services.directory import backfill_auto
 
@@ -244,6 +252,10 @@ async def lifespan(app: FastAPI):
         else:
             yield
     finally:
+        # Let a half-done announcement finish: it is only a few hundred writes and
+        # a restart that cancels it leaves workspaces without the changelog row.
+        with suppress(Exception, asyncio.TimeoutError):
+            await asyncio.wait_for(app.state.announce_release, timeout=60)
         tasks = (reaper_task, nerve_task, webhook_task, action_task, index_task, *background)
         for task in tasks:
             task.cancel()

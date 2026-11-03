@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+import time
 import uuid
 
 import asyncpg
@@ -99,10 +101,16 @@ async def test_a_new_release_is_announced_and_orientation_is_incremental(client)
 
     async with run_server({}, ".server-release.log") as base_url:
         async with httpx.AsyncClient(base_url=base_url, timeout=60) as fresh:
-            polled = await fresh.get("/v1/events", headers=ws["key"], params={
-                "cursor": cursor, "types": "platform.released"})
-            assert polled.status_code == 200, polled.text
-            events = polled.json()["events"]
+            # The announcement fans out in the background once startup is done.
+            deadline = time.monotonic() + 180
+            while True:
+                polled = await fresh.get("/v1/events", headers=ws["key"], params={
+                    "cursor": cursor, "types": "platform.released"})
+                assert polled.status_code == 200, polled.text
+                events = polled.json()["events"]
+                if events or time.monotonic() > deadline:
+                    break
+                await asyncio.sleep(0.25)
             assert len(events) == 1
             details = events[0]["details"]
             assert details["from"] == "3.4.9" and details["to"] == settings.app_version
