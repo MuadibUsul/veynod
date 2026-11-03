@@ -9,6 +9,7 @@ is never copied onto a task the console can read.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import sys
@@ -55,6 +56,24 @@ _NOT_WIRED = {
     "lease_denied",
     "admission",
 }
+
+
+def _kernel_code(payload: dict[str, Any]) -> str | None:
+    """The Kernel's own error code (``submission_in_progress``, ``lease_not_active``…).
+
+    Folding every rejection into ``kernel_rejected`` left the runner unable to
+    tell "wait for the gate" from "lease again".
+    """
+    detail = payload.get("detail")
+    for holder in (detail, payload):
+        if not isinstance(holder, dict):
+            continue
+        code = holder.get("error")
+        if isinstance(code, dict):
+            code = code.get("code")
+        if isinstance(code, str) and code.replace("_", "").isalnum() and len(code) <= 64:
+            return code
+    return None
 
 
 class KernelDeliveryError(RuntimeError):
@@ -176,6 +195,28 @@ def kernel_owns_steps(task: Any) -> bool:
         return False
     status = str(delivery.get("status") or "")
     return delivery.get("mode") == "kernel" and status not in _NOT_WIRED
+
+
+def gate_pending(task: Any, now: datetime, hold_seconds: int) -> bool:
+    """The Kernel gate holds this task's submission and is not overdue.
+
+    The runner stops renewing the product lease once it has submitted; a gate
+    slower than the lease TTL then made the reaper hand the task to another
+    computer, which redid work that was about to merge.
+    """
+    correlation = getattr(task, "correlation", None) or {}
+    delivery = correlation.get("kernel_delivery") if isinstance(correlation, dict) else None
+    if not isinstance(delivery, dict) or delivery.get("mode") != "kernel":
+        return False
+    if delivery.get("status") != "gate" or delivery.get("gate") not in (None, "pending"):
+        return False
+    try:
+        submitted = datetime.fromisoformat(str(delivery.get("submitted_at")))
+    except ValueError:
+        return False
+    if submitted.tzinfo is None:
+        submitted = submitted.replace(tzinfo=timezone.utc)
+    return (now - submitted).total_seconds() < hold_seconds
 
 
 def split_bundle(bundle: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
@@ -328,7 +369,7 @@ class KernelPlane:
             raise KernelDeliveryError(
                 f"Kernel HTTP {response.status_code}: {_safe_detail(payload)}",
                 502 if response.status_code >= 500 else response.status_code,
-                "kernel_rejected",
+                _kernel_code(payload) or "kernel_rejected",
             )
         return response.status_code, payload
 
@@ -794,7 +835,11 @@ async def submit_diff(
     binding = await _binding(session, task)
     if binding is None:
         raise KernelDeliveryError("Kernel binding disappeared", 409, "kernel_unbound")
-    key = (idempotency_key or f"{task.task_key}:{kernel_task_id}")[:200]
+    # One key per patch: the Kernel binds a key to one patch SHA-256, so a key
+    # without the digest made every revision after a failed gate a 409
+    # idempotency_key_conflict. The same diff retried still dedupes.
+    digest = hashlib.sha256(git_diff.encode("utf-8")).hexdigest()[:32]
+    key = (idempotency_key or f"{task.task_key}:{kernel_task_id}:{digest}")[:200]
     owned = plane is None
     plane = plane or plane_for(binding)
     try:
@@ -828,6 +873,7 @@ async def submit_diff(
         "kernel_workspace_id": binding["workspace_id"],
         "submission_id": submission_id,
         "submission_status": payload.get("status"),
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
         "gate": "pending",
         "primitives": list(PRIMITIVES),
     }

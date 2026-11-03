@@ -116,6 +116,9 @@ class Settings(BaseSettings):
     kernel_provision_on_create: bool = True
     # verification_gate + merge_coordinator replace a permanent reviewer host.
     kernel_delivery_default: bool = True
+    # While the Kernel gate works on a task's submission, the lease reaper does
+    # not hand the task to another computer; past this age it does.
+    kernel_gate_hold_seconds: int = Field(default=3600, ge=60, le=86_400)
     # Polling sweepers start in this process. With a separate worker container
     # (ADR-019) set this to 0 so the API process only serves requests and the
     # nerve socket; the presence sweep and the scheduler then belong there.

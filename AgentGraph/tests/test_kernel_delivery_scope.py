@@ -186,3 +186,70 @@ async def test_bind_only_creates_the_node_without_taking_a_lease(monkeypatch) ->
     assert result["leased"] is False
     assert result["status"] == "bound"
     assert result["scope_hash"]
+
+
+def test_kernel_error_codes_survive_the_product_api() -> None:
+    code = _module._kernel_code
+    assert code({"detail": {"error": "submission_in_progress", "message": "wait"}}) == \
+        "submission_in_progress"
+    assert code({"error": {"code": "lease_not_active"}}) == "lease_not_active"
+    assert code({"detail": "plain text"}) is None
+    assert code({"detail": {"error": "not a code; DROP"}}) is None
+
+
+@pytest.mark.asyncio
+async def test_a_revised_diff_gets_its_own_idempotency_key(monkeypatch) -> None:
+    """A failed gate's revision used to reuse the first key: 409 forever."""
+    task = SimpleNamespace(task_key="T-1", input_context={},
+                           correlation={"kernel_delivery": {"kernel_task_id": "k-1",
+                                                            "lease": "held"}})
+    keys: list[str] = []
+
+    class Plane:
+        async def submit(self, body, key):
+            keys.append(key)
+            return 202, {"submission_id": f"s-{len(keys)}", "status": "QUEUED"}
+
+    async def token(*_):
+        return "lease-token"
+
+    async def binding(*_):
+        return {"workspace_id": "w"}
+
+    async def stamp(*_):
+        return None
+
+    class Session:
+        async def commit(self):
+            return None
+
+    monkeypatch.setattr(_module, "_load_token", token)
+    monkeypatch.setattr(_module, "_binding", binding)
+    monkeypatch.setattr(_module, "_stamp", stamp)
+    for diff in ("diff --git a/x b/x\n+one\n", "diff --git a/x b/x\n+one\n",
+                 "diff --git a/x b/x\n+two\n"):
+        await _module.submit_diff(Session(), task, git_diff=diff, touched_symbols=["x"],
+                                  local_test_passed=True, plane=Plane())
+    assert keys[0] == keys[1], "the same diff retried dedupes"
+    assert keys[2] != keys[0], "a revision is a new submission"
+
+
+def test_the_reaper_waits_for_a_gate_that_holds_the_submission() -> None:
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+
+    def task(**delivery):
+        return SimpleNamespace(correlation={"kernel_delivery": {"mode": "kernel", **delivery}})
+
+    recent = (now - timedelta(minutes=10)).isoformat()
+    assert _module.gate_pending(task(status="gate", gate="pending", submitted_at=recent), now, 3600)
+    # Overdue, failed, merged, legacy and malformed records do not hold the task.
+    old = (now - timedelta(hours=2)).isoformat()
+    assert not _module.gate_pending(task(status="gate", gate="pending", submitted_at=old),
+                                    now, 3600)
+    assert not _module.gate_pending(task(status="gate_failed", gate="fail", submitted_at=recent),
+                                    now, 3600)
+    assert not _module.gate_pending(task(status="merged", submitted_at=recent), now, 3600)
+    assert not _module.gate_pending(task(status="gate", submitted_at="yesterday"), now, 3600)
+    assert not _module.gate_pending(SimpleNamespace(correlation={}), now, 3600)

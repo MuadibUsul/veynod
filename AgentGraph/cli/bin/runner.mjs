@@ -437,6 +437,25 @@ export function combinedMcpConfig({ product, kernelUrl, kernelToken }) {
   return { mcpServers };
 }
 
+/**
+ * Submit the worktree's diff. The agent may already have submitted its own
+ * (the prompt tells it how): a gate still working on that one answers 409
+ * submission_in_progress, which is not a failure of this placement. Reading
+ * it as one reported "failed", moved the task and started the work again.
+ */
+export async function submitKernelDiff(fetchImpl, options, taskKey, diff) {
+  try {
+    return await callApi(fetchImpl, options.host, options.key,
+      `/v1/tasks/${encodeURIComponent(taskKey)}/kernel/submit`, {
+        method: "POST",
+        body: { git_diff: diff, touched_symbols: touchedSymbolsFromDiff(diff), local_test_passed: true },
+      });
+  } catch (error) {
+    if (error.code === "submission_in_progress") return { status: "in_progress", already_submitted: true };
+    throw error;
+  }
+}
+
 function cachedDiff(cwd) {
   execFileSync("git", ["add", "-A"], { cwd, stdio: ["ignore", "pipe", "pipe"] });
   return String(execFileSync("git", ["diff", "--cached", "--binary", "HEAD"], { cwd, encoding: "utf8" }));
@@ -973,15 +992,7 @@ export async function runRunner(options, {
         if (result.ok && !String(diff).trim()) {
           result = { ok: false, reason: "no_kernel_submission" };
         } else if (result.ok) {
-          const submitted = await callApi(fetchImpl, options.host, options.key,
-            `/v1/tasks/${encodeURIComponent(taskKey)}/kernel/submit`, {
-              method: "POST",
-              body: {
-                git_diff: diff,
-                touched_symbols: touchedSymbolsFromDiff(diff),
-                local_test_passed: true,
-              },
-            });
+          const submitted = await submitKernelDiff(fetchImpl, options, taskKey, diff);
           const gate = await settleGate(() => readGate(taskKey), {
             waitMs: Number(options.gateWaitMs ?? process.env.VEYNOD_GATE_WAIT_MS ?? 0),
           });
@@ -994,7 +1005,8 @@ export async function runRunner(options, {
             result = { ok: false, reason: "needs_human" };
           } else if (gate?.gate === "fail" || gate?.status === "gate_failed") {
             result = { ok: false, reason: "verification_gate failed" };
-          } else if (gate?.merged || gate?.gate === "pass" || submitted?.submission_id) {
+          } else if (gate?.merged || gate?.gate === "pass" || submitted?.submission_id
+              || submitted?.already_submitted) {
             result = { ok: true, reason: gate?.merge_sha ? `merge_coordinator ${gate.merge_sha}` : "submitted_to_kernel_gate" };
           }
         }

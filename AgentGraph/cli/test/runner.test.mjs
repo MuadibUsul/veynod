@@ -581,3 +581,15 @@ test("a hub uses the runtime that is installed, whatever was saved", async () =>
       saved === "claude");
   }
 });
+
+test("a gate still working on the agent's own submission is not a failed placement", async () => {
+  const { submitKernelDiff } = await import("../bin/runner.mjs");
+  const fetchImpl = async () => ({ ok: false, status: 409,
+    json: async () => ({ error: { code: "submission_in_progress", message: "wait" } }) });
+  const result = await submitKernelDiff(fetchImpl, { host: "https://h", key: "k" }, "T-1", "diff");
+  assert.equal(result.already_submitted, true);
+  const refused = async () => ({ ok: false, status: 409,
+    json: async () => ({ error: { code: "lease_not_active", message: "gone" } }) });
+  await assert.rejects(submitKernelDiff(refused, { host: "https://h", key: "k" }, "T-1", "diff"),
+    (error) => error.code === "lease_not_active");
+});
