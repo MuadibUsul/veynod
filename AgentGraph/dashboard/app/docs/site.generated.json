@@ -9070,6 +9070,12 @@
          "name": "max_concurrency",
          "required": false,
          "type": "integer | null"
+        },
+        {
+         "description": "Fresh report: delivery mode, worktree leases",
+         "name": "capabilities_report",
+         "required": false,
+         "type": "object | null"
         }
        ],
        "description": "",

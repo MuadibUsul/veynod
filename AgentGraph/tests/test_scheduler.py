@@ -183,6 +183,64 @@ async def test_two_failures_change_host_and_three_rounds_stop(client):
     assert [item["status"] for item in await _placements(client, ws, key)] == ["failed"] * 3
 
 
+async def test_a_chunk_sent_back_by_its_gate_is_offered_again(client):
+    """A failed gate leaves the chunk in `rework` and its task in HANDOFF — the
+    work pass only offers READY tasks, so the scheduler has to reopen it, or the
+    chunk waits for a person who was never asked."""
+    ws = await _workspace(client, "full")
+    host = await _host(client, ws, f"aa-{uuid.uuid4().hex[:4]}")
+    architect = await client.post(
+        f"/v1/admin/workspaces/{ws['id']}/agent-tokens", headers=ADMIN,
+        json={"role_scope": "ANALYST", "allowed_namespaces": ["*"]})
+    analyst = {"Authorization": f"Bearer {architect.json()['api_key']}"}
+    diagram_key = f"rw-{uuid.uuid4().hex[:6]}"
+    made = await client.post("/v1/diagrams", headers=analyst, json={
+        "diagram_key": diagram_key, "title": "x", "chunks": [{
+            "chunk_key": "a", "title": "a", "scope": "build a", "layer": "interface",
+            "icd": {"exports": ["a()"]}, "done_criteria": ["pytest tests/test_a.py"],
+            "allowed_write_paths": ["src/a.py"]}]})
+    assert made.status_code == 201, made.text
+    confirmed = await client.post(f"/v1/diagrams/{diagram_key}/confirm", headers=ws["owner"])
+    assert confirmed.status_code == 200, confirmed.text
+    frozen = await client.post(f"/v1/diagrams/{diagram_key}/freeze", headers=ws["owner"], json={})
+    assert frozen.status_code == 200, frozen.text
+    # Full automation dispatches the first chunks with the freeze itself.
+    chunk_task = next(item["task_key"] for item in frozen.json()["chunks"]
+                      if item["chunk_key"] == "a")
+    assert chunk_task
+
+    # The gate fails the chunk: state rework, task HANDOFF — nothing holding it.
+    # Three failed attempts from before the gate must not count against the new
+    # round; only failures after the gate do.
+    await _sql("UPDATE diagram_chunks SET state = 'rework', gate = "
+               "'{\"result\": \"fail\", \"at\": \"2999-01-01T00:00:00+00:00\"}'::jsonb "
+               "WHERE task_key = $1", chunk_task)
+    await _sql("UPDATE collab_tasks SET status = 'HANDOFF', assignee = NULL WHERE task_key = $1",
+               chunk_task)
+    for index in range(3):
+        await _sql(
+            "INSERT INTO runner_placements (workspace_id, task_id, task_key, host_id, agent_id, "
+            "step, mode, status, reason, created_at) SELECT workspace_id, id, task_key, $2, $3, "
+            "'work', 'assign', 'failed', 'reported_failed', '2000-01-01'::timestamptz + $4 * "
+            "interval '1 minute' FROM collab_tasks WHERE task_key = $1",
+            chunk_task, host["host_id"], host["agent_id"], index)
+
+    result = await _schedule(client, ws)
+    assert result["reopened"] == 1, result
+    task = await _task_row(client, ws, chunk_task)
+    assert task["status"] in ("READY", "IN_PROGRESS"), task
+    assert task["assignee"] == host["assignee"], (
+        {k: result.get(k) for k in ("mode", "placed", "unplaced", "suggested", "reopened", "stopped")},
+        [item["reason"] for item in await _placements(client, ws, chunk_task)])
+    offered = [item for item in await _placements(client, ws, chunk_task)
+               if item["status"] == "offered"]
+    assert offered and offered[0]["host_id"] == host["host_id"]
+
+    # The task is held again: the next pass must not open a second placement.
+    again = await _schedule(client, ws)
+    assert again["reopened"] == 0, again
+
+
 async def test_manual_and_semi_only_suggest(client):
     for mode in ("manual", "semi"):
         ws = await _workspace(client, mode)

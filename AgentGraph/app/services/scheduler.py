@@ -339,14 +339,23 @@ async def _load(session: AsyncSession, workspace_id: Any,
     return load
 
 
-async def _work_failures(session: AsyncSession, task: CollabTask) -> tuple[dict[str, int], int]:
+async def _work_failures(session: AsyncSession, task: CollabTask,
+                         since: datetime | None = None) -> tuple[dict[str, int], int]:
     """Hosts to avoid for this task (failed twice, or moved off by the supervisor)
-    and the failed rounds so far. A supervisor's move does not count as a round."""
+    and the failed rounds so far. A supervisor's move does not count as a round.
+
+    ``since`` narrows both counts to attempts after that moment: a gate rejection
+    starts a fresh round, so history that died before it does not keep the host
+    it died on, or the whole task, out of play.
+    """
+    clause, params = "", {"t": task.id}
+    if since is not None:
+        clause, params["since"] = " AND created_at >= :since", since
     rows = (await session.execute(text(
         "SELECT host_id, status, count(*) FROM runner_placements WHERE task_id = :t "
         "AND step = 'work' AND host_id IS NOT NULL AND (status = 'failed' "
-        "OR (status = 'moved' AND reason = 'supervisor_moved')) GROUP BY host_id, status"),
-        {"t": task.id})).all()
+        "OR (status = 'moved' AND reason = 'supervisor_moved'))" + clause
+        + " GROUP BY host_id, status"), params)).all()
     failures: dict[str, int] = {}
     rounds = 0
     for host_id, status, count in rows:
@@ -358,6 +367,17 @@ async def _work_failures(session: AsyncSession, task: CollabTask) -> tuple[dict[
     return failures, rounds
 
 
+async def _last_gate_at(session: AsyncSession, task: CollabTask,
+                        chunk: dict[str, Any] | None) -> datetime | None:
+    """When the chunk's gate last spoke, if a failed gate sent it back."""
+    if chunk is None or chunk.get("status") != "rework":
+        return None
+    return (await session.execute(text(
+        "SELECT COALESCE((c.gate->>'at')::timestamptz, c.updated_at) "
+        "FROM diagram_chunks c WHERE c.workspace_id = :ws AND c.task_key = :k"),
+        {"ws": task.workspace_id, "k": task.task_key})).scalar_one_or_none()
+
+
 async def _held(session: AsyncSession, task: CollabTask) -> bool:
     """The supervisor withdrew the task from the computers and nobody took it since."""
     latest = (await session.execute(text(
@@ -367,6 +387,57 @@ async def _held(session: AsyncSession, task: CollabTask) -> bool:
     return (latest is not None and latest["status"] == "withdrawn"
             and latest["reason"] == "held"
             and (latest["lease_epoch"] or 0) >= (task.lease_epoch or 0))
+
+
+async def _reopen_rework(session: AsyncSession, workspace_id: Any, now: datetime) -> int:
+    """A chunk sent back by a failed gate is work again, not a dead end.
+
+    The gate sets the chunk to ``rework`` and the executor's task back to
+    HANDOFF; the work pass below only offers READY tasks, so without this the
+    chunk sat ready-for-rework with nothing to pick it up.
+
+    A gate rework is a new round: only work placements made *after* the last
+    gate result count against the three-round budget. Counting every historical
+    failure meant a chunk whose earlier attempts died (hosts busy, offline,
+    quota) arrived already out of rounds and stayed stranded.
+    """
+    rows = (await session.execute(text(
+        "SELECT t.*, c.chunk_key FROM diagram_chunks c "
+        "JOIN collab_tasks t ON t.workspace_id = c.workspace_id AND t.task_key = c.task_key "
+        "WHERE c.workspace_id = :ws AND c.state = 'rework' "
+        "AND t.status IN ('HANDOFF', 'READY') AND t.assignee IS NULL "
+        "AND t.claimed_by IS NULL AND t.active_run_id IS NULL "
+        "AND NOT EXISTS (SELECT 1 FROM runner_placements p WHERE p.task_id = t.id "
+        "AND p.status IN ('suggested', 'offered', 'claimed', 'unplaced')) "
+        "ORDER BY t.priority DESC, t.created_at LIMIT 50 FOR UPDATE OF t SKIP LOCKED"),
+        {"ws": workspace_id})).mappings().all()
+    reopened = 0
+    for row in rows:
+        task = await session.get(CollabTask, row["id"])
+        if task is None or task.status is TaskStatus.READY:
+            continue
+        _, rounds = await _work_failures(session, task, await _last_gate_at(
+            session, task, {"status": "rework"}))
+        if rounds >= MAX_ROUNDS:
+            continue
+        before = task_snapshot(task)
+        task.status = TaskStatus.READY
+        task.version += 1
+        task.updated_at = now
+        await session.flush()
+        await record_audit(session, workspace_id=workspace_id, session_batch_id=uuid.uuid4(),
+                           agent_signature="scheduler", target_table="collab_tasks",
+                           target_record_id=task.id, operation="UPDATE", before=before,
+                           after=task_snapshot(task))
+        await append_event(
+            session, workspace_id=workspace_id, agent="scheduler",
+            event_type="TASK_REOPENED_FOR_REWORK",
+            payload={"task_key": task.task_key, "chunk_key": row["chunk_key"],
+                     "round": (rounds or 0) + 1,
+                     "note": "gate sent the chunk back; it is placed again"},
+            namespace=task.namespace)
+        reopened += 1
+    return reopened
 
 
 async def _offer_work(session: AsyncSession, task: CollabTask, host: dict[str, Any],
@@ -449,6 +520,10 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
     online = _online(hosts, now)
     load = await _load(session, workspace_id, hosts)
 
+    # A failed gate leaves the chunk in `rework`, but only READY work is placed
+    # below: without this the chunk waited forever on a HANDOFF nobody reopens.
+    reopened = await _reopen_rework(session, workspace_id, now) if mode == "full" else 0
+
     # ADR-017: a task with an active Agent Run is executed by the Runtime
     # through the Kernel. It must never also be offered to a runner host.
     tasks = (await session.execute(
@@ -464,12 +539,14 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
     placed = suggested = unplaced = gave_up = 0
     to_dispatch: list[dict[str, Any]] = []
     workspace_mode = mode
+    chunk_states = await _chunk_states(session, workspace_id)
     for task in tasks:
         if await _held(session, task):
             continue
         # A chunk task follows its diagram's own mode when the diagram sets one.
         mode = await automation.mode_for_task(session, workspace_id, task.task_key)
-        failures, rounds = await _work_failures(session, task)
+        failures, rounds = await _work_failures(
+            session, task, await _last_gate_at(session, task, chunk_states.get(task.task_key)))
         if rounds >= MAX_ROUNDS and mode == "full":
             before = task_snapshot(task)
             task.status = TaskStatus.HANDOFF
@@ -548,7 +625,7 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
     # across a 200 ms (or 5 s) receipt wait per task.
     delivered = await _dispatch_over_nerve(workspace_id, to_dispatch)
     return {"mode": workspace_mode, "hosts": len(online), "placed": placed,
-            "suggested": suggested, "nerve": delivered,
+            "suggested": suggested, "nerve": delivered, "reopened": reopened,
             "unplaced": unplaced, "stopped": gave_up, **counts, **steps, "rounds": rounds}
 
 
