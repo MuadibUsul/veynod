@@ -1082,8 +1082,10 @@ export async function runOnePoke(options, poke, {
     // Without a watcher, wait for the placement to stop being open.
     while (now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, sleepMs));
+      const placementId = poke.placement_id || poke.note?.match(/\bplacement (\S+)/)?.[1] || "";
+      if (!placementId) return;
       const placement = await callApi(fetch, options.host, options.key,
-        `/v1/runner/placements/${encodeURIComponent(poke.note?.match(/\bp-\S+/)?.[0] || "")}`)
+        `/v1/runner/placements/${encodeURIComponent(placementId)}`)
         .catch(() => null);
       if (placement && !OPEN_PLACEMENT.has(placement.status)) return;
       if (placement === null) return;
@@ -1106,9 +1108,26 @@ export function onePokeFromArgs(argv) {
   return {
     kind: "task.placed",
     task_key: args.task,
+    placement_id: args.placement,
     note: `placement ${args.placement}`,
     agent_id: args.agent,
   };
+}
+
+/** The messenger's runner options for this worker (repos, runtime, delivery). */
+export function workerRunnerOptions(env = process.env) {
+  let given = {};
+  try {
+    given = JSON.parse(env.VEYNOD_RUNNER_OPTIONS || "{}") || {};
+  } catch {
+    given = {};
+  }
+  const out = {};
+  if (Array.isArray(given.repos)) out.repos = given.repos.map(String);
+  for (const field of ["runtime", "exec", "delivery", "gitBase", "reposDir"]) {
+    if (typeof given[field] === "string" && given[field]) out[field] = given[field];
+  }
+  return out;
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"))) {
@@ -1119,7 +1138,7 @@ if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.
     process.stderr.write("runner.mjs needs VEYNOD_AGENT_TOKEN\n");
     process.exit(2);
   }
-  runOnePoke({ host, key, agent: process.env.VEYNOD_AGENT_ID, slots: 1 }, poke)
+  runOnePoke({ ...workerRunnerOptions(), host, key, agent: process.env.VEYNOD_AGENT_ID, slots: 1 }, poke)
     .then(() => process.exit(0))
     .catch((error) => {
       process.stderr.write(`runner failed: ${error.message}\n`);

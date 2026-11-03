@@ -42,13 +42,15 @@ const UNPLACED_LABEL: Record<string, string> = {
   no_host_with_runtime: "No runner has Claude Code or Codex ready",
   every_host_failed: "Every runner that could take it already failed it",
   hosts_out_of_quota: "Every runner that could take it is out of quota",
-  no_reviewer_host: "No reviewer computer can check it",
+  no_reviewer_host: "No other computer can review it",
   no_supervisor_host: "No supervisor computer looks after the Loop",
 };
 
 // Reasons a computer fixes: the action goes to the Computers list.
 const NEEDS_A_COMPUTER = new Set(["no_host_online", "no_host_with_runtime", "hosts_out_of_quota",
-  "no_reviewer_host", "no_host_for_repo"]);
+  "no_host_for_repo"]);
+// The overview already lists these under "waits for your review": the person is the reviewer.
+const PERSON_REVIEWS = new Set(["no_reviewer_host"]);
 
 const ROUND_LABEL: Record<string, string> = {
   offered: "Supervisor round running",
@@ -191,12 +193,16 @@ export function LoopView({
       action: { label: t("How to ship"), href: "/dashboard/deploy/" },
     });
   }
-  for (const item of (overview?.needs_you.waiting ?? []).slice(0, 3)) {
+  const waitingItems = overview?.needs_you.waiting ?? [];
+  const listed = new Set(waitingItems.map((item) => item.key));
+  for (const item of waitingItems.slice(0, 3)) {
+    const review = item.why === "review";
     needs.push({
-      key: `waiting-${item.key}`, tone: "red",
-      title: item.asked_by ? t("{who} waits for your answer", { who: item.asked_by }) : t("A task waits for your answer"),
+      key: `waiting-${item.key}`, tone: review ? "cyan" : "red",
+      title: review ? t("A task waits for your review")
+        : item.asked_by ? t("{who} waits for your answer", { who: item.asked_by }) : t("A task waits for your answer"),
       detail: `${item.title} · ${waited(item.since, t)}`,
-      action: { label: t("Answer it"), run: () => onOpenTask(item.key) },
+      action: { label: review ? t("Review") : t("Answer it"), run: () => onOpenTask(item.key) },
     });
   }
   if (waitingReview > 0) {
@@ -206,7 +212,10 @@ export function LoopView({
     });
   }
   const groups = new Map<string, Unplaced[]>();
-  for (const item of unplaced) groups.set(item.reason || item.note, [...(groups.get(item.reason || item.note) ?? []), item]);
+  for (const item of unplaced) {
+    if (PERSON_REVIEWS.has(item.reason) && item.task_key && listed.has(item.task_key)) continue;
+    groups.set(item.reason || item.note, [...(groups.get(item.reason || item.note) ?? []), item]);
+  }
   for (const [reason, items] of Array.from(groups.entries())) {
     const keys = items.map((item) => item.task_key).filter((key): key is string => Boolean(key));
     const label = t(UNPLACED_LABEL[reason] ?? items[0].note);

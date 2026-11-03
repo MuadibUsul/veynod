@@ -37,11 +37,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 try:  # the shared contract package lives at the repository root
     from contracts.nerve_protocol import (
         EXEC_ACK_TIMEOUT_S,
-        NET_ACK_TIMEOUT_S,
+        NET_ACK_MAX_S,
         NerveEnvelope,
         NerveError,
         NerveFrameType,
+        net_ack_deadline_s,
         poke_frame,
+        smooth_rtt_ms,
     )
 except ImportError:  # pragma: no cover - only when running outside the monorepo
     import sys as _sys
@@ -52,11 +54,13 @@ except ImportError:  # pragma: no cover - only when running outside the monorepo
         _sys.path.insert(0, str(_root))
     from contracts.nerve_protocol import (
         EXEC_ACK_TIMEOUT_S,
-        NET_ACK_TIMEOUT_S,
+        NET_ACK_MAX_S,
         NerveEnvelope,
         NerveError,
         NerveFrameType,
+        net_ack_deadline_s,
         poke_frame,
+        smooth_rtt_ms,
     )
 
 logger = logging.getLogger("agentgraph.nerve_hub")
@@ -74,6 +78,11 @@ def _ms() -> int:
     return int(time.monotonic() * 1000)
 
 
+def exec_ack_deadline_s(rtt_ms: float) -> float:
+    """The second-receipt wait: orientation, plus the worker's own hello round trips."""
+    return EXEC_ACK_TIMEOUT_S + min(NET_ACK_MAX_S, 4 * max(0.0, rtt_ms) / 1000.0)
+
+
 @dataclass
 class ActiveSocket:
     workspace_id: Any
@@ -87,6 +96,8 @@ class ActiveSocket:
     active_task_key: str | None = None
     active_lease_epoch: int | None = None
     last_rtt_ms: int = 0
+    #: Smoothed first-receipt round trip; sizes this socket's next deadlines.
+    rtt_ms: float = 0.0
     expires_at: datetime | None = None
     closed: bool = False
 
@@ -236,14 +247,15 @@ class NerveHub:
         net_received = False
         try:
             await sock.ws.send_json(frame.to_dict())
-            net_ack = await asyncio.wait_for(net_future, timeout=NET_ACK_TIMEOUT_S)
+            net_ack = await asyncio.wait_for(net_future, timeout=net_ack_deadline_s(sock.rtt_ms))
             net_received = True
             net_rtt_ms = int((time.perf_counter() - started) * 1000)
             sock.last_rtt_ms = net_rtt_ms
+            sock.rtt_ms = smooth_rtt_ms(sock.rtt_ms, net_rtt_ms)
             if on_net_ack is not None:
                 await on_net_ack(net_rtt_ms)
 
-            exec_ack = await asyncio.wait_for(exec_future, timeout=EXEC_ACK_TIMEOUT_S)
+            exec_ack = await asyncio.wait_for(exec_future, timeout=exec_ack_deadline_s(sock.rtt_ms))
             facts = {
                 "net_rtt_ms": net_rtt_ms,
                 "exec_startup_ms": int((time.perf_counter() - started) * 1000),
@@ -340,9 +352,12 @@ async def deliver_task_poke(
         return {"dispatched": False, "reason": "STALE_EPOCH"}
 
     await session.execute(text(
+        # The reaper reopens a dispatch past this deadline, so it must not be
+        # shorter than the hub's own wait for this socket (plus a margin).
         "UPDATE collab_tasks SET lease_epoch = :e, dispatch_state = 'AWAITING_NET_ACK', "
-        "ack_deadline_at = NOW() + INTERVAL '250 milliseconds', updated_at = NOW() "
-        "WHERE id = :id"), {"e": epoch, "id": task["id"]})
+        "ack_deadline_at = NOW() + make_interval(secs => :wait), updated_at = NOW() "
+        "WHERE id = :id"),
+        {"e": epoch, "id": task["id"], "wait": net_ack_deadline_s(sock.rtt_ms) + 0.05})
     await session.execute(text(
         "INSERT INTO poke_deliveries (workspace_id, event_seq, recipient, channel, status, "
         "detail, lease_epoch, qos_status, task_key, frame_id) "
@@ -358,8 +373,9 @@ async def deliver_task_poke(
     async def record_net_ack(rtt_ms: int) -> None:
         await session.execute(text(
             "UPDATE collab_tasks SET dispatch_state = 'AWAITING_EXEC_ACK', "
-            "ack_deadline_at = NOW() + INTERVAL '5000 milliseconds' "
-            "WHERE id = :id AND lease_epoch = :e"), {"id": task["id"], "e": epoch})
+            "ack_deadline_at = NOW() + make_interval(secs => :wait) "
+            "WHERE id = :id AND lease_epoch = :e"),
+            {"id": task["id"], "e": epoch, "wait": exec_ack_deadline_s(sock.rtt_ms) + 0.05})
         await session.execute(text(
             "UPDATE poke_deliveries SET qos_status = 'NET_ACKED', net_ack_at = NOW(), "
             "net_rtt_ms = :rtt WHERE workspace_id = :ws AND frame_id = :f"),
@@ -446,7 +462,7 @@ async def mark_offline(session: AsyncSession, sock: ActiveSocket, reason: str) -
         {"ws": sock.workspace_id, "c": sock.conn_id})
     await session.commit()
     try:
-        await sock.ws.close(code=4008, reason="QOS_200MS_NET_ACK_TIMEOUT")
+        await sock.ws.close(code=4008, reason="QOS_NET_ACK_TIMEOUT")
     except Exception:  # noqa: BLE001
         pass
     logger.warning("agent %s offline: %s", sock.agent_id, reason)

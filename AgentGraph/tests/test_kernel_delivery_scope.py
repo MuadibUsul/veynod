@@ -127,6 +127,9 @@ def test_needs_write_set_is_not_kernel_owned() -> None:
     leased = SimpleNamespace(correlation={"kernel_delivery": {"mode": "kernel",
                                                              "status": "leased"}})
     assert _module.kernel_owns_steps(leased) is True
+    # The Loop's read model passes plain rows, not ORM objects.
+    assert _module.kernel_owns_steps({"correlation": leased.correlation}) is True
+    assert _module.kernel_owns_steps({"correlation": None}) is False
 
 
 def test_expired_lease_is_not_reused() -> None:

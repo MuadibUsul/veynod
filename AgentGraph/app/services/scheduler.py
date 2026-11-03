@@ -69,7 +69,8 @@ UNPLACED = {
     "every_host_failed": "Every runner that could take it already failed it twice.",
     "hosts_out_of_quota": "Every runner that could take it is out of quota.",
     "hosts_busy": "Every runner that could take it is busy; it waits for a free slot.",
-    "no_reviewer_host": "No reviewer computer is online that did not build it.",
+    "no_reviewer_host": ("No other computer can review it (the one that built it may not), "
+                         "so it waits for your review."),
     "no_supervisor_host": "No supervisor computer is online to look after the Loop.",
 }
 # Reasons that wait on their own; the rest need the owner.

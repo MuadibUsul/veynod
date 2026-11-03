@@ -98,10 +98,30 @@ export function reviewTwinWanted(options = {}) {
  */
 export function hubWorkers(config = {}) {
   const identities = config.identities || [];
-  if (!config.run_tasks) return identities;
   if (reviewTwinWanted(config)) return identities;
   const workers = identities.filter((item) => item.role !== "review");
   return workers.length ? workers : identities.slice(0, 1);
+}
+
+/**
+ * Which saved identities `up` reuses. One the plan wants is kept while its key
+ * file is there. One it no longer wants (the -review seat after going from
+ * --slots 2 to 1) is parked in the config instead of forgotten: the hub does
+ * not start it (hubWorkers), and asking for it again reuses its key rather than
+ * minting another `-review-2`, `-review-3`… identity on the board.
+ */
+export function reuseIdentities(plan, previous, { host, fresh = false, exists = existsSync } = {}) {
+  const usable = !fresh && previous?.host === host
+    ? (previous.identities || []).filter((item) => item?.key_file && exists(item.key_file)) : [];
+  const identities = [];
+  const missing = [];
+  for (const wanted of plan.identities) {
+    const kept = usable.find((item) => item.role === wanted.role);
+    if (kept) identities.push(kept);
+    else missing.push(wanted);
+  }
+  const parked = usable.filter((item) => !plan.identities.some((wanted) => wanted.role === item.role));
+  return { identities, missing, parked };
 }
 
 export function upPlan(options, { home = defaultHome(), clients = [], name = hostname() } = {}) {
@@ -243,24 +263,27 @@ export async function doctor({ home = defaultHome(), config = loadConfig(home), 
   }
   add("config", true, true, `Connected to ${config.host}.`);
   let computerKey = null;
+  // A parked identity (not started by the hub) cannot make the doctor red.
+  const started = new Set(hubWorkers(config).map((item) => item.agent_id));
   for (const identity of config.identities || []) {
+    const required = started.has(identity.agent_id);
     let key = null;
     try {
       key = readKey(identity);
     } catch {
-      add(`key:${identity.agent_id}`, false, true, `The key for ${identity.agent_id} is missing.`,
+      add(`key:${identity.agent_id}`, false, required, `The key for ${identity.agent_id} is missing.`,
         "Run `npx veynod up` again to reconnect.");
       continue;
     }
     if (identity.role === "computer") computerKey = key;
     try {
       const who = await getJson(fetchImpl, `${config.host}/v1/whoami`, key);
-      add(`key:${identity.agent_id}`, who.status === 200, true,
+      add(`key:${identity.agent_id}`, who.status === 200, required,
         who.status === 200 ? `${identity.agent_id} is accepted by the board.`
           : `The board refused ${identity.agent_id} (HTTP ${who.status}).`,
         who.status === 200 ? null : "The key was revoked or expired: run `npx veynod up` again.");
     } catch (error) {
-      add(`key:${identity.agent_id}`, false, true, `Veynod at ${config.host} did not answer (${error.message}).`,
+      add(`key:${identity.agent_id}`, false, required, `Veynod at ${config.host} did not answer (${error.message}).`,
         "Check the network or --host.");
     }
   }

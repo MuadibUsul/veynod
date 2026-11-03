@@ -853,6 +853,9 @@ async function listenNerve(options) {
   const messenger = new Messenger({
     host: options.host, key: options.key, agentId: options.agent,
     runner: fileURLToPath(runner), say,
+    // The worker says hello as this computer: same repos, runtime and delivery.
+    runnerOptions: { repos: options.repos || [], runtime: options.runtime || "",
+      exec: options.exec || "", delivery: options.delivery || "kernel" },
   });
   const stop = () => {
     messenger.stop();
@@ -1389,7 +1392,7 @@ function printChecks(checks) {
 
 /** veynod up: connect this computer, wire its agents, install the hub, run the doctor. */
 async function up(options) {
-  const { doctor, doctorOk, loadConfig, saveConfig, storeKey, upPlan } = await import("./up.mjs");
+  const { doctor, doctorOk, loadConfig, reuseIdentities, saveConfig, storeKey, upPlan } = await import("./up.mjs");
   const out = (line = "") => process.stdout.write(`${line}\n`);
   out();
   out(`  ${violet("◆")} ${bold("Veynod")} ${dim(`up · ${options.host}`)}`);
@@ -1422,18 +1425,10 @@ async function up(options) {
     out(`  ${green("✓")} ${RUNTIME_NAMES[picked.runtime]} runs this computer's tasks`);
   }
   const previous = loadConfig();
-  const identities = [];
-  let missing = [];
-  for (const wanted of plan.identities) {
-    const kept = !options.fresh && previous?.host === options.host
-      && previous.identities?.find((item) => item.role === wanted.role && existsSync(item.key_file));
-    if (kept) {
-      out(`  ${green("✓")} ${kept.agent_id} is already connected`);
-      identities.push(kept);
-    } else {
-      missing.push(wanted);
-    }
-  }
+  const reused = reuseIdentities(plan, previous, { host: options.host, fresh: options.fresh });
+  const identities = reused.identities;
+  let missing = reused.missing;
+  for (const kept of identities) out(`  ${green("✓")} ${kept.agent_id} is already connected`);
   // One approval for every identity still missing; an older server mints one
   // per code, so the rest are asked for again, one code each.
   let legacy = false;
@@ -1474,7 +1469,7 @@ async function up(options) {
     }
   }
   saveConfig({ host: options.host, run_tasks: plan.run_tasks, runtime: options.runtime, exec: options.exec,
-    slots: options.slots, repos: options.repos, identities,
+    slots: options.slots, repos: options.repos, identities: [...identities, ...reused.parked],
     delivery: options.delivery || "kernel", legacy_review: Boolean(options.legacyReview) });
   out();
   let serviceInstalled;

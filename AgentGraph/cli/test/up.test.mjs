@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { acquireLock, agentName, doctor, doctorOk, hubWorkers, keyPath, loadConfig, saveConfig, storeKey, upPlan } from "../bin/up.mjs";
+import { acquireLock, agentName, doctor, doctorOk, hubWorkers, keyPath, loadConfig, reuseIdentities, saveConfig, storeKey, upPlan } from "../bin/up.mjs";
 import { connect, parseArgs, sealForTest, servicePlan, settledDoctor } from "../bin/veynod.mjs";
 
 test("up plans one worker when slots=1; a review twin only above that", () => {
@@ -226,4 +226,49 @@ test("the doctor counts whichever runtime is installed when none was chosen", as
     assert.equal(check.text, text);
     if (!ok) assert.match(check.fix, /command-line tool, not the desktop app/);
   }
+});
+
+test("an identity the plan no longer wants is parked, not forgotten", () => {
+  const plan = { identities: [{ role: "computer", label: "box" }] };
+  const previous = { host: "https://veynod.com", identities: [
+    { role: "computer", agent_id: "box", key_file: "/k/box.key" },
+    { role: "review", agent_id: "box-review", key_file: "/k/box-review.key" },
+  ] };
+  const exists = () => true;
+  const reused = reuseIdentities(plan, previous, { host: "https://veynod.com", exists });
+  assert.deepEqual(reused.identities.map((item) => item.agent_id), ["box"]);
+  assert.deepEqual(reused.missing, []);
+  assert.deepEqual(reused.parked.map((item) => item.agent_id), ["box-review"]);
+  // Asking for the twin again reuses the parked key: no box-review-2 on the board.
+  const twin = { identities: [...plan.identities, { role: "review", label: "box-review" }] };
+  const again = reuseIdentities(twin, previous, { host: "https://veynod.com", exists });
+  assert.deepEqual(again.identities.map((item) => item.agent_id), ["box", "box-review"]);
+  assert.deepEqual(again.missing, []);
+  // Another board, --fresh, or a lost key file asks again.
+  assert.equal(reuseIdentities(plan, previous, { host: "https://other.example", exists }).missing.length, 1);
+  assert.equal(reuseIdentities(plan, previous, { host: "https://veynod.com", fresh: true, exists }).missing.length, 1);
+  assert.equal(reuseIdentities(plan, previous, { host: "https://veynod.com", exists: () => false }).missing.length, 1);
+  // The hub never starts a parked review seat on slots=1, in either mode.
+  for (const run_tasks of [true, false]) {
+    const workers = hubWorkers({ run_tasks, slots: 1, identities: previous.identities });
+    assert.deepEqual(workers.map((item) => item.agent_id), ["box"]);
+  }
+});
+
+test("a parked identity the board refuses does not turn the doctor red", async () => {
+  const home = mkdtempSync(join(tmpdir(), "veynod-park-"));
+  const config = { host: "https://veynod.test", run_tasks: true, slots: 1, delivery: "kernel", runtime: "custom",
+    exec: "true", identities: [
+      { role: "computer", agent_id: "box", key_file: storeKey("box", "agt_box", home) },
+      { role: "review", agent_id: "box-review", key_file: storeKey("box-review", "agt_review", home) },
+    ] };
+  const fetchImpl = async (url, init) => {
+    const ok = init.headers.Authorization === "Bearer agt_box";
+    return { status: url.endsWith("/v1/whoami") ? (ok ? 200 : 401) : 404, json: async () => ({}) };
+  };
+  const checks = await doctor({ home, config, fetchImpl, run: () => "", nodeVersion: "24.0.0" });
+  const parked = checks.find((item) => item.id === "key:box-review");
+  assert.equal(parked.ok, false);
+  assert.equal(parked.required, false);
+  assert.ok(doctorOk(checks), JSON.stringify(checks.filter((item) => !item.ok)));
 });

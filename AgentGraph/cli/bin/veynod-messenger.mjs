@@ -35,23 +35,33 @@ export function nerveUrl(host) {
  * The worker command for a poke. `runner` is this repo's runner; it is started
  * in its own group so a kill takes its git/pytest children with it.
  */
-export function workerCommand({ runner, payload, token, agentId }) {
+/**
+ * The worker process for one poke. It talks to the same board as the
+ * messenger (VEYNOD_HOST) and says hello with the same repos, runtime and
+ * delivery mode (VEYNOD_RUNNER_OPTIONS): a worker that fell back to
+ * localhost, or said hello with no repos, failed the second receipt or
+ * erased the computer's repos on the board, and the task bounced back.
+ */
+export function workerCommand({ runner, payload, token, agentId, host, runnerOptions = {} }) {
   return {
     command: process.execPath,
     args: [runner, "--task", payload.task_key, "--epoch", String(payload.lease_epoch),
       "--placement", payload.placement_id],
     env: {
       ...process.env,
+      ...(host ? { VEYNOD_HOST: host } : {}),
       VEYNOD_AGENT_ID: agentId,
       VEYNOD_AGENT_TOKEN: token,
       VEYNOD_TASK_POKE: JSON.stringify(payload),
+      VEYNOD_RUNNER_OPTIONS: JSON.stringify(runnerOptions),
     },
   };
 }
 
 export class Messenger {
-  constructor({ host, key, agentId, runner, say = () => {} }) {
+  constructor({ host, key, agentId, runner, runnerOptions = {}, say = () => {} }) {
     this.host = host;
+    this.runnerOptions = runnerOptions;
     this.key = key;
     this.agentId = agentId || "";
     this.hostId = os.hostname();
@@ -156,6 +166,7 @@ export class Messenger {
     this.active = { taskKey, epoch, frameId };
     const { command, args, env } = workerCommand({
       runner: this.runner, payload, token: this.key, agentId: this.agentId,
+      host: this.host, runnerOptions: this.runnerOptions,
     });
     let child;
     try {

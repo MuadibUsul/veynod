@@ -182,7 +182,12 @@ async def test_no_reviewer_is_said_in_plain_words(client):
     needs = [item for item in needs if item["step"] != "supervise"]
     assert [(item["task_key"], item["step"], item["reason"]) for item in needs] == [
         (key, "review", "no_reviewer_host")]
-    assert needs[0]["note"] == "No reviewer computer is online that did not build it."
+    assert needs[0]["note"].startswith("No other computer can review it")
+    # With no reviewer computer the person is the reviewer: the Loop says so
+    # under "needs you" instead of waiting for a computer that never comes.
+    overview = (await client.get("/v1/loop/overview", headers=ws["owner"])).json()
+    waiting = {item["key"]: item for item in overview["needs_you"]["waiting"]}
+    assert waiting[key]["why"] == "review"
 
 
 async def test_the_supervisor_walks_the_floor_only_when_something_waits(client):

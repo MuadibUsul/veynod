@@ -10,6 +10,7 @@
     "bin/veynod.mjs",
     "bin/runner.mjs",
     "bin/up.mjs",
+    "bin/veynod-messenger.mjs",
     "README.md"
   ],
   "optionalDependencies": {

@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Principal, can, get_principal, require_permission
 from app.database import get_db
-from app.services import agent_runtime
+from app.errors import ApiError
+from app.services import agent_runtime, task_lifecycle
 
 router = APIRouter(prefix="/v1/tasks", tags=["Agent Runtime"])
 
@@ -27,8 +28,6 @@ async def task_execution(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> Any:
-    from app.services import task_lifecycle
-
     try:
         return await task_lifecycle.execution_view(session, principal, task_key)
     except task_lifecycle.LifecycleError as exc:
@@ -54,13 +53,16 @@ async def _product_task(session, principal: Principal, task_key: str):
 
 
 def _delivery_error(exc: Exception) -> None:
+    """Keep the delivery code in the standard envelope (``error.code``).
+
+    A dict ``HTTPException.detail`` is flattened to ``http_error`` by the global
+    handler, so the runner could never tell ``kernel_unbound`` from
+    ``scope_reissue_required``.
+    """
     from app.services.kernel_delivery import KernelDeliveryError
 
     if isinstance(exc, KernelDeliveryError):
-        raise HTTPException(
-            status_code=exc.status_code,
-            detail={"code": exc.code, "message": str(exc)},
-        ) from exc
+        raise ApiError(exc.status_code, exc.code, str(exc)) from exc
     raise exc
 
 
@@ -142,8 +144,6 @@ async def task_trace(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> Any:
-    from app.services import task_lifecycle
-
     try:
         return await task_lifecycle.trace_view(session, principal, task_key)
     except task_lifecycle.LifecycleError as exc:

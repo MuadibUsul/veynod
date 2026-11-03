@@ -163,8 +163,12 @@ def public_delivery(record: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def kernel_owns_steps(task: Any) -> bool:
-    """Kernel gate and merge replace a second reviewer/merger computer."""
-    correlation = getattr(task, "correlation", None) or {}
+    """Kernel gate and merge replace a second reviewer/merger computer.
+
+    ``task`` is a ``CollabTask`` or a row mapping with a ``correlation`` key.
+    """
+    correlation = (task.get("correlation") if isinstance(task, dict)
+                   else getattr(task, "correlation", None)) or {}
     if not isinstance(correlation, dict):
         return False
     delivery = correlation.get("kernel_delivery") or {}

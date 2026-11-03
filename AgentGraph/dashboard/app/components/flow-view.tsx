@@ -65,7 +65,9 @@ export type Overview = {
   open: number;
   needs_you: {
     deploy: { key: string; title: string; since: string | null }[];
-    waiting: { key: string; title: string; since: string | null; asked_by: string | null }[];
+    // why: "review" when the person is the task's reviewer, "answer" when an agent asked.
+    waiting: { key: string; title: string; since: string | null; asked_by: string | null;
+      why?: "review" | "answer" }[];
   };
   today: { approved: number; returned: number; done: number; hours: { approved: number; done: number }[] };
   agents: FlowAgent[];
