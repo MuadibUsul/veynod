@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 
 import { acquireLock, agentName, doctor, doctorOk, hubWorkers, keyPath, loadConfig, saveConfig, storeKey, upPlan } from "../bin/up.mjs";
@@ -226,4 +226,28 @@ test("the doctor counts whichever runtime is installed when none was chosen", as
     assert.equal(check.text, text);
     if (!ok) assert.match(check.fix, /command-line tool, not the desktop app/);
   }
+});
+
+test("a stored key the board refused is not 'already connected'", async () => {
+  const { identityAccepts } = await import("../bin/up.mjs");
+  const home = mkdtempSync(join(tmpdir(), "veynod-live-"));
+  const keyFile = keyPath("box", home);
+  mkdirSync(dirname(keyFile), { recursive: true });
+  writeFileSync(keyFile, "agt_deadbeef\n", { mode: 0o600 });
+  const identity = { agent_id: "box", key_file: keyFile };
+  const calls = [];
+  const fake = (status) => async (url, init) => {
+    calls.push([url, init.headers.Authorization]);
+    return { status, arrayBuffer: async () => new ArrayBuffer(0) };
+  };
+  assert.equal(await identityAccepts(identity, "https://x.test", { fetchImpl: fake(200) }), true);
+  assert.equal(await identityAccepts(identity, "https://x.test", { fetchImpl: fake(401) }), false);
+  // Unknown (network / 5xx) keeps the key: a blip must not force re-approval.
+  assert.equal(await identityAccepts(identity, "https://x.test", { fetchImpl: fake(503) }), null);
+  const boom = async () => { throw new Error("offline"); };
+  assert.equal(await identityAccepts(identity, "https://x.test", { fetchImpl: boom }), null);
+  // A missing key file is a refusal, not an unknown.
+  assert.equal(await identityAccepts({ agent_id: "gone", key_file: keyPath("gone", home) },
+    "https://x.test", { fetchImpl: fake(200) }), false);
+  assert.ok(calls.every(([url]) => url.endsWith("/v1/whoami")));
 });

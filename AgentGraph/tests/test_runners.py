@@ -110,11 +110,19 @@ async def test_heartbeat_reports_running_tasks_and_quota(client):
     beat = await client.post("/v1/runner/heartbeat", headers=runner["headers"], json={
         "running": ["task-a"],
         "runtimes": [{"id": "claude", "usage": {"windows": [
-            {"name": "5h", "used_percent": 97}]}}]})
+            {"name": "5h", "used_percent": 97}]}}],
+        # The runner sends its capability report with every beat, so the strict
+        # schema has to accept it; without the field every beat 422s and the
+        # host's lease/worktree card freezes at hello time.
+        "capabilities_report": {"delivery": "kernel", "mcp_pinning": True,
+                                "leases": [{"task_key": "task-a", "worktree": "leased",
+                                            "lease": "held"}]}})
     assert beat.status_code == 200, beat.text
     assert beat.json()["running"] == ["task-a"]
     assert beat.json()["free_slots"] == 1
     assert beat.json()["runtimes"][0]["usage"]["windows"][0]["used_percent"] == 97
+    assert beat.json()["capabilities_report"]["delivery"] == "kernel"
+    assert beat.json()["capabilities_report"]["leases"][0]["worktree"] == "leased"
 
     for ref in (hello["host_id"], hello["permanent_address"], runner["agent_id"]):
         one = await client.get(f"/v1/runner/hosts/{ref}", headers=runner["headers"])

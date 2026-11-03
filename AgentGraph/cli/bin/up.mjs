@@ -77,6 +77,37 @@ export function readKey(identity) {
   return readFileSync(identity.key_file, "utf8").trim();
 }
 
+/**
+ * Does the board still accept this identity's key?
+ *
+ * `up` used to decide "already connected" from the key file alone, so a key the
+ * owner removed in the console stayed "connected" forever and the doctor was the
+ * only thing that noticed. Returns `true` (accepted), `false` (revoked/refused)
+ * and `null` when the board could not be asked — in which case the key is kept,
+ * because a network blip must not force a re-approval.
+ */
+export async function identityAccepts(identity, host, { fetchImpl = fetch, timeoutMs = 8_000 } = {}) {
+  let key;
+  try {
+    key = readKey(identity);
+  } catch {
+    return false;
+  }
+  try {
+    const response = await fetchImpl(`${host}/v1/whoami`, {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    await response.arrayBuffer().catch(() => null);
+    if (response.status === 200) return true;
+    if (response.status === 401 || response.status === 403 || response.status === 404) return false;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+
 // ------------------------------------------------------------------ plan
 
 /**

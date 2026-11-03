@@ -343,7 +343,7 @@ test("a supervise round reads its agenda, runs, and reports a failure", async ()
 const noOar = async (spec) => { throw new Error(`no ${spec}`); };
 
 /** A fake Veynod for runRunner: answers hello, heartbeats, placements, tasks and renews. */
-async function fakeVeynod({ placements = {}, tasks = {} } = {}) {
+async function fakeVeynod({ placements = {}, tasks = {}, beatRefusesReport = false } = {}) {
   const calls = [];
   const server = createServer((req, res) => {
     let body = "";
@@ -354,6 +354,11 @@ async function fakeVeynod({ placements = {}, tasks = {} } = {}) {
       const placement = /^\/v1\/runner\/placements\/(plc_[0-9A-Z]+)$/.exec(req.url);
       const task = /^\/v1\/tasks\/([^/]+)$/.exec(req.url);
       if (req.url === "/v1/runner/hello") res.end(JSON.stringify({ host_id: "hst_9", agent_id: "box" }));
+      else if (req.url === "/v1/runner/heartbeat" && beatRefusesReport
+        && body.includes("capabilities_report")) {
+        res.statusCode = 422;
+        res.end(JSON.stringify({ error: { code: "validation_error", message: "request validation failed" } }));
+      }
       else if (placement) res.end(JSON.stringify({ placement_id: placement[1], status: placements[placement[1]] ?? "offered" }));
       else if (task && req.method === "GET") res.end(JSON.stringify({ task_key: task[1], repo: tasks[task[1]] ?? null }));
       else res.end("{}");
@@ -405,6 +410,28 @@ test("OAR sessions get only Veynod's MCP, with the runner key", async () => {
   assert.deepEqual(options.mcpServers, [veynodMcpServer({ host: "https://h", key: "ag_k" })]);
   assert.equal(options.userConfiguration, "exclude");
   assert.deepEqual(options.env, { A: "1" });
+});
+
+test("a runtime that refuses userConfiguration still gets Veynod's MCP", async () => {
+  // Codex rejects the session outright when userConfiguration is passed, which
+  // failed every task handed to it. It must still be pinned to Veynod's MCP.
+  let options = null;
+  const importer = async (spec) => {
+    if (spec === "@botiverse/oar/runtimes/codex") {
+      return { codexRuntime: {
+        refusedSessionOptions: { userConfiguration: "codex cannot exclude it" },
+        installation: async () => ({ kind: "available" }),
+        session: async (_installation, opts) => { options = opts; return { dispose: async () => {} }; },
+      } };
+    }
+    if (spec === "@botiverse/oar/observe") return { promptAndWait: async () => ({ kind: "ended" }) };
+    throw new Error(spec);
+  };
+  const adapter = adapterFor("codex", { importer });
+  const result = await adapter.run({ cwd: "/tmp", prompt: "p", env: {}, pin: { host: "https://h", key: "ag_k" } });
+  assert.equal(result.ok, true);
+  assert.deepEqual(options.mcpServers, [veynodMcpServer({ host: "https://h", key: "ag_k" })]);
+  assert.equal("userConfiguration" in options, false, "codex must not receive it");
 });
 
 test("codex without OAR is reported as not pinned", async () => {
@@ -482,6 +509,19 @@ test("hello says whether the runner pins its MCP identity", async () => {
     mcp_pinning: true, runtime: "custom", delivery: "kernel", leases: [],
   });
   assert.deepEqual(Object.keys(hello.body), ["host"], "nothing outside host: the hello schema is strict");
+});
+
+test("a board that refuses the capability report still gets presence heartbeats", async () => {
+  const state = mkdtempSync(join(tmpdir(), "veynod-state-"));
+  const fake = await fakeVeynod({ beatRefusesReport: true });
+  await runRunner({ host: fake.host, key: "ag_box", runtime: "custom", exec: "true", slots: 1 },
+    { follow: async () => 0, version: "t", every: 20, stateDir: state });
+  fake.close();
+  const beats = fake.calls.filter((call) => call.path === "/v1/runner/heartbeat");
+  assert.ok(beats.some((call) => call.body?.capabilities_report), "the report is sent first");
+  const fallback = beats.filter((call) => call.body && !call.body.capabilities_report);
+  assert.ok(fallback.length >= 1, "a refused report is retried without it");
+  assert.ok(fallback[0].body.running !== undefined, "the beat keeps its real content");
 });
 
 // ------------------------------------------------------------------ runtimes (0.5.2)

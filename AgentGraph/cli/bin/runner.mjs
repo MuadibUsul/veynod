@@ -546,7 +546,17 @@ export function adapterFor(runtime, { exec = "", importer = (spec) => import(spe
           const installation = await oar.installation();
           if (installation?.kind === "available") {
             const options = { cwd, env };
-            if (pin) Object.assign(options, { mcpServers: [veynodMcpServer(pin)], userConfiguration: "exclude" });
+            if (pin) {
+              const overlay = { mcpServers: [veynodMcpServer(pin)] };
+              // `userConfiguration: "exclude"` keeps the user's own MCP servers
+              // out of a runner session, but not every runtime honors it: Codex
+              // rejects the session outright, which failed every task it was
+              // handed. Ask the runtime instead of assuming.
+              if (!oar.refusedSessionOptions?.userConfiguration) {
+                overlay.userConfiguration = "exclude";
+              }
+              Object.assign(options, overlay);
+            }
             const session = await oar.session(installation, options);
             try {
               const result = await promptAndWait(session, prompt);
@@ -820,6 +830,10 @@ export async function runRunner(options, {
   const running = new Map();
   const seen = new Set();
   let lastInventory = Date.now();
+  // A board older than the capability report rejects the beat as a strict-body
+  // 422. Losing the whole heartbeat silences presence and quota, so retry the
+  // beat without the report and keep sending what that board understands.
+  let reportOnBeat = true;
   const beat = async () => {
     try {
       if (options.runtime !== "custom" && Date.now() - lastInventory > 10 * 60_000) {
@@ -832,9 +846,20 @@ export async function runRunner(options, {
           say(`runtime is now ${now.runtime}`);
         }
       }
-      await callApi(fetchImpl, options.host, options.key, "/v1/runner/heartbeat", {
-        method: "POST", body: { running: [...running.keys()], runtimes, capabilities_report: reportFields() },
-      });
+      const payload = { running: [...running.keys()], runtimes };
+      if (reportOnBeat) payload.capabilities_report = reportFields();
+      try {
+        await callApi(fetchImpl, options.host, options.key, "/v1/runner/heartbeat", {
+          method: "POST", body: payload,
+        });
+      } catch (error) {
+        if (!reportOnBeat || error.status !== 422) throw error;
+        reportOnBeat = false;
+        say("heartbeat: this board does not take the capability report yet");
+        await callApi(fetchImpl, options.host, options.key, "/v1/runner/heartbeat", {
+          method: "POST", body: { running: payload.running, runtimes },
+        });
+      }
     } catch (error) {
       say(`heartbeat: ${error.message}`);
     }

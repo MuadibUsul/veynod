@@ -1389,7 +1389,8 @@ function printChecks(checks) {
 
 /** veynod up: connect this computer, wire its agents, install the hub, run the doctor. */
 async function up(options) {
-  const { doctor, doctorOk, loadConfig, saveConfig, storeKey, upPlan } = await import("./up.mjs");
+  const { doctor, doctorOk, identityAccepts, loadConfig, saveConfig, storeKey, upPlan } =
+    await import("./up.mjs");
   const out = (line = "") => process.stdout.write(`${line}\n`);
   out();
   out(`  ${violet("◆")} ${bold("Veynod")} ${dim(`up · ${options.host}`)}`);
@@ -1425,14 +1426,21 @@ async function up(options) {
   const identities = [];
   let missing = [];
   for (const wanted of plan.identities) {
-    const kept = !options.fresh && previous?.host === options.host
+    const stored = !options.fresh && previous?.host === options.host
       && previous.identities?.find((item) => item.role === wanted.role && existsSync(item.key_file));
-    if (kept) {
-      out(`  ${green("✓")} ${kept.agent_id} is already connected`);
-      identities.push(kept);
-    } else {
-      missing.push(wanted);
+    // A key file is not a connection: the owner may have removed the token in
+    // the console. Ask the board; keep on unknown (a network blip must not
+    // force re-approval), and re-approve only on an actual refusal.
+    const alive = stored ? await identityAccepts(stored, options.host) : false;
+    if (stored && alive !== false) {
+      out(`  ${green("✓")} ${stored.agent_id} is already connected`);
+      identities.push(stored);
+      continue;
     }
+    if (stored) {
+      out(`  ${yellow("!")} ${stored.agent_id} is no longer accepted by the board; reconnecting`);
+    }
+    missing.push(wanted);
   }
   // One approval for every identity still missing; an older server mints one
   // per code, so the rest are asked for again, one code each.

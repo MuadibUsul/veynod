@@ -1459,6 +1459,8 @@ class RunnerHeartbeatRequest(StrictModel):
     runtimes: list[dict[str, Any]] | None = Field(
         default=None, max_length=8, description="Fresh runtime list, e.g. new quota windows")
     max_concurrency: int | None = Field(default=None, ge=1, le=64)
+    capabilities_report: dict[str, Any] | None = Field(
+        default=None, description="Fresh report: delivery mode, worktree leases")
 
 
 class PlacementReportRequest(StrictModel):
