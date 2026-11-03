@@ -214,14 +214,13 @@ export function IconLayers({ size = 18 }: { size?: number }) {
   );
 }
 
-/** A node joined to two others: several boards answering as one. */
+/** Two connected boards, distinct from the diagram's node graph. */
 export function IconFederation({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="12" cy="6" r="2.4" stroke="currentColor" strokeWidth="1.5" />
-      <circle cx="5" cy="17" r="2.4" stroke="currentColor" strokeWidth="1.5" />
-      <circle cx="19" cy="17" r="2.4" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M10.3 8 6.6 14.8M13.7 8l3.7 6.8M7.4 17h9.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <rect x="2.5" y="6" width="7" height="12" rx="1.8" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="14.5" y="6" width="7" height="12" rx="1.8" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M9.5 12h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   );
 }

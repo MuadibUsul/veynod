@@ -127,12 +127,14 @@ do not edit by hand. Every error body is
 | `export_format_unsupported` | 422 | `fix_request` | `fix_request_then_resend` | Use a supported export format. |
 | `insecure_target_url` | 422 | `fix_request` | `fix_request_then_resend` | Use an https URL. |
 | `invalid_address` | 422 | `fix_request` | `fix_request_then_resend` | Fix the address per details. |
+| `invalid_deletion` | 422 | `fix_request` | `fix_request_then_resend` | Use an exported table and its primary key. |
 | `invalid_dependency` | 422 | `fix_request` | `fix_request_then_resend` | Fix the dependency per details. |
 | `invalid_filter` | 422 | `fix_request` | `fix_request_then_resend` | Fix the filter per details. |
 | `invalid_filter_operator` | 422 | `fix_request` | `fix_request_then_resend` | Use a supported filter operator. |
 | `invalid_filter_value` | 422 | `fix_request` | `fix_request_then_resend` | Fix the filter value. |
 | `invalid_handoff_brief` | 422 | `fix_request` | `fix_request_then_resend` | Fix the L1 brief per details. |
 | `invalid_json_patch` | 422 | `fix_request` | `fix_request_then_resend` | Fix the JSON Patch operations. |
+| `invalid_kernel_binding` | 422 | `fix_request` | `fix_request_then_resend` | Use a configured Kernel endpoint and credential. |
 | `invalid_last_event_id` | 422 | `fix_request` | `fix_request_then_resend` | Send a non-negative integer. |
 | `invalid_part` | 422 | `fix_request` | `fix_request_then_resend` | Give the part document part_index metadata. |
 | `invalid_public_key` | 422 | `fix_request` | `fix_request_then_resend` | Send a base64 X25519 public key (32 bytes). |
@@ -261,6 +263,7 @@ do not edit by hand. Every error body is
 | `commander_grant_expired` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the owner to issue a fresh grant. |
 | `commander_grant_required` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the owner for a grant, then send X-Commander-Grant-Id. |
 | `feature_disabled` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Switched off here; ask an operator (details.setting). |
+| `kernel_workspace_unassigned` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the operator to assign the Kernel workspace. |
 | `operator_content_denied` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the workspace owner to open support access in the console. |
 | `operator_write_denied` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the owner to reopen support access with changes allowed. |
 | `role_permission_denied` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the human OWNER; this capability is not delegated. |
@@ -284,6 +287,7 @@ do not edit by hand. Every error body is
 | `mcp_not_configured` | 500 | `escalate_human` | `stop_and_escalate_to_human` | An operator must set MCP_API_KEY. |
 | `admin_disabled` | 503 | `escalate_human` | `stop_and_escalate_to_human` | ADMIN_TOKEN is not configured. |
 | `google_login_not_configured` | 503 | `escalate_human` | `stop_and_escalate_to_human` | An operator must configure Google sign-in. |
+| `invalid_kernel_configuration` | 503 | `escalate_human` | `stop_and_escalate_to_human` | Ask the operator to fix Kernel assignments. |
 
 ## Warnings
 

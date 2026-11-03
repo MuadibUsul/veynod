@@ -33,6 +33,7 @@ type Seat = {
   status: "active" | "paused" | "revoked";
   state: State;
   running: string[];
+  last_seen_at: string | null;
 };
 
 type KernelLease = {
@@ -193,8 +194,16 @@ export function HostsPanel({
         const paused = computer.seats.every((seat) => seat.status !== "active");
         // What keeps an online computer from working: no runtime it can start, or a seat taken off.
         const noRuntime = computer.state !== "revoked" && computer.runtimes.length > 0 && runtimes.length === 0;
-        const removedSeats = computer.state === "revoked" ? []
-          : computer.seats.filter((seat) => seat.status === "revoked");
+        const liveSeats = computer.seats.filter((seat) => seat.status !== "revoked");
+        const removedSeats = (["work", "review"] as const).flatMap((role) => {
+          if (liveSeats.some((seat) => seat.seat === role)) return [];
+          return computer.seats
+            .filter((seat) => seat.seat === role && seat.status === "revoked")
+            .sort((a, b) => (b.last_seen_at ?? "").localeCompare(a.last_seen_at ?? ""))
+            .slice(0, 1);
+        });
+        const visibleSeats = computer.seats.filter((seat) =>
+          seat.status !== "revoked" || removedSeats.some((removed) => removed.host_id === seat.host_id));
         const stateText = computer.last_seen_at && computer.state !== "online"
           ? `${t(STATE_LABEL[computer.state])} · ${relativeTime(computer.last_seen_at)}`
           : t(STATE_LABEL[computer.state]);
@@ -209,7 +218,7 @@ export function HostsPanel({
               </span>
             </div>
             <div className="station-seats">
-              {computer.seats.map((seat) => {
+              {visibleSeats.map((seat) => {
                 const busy = seat.running.length > 0;
                 const identity = seat.agent_id || seat.host_id;
                 const runtime = runtimes[0];

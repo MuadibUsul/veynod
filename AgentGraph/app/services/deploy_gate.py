@@ -503,7 +503,7 @@ async def claim(host: str) -> dict[str, Any]:
                 "status_reason = 'superseded by a newer trigger' WHERE id = :id"),
                 {"id": row["id"]})
             await _audit(session, runner, "superseded", row["id"], by=newest["id"])
-        manual = any(row["trigger_kind"] == "manual" for row in queued)
+        manual = newest["trigger_kind"] == "manual"
         deploy_allowed = manual or bool(state["auto_deploy_authorized"] and owner["allows"])
         await session.execute(text(
             "UPDATE deploy_gate_runs SET status = 'running', claimed_by = :by, "

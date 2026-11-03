@@ -381,12 +381,14 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `export_format_unsupported` | 422 | `fix_request` |
 | `insecure_target_url` | 422 | `fix_request` |
 | `invalid_address` | 422 | `fix_request` |
+| `invalid_deletion` | 422 | `fix_request` |
 | `invalid_dependency` | 422 | `fix_request` |
 | `invalid_filter` | 422 | `fix_request` |
 | `invalid_filter_operator` | 422 | `fix_request` |
 | `invalid_filter_value` | 422 | `fix_request` |
 | `invalid_handoff_brief` | 422 | `fix_request` |
 | `invalid_json_patch` | 422 | `fix_request` |
+| `invalid_kernel_binding` | 422 | `fix_request` |
 | `invalid_last_event_id` | 422 | `fix_request` |
 | `invalid_part` | 422 | `fix_request` |
 | `invalid_public_key` | 422 | `fix_request` |
@@ -515,6 +517,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `commander_grant_expired` | 403 | `escalate_human` |
 | `commander_grant_required` | 403 | `escalate_human` |
 | `feature_disabled` | 403 | `escalate_human` |
+| `kernel_workspace_unassigned` | 403 | `escalate_human` |
 | `operator_content_denied` | 403 | `escalate_human` |
 | `operator_write_denied` | 403 | `escalate_human` |
 | `role_permission_denied` | 403 | `escalate_human` |
@@ -538,3 +541,4 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `mcp_not_configured` | 500 | `escalate_human` |
 | `admin_disabled` | 503 | `escalate_human` |
 | `google_login_not_configured` | 503 | `escalate_human` |
+| `invalid_kernel_configuration` | 503 | `escalate_human` |

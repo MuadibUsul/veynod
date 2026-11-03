@@ -189,7 +189,7 @@ async def _findings(session: AsyncSession) -> list[dict[str, Any]]:
     for row in (await session.execute(text(
             "SELECT workspace_id, task_key, canonical_id, updated_at FROM collab_tasks "
             "WHERE status = 'READY' AND kind <> 'escalation' AND updated_at < NOW() - "
-            "INTERVAL '2 hours' LIMIT 500"))).mappings():
+            "INTERVAL '2 hours' ORDER BY updated_at ASC LIMIT 500"))).mappings():
         add("unclaimed_task", row["workspace_id"], "task", row["task_key"],
             id=row["canonical_id"], ready_since=row["updated_at"].isoformat())
     # Blueprint L6: work stuck without anyone on it is raised within the hour.
@@ -212,14 +212,14 @@ async def _findings(session: AsyncSession) -> list[dict[str, Any]]:
             "LEFT JOIN collab_tasks t ON t.workspace_id = c.workspace_id AND t.task_key = "
             "c.task_key WHERE c.task_key IS NOT NULL AND c.state NOT IN ('retired', 'suspended') "
             "AND (t.id IS NULL OR (c.state = 'merged' AND t.status IN ('FAILED', 'CANCELLED'))) "
-            "LIMIT 500"))).mappings():
+            "ORDER BY c.updated_at ASC LIMIT 500"))).mappings():
         add("diagram_board_mismatch", row["workspace_id"], "chunk",
             f"{row['diagram_key']}:{row['chunk_key']}", task_key=row["task_key"],
             task_status=row["task_status"] or "missing")
     for row in (await session.execute(text(
             "SELECT c.workspace_id, d.diagram_key, c.chunk_key, c.queued_at FROM diagram_chunks c "
             "JOIN diagrams d ON d.id = c.diagram_id WHERE c.queued_at < NOW() - INTERVAL "
-            "'2 hours' AND c.state = 'dispatched' LIMIT 500"))).mappings():
+            "'2 hours' AND c.state = 'dispatched' ORDER BY c.queued_at ASC LIMIT 500"))).mappings():
         add("merge_queue_stall", row["workspace_id"], "chunk",
             f"{row['diagram_key']}:{row['chunk_key']}", queued_since=row["queued_at"].isoformat())
     for row in (await session.execute(text(

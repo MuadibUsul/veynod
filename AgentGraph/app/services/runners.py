@@ -463,7 +463,7 @@ async def list_hosts(session: AsyncSession, principal: Principal, *,
                      include_revoked: bool = False) -> dict[str, Any]:
     rows = (await session.execute(text(
         "SELECT * FROM runner_hosts WHERE workspace_id = :ws "
-        "ORDER BY last_seen_at DESC LIMIT 200"),
+        "ORDER BY (status = 'revoked') ASC, last_seen_at DESC LIMIT 200"),
         {"ws": principal.workspace.id})).mappings().all()
     now = _now()
     every = [host_out(dict(row), now) for row in rows]
