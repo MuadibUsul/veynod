@@ -1,0 +1,27 @@
+# Build context is the repository root: every image copies contracts/ and its
+# own tree from here. Keep this list to things no image needs.
+.git
+.gitignore
+**/.venv
+**/venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/node_modules
+**/.next
+AgentGraph/.env
+AgentGraph/.env.*
+!AgentGraph/.env.example
+AgentGraph/tests
+veynod_kernel/tests
+contracts/tests
+agent_runtime/tests
+AgentGraph/docs
+AgentGraph/README.md
+AgentGraph/backups
+AgentGraph/dashboard/.env.local
+# Design notes, scripts and the VPS compose live outside every image.
+docs
+scripts
+deploy/proxy

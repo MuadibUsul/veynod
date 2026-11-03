@@ -1,8 +1,8 @@
 FROM node:20-alpine AS dashboard
 WORKDIR /dashboard
-COPY dashboard/package.json dashboard/package-lock.json ./
+COPY AgentGraph/dashboard/package.json AgentGraph/dashboard/package-lock.json ./
 RUN npm ci --no-audit --no-fund
-COPY dashboard/ ./
+COPY AgentGraph/dashboard/ ./
 RUN npm run build
 
 FROM python:3.12-slim AS runtime
@@ -17,12 +17,14 @@ WORKDIR /app
 # A fixed uid lets operators own bind mounts such as /backups (uid 10001).
 RUN addgroup --system --gid 10001 app && adduser --system --uid 10001 --ingroup app app
 
-COPY requirements.txt ./
+COPY AgentGraph/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
-COPY sql ./sql
-COPY scripts ./scripts
+COPY AgentGraph/app ./app
+COPY AgentGraph/sql ./sql
+COPY AgentGraph/scripts ./scripts
+# The shared WorkScope/identity contracts live at the repository root.
+COPY contracts ./contracts
 COPY --from=dashboard /dashboard/out ./dashboard/out
 
 RUN mkdir -p /backups && chown -R app:app /app /backups && chmod 700 /backups
