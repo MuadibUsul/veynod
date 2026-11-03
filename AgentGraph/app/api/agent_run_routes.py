@@ -45,6 +45,7 @@ def _drive(principal: Principal) -> None:
 
 async def _product_task(session, principal: Principal, task_key: str):
     from app.auth import ensure_namespace
+    from app.services import task_lifecycle
 
     task = await task_lifecycle.load_task_row(session, principal.workspace.id, task_key)
     if task is None:

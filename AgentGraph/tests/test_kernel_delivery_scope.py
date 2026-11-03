@@ -183,3 +183,49 @@ async def test_bind_only_creates_the_node_without_taking_a_lease(monkeypatch) ->
     assert result["leased"] is False
     assert result["status"] == "bound"
     assert result["scope_hash"]
+
+
+# ------------------------------------------------------------------ routes
+# The Kernel routes resolve their task through a helper; an import that only
+# exists inside some other function left `/kernel/lease` a 500 in production
+# and no test touched it.
+
+
+def test_product_task_helper_imports_what_it_uses() -> None:
+    import asyncio
+    import sys
+    from pathlib import Path
+    from types import SimpleNamespace
+
+    import fastapi
+
+    root = Path(__file__).resolve().parents[1]
+    if str(root) not in sys.path:
+        sys.path.insert(0, str(root))
+
+    import app.api.agent_run_routes as routes
+
+    class Session:
+        pass
+
+    task = SimpleNamespace(namespace="default")
+    seen: list[str] = []
+
+    async def load_task_row(session, workspace_id, task_key):
+        seen.append(task_key)
+        return task
+
+    from app.services import task_lifecycle
+
+    original = task_lifecycle.load_task_row
+    task_lifecycle.load_task_row = load_task_row
+    try:
+        from app.auth import AuthKind
+
+        principal = SimpleNamespace(workspace=SimpleNamespace(id="ws"), allowed_namespaces=["*"],
+                                    auth_kind=AuthKind.WORKSPACE)
+        got = asyncio.run(routes._product_task(Session(), principal, "t-1"))
+    finally:
+        task_lifecycle.load_task_row = original
+    assert got is task and seen == ["t-1"]
+    assert isinstance(routes.router, fastapi.APIRouter)
