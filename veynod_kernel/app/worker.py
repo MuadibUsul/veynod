@@ -118,6 +118,17 @@ async def run(args: argparse.Namespace) -> int:
         for index in range(max(1, args.workers))
     ]
     tasks = [asyncio.create_task(worker.run_forever()) for worker in workers]
+
+    def _report(task: asyncio.Task) -> None:
+        """A loop that exits is otherwise silent: asyncio.run never reads it."""
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error("gate worker loop died: %r", error, exc_info=error)
+
+    for task in tasks:
+        task.add_done_callback(_report)
     logger.info(
         "gate workers started: count=%s lease=%ss max_attempts=%s sandbox=%s",
         len(workers),

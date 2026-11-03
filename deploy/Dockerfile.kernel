@@ -54,6 +54,7 @@ COPY veynod_kernel/app ./app
 COPY veynod_kernel/sql ./sql
 COPY veynod_kernel/cli ./cli
 COPY veynod_kernel/scripts ./scripts
+COPY contracts ./contracts
 
 EXPOSE 8001
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=5 \

@@ -22,6 +22,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from contracts.work_scope import WorkScope
 from typing import Awaitable, Callable, Sequence
 from uuid import UUID
 
@@ -532,11 +533,14 @@ class DeterministicVerificationGate:
 
             # Symlinks can escape the sandbox when the gate reads files or runs
             # tests; reject them outright.
-            symlinks = [
-                path
-                for path in changed_files
-                if (worktree / path).is_symlink()
-            ]
+            symlinks = []
+            for path in changed_files:
+                candidate = worktree
+                for segment in Path(path).parts:
+                    candidate = candidate / segment
+                    if candidate.is_symlink():
+                        symlinks.append(path)
+                        break
             if symlinks:
                 gate_results[-1] = _gate(
                     GateStage.WRITE_SET_BOUNDARY,
@@ -565,6 +569,19 @@ class DeterministicVerificationGate:
                 )
                 return _AttemptResult(False, False, gate_results)
 
+            if task.lease_scope is not None:
+                try:
+                    scope = WorkScope.from_dict(task.lease_scope)
+                    if task.lease_scope_hash != scope.scope_hash:
+                        raise PermissionError("lease WorkScope hash mismatch")
+                    scope.assert_files_allowed(changed_files)
+                except (ValueError, PermissionError) as exc:
+                    gate_results[-1] = _gate(
+                        GateStage.WRITE_SET_BOUNDARY, False, 1,
+                        f"[Stage 1: WorkScope Violation] {exc}",
+                    )
+                    return _AttemptResult(False, False, gate_results)
+
             gate_results[-1] = _gate(
                 GateStage.WRITE_SET_BOUNDARY,
                 True,
@@ -574,7 +591,7 @@ class DeterministicVerificationGate:
 
             # Stage 1.5: derive the changed AST scope from the actual base and
             # patched files.  touched_symbols is Runner-supplied and is not
-            # trusted here.  Module-level changes require a file-level lock.
+            # trusted here.  Module-level changes require file-level scope.
             scope_started = time.monotonic()
             scope_ok, scope_detail = await self._check_ast_scope(
                 repo, worktree, base_sha, task, changed_files
@@ -763,9 +780,20 @@ class DeterministicVerificationGate:
           docstring) to be covered by a *file-level* write lock;
         * non-Python or unparsable changed files to have a file-level lock.
         """
-        file_locks = {
-            lock for lock in task.write_locks if "::" not in lock
-        }
+        file_locks = {lock for lock in task.write_locks if "::" not in lock}
+        scope = WorkScope.from_dict(task.lease_scope) if task.lease_scope else None
+
+        def file_authorized(path: str) -> bool:
+            if path in file_locks:
+                return scope is None or scope.allows_symbol(path)
+            # A scoped task uses an ancestor lock for scheduling while its
+            # frozen path grant supplies the exact file boundary.
+            return bool(
+                scope is not None
+                and scope.allows_symbol(path)
+                and any(path.startswith(f"{lock}/") for lock in file_locks)
+            )
+
         violations: list[str] = []
         for file_path in changed_files:
             safe = _safe_path(worktree, file_path)
@@ -775,13 +803,13 @@ class DeterministicVerificationGate:
             patched = safe.read_text(encoding="utf-8", errors="replace")
             base = await repo.read_file(file_path, base_sha)
             if not file_path.endswith(".py"):
-                if file_path not in file_locks:
+                if not file_authorized(file_path):
                     violations.append(
                         f"{file_path}: non-Python change requires a file-level lock"
                     )
                 continue
             if base is None:
-                if file_path not in file_locks:
+                if not file_authorized(file_path):
                     violations.append(
                         f"{file_path}: new file requires a file-level lock"
                     )
@@ -805,7 +833,7 @@ class DeterministicVerificationGate:
                 base_snapshot["signature_hash"]
                 != patched_snapshot["signature_hash"]
             )
-            if module_changed and file_path not in file_locks:
+            if module_changed and not file_authorized(file_path):
                 violations.append(
                     f"{file_path}: module-level/signature change requires a "
                     f"file-level lock (have {sorted(task.write_locks)[:8]})"
@@ -819,19 +847,23 @@ class DeterministicVerificationGate:
                     violations.append(
                         f"{symbol}: changed AST symbol is outside the write set"
                     )
+                if scope is not None and not scope.allows_symbol(symbol):
+                    violations.append(
+                        f"{symbol}: changed AST symbol is outside the frozen WorkScope"
+                    )
             # Added/removed symbols are structural module changes even when
             # the whole-file skeleton hash happens to stay stable.
             for symbol in sorted(set(patched_symbols) - set(base_symbols)):
-                if file_path not in file_locks:
+                if not file_authorized(file_path):
                     violations.append(
                         f"{symbol}: added symbol requires a file-level lock"
                     )
             for symbol in sorted(set(base_symbols) - set(patched_symbols)):
-                if file_path not in file_locks:
+                if not file_authorized(file_path):
                     violations.append(
                         f"{symbol}: removed symbol requires a file-level lock"
                     )
-            if not patched_symbols and patched.strip() and file_path not in file_locks:
+            if not patched_symbols and patched.strip() and not file_authorized(file_path):
                 violations.append(
                     f"{file_path}: unparsable/empty AST requires a file-level lock"
                 )

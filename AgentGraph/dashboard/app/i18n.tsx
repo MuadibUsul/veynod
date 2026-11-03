@@ -65,6 +65,19 @@ const ZH: Record<string, string> = {
   Zoom: "缩放",
   "Diagram": "图",
   "Loop": "Loop",
+  "Federation": "联邦",
+  "Federation is coming soon": "联邦，马上开放",
+  "One board per team, joined so a task can cross into another team's board with its evidence. Nothing to set up yet.":
+    "每个团队一个板，彼此结盟后任务可以带着证据走进另一个团队的板。现在还没有要配的东西。",
+  "Peers": "结对",
+  "Which boards this one trusts, and the scope each may reach.":
+    "这个板信任哪些板，以及每个板能伸到哪。",
+  "Handoffs": "移交",
+  "Tasks that leave this board, with the acceptance they keep there.":
+    "带着验收条件离开这个板的任务。",
+  "Shared evidence": "共享证据",
+  "Gate and merge results that travel with the commit, never a status alone.":
+    "跟着提交走的门禁与合并结果，绝不只是一个状态。",
   "More": "更多",
   "More views": "更多视图",
   "Diagrams": "图",

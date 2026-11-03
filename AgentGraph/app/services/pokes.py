@@ -94,6 +94,12 @@ async def _announce(workspace_id: Any) -> None:
 
 
 async def sweep_presence() -> int:
+    """Delete stale rows; nerve rows survive at 90 s because their socket is newer.
+
+    A nerve socket keeps its own row touched every few seconds and removes it
+    on close, so a row that is old at 90 s is an orphan from a killed process:
+    it is deleted like any other, and the agent's directory state follows.
+    """
     async def run(session: AsyncSession) -> int:
         result = await session.execute(text(
             "DELETE FROM agent_presence WHERE (transport <> 'api' AND seen_at < :cutoff) "

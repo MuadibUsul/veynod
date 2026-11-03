@@ -1140,6 +1140,37 @@ a {
   font-size: 13px;
 }
 
+/* What the placeholder page will hold, so it is not a bare "coming soon". */
+.federation-preview {
+  display: grid;
+  gap: 10px;
+  width: min(420px, 100%);
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  text-align: left;
+}
+
+.federation-preview li {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.federation-preview strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.federation-preview span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 /* ----------------------------------------------------------------- modals */
 
 .overlay {

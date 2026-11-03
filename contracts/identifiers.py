@@ -19,12 +19,16 @@ IDENTIFIER_FIELDS: tuple[str, ...] = (
     "project_id",
     "repository_id",
     "coding_session_id",
+    "diagram_id",
+    "chunk_key",
+    "product_task_key",
     "product_task_id",
     "agent_run_id",
     "workflow_id",
     "workflow_version",
     "kernel_task_id",
     "attempt_id",
+    "placement_id",
     "submission_id",
     "verification_run_id",
     "commit_sha",
@@ -55,6 +59,12 @@ def require_uuid(value: Any, field_name: str) -> str:
     return str(value)
 
 
+def require_opaque_id(value: Any, field_name: str) -> str:
+    if not isinstance(value, str) or not value.strip() or any(ord(char) < 32 for char in value):
+        raise ValueError(f"{field_name} must be a nonempty opaque identifier")
+    return value
+
+
 @dataclass(frozen=True)
 class IdentityChain:
     """The stable link between product, runtime and kernel facts.
@@ -69,12 +79,16 @@ class IdentityChain:
     project_id: str | None = None
     repository_id: str | None = None
     coding_session_id: str | None = None
+    diagram_id: int | None = None
+    chunk_key: str | None = None
+    product_task_key: str | None = None
     product_task_id: str | None = None
     agent_run_id: str | None = None
     workflow_id: str | None = None
     workflow_version: int | None = None
     kernel_task_id: str | None = None
     attempt_id: str | None = None
+    placement_id: str | None = None
     submission_id: str | None = None
     verification_run_id: str | None = None
     commit_sha: str | None = None
@@ -85,8 +99,14 @@ class IdentityChain:
     )
 
     def validate(self) -> "IdentityChain":
-        require_uuid(self.tenant_id, "tenant_id")
+        require_opaque_id(self.tenant_id, "tenant_id")
         require_uuid(self.workspace_id, "workspace_id")
+        if self.diagram_id is not None and self.diagram_id < 1:
+            raise ValueError("diagram_id must be positive")
+        for name in ("chunk_key", "product_task_key", "placement_id"):
+            value = getattr(self, name)
+            if value is not None:
+                require_opaque_id(value, name)
         for name in (
             "project_id",
             "repository_id",
@@ -123,12 +143,16 @@ class IdentityChain:
                 "project_id",
                 "repository_id",
                 "coding_session_id",
+                "diagram_id",
+                "chunk_key",
+                "product_task_key",
                 "product_task_id",
                 "agent_run_id",
                 "workflow_id",
                 "workflow_version",
                 "kernel_task_id",
                 "attempt_id",
+                "placement_id",
                 "submission_id",
                 "verification_run_id",
                 "commit_sha",
@@ -146,4 +170,5 @@ __all__ = [
     "new_correlation_id",
     "new_id",
     "require_uuid",
+    "require_opaque_id",
 ]

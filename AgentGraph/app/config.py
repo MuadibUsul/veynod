@@ -116,6 +116,13 @@ class Settings(BaseSettings):
     kernel_provision_on_create: bool = True
     # verification_gate + merge_coordinator replace a permanent reviewer host.
     kernel_delivery_default: bool = True
+    # Polling sweepers start in this process. With a separate worker container
+    # (ADR-019) set this to 0 so the API process only serves requests and the
+    # nerve socket; the presence sweep and the scheduler then belong there.
+    inline_background_loops: bool = True
+    # Replays Kernel commit projections the event stream lost (Phase 2, item 5).
+    diagram_reconcile_enabled: bool = True
+    diagram_reconcile_interval_seconds: int = Field(default=300, ge=30, le=3_600)
     code_projection_enabled: bool = True
     code_projection_interval_seconds: int = Field(default=30, ge=5, le=3_600)
     code_projection_batch_size: int = Field(default=100, ge=1, le=500)

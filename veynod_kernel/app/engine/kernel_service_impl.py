@@ -197,6 +197,8 @@ class PostgresKernelEngineService(KernelEngineService):
             task_id=task.task_id,
             worker_hub_id=worker_id,
             write_set=list(task.write_locks),
+            work_scope=task.lease_scope,
+            scope_hash=task.lease_scope_hash,
             read_set_artifact_ids=list(task.read_artifact_ids),
             status=ApiTaskStatus(task.status.value),
         )
@@ -243,6 +245,10 @@ class PostgresKernelEngineService(KernelEngineService):
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Claimed task disappeared.",
             )
+        if task.work_scope is not None:
+            task.lease_scope = task.work_scope
+            task.lease_scope_hash = task.scope_hash
+            await self.session.commit()
         workspace = await self.session.get(Workspace, workspace_id)
         if workspace is None:
             raise HTTPException(
@@ -378,6 +384,8 @@ class PostgresKernelEngineService(KernelEngineService):
             specification=task.spec_prompt,
             last_error_traceback=task.last_error_traceback,
             write_set=list(task.write_locks),
+            work_scope=task.lease_scope,
+            scope_hash=task.lease_scope_hash,
             read_only_signatures=read_views,
             frozen_tests=test_views,
             mutable_stubs=mutable_views,

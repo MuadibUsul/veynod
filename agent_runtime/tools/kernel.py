@@ -414,19 +414,31 @@ class KernelToolRuntime:
         arguments: dict[str, Any],
         idempotency_key: str,
     ) -> ToolResult:
+        work_scope = context.kernel.get("work_scope")
+        # One product task owns exactly one Kernel node.  The host path
+        # (kernel_delivery) uses the same key, so a task provisioned for a host
+        # and then started as a Run reuses that node instead of creating a
+        # second one whose identical write set can never be leased.
         body = {
             "request_key": (
-                f"{context.product_task_id or context.run_id}:{idempotency_key}"
-            )[:200],
+                f"product:{context.product_task_id}"[:200]
+                if context.product_task_id
+                else f"{context.run_id}:{idempotency_key}"[:200]
+            ),
             "title": arguments["title"],
             "spec_prompt": arguments["spec_prompt"],
             "type": arguments.get("type") or "IMPLEMENT_BODY",
             "read_symbols": arguments.get("read_symbols") or [],
             "target_symbols": arguments.get("target_symbols") or [],
             "test_symbols": arguments.get("test_symbols") or [],
-            "write_set_symbols": arguments.get("write_set_symbols") or [],
+            "write_set_symbols": (
+                [] if work_scope is not None
+                else arguments.get("write_set_symbols") or []
+            ),
             "priority": int(arguments.get("priority") or 100),
         }
+        if work_scope is not None:
+            body["work_scope"] = work_scope
         _, payload = await self._request(
             binding,
             "POST",

@@ -178,7 +178,10 @@ EPHEMERAL = frozenset({
     # dedupe keys describe this deployment's progress, not the tenant's data.
     # Kernel bindings name a local endpoint and credential reference.
     "code_projection_cursors", "runtime_projection_cursors", "event_inbox",
-    "lifecycle_projections", "kernel_bindings",
+    "lifecycle_projections", "kernel_bindings", "kernel_delivery_leases",
+    # Diagram→Kernel projection dedupe keys, for the same reason: a replayed
+    # Kernel commit must stay a no-op after an import.
+    "diagram_chunk_projections",
     # Per-tenant runtime limits are the operator's ceiling, like budget limits.
     "tenant_runtime_limits",
 })

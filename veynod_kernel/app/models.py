@@ -184,6 +184,10 @@ class DagTask(Base):
     )
     # Set when the Agent Runtime created this node (idempotent retries).
     runtime_request_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    work_scope: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    scope_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_scope: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    lease_scope_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     base_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     result_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     snapshot_id: Mapped[UUID | None] = mapped_column(

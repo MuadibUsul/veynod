@@ -1,0 +1,31 @@
+flowchart TB
+  subgraph NOW["当前 HEAD b8355c0（真实）"]
+    D1["Diagram Chunk<br/>allowed_write_paths"]
+    P1["Product Task (DG-*)"]
+    H1["Host Runner<br/>runner.mjs"]
+    R1["Runtime<br/>KernelToolRuntime"]
+    K1["Kernel Task + Lease<br/>WorkScope 冻结"]
+    Q1["人工 diagram.review<br/>人工 diagram.merge"]
+    DB1[("collab_tasks<br/>diagram_chunks")]
+    D1 -->|"dispatch: 仅文本上下文"| P1
+    P1 -->|"runner_placements"| H1
+    P1 -->|"/run（可与 host 并发）"| R1
+    H1 -->|"kernel/lease + kernel/submit"| K1
+    R1 -->|"create_task（另一把幂等键）"| K1
+    H1 -->|"模型自报 gate"| Q1
+    Q1 -->|"只改状态，不做 Git"| DB1
+    K1 -->|"COMMITTED 事件"| DB1
+    DB1 -.->|"无投影"| D1
+    K1 -.->|"不解锁下游"| D1
+    H1 -.->|"重复 provision 写集冲突"| K1
+  end
+  subgraph TARGET["目标（规范 §19）"]
+    D2["冻结 Diagram + WorkScope"] --> T2["唯一 Chunk↔Kernel Task"]
+    T2 --> S2["Scheduler 单一 placement"]
+    S2 --> R2["Runner / Runtime Adapter"]
+    R2 --> K2["Kernel Lease + Patch"]
+    K2 --> G2["唯一 Gate + Merge"]
+    G2 --> E2["持久事件 + Evidence"]
+    E2 --> PR2["幂等投影 Product + Diagram"]
+    PR2 -->|"自动解锁"| D2
+  end

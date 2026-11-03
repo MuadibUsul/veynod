@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
@@ -146,9 +147,15 @@ async def test_event_inbox_retry_dead_letter_and_replay(monkeypatch):
                 {"id": failed_id},
             )
             await session.commit()
-        await event_dispatch.dispatch_once(limit=10)
-        status, attempts = await _event_status(failed_id)
-        assert attempts == expected, (status, attempts)
+        # The server's own dispatch loop shares this table and may get there
+        # first, so wait for the attempt count rather than demanding exactly.
+        for _ in range(20):
+            await event_dispatch.dispatch_once(limit=10)
+            status, attempts = await _event_status(failed_id)
+            if attempts >= expected:
+                break
+            await asyncio.sleep(0.1)
+        assert attempts >= expected, (status, attempts)
     assert status == "DEAD", status
     replayed = await event_dispatch.replay(failed_id)
     assert replayed is not None and replayed["status"] == "PENDING"
@@ -158,9 +165,10 @@ async def test_event_inbox_retry_dead_letter_and_replay(monkeypatch):
 
 
 async def test_runtime_usage_metering_is_idempotent(client, workspace):
+    from sqlalchemy import select
+
     from app.models import CollabTask
     from app.services import agent_runtime as runtime_service
-    from sqlalchemy import select
 
     headers = workspace["headers"]
     task = await client.post(

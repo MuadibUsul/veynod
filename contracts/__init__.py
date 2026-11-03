@@ -17,6 +17,7 @@ from .identifiers import (
     new_correlation_id,
     new_id,
     require_uuid,
+    require_opaque_id,
 )
 from .idempotency import (
     binding_matches,
@@ -24,6 +25,7 @@ from .idempotency import (
     command_key,
     normalize_key,
 )
+from .work_scope import WorkScope, normalize_path
 
 __all__ = [
     "ErrorCode",
@@ -38,8 +40,11 @@ __all__ = [
     "new_correlation_id",
     "new_id",
     "require_uuid",
+    "require_opaque_id",
     "binding_matches",
     "canonical_key",
     "command_key",
     "normalize_key",
+    "WorkScope",
+    "normalize_path",
 ]
