@@ -51,6 +51,9 @@ services:
       args:
         BUILD_RUST: ${BUILD_RUST:-1}
     image: ${VEYNOD_IMAGE_PREFIX:-veynod}-kernel:${VEYNOD_VERSION:-dev}
+    # Same repository owner as the gate: loose objects and worktree metadata
+    # must never end up root-owned inside the shared bare repos.
+    user: ${VN_GATE_DOCKER_USER:-}
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-veynod}:${POSTGRES_PASSWORD}@db:5432/veynod_kernel
       VN_AUTO_INIT_DB: "true"

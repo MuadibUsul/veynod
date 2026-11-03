@@ -25,6 +25,9 @@ services:
   kernel-api:
     image: veynod-kernel:${VEYNOD_TAG:?VEYNOD_TAG is required}
     container_name: veynod-kernel-api
+    # Same repository owner as the gate: loose objects and worktree metadata
+    # must never end up root-owned inside the shared bare repos.
+    user: "${VN_GATE_DOCKER_USER}"
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@veynod-db-1:5432/veynod_kernel
       VN_AUTO_INIT_DB: "true"
