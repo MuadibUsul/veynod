@@ -134,19 +134,23 @@ curl -s -X POST http://127.0.0.1:8001/v1/admin/tokens \
   -H 'X-Admin-Key: dev-admin' -H 'Content-Type: application/json' \
   -d '{"label":"runtime","workspace_id":"<kernel-workspace-id>"}'
 
-# 产品侧：项目 + 仓库绑定
+# 生产部署先用 KERNEL_WORKSPACE_BINDINGS 登记产品工作区 UUID 与对应的
+# Kernel workspace、URL、凭据引用，再用 OWNER/ADMIN 登录令牌绑定。
+# 开发环境可用 KERNEL_WORKSPACE_ID 指定单个默认 Kernel workspace。
+# URL/凭据还须在产品 API 和 Runtime Worker 的服务端白名单中。
 curl -s -X POST http://127.0.0.1:8000/v1/projects \
-  -H "Authorization: Bearer <workspace key>" -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer <owner session>" -H 'Content-Type: application/json' \
   -d '{"name":"calc","repo":"/abs/path/repo.git","description":"计算器"}'
 
 curl -s -X POST http://127.0.0.1:8000/v1/projects/calc/repositories \
-  -H "Authorization: Bearer <workspace key>" -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer <owner session>" -H 'Content-Type: application/json' \
   -d '{"repo_path":"/abs/path/repo.git","kernel_workspace_id":"<kernel-workspace-id>",
        "kernel_base_url":"http://127.0.0.1:8001"}'
 ```
 
 之后任何带 `project=calc, repo=/abs/path/repo.git` 的任务都会路由到该 Kernel workspace。
-一个 Kernel 可以承载多个 workspace；分片时把不同项目的 `kernel_base_url` 指向不同实例即可，对产品透明。
+一个 Kernel 可以承载多个 workspace；多实例需在产品 API 配置 `KERNEL_ADMIN_KEYS` 或
+`KERNEL_ALLOWED_BASE_URLS`，并通过 `KERNEL_WORKSPACE_BINDINGS` 逐工作区登记目标。
 
 ---
 

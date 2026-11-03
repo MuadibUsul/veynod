@@ -14,6 +14,8 @@ from contracts.work_scope import WorkScope
 @pytest.mark.asyncio
 async def test_run_scope_overrides_model_write_set_on_kernel_creation(monkeypatch) -> None:
     monkeypatch.setenv("TEST_SCOPE_KERNEL_TOKEN", "vnk_test_scope_token")
+    monkeypatch.setenv("KERNEL_ALLOWED_BASE_URLS", "http://kernel.test")
+    monkeypatch.setenv("KERNEL_ALLOWED_CREDENTIAL_REFS", "TEST_SCOPE_KERNEL_TOKEN")
     scope = WorkScope.from_legacy_paths(["src/allowed/**"])
     seen: list[dict] = []
 
@@ -37,6 +39,13 @@ async def test_run_scope_overrides_model_write_set_on_kernel_creation(monkeypatc
             "work_scope": scope.to_dict(),
         },
     )
+    monkeypatch.setenv("KERNEL_WORKSPACE_BINDINGS", json.dumps({
+        context.workspace_id: [{
+            "kernel_workspace_id": context.kernel["workspace_id"],
+            "kernel_base_url": "http://kernel.test",
+            "credential_ref": "TEST_SCOPE_KERNEL_TOKEN",
+        }],
+    }))
     try:
         with tool_context(context):
             result = await runtime.execute(

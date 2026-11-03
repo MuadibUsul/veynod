@@ -17,11 +17,13 @@ Veynod Kernel syscall/runner planes.  It is deliberately strict:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -330,18 +332,71 @@ class KernelToolRuntime:
         base_url = str(kernel.get("base_url") or "").strip()
         workspace_id = str(kernel.get("workspace_id") or "").strip()
         if base_url and workspace_id:
+            parsed = urlsplit(base_url)
+            allowed_urls = {
+                os.environ.get("KERNEL_URL", "").strip().rstrip("/"),
+                self.config.default_binding.base_url.rstrip("/")
+                if self.config.default_binding else "",
+                *(url.strip().rstrip("/") for url in
+                  os.environ.get("KERNEL_ALLOWED_BASE_URLS", "").split(",")
+                  if url.strip()),
+            }
+            if (base_url.rstrip("/") not in allowed_urls
+                    or parsed.scheme not in {"http", "https"}
+                    or not parsed.hostname or parsed.username or parsed.password
+                    or parsed.path or parsed.query or parsed.fragment):
+                raise KernelToolConfigError("untrusted Kernel URL in run binding")
+            credential_ref = str(kernel.get("credential_ref") or "KERNEL_RUNTIME_TOKEN")
+            allowed_refs = {
+                self.config.default_binding.credential_ref
+                if self.config.default_binding else "KERNEL_RUNTIME_TOKEN",
+                *(ref.strip() for ref in
+                  os.environ.get("KERNEL_ALLOWED_CREDENTIAL_REFS", "").split(",")
+                  if ref.strip()),
+            }
+            if credential_ref not in allowed_refs:
+                raise KernelToolConfigError(
+                    "untrusted credential reference in run binding")
+            try:
+                assignments = json.loads(
+                    os.environ.get("KERNEL_WORKSPACE_BINDINGS", "{}"))
+            except ValueError as exc:
+                raise KernelToolConfigError(
+                    "invalid Kernel workspace assignments") from exc
+            if not isinstance(assignments, dict):
+                raise KernelToolConfigError("invalid Kernel workspace assignments")
+            if assignments:
+                permitted = assignments.get(context.workspace_id, [])
+                assigned = isinstance(permitted, list) and any(
+                    isinstance(item, dict)
+                    and item.get("kernel_workspace_id") == workspace_id
+                    and str(item.get("kernel_base_url", "")).rstrip("/")
+                    == base_url.rstrip("/")
+                    and item.get("credential_ref", "KERNEL_RUNTIME_TOKEN")
+                    == credential_ref
+                    for item in permitted)
+            elif os.environ.get("RUNTIME_ENVIRONMENT", "development") != "production":
+                default = self.config.default_binding
+                assigned = bool(default and default.workspace_id == workspace_id
+                                and default.base_url.rstrip("/") == base_url.rstrip("/")
+                                and default.credential_ref == credential_ref)
+            else:
+                assigned = False
+            if not assigned:
+                raise KernelToolConfigError(
+                    "Kernel workspace is not assigned to this Run workspace")
             return KernelBinding(
                 base_url=base_url,
                 workspace_id=workspace_id,
-                credential_ref=str(
-                    kernel.get("credential_ref") or "KERNEL_RUNTIME_TOKEN"
-                ),
+                credential_ref=credential_ref,
                 worker_hub_id=str(
                     kernel.get("worker_hub_id")
                     or (self.config.default_binding.worker_hub_id
                         if self.config.default_binding else "veynod-runtime")
                 ),
             )
+        if os.environ.get("RUNTIME_ENVIRONMENT", "development") == "production":
+            return None
         return self.config.default_binding
 
     # ----------------------------------------------------------------- calls

@@ -21,21 +21,21 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import select, text
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
-from contracts.idempotency import normalize_key
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.runner_routes import require_runner
 from app.auth import RunnerIdentity
 from app.config import settings
 from app.database import get_db_session
-from app.models import DagTask, KernelEvent, Workspace
-from contracts.work_scope import WorkScope
-from app.api.runner_routes import require_runner
 from app.engine.task_commands import (
     TaskCancelConflict,
     TaskNotFound,
+)
+from app.engine.task_commands import (
     cancel_task as cancel_task_command,
 )
+from app.models import DagTask, KernelEvent, Workspace
 from app.services.git_ops import (
     GitError,
     GitRepository,
@@ -44,6 +44,8 @@ from app.services.git_ops import (
 )
 from app.services.task_bootstrap import create_dag_task, task_json
 from app.services.task_evidence import build_task_evidence
+from contracts.idempotency import normalize_key
+from contracts.work_scope import WorkScope
 
 router = APIRouter(prefix="/v1", tags=["Runtime service"])
 
@@ -244,15 +246,15 @@ async def runtime_task_evidence(
     task_id: UUID,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     x_workspace_id: Annotated[
-        str | None, Header(alias="X-Workspace-Id")
-    ] = None,
+        str, Header(alias="X-Workspace-Id")
+    ],
 ) -> dict:
     task = await session.get(DagTask, task_id)
     if task is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found."
         )
-    if x_workspace_id and str(task.workspace_id) != x_workspace_id.strip():
+    if str(task.workspace_id) != x_workspace_id.strip():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found."
         )
@@ -273,15 +275,15 @@ async def runtime_cancel_task(
     body: dict,
     session: Annotated[AsyncSession, Depends(get_db_session)],
     x_workspace_id: Annotated[
-        str | None, Header(alias="X-Workspace-Id")
-    ] = None,
+        str, Header(alias="X-Workspace-Id")
+    ],
 ) -> dict:
     task = await session.get(DagTask, task_id)
     if task is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found."
         )
-    if x_workspace_id and str(task.workspace_id) != x_workspace_id.strip():
+    if str(task.workspace_id) != x_workspace_id.strip():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Task not found."
         )

@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Principal, principal_for_admin
 from app.config import get_settings
+from app.errors import ApiError
 from app.models import CollabTask, TaskStatus, Workspace
 from app.schemas import (
     AcceptanceItem,  # noqa: F401  (documented dependency)
@@ -185,6 +186,8 @@ async def kernel_binding_for(
     default from settings.  A missing binding means "this repository is not
     wired to a Kernel yet" and the Run keeps working without code execution.
     """
+    from app.services.kernel_binding_policy import validate_workspace_assignment
+
     rows = (
         await session.execute(
             text(
@@ -193,10 +196,9 @@ async def kernel_binding_for(
                        worker_hub_id, project, repo_path
                 FROM kernel_bindings
                 WHERE workspace_id = :workspace_id AND status = 'ACTIVE'
-                ORDER BY (project = :project) DESC,
-                         (repo_path = :repo) DESC,
-                         updated_at DESC
-                LIMIT 5
+                  AND repo_path = :repo AND project IN (:project, '')
+                ORDER BY (project = :project) DESC, updated_at DESC
+                LIMIT 2
                 """
             ),
             {
@@ -210,19 +212,38 @@ async def kernel_binding_for(
         if row["repo_path"] == (repo_path or "") and row["project"] == (
             project or ""
         ):
-            return _binding(row)
+            binding = _binding(row)
+            try:
+                validate_workspace_assignment(
+                    str(workspace_id), binding["workspace_id"],
+                    binding["base_url"], binding["credential_ref"])
+            except ApiError:
+                continue
+            return binding
     for row in rows:
-        if row["repo_path"] == (repo_path or ""):
-            return _binding(row)
-    if rows:
-        return _binding(rows[0])
+        if row["repo_path"] == (repo_path or "") and row["project"] == "":
+            binding = _binding(row)
+            try:
+                validate_workspace_assignment(
+                    str(workspace_id), binding["workspace_id"],
+                    binding["base_url"], binding["credential_ref"])
+            except ApiError:
+                continue
+            return binding
     if settings.kernel_url and settings.kernel_workspace_id:
-        return {
+        binding = {
             "base_url": settings.kernel_url,
             "workspace_id": settings.kernel_workspace_id,
             "credential_ref": "KERNEL_RUNTIME_TOKEN",
             "worker_hub_id": "veynod-runtime",
         }
+        try:
+            validate_workspace_assignment(
+                str(workspace_id), binding["workspace_id"],
+                binding["base_url"], binding["credential_ref"])
+        except ApiError:
+            return None
+        return binding
     return None
 
 
@@ -246,6 +267,9 @@ async def upsert_kernel_binding(
     credential_ref: str = "KERNEL_RUNTIME_TOKEN",
     worker_hub_id: str = "veynod-runtime",
 ) -> dict[str, Any]:
+    from app.services.kernel_binding_policy import validate_binding
+
+    kernel_base_url, credential_ref = validate_binding(kernel_base_url, credential_ref)
     row = (
         await session.execute(
             text(
@@ -279,7 +303,6 @@ async def upsert_kernel_binding(
             },
         )
     ).mappings().first()
-    await session.commit()
     return dict(row) if row else {}
 
 

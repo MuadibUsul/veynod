@@ -223,6 +223,10 @@ REGISTRY: dict[str, ErrorSpec] = {
     "duplicate_key_in_batch": _spec(422, FIX_REQUEST, "Deduplicate keys per details."),
     "export_format_unsupported": _spec(422, FIX_REQUEST, "Use a supported export format."),
     "invalid_address": _spec(422, FIX_REQUEST, "Fix the address per details."),
+    "invalid_deletion": _spec(422, FIX_REQUEST, "Use an exported table and its primary key."),
+    "invalid_kernel_binding": _spec(422, FIX_REQUEST, "Use a configured Kernel endpoint and credential."),
+    "invalid_kernel_configuration": _spec(503, ESCALATE_HUMAN, "Ask the operator to fix Kernel assignments."),
+    "kernel_workspace_unassigned": _spec(403, ESCALATE_HUMAN, "Ask the operator to assign the Kernel workspace."),
     "invalid_filter": _spec(422, FIX_REQUEST, "Fix the filter per details."),
     "namespace_not_registered": _spec(
         422, FIX_REQUEST, "Call register_namespace, then resend.", "register_namespace"

@@ -421,10 +421,13 @@ def plane_for(
     transport: httpx.AsyncBaseTransport | None = None,
     admin_key: str | None = None,
 ) -> KernelPlane:
+    from app.services.kernel_binding_policy import validate_binding
+
     settings = get_settings()
     credential = str(binding.get("credential_ref") or "KERNEL_RUNTIME_TOKEN")
+    base_url, credential = validate_binding(str(binding["base_url"]), credential)
     return KernelPlane(
-        str(binding["base_url"]),
+        base_url,
         str(binding["workspace_id"]),
         service_key=settings.kernel_service_key,
         runner_token=os.environ.get(credential, "").strip(),

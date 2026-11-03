@@ -168,6 +168,7 @@ async def kernel():
         os.environ["KERNEL_ADMIN_KEY"] = ADMIN_KEY
         async with run_server({
             "KERNEL_SERVICE_KEY": SERVICE_KEY,
+            "KERNEL_WORKSPACE_ID": kernel_workspace,
             # The event poller reads the Kernel endpoint from settings, not from
             # the binding, so point the whole process at this test Kernel.
             "KERNEL_URL": base_url,
@@ -197,10 +198,11 @@ async def _bind_kernel(client, ws: dict, kernel: dict) -> None:
     project = (await client.post("/v1/projects", headers=ws["key"], json={
         "name": f"chunk-{uuid.uuid4().hex[:6]}", "repo": REPO})).json()
     project_name = project.get("name") or project.get("project")
-    added = await client.post(f"/v1/projects/{project_name}/repositories", headers=ws["key"], json={
-        "repo_path": REPO, "default_branch": "main",
-        "kernel_base_url": kernel["base_url"],
-        "kernel_workspace_id": kernel["workspace"]})
+    added = await client.post(
+        f"/v1/projects/{project_name}/repositories", headers=ws["person"], json={
+            "repo_path": REPO, "default_branch": "main",
+            "kernel_base_url": kernel["base_url"],
+            "kernel_workspace_id": kernel["workspace"]})
     assert added.status_code in (200, 201), added.text
 
 
@@ -338,7 +340,7 @@ async def test_a_replayed_commit_unlocks_downstream_once(kernel) -> None:
     assert types.count("timeline.chunk_merged") == 1, types
 
 
-async def test_the_reconciler_projects_a_lost_commit_event(kernel) -> None:
+async def test_the_reconciler_projects_a_lost_commit_event(kernel, monkeypatch) -> None:
     client = kernel["client"]
     ws = await _workspace(client)
     await _bind_kernel(client, ws, kernel)
@@ -364,13 +366,24 @@ async def test_the_reconciler_projects_a_lost_commit_event(kernel) -> None:
     finally:
         await conn.close()
 
+    from app.config import get_settings
     from app.database import async_session_factory
-    from app.services import kernel_delivery
-    from app.services.task_lifecycle import kernel_binding_for
+    from app.services import kernel_binding_policy, kernel_delivery, task_lifecycle
+
+    # This probe runs in the test process, outside the product server's env.
+    local_settings = get_settings().model_copy(update={
+        "kernel_url": kernel["base_url"],
+        "kernel_workspace_id": kernel["workspace"],
+        "kernel_service_key": SERVICE_KEY,
+        "kernel_admin_key": ADMIN_KEY,
+    })
+    monkeypatch.setattr(task_lifecycle, "settings", local_settings)
+    monkeypatch.setattr(kernel_binding_policy, "get_settings", lambda: local_settings)
+    monkeypatch.setattr(kernel_delivery, "get_settings", lambda: local_settings)
 
     # The reconciler's own read, so a failure below is not the SQL's fault.
     async with async_session_factory() as probe_session:
-        binding = await kernel_binding_for(probe_session, ws["id"], None, None)
+        binding = await task_lifecycle.kernel_binding_for(probe_session, ws["id"], None, REPO)
         assert binding, "no kernel binding"
         plane = kernel_delivery.plane_for(binding, admin_key=ADMIN_KEY)
         try:

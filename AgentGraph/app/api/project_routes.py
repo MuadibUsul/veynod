@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import Principal, RoleScope, get_principal, require_permission
+from app.auth import Principal, RoleScope, get_principal, is_manager
 from app.database import get_db
+from app.errors import Forbidden
 from app.services import projects
 
 router = APIRouter(prefix="/v1", tags=["Projects"])
@@ -122,7 +123,16 @@ async def add_project_repository(
 
     from app.services import task_lifecycle
 
-    require_permission(principal, "task:create")
+    if not is_manager(principal):
+        raise Forbidden("only a workspace owner or admin can bind a repository")
+    from app.config import get_settings
+
+    settings = get_settings()
+    from app.services.kernel_binding_policy import validate_workspace_assignment
+
+    validate_workspace_assignment(
+        str(principal.workspace.id), body.kernel_workspace_id,
+        body.kernel_base_url or settings.kernel_url, body.credential_ref)
     project_row = (
         await session.execute(
             text(
@@ -158,10 +168,6 @@ async def add_project_repository(
             },
         )
     ).mappings().one()
-    await session.commit()
-    from app.config import get_settings
-
-    settings = get_settings()
     await task_lifecycle.upsert_kernel_binding(
         session,
         workspace_id=principal.workspace.id,
@@ -171,6 +177,7 @@ async def add_project_repository(
         kernel_workspace_id=body.kernel_workspace_id,
         credential_ref=body.credential_ref,
     )
+    await session.commit()
     return dict(row)
 
 

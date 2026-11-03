@@ -30,9 +30,10 @@ logger = logging.getLogger("agentgraph.diagram_reconcile")
 #: Bound, still open, and old enough that an in-flight event is not a miss yet.
 _CANDIDATES = """
 SELECT c.id, c.chunk_key, c.task_key, c.kernel_task_id, c.kernel_workspace_id,
-       c.scope_hash, d.namespace
+       c.scope_hash, d.namespace, t.project, COALESCE(t.repo, d.repo) AS repo
 FROM diagram_chunks c
 JOIN diagrams d ON d.id = c.diagram_id
+LEFT JOIN collab_tasks t ON t.workspace_id = c.workspace_id AND t.task_key = c.task_key
 WHERE c.workspace_id = :ws
   AND c.kernel_task_id IS NOT NULL
   AND c.state IN ('dispatched', 'rework')
@@ -69,7 +70,8 @@ async def reconcile_once(limit: int = 50, grace_seconds: int = 120,
             })).mappings().all()
             for row in rows:
                 stats["candidates"] += 1
-                binding = await kernel_binding_for(session, workspace_id, None, None)
+                binding = await kernel_binding_for(session, workspace_id,
+                                                   row["project"], row["repo"])
                 if binding is None:
                     stats["skipped"] += 1
                     logger.info("no Kernel binding for workspace %s", workspace_id)
