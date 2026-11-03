@@ -12,14 +12,16 @@ One product, two bounded contexts:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
+import os
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from .clients import AgentGraphClient, IntegrationError, KernelClient
@@ -64,6 +66,10 @@ async def _sync_loop() -> None:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    if os.environ.get("VN_ENABLE_LEGACY_PLATFORM") != "1":
+        raise RuntimeError("The deprecated Platform gateway is disabled")
+    if len(os.environ.get("PLATFORM_API_KEY", "")) < 32:
+        raise RuntimeError("The deprecated Platform gateway requires PLATFORM_API_KEY")
     store.init()
     task = asyncio.create_task(_sync_loop(), name="veynod-platform-sync")
     try:
@@ -85,10 +91,26 @@ app = FastAPI(
 )
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        origin.strip()
+        for origin in os.environ.get("PLATFORM_CORS_ORIGINS", "").split(",")
+        if origin.strip()
+    ],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def require_platform_key(request: Request, call_next):
+    if (request.url.path.startswith("/v1/platform/")
+            and request.url.path != "/v1/platform/health"):
+        expected = os.environ.get("PLATFORM_API_KEY", "")
+        supplied = request.headers.get("Authorization", "")
+        if not expected or not hmac.compare_digest(
+            supplied, f"Bearer {expected}"):
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+    return await call_next(request)
 
 _TEMPLATE = (Path(__file__).parent / "templates" / "index.html").read_text(encoding="utf-8")
 
