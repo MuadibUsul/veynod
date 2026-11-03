@@ -1027,7 +1027,7 @@ runtime, not Claude Code.
 
 **Before the drill (`up-hub-p1-release-drill`) on your computer:**
 1. Deploy the server (schema 3.65) and add a release-notes entry.
-2. Publish the CLI (sync `open-source-repo/bin`).
+2. Publish the CLI (`scripts/export_public_bridge.sh` from `AgentGraph/cli`).
 3. Set automation to full.
 4. Run `npx veynod up --run-tasks --repo owner/name` and approve the one code.
 

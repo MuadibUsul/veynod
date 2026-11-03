@@ -42,7 +42,6 @@ from app.api.deploy_gate_routes import runner_router as deploy_gate_runner_route
 from app.api.event_admin_routes import router as event_admin_router
 from app.api.human_routes import router as human_router
 from app.api.inbox_stream import router as inbox_stream_router
-from app.api.ws_nerve_routes import router as nerve_router
 from app.api.oauth_routes import router as oauth_router
 from app.api.org_routes import router as org_router
 from app.api.project_page import router as project_page_router
@@ -54,6 +53,7 @@ from app.api.stream_routes import admin_router as admin_stream_router
 from app.api.stream_routes import router as stream_router
 from app.api.v1_routes import router as v1_router
 from app.api.wellknown_routes import router as wellknown_router
+from app.api.ws_nerve_routes import router as nerve_router
 from app.concurrency import ConcurrencyLimitMiddleware, DatabaseAdmissionMiddleware
 from app.config import get_settings
 from app.database import apply_schema, check_database, engine

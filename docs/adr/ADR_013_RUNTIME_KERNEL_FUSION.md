@@ -103,6 +103,7 @@ C. 在 Runtime 实现 `KernelToolRuntime`，以**服务身份 + 工作区上下�
 
 **决策**：
 - `veynod_platform` 标记 deprecated，移出默认部署与导航；代码保留一个版本供参考。
+  （2026-11-03：保留期已满，目录已删除；历史版本见 git `db39435`。）
 - 三个页面降级为 `/dashboard/internal/*`（管理员权限），不做产品导航；
   Task Detail 承担 Code/Loop/Gate/Delivery 展示。
 - 不通过"隐藏菜单"完成融合：后端路由权限与信息架构同步调整。

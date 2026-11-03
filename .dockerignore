@@ -1,0 +1,21 @@
+# Every image builds from the repository root; send only what they COPY.
+.git
+**/.venv
+**/venv
+**/__pycache__
+**/*.py[cod]
+**/.pytest_cache
+**/.ruff_cache
+**/.hypothesis
+**/node_modules
+**/.next
+AgentGraph/dashboard/out
+**/.env
+**/.env.*
+!**/.env.example
+**/backups
+**/target
+docs
+**/tests
+*.md
+!AgentGraph/dashboard/**/*.md

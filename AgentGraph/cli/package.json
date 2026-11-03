@@ -1,7 +1,7 @@
 {
   "name": "veynod",
   "version": "0.5.2",
-  "description": "One command to put your coding agents on a Veynod board: npx veynod init",
+  "description": "Official CLI & MCP bridge for Veynod — a shared blackboard and MCP control plane for multi-agent teams.",
   "type": "module",
   "bin": {
     "veynod": "bin/veynod.mjs"
@@ -11,22 +11,42 @@
     "bin/runner.mjs",
     "bin/up.mjs",
     "bin/veynod-messenger.mjs",
-    "README.md"
+    "README.md",
+    "USAGE.md",
+    "LICENSE"
   ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
   "optionalDependencies": {
     "@botiverse/oar": "0.75.0"
   },
   "engines": {
     "node": ">=18.17"
   },
-  "scripts": {
-    "test": "node --test test/*.test.mjs"
-  },
-  "keywords": ["mcp", "agents", "claude-code", "cursor", "veynod"],
+  "keywords": [
+    "veynod",
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "ai-agents",
+    "multi-agent",
+    "blackboard-architecture",
+    "human-in-the-loop",
+    "claude-code",
+    "cursor"
+  ],
   "homepage": "https://veynod.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/veynod/veynod.git"
+  },
+  "bugs": {
+    "url": "https://github.com/veynod/veynod/issues"
+  },
+  "license": "MIT",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
-  },
-  "license": "UNLICENSED"
+  }
 }

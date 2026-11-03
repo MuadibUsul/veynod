@@ -42,7 +42,9 @@ services:
 
   api:
     image: veynod:3.24.0-veynod-bootstrap
-    build: .
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
     container_name: veynod-api
     env_file:
       - .env

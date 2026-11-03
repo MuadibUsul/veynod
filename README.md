@@ -11,7 +11,7 @@
 | MCP | https://veynod.com/mcp/ |
 | npm | [`veynod@0.5.2`](https://www.npmjs.com/package/veynod/v/0.5.2) |
 | Registry name | [`io.github.veynod/veynod`](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.veynod%2Fveynod/versions/latest) |
-| This repository | Full runtime monorepo. Public bridge text in-tree: [`AgentGraph/open-source-repo/`](AgentGraph/open-source-repo/README.md). Published bridge: https://github.com/veynod/veynod |
+| This repository | Full runtime monorepo. Public bridge (npm `veynod`) source: [`AgentGraph/cli/`](AgentGraph/cli/README.md). Published bridge: https://github.com/veynod/veynod |
 
 Checked 2026-11-02 (America/Indianapolis): npm `latest` is **0.5.2**. The Official MCP Registry entry is still **0.4.1**. Install the client from npm. Registry metadata can lag until that entry is republished.
 
@@ -97,7 +97,7 @@ Names below are groups. Confirm the live list on the [JSON descriptor](https://v
 - The hosted MCP endpoint needs network access. Agent keys need the same care as other API secrets.
 - Does not replace CI, an issue tracker, or a retrieval stack. PostgreSQL in this repo can use pgvector; that does not make Veynod a vector database.
 - Leases and gates improve coordination. They do not make a plan correct.
-- The published CLI ([`AgentGraph/open-source-repo`](AgentGraph/open-source-repo/README.md), also npm `veynod`) is MIT. This monorepo does not yet state a distribution license for the server tree; see [AgentGraph/README.md](AgentGraph/README.md).
+- The published CLI ([`AgentGraph/cli`](AgentGraph/cli/README.md), npm `veynod`) is MIT. This monorepo does not yet state a distribution license for the server tree; see [AgentGraph/README.md](AgentGraph/README.md).
 
 ## FAQ
 
@@ -124,8 +124,8 @@ Yes, from this repository. [本仓库架构](#本仓库架构) has `docker compo
 - npm: https://www.npmjs.com/package/veynod
 - Registry: https://registry.modelcontextprotocol.io/v0.1/servers/io.github.veynod%2Fveynod/versions/latest
 - Public bridge: https://github.com/veynod/veynod
-- CLI text in this repo: [AgentGraph/open-source-repo/README.md](AgentGraph/open-source-repo/README.md)
-- CLI license (MIT): [AgentGraph/open-source-repo/LICENSE](AgentGraph/open-source-repo/LICENSE)
+- CLI source in this repo: [AgentGraph/cli/README.md](AgentGraph/cli/README.md)
+- CLI license (MIT): [AgentGraph/cli/LICENSE](AgentGraph/cli/LICENSE)
 
 ---
 
@@ -318,6 +318,15 @@ Kernel 内部接口（用户不可见）：6 个 syscall、`/v2/syscalls/submit_
 
 ### 7. 测试与验收
 
+一条命令跑全部套件（CI 跑的就是它；每个数据库套件用自己的临时库）：
+
+```bash
+PG_URL=postgresql+asyncpg://agentgraph:agentgraph@127.0.0.1:5432 scripts/test_all.sh
+scripts/test_all.sh runtime kernel        # 只跑部分：contracts runtime kernel product cli dashboard
+```
+
+分别运行：
+
 ```bash
 # Runtime（真实 Postgres）
 TEST_DATABASE_URL=postgresql+asyncpg://agentgraph:agentgraph@127.0.0.1:55433/agentgraph_test \
@@ -365,10 +374,14 @@ veynod/
 ├── contracts/         跨服务 ID / 事件 / 错误契约
 ├── deploy/            统一部署（Dockerfile、环境模板、初始化脚本）
 ├── docs/              统一架构、审计、迁移、ADR、验收报告
-├── scripts/           e2e_unified.py、migrate_all.sh、backfill_unified.py
-├── docker-compose.yml 一套生产部署
-└── veynod_platform/   DEPRECATED：早期第三产品原型，不再部署
+├── scripts/           test_all.sh、export_public_bridge.sh、e2e_unified.py、migrate_all.sh
+├── .github/workflows/ 唯一 CI（ci.yml：lint + 全部测试套件）与 CLI 发布
+└── docker-compose.yml 一套生产部署（三个镜像都从仓库根目录构建：deploy/Dockerfile.*）
 ```
+
+一个仓库的约束由 `contracts/tests/test_repository.py` 强制：三个服务的依赖精确且版本一致、
+所有镜像从根目录构建、只有根目录一套 CI、只有一个 CLI 源（`AgentGraph/cli`，
+用 `scripts/export_public_bridge.sh` 导出到公开仓库）。
 
 ---
 

@@ -1,8 +1,16 @@
+# Product API image (FastAPI + MCP + the exported console).
+#
+# Build from the repository root, like the Kernel and Runtime images:
+#   docker build -f deploy/Dockerfile.api -t veynod-api .
+#
+# The root context is what lets the image carry the shared `contracts`
+# package; the old AgentGraph/Dockerfile built from AgentGraph/ and could not.
+
 FROM node:20-alpine AS dashboard
 WORKDIR /dashboard
-COPY dashboard/package.json dashboard/package-lock.json ./
+COPY AgentGraph/dashboard/package.json AgentGraph/dashboard/package-lock.json ./
 RUN npm ci --no-audit --no-fund
-COPY dashboard/ ./
+COPY AgentGraph/dashboard/ ./
 RUN npm run build
 
 FROM python:3.12-slim AS runtime
@@ -17,13 +25,12 @@ WORKDIR /app
 # A fixed uid lets operators own bind mounts such as /backups (uid 10001).
 RUN addgroup --system --gid 10001 app && adduser --system --uid 10001 --ingroup app app
 
-COPY requirements.txt ./
+COPY AgentGraph/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY app ./app
-COPY sql ./sql
-COPY scripts ./scripts
-# The shared WorkScope/identity contracts live at the repository root.
+COPY AgentGraph/app ./app
+COPY AgentGraph/sql ./sql
+COPY AgentGraph/scripts ./scripts
 COPY contracts ./contracts
 COPY --from=dashboard /dashboard/out ./dashboard/out
 
