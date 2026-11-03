@@ -35,6 +35,7 @@ from app.services import addresses as address_service
 from app.services.common import append_event
 
 settings = get_settings()
+MAX_UPLOAD_PART_BYTES = 8 * 1024 * 1024
 
 
 def _utcnow() -> datetime:
@@ -424,11 +425,15 @@ async def put_upload_part(
     data: bytes,
 ) -> dict[str, Any]:
     require_permission(principal, "doc:write")
+    if part_index < 0:
+        raise ApiError(422, "validation_error", "part_index must be nonnegative")
+    if len(data) > min(MAX_UPLOAD_PART_BYTES, settings.max_blob_bytes):
+        raise ApiError(413, "payload_too_large", "upload part exceeds the size limit")
     upload = await session.scalar(select(BlobUpload).where(
         BlobUpload.id == _uuid(upload_id),
         BlobUpload.workspace_id == principal.workspace.id,
         BlobUpload.uploader == principal.agent_signature,
-    ))
+    ).with_for_update())
     if upload is None:
         raise NotFound("blob upload", f"upload '{upload_id}' not found")
     if upload.expires_at < _utcnow():
@@ -440,6 +445,11 @@ async def put_upload_part(
         BlobUploadPart.upload_id == upload.id,
         BlobUploadPart.part_index == part_index,
     ))
+    stored = await session.scalar(select(func.coalesce(func.sum(BlobUploadPart.byte_size), 0))
+                                  .where(BlobUploadPart.upload_id == upload.id))
+    new_size = int(stored or 0) - (existing.byte_size if existing else 0) + len(data)
+    if new_size > settings.max_blob_bytes:
+        raise ApiError(413, "payload_too_large", "upload exceeds the blob size limit")
     if existing is None:
         existing = BlobUploadPart(
             upload_id=upload.id, part_index=part_index, content=data,
@@ -462,7 +472,7 @@ async def complete_upload(
         BlobUpload.id == _uuid(upload_id),
         BlobUpload.workspace_id == principal.workspace.id,
         BlobUpload.uploader == principal.agent_signature,
-    ))
+    ).with_for_update())
     if upload is None:
         raise NotFound("blob upload", f"upload '{upload_id}' not found")
     if upload.expires_at < _utcnow():
@@ -473,11 +483,15 @@ async def complete_upload(
     )).scalars().all()
     if not parts:
         raise ApiError(422, "validation_error", "upload has no parts")
+    if any(part.part_index != index for index, part in enumerate(parts)):
+        raise ApiError(409, "upload_incomplete", "upload parts must be contiguous")
     if upload.total_parts is not None and len(parts) != upload.total_parts:
         raise ApiError(409, "upload_incomplete",
                        f"expected {upload.total_parts} parts, got {len(parts)}",
                        details={"upload_id": str(upload.id),
                                 "missing": upload.total_parts - len(parts)})
+    if sum(part.byte_size for part in parts) > settings.max_blob_bytes:
+        raise ApiError(413, "payload_too_large", "upload exceeds the blob size limit")
     data = b"".join(part.content for part in parts)
     blob = await create_blob(
         session, principal, data,
@@ -531,19 +545,29 @@ async def gc_blobs(session: AsyncSession, *, now: datetime | None = None) -> dic
     for blob in expired:
         blob.content = None
         reclaimed += blob.byte_size
-    if expired and not rows:
-        await session.commit()
-    if rows:
+    expired_uploads = (await session.execute(
+        select(BlobUpload).where(BlobUpload.expires_at <= (now or _utcnow()))
+        .limit(1000).with_for_update(skip_locked=True)
+    )).scalars().all()
+    for upload in expired_uploads:
+        await session.delete(upload)
+    by_workspace: dict[Any, dict[str, int]] = {}
+    for blob in rows:
+        stats = by_workspace.setdefault(blob.workspace_id, {"count": 0, "reclaimed_bytes": 0})
+        stats["count"] += 1
+        stats["reclaimed_bytes"] += blob.byte_size
+    for workspace_id, stats in by_workspace.items():
         await append_event(
             session,
-            workspace_id=rows[0].workspace_id,
+            workspace_id=workspace_id,
             agent="blob_gc",
             event_type="BLOB_GC",
-            payload={"count": len(rows), "reclaimed_bytes": reclaimed},
+            payload=stats,
         )
+    if rows or expired or expired_uploads:
         await session.commit()
     return {"purged": len(rows), "expired_deletes": len(expired),
-            "reclaimed_bytes": reclaimed}
+            "expired_uploads": len(expired_uploads), "reclaimed_bytes": reclaimed}
 
 
 async def create_cleanup_grant(

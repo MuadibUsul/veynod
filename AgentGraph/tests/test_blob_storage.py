@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import select, update
 
 from app.database import async_session_factory
-from app.models import Blob, SharedDocument
+from app.models import Blob, BlobUpload, BlobUploadPart, SharedDocument
 
 pytestmark = pytest.mark.integration
 ADMIN = {"Authorization": "Bearer test-admin"}
@@ -94,6 +94,54 @@ async def test_blob_upload_download_attachment_and_force_delete(client, workspac
                             headers=workspace["headers"])
     assert refs.status_code == 200
     assert refs.json()["items"][0]["broken"] is True
+
+
+async def test_resumable_upload_is_bounded_and_expired_parts_are_reclaimed(client, workspace):
+    started = await client.post(
+        "/v1/blobs/uploads", headers=workspace["headers"],
+        json={"file_name": "pieces.bin", "total_parts": 2})
+    assert started.status_code == 201, started.text
+    upload_id = started.json()["upload_id"]
+    too_large = await client.put(
+        f"/v1/blobs/uploads/{upload_id}/parts/0", headers=workspace["headers"],
+        content=b"x" * (8 * 1024 * 1024 + 1))
+    assert too_large.status_code == 413
+    second = await client.put(
+        f"/v1/blobs/uploads/{upload_id}/parts/1", headers=workspace["headers"],
+        content=b"world")
+    assert second.status_code == 200, second.text
+    incomplete = await client.post(
+        f"/v1/blobs/uploads/{upload_id}/complete", headers=workspace["headers"])
+    assert incomplete.status_code == 409
+    first = await client.put(
+        f"/v1/blobs/uploads/{upload_id}/parts/0", headers=workspace["headers"],
+        content=b"hello ")
+    assert first.status_code == 200, first.text
+    complete = await client.post(
+        f"/v1/blobs/uploads/{upload_id}/complete", headers=workspace["headers"])
+    assert complete.status_code == 201, complete.text
+    downloaded = await client.get(
+        f"/v1/blobs/{complete.json()['id']}", headers=workspace["headers"])
+    assert downloaded.content == b"hello world"
+
+    stale = await client.post(
+        "/v1/blobs/uploads", headers=workspace["headers"],
+        json={"file_name": "stale.bin", "total_parts": 1})
+    stale_id = stale.json()["upload_id"]
+    assert (await client.put(
+        f"/v1/blobs/uploads/{stale_id}/parts/0", headers=workspace["headers"],
+        content=b"discard me")).status_code == 200
+    async with async_session_factory() as session:
+        await session.execute(update(BlobUpload).where(
+            BlobUpload.id == uuid.UUID(stale_id)).values(
+            expires_at=datetime.now(timezone.utc) - timedelta(hours=1)))
+        await session.commit()
+    gc = await client.post("/v1/blobs/gc", headers=workspace["headers"])
+    assert gc.status_code == 200, gc.text
+    assert gc.json()["expired_uploads"] >= 1
+    async with async_session_factory() as session:
+        assert await session.get(BlobUpload, uuid.UUID(stale_id)) is None
+        assert await session.get(BlobUploadPart, (uuid.UUID(stale_id), 0)) is None
 
 
 async def test_blob_gc_cleanup_grant_and_base64_admission(client, workspace):

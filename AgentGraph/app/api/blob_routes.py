@@ -7,6 +7,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.request_body import bounded_body
 from app.auth import Principal, get_principal
 from app.database import get_db
 from app.errors import Forbidden
@@ -29,7 +30,7 @@ async def upload_blob(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    data = await request.body()
+    data = await bounded_body(request, blobs.settings.max_blob_bytes)
     blob = await blobs.create_blob(
         session, principal, data, file_name=file_name, media_type=media_type
     )
@@ -135,7 +136,8 @@ async def put_part(
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> dict:
-    data = await request.body()
+    data = await bounded_body(request, min(blobs.MAX_UPLOAD_PART_BYTES,
+                                           blobs.settings.max_blob_bytes))
     return await blobs.put_upload_part(
         session, principal, upload_id, part_index, data
     )

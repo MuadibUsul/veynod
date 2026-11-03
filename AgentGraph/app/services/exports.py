@@ -872,7 +872,12 @@ async def wait_for(export_id: str, timeout: float = 120.0) -> None:
 def _read_archive(data: bytes) -> tuple[dict[str, Any], zipfile.ZipFile]:
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
+        if (len(archive.namelist()) != len(set(archive.namelist()))
+                or sum(item.file_size for item in archive.infolist()) > settings.max_import_bytes):
+            raise ApiError(413, "payload_too_large", "archive expands beyond the import limit")
         manifest = json.loads(archive.read("manifest.json"))
+    except ApiError:
+        raise
     except Exception as exc:  # noqa: BLE001 - anything unreadable is the client's
         raise ApiError(422, "export_format_unsupported", "not an Veynod export archive",
                        details={"supported": list(SUPPORTED_FORMATS)}) from exc
@@ -904,6 +909,16 @@ def _verify(manifest: dict[str, Any], archive: zipfile.ZipFile) -> None:
     if mismatches:
         raise ApiError(422, "checksum_mismatch", "the archive does not match its manifest",
                        details={"mismatches": mismatches[:100], "total": len(mismatches)})
+
+
+def _validate_deletion(entry: dict[str, Any], pks: dict[str, list[str]]) -> str:
+    table = entry.get("table")
+    if (table not in EXPORTED or table not in pks
+            or entry.get("columns") != pks[table]
+            or not isinstance(entry.get("pk"), list)
+            or len(entry["pk"]) != len(pks[table])):
+        raise ApiError(422, "invalid_deletion", "invalid deletion target")
+    return table
 
 
 def _rows_from(manifest: dict[str, Any], archive: zipfile.ZipFile) -> dict[str, list[dict]]:
@@ -977,11 +992,8 @@ async def import_archive(
     like the ``new_workspace`` import it continues.
     """
     factory = session_factory or async_session_factory
-    if principal is not None and not (
-        principal.auth_kind is AuthKind.HUMAN_ADMIN
-        or (principal.auth_kind is AuthKind.HUMAN and principal.human_role == "OWNER")
-    ):
-        raise Forbidden("imports are run by a human owner or the admin console")
+    if principal is not None and principal.auth_kind is not AuthKind.HUMAN_ADMIN:
+        raise Forbidden("imports require the admin console")
     if target not in ("new_workspace", "new_tenant", "increment"):
         raise ApiError(422, "validation_error", "target must be new_workspace, new_tenant "
                        "or increment", details={"field": "target"})
@@ -1069,8 +1081,9 @@ async def _apply(
     if target == "increment":
         applied = await session.scalar(
             text("SELECT source_export_id FROM imports WHERE status = 'done' "
-                 "AND source_export_id = :prev"),
-            {"prev": manifest["prev_export_id"]},
+                 "AND source_export_id = :prev AND tenant_id = :tenant"),
+            {"prev": manifest["prev_export_id"],
+             "tenant": into_tenant_id or manifest["tenant_id"]},
         )
         if applied is None:
             raise ApiError(409, "increment_out_of_order",
@@ -1158,12 +1171,13 @@ async def _apply(
                 if not line.strip():
                     continue
                 entry = json.loads(line)
+                table = _validate_deletion(entry, pks)
                 where = " AND ".join(
                     f"CAST({column} AS text) = :k{index}"
                     for index, column in enumerate(entry["columns"])
                 )
                 await session.execute(
-                    text(f"DELETE FROM {entry['table']} WHERE {where}"),
+                    text(f"DELETE FROM {table} WHERE {where}"),
                     {f"k{index}": str(value) for index, value in enumerate(entry["pk"])},
                 )
                 counts["deleted"] = counts.get("deleted", 0) + 1

@@ -2515,7 +2515,9 @@ async def create_import(
     verify: bool = Query(default=True),
     principal: Principal = Depends(get_principal),
 ) -> dict:
-    data = await request.body()
+    from app.api.request_body import bounded_body
+
+    data = await bounded_body(request, export_service.settings.max_import_bytes)
     return await export_service.import_archive(principal, data, target=target, verify=verify)
 
 

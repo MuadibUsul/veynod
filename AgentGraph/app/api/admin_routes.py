@@ -1560,10 +1560,12 @@ async def admin_import(
     verify: bool = Query(default=True),
     into_tenant: str | None = Query(default=None, max_length=40),
 ) -> dict:
+    from app.api.request_body import bounded_body
+
     if into_tenant:
         await operator_privacy.require_tenant_content_access(
             into_tenant, method="POST", path="/v1/admin/imports")
-    data = await request.body()
+    data = await bounded_body(request, export_service.settings.max_import_bytes)
     return await export_service.import_archive(
         None, data, target=target, verify=verify, into_tenant_id=into_tenant
     )
