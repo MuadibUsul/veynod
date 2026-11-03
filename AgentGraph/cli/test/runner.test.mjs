@@ -442,6 +442,23 @@ test("codex without OAR is reported as not pinned", async () => {
   assert.equal(await pinsIdentity("codex", { importer: withOar }), true);
 });
 
+test("codex without OAR runs in the scratch directory, which is not a git repository", async () => {
+  // `codex exec` refuses an untrusted non-repo directory outright, so every
+  // task handed to such a runner failed instantly (P6 on the live board).
+  const dir = mkdtempSync(join(tmpdir(), "veynod-codex-"));
+  let seen = null;
+  const spawner = async (command, args, options) => {
+    seen = { command, args, options };
+    return { ok: true };
+  };
+  const adapter = adapterFor("codex", { importer: noOar, spawner });
+  const result = await adapter.run({ cwd: dir, prompt: "do it", env: {} });
+  assert.equal(result.ok, true);
+  assert.equal(seen.command, "codex");
+  assert.deepEqual(seen.args, ["exec", "--skip-git-repo-check", "do it"]);
+  assert.equal(seen.options.cwd, dir);
+});
+
 test("a placement the platform moved on is not worked and not reported", async () => {
   const state = mkdtempSync(join(tmpdir(), "veynod-state-"));
   const fake = await fakeVeynod({ placements: { [PLC_A]: "moved" } });

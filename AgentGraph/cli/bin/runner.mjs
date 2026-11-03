@@ -570,7 +570,11 @@ export function adapterFor(runtime, { exec = "", importer = (spec) => import(spe
           return { ok: false, reason: error instanceof Error ? error.message : String(error) };
         }
       }
-      if (runtime !== "claude") return spawner(runtime, ["exec", prompt], { cwd, env });
+      // `codex exec` refuses a directory that is not a git repository and the
+      // runner's scratch dirs are not; it also runs unattended either way.
+      if (runtime !== "claude") {
+        return spawner(runtime, ["exec", "--skip-git-repo-check", prompt], { cwd, env });
+      }
       const args = ["-p", prompt, "--permission-mode", permissionMode];
       let file = null;
       const mounted = mcpConfig || (pin ? claudeMcpConfig(pin) : null);
