@@ -224,7 +224,13 @@ def test_product_task_helper_imports_what_it_uses() -> None:
 
         principal = SimpleNamespace(workspace=SimpleNamespace(id="ws"), allowed_namespaces=["*"],
                                     auth_kind=AuthKind.WORKSPACE)
-        got = asyncio.run(routes._product_task(Session(), principal, "t-1"))
+        # Not asyncio.run: it clears the thread's loop and every later async
+        # fixture in the session then fails with "no current event loop".
+        loop = asyncio.new_event_loop()
+        try:
+            got = loop.run_until_complete(routes._product_task(Session(), principal, "t-1"))
+        finally:
+            loop.close()
     finally:
         task_lifecycle.load_task_row = original
     assert got is task and seen == ["t-1"]

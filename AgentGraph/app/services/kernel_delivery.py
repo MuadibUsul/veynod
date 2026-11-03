@@ -547,15 +547,19 @@ def _lease_expired(value: str | None, *, grace_seconds: int = 5) -> bool:
     return (datetime.now(timezone.utc) - deadline).total_seconds() > -grace_seconds
 
 
-def _expires(value: str | None) -> str | None:
+def _expires(value: str | None) -> datetime | None:
+    """The Kernel's expiry as a datetime.
+
+    It arrives as ISO text from the lease response, but the parameter is typed
+    by ``CAST(:expires AS timestamptz)``, and asyncpg refuses a str for that —
+    so this returns a datetime, not the original text.
+    """
     if not value:
         return None
-    text_value = str(value).replace("Z", "+00:00")
     try:
-        datetime.fromisoformat(text_value)
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
-    return text_value
 
 
 def _blocked(status: str, error: str, *, write_set: list[str] | None = None) -> dict[str, Any]:
