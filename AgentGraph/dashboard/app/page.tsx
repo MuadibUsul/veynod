@@ -7,6 +7,7 @@ import { AuditView } from "./components/audit";
 import { SituationView } from "./components/situation";
 import { Blackboard } from "./components/blackboard";
 import { DiagramView } from "./components/diagram-view";
+import { FederationView } from "./components/federation";
 import { LoopView } from "./components/loop-view";
 import { DocumentsView } from "./components/documents";
 import { GovernanceView, type GovernanceSection } from "./components/governance";
@@ -22,6 +23,7 @@ import {
 import {
   IconChevron,
   IconDocuments,
+  IconFederation,
   IconGraph,
   IconLayers,
   IconPulse,
@@ -134,6 +136,7 @@ function sessionPath(path: string, workspaceId: string, method: string): string 
 type Tab =
   | "diagram"
   | "loop"
+  | "federation"
   | "situation"
   | "blackboard"
   | "tasks"
@@ -1302,6 +1305,8 @@ export default function ConsolePage() {
       go: () => setTab("diagram") },
     { id: "loop", label: t("Loop"), active: inLoop, alert: approvals.length, icon: <IconPulse />,
       go: () => setTab("loop") },
+    { id: "federation", label: t("Federation"), active: tab === "federation",
+      icon: <IconFederation />, go: () => setTab("federation") },
     { id: "documents", label: t("Documents"), active: tab === "documents", icon: <IconDocuments />,
       go: () => setTab("documents") },
     { id: "more", label: t("Settings"), active: inSettings, alert: pendingProposals || undefined,
@@ -1733,6 +1738,7 @@ export default function ConsolePage() {
                       onCreate={() => setShowCreateTask(true)}
                     />
                   )}
+                  {tab === "federation" && <FederationView t={t} />}
                   {tab === "documents" && (
                     <DocumentsView
                       workspaceId={selectedWorkspace.id}
