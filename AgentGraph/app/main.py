@@ -42,6 +42,7 @@ from app.api.deploy_gate_routes import runner_router as deploy_gate_runner_route
 from app.api.event_admin_routes import router as event_admin_router
 from app.api.human_routes import router as human_router
 from app.api.inbox_stream import router as inbox_stream_router
+from app.api.ws_nerve_routes import router as nerve_router
 from app.api.oauth_routes import router as oauth_router
 from app.api.org_routes import router as org_router
 from app.api.project_page import router as project_page_router
@@ -144,9 +145,14 @@ async def lifespan(app: FastAPI):
     except Exception:  # noqa: BLE001 - the directory backfill must not stop the service
         logger.exception("could not backfill the agent directory")
     await event_bus.start()
+    # The nerve reaper belongs to this process: it closes the sockets this
+    # process owns, so it stays even when the heavier sweeps move out.
+    from app.services.nerve_hub import nerve_reaper_loop
+
     reaper_task = asyncio.create_task(
         lease_reaper_loop(), name="agentgraph-lease-reaper"
     )
+    nerve_task = asyncio.create_task(nerve_reaper_loop(), name="agentgraph-nerve-reaper")
     webhook_task = asyncio.create_task(
         webhook_delivery_loop(), name="agentgraph-webhook-dispatcher"
     )
@@ -168,17 +174,28 @@ async def lifespan(app: FastAPI):
     from app.services.token_budget import flush as flush_token_usage
     from app.services.token_budget import flush_loop as token_usage_loop
 
-    background = [
-        asyncio.create_task(access_log_loop(), name="agentgraph-access-log"),
-        asyncio.create_task(token_usage_loop(), name="agentgraph-token-usage"),
-        asyncio.create_task(situation_loop(), name="agentgraph-metrics"),
-        asyncio.create_task(situation_evaluation_loop(), name="agentgraph-situation"),
-        asyncio.create_task(mail_worker_loop(), name="agentgraph-mailer"),
-        asyncio.create_task(incident_check_loop(), name="agentgraph-incident-sla"),
-        asyncio.create_task(blob_gc_loop(), name="agentgraph-blob-gc"),
-        asyncio.create_task(presence_loop(), name="agentgraph-presence"),
-        asyncio.create_task(scheduler_loop(), name="agentgraph-scheduler"),
-    ]
+    # Request-path latency does not come from the loops themselves but from
+    # what they take off the shared pool (ADR-019): a deployment that runs a
+    # separate worker sets this to 0 and keeps only what must be in-process.
+    background = []
+    if settings.inline_background_loops:
+        background = [
+            asyncio.create_task(access_log_loop(), name="agentgraph-access-log"),
+            asyncio.create_task(token_usage_loop(), name="agentgraph-token-usage"),
+            asyncio.create_task(situation_loop(), name="agentgraph-metrics"),
+            asyncio.create_task(situation_evaluation_loop(), name="agentgraph-situation"),
+            asyncio.create_task(mail_worker_loop(), name="agentgraph-mailer"),
+            asyncio.create_task(incident_check_loop(), name="agentgraph-incident-sla"),
+            asyncio.create_task(blob_gc_loop(), name="agentgraph-blob-gc"),
+            asyncio.create_task(presence_loop(), name="agentgraph-presence"),
+            asyncio.create_task(scheduler_loop(), name="agentgraph-scheduler"),
+        ]
+        if settings.diagram_reconcile_enabled:
+            from app.services.diagram_reconcile import reconcile_loop
+
+            background.append(asyncio.create_task(
+                reconcile_loop(settings.diagram_reconcile_interval_seconds),
+                name="agentgraph-diagram-reconcile"))
     if settings.code_projection_enabled:
         from app.services.code_engine import code_projection_loop
 
@@ -227,7 +244,7 @@ async def lifespan(app: FastAPI):
         else:
             yield
     finally:
-        tasks = (reaper_task, webhook_task, action_task, index_task, *background)
+        tasks = (reaper_task, nerve_task, webhook_task, action_task, index_task, *background)
         for task in tasks:
             task.cancel()
         for task in tasks:
@@ -365,6 +382,7 @@ app.include_router(human_router)
 app.include_router(org_router)
 app.include_router(stream_router)
 app.include_router(inbox_stream_router)
+app.include_router(nerve_router)
 app.include_router(admin_router)
 app.include_router(event_admin_router)
 app.include_router(admin_stream_router)

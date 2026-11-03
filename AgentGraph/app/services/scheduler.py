@@ -158,6 +158,16 @@ async def _take_back(session: AsyncSession, task: CollabTask, host: dict[str, An
         from app.services.leases import orphan_task
 
         await orphan_task(session, task, state="revoked", reason=reason, actor="scheduler")
+        # Free the Kernel worktree too: an orphaned host must not keep a write-set
+        # lock that blocks the replacement placement.
+        try:
+            from app.services import kernel_delivery
+
+            await kernel_delivery.release_task_lease(
+                session, task, reason=f"scheduler: {reason}"[:2000]
+            )
+        except Exception:  # noqa: BLE001 - placement still proceeds
+            logger.exception("could not release the Kernel lease for %s", task.task_key)
     if task.assignee == f"agent:{host['agent_id']}":
         await _unassign(session, task, "scheduler")
 
@@ -389,6 +399,43 @@ async def _offer_work(session: AsyncSession, task: CollabTask, host: dict[str, A
     return placement_id
 
 
+async def _dispatch_over_nerve(workspace_id: Any, pending: list[dict[str, Any]]) -> dict[str, int]:
+    """Poke each offered task on its agent's nerve socket, after the pass committed.
+
+    The SSE poke still happens (``_offer_work`` writes TASK_PLACED), so a host
+    without the nerve keeps working. A nerve failure here reopens the task and
+    leaves ``CHUNK``/placement bookkeeping for the normal reaper paths; it never
+    fails the pass.
+    """
+    if not pending:
+        return {"ok": 0, "failed": 0, "skipped": 0}
+    from app.database import async_session_factory
+    from app.services import nerve_hub
+
+    ok = failed = skipped = 0
+    async with async_session_factory() as session:
+        for item in pending:
+            if nerve_hub.nerve_hub.get(workspace_id, item["agent_id"]) is None:
+                skipped += 1
+                continue
+            result = await nerve_hub.deliver_task_poke(
+                session,
+                workspace_id=workspace_id,
+                task_key=item["task_key"],
+                placement_id=item["placement_id"],
+                epoch=item["epoch"],
+                title=item["title"],
+                payload={"agent_id": item["agent_id"]},
+            )
+            if result.get("dispatched"):
+                ok += 1
+            else:
+                failed += 1
+                logger.info("nerve dispatch for %s did not land: %s",
+                            item["task_key"], result.get("reason"))
+    return {"ok": ok, "failed": failed, "skipped": skipped}
+
+
 async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
     """One scheduling pass over a workspace. Commits."""
     hosts = await _hosts(session, workspace_id)
@@ -415,6 +462,7 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
         ).order_by(CollabTask.priority.desc(), CollabTask.created_at)
         .limit(100).with_for_update(skip_locked=True))).scalars().all()
     placed = suggested = unplaced = gave_up = 0
+    to_dispatch: list[dict[str, Any]] = []
     workspace_mode = mode
     for task in tasks:
         if await _held(session, task):
@@ -483,15 +531,24 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
                  "host": host["host_id"], "agent": host["agent_id"]})
             suggested += 1
             continue
-        await _offer_work(session, task, host, now)
+        placement_id = await _offer_work(session, task, host, now)
+        if host.get("agent_id"):
+            to_dispatch.append({
+                "placement_id": placement_id, "task_key": task.task_key,
+                "title": task.title, "agent_id": host["agent_id"],
+                "epoch": int(task.lease_epoch or 0) + 1,
+            })
         placed += 1
     steps = await _place_steps(session, workspace_id, online, load, workspace_mode, now) \
         if workspace_mode == "full" else {}
     rounds = await _supervise(session, workspace_id, hosts, online, now) \
         if workspace_mode == "full" else 0
     await session.commit()
+    # Delivery is a separate step: the pass must not hold its transaction open
+    # across a 200 ms (or 5 s) receipt wait per task.
+    delivered = await _dispatch_over_nerve(workspace_id, to_dispatch)
     return {"mode": workspace_mode, "hosts": len(online), "placed": placed,
-            "suggested": suggested,
+            "suggested": suggested, "nerve": delivered,
             "unplaced": unplaced, "stopped": gave_up, **counts, **steps, "rounds": rounds}
 
 
