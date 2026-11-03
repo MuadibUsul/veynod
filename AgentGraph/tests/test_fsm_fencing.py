@@ -81,6 +81,21 @@ async def test_handoff_after_the_lease_expired_is_refused():
                 f"/v1/tasks/{task['task_key']}/handoff",
                 headers={**agent["headers"], **V2},
                 json={"next_status": "REVIEWING", "brief": BRIEF, "fencing_token": token})
+            if late.status_code != 409 or late.json().get("error", {}).get("code") != "lease_expired":
+                from pathlib import Path
+
+                row = await _sql(
+                    "SELECT status::text AS status, dispatch_state, lease_owner, "
+                    "lease_expires_at, lease_epoch, version FROM collab_tasks WHERE task_key = $1",
+                    task["task_key"])
+                leases = await _sql(
+                    "SELECT state, fencing_token, expires_at FROM leases WHERE resource_ref = "
+                    "(SELECT canonical_id FROM collab_tasks WHERE task_key = $1)", task["task_key"])
+                log = (Path(__file__).parent / ".server-fsm-fencing.log").read_text(
+                    encoding="utf-8", errors="replace")[-2500:]
+                raise AssertionError(
+                    f"handoff={late.status_code} body={late.text} "
+                    f"task={[dict(r) for r in row]} leases={[dict(r) for r in leases]}\n{log}")
             assert late.status_code == 409, late.text
             assert late.json()["error"]["code"] == "lease_expired"
             assert late.json()["error"]["details"]["task_key"] == task["task_key"]
