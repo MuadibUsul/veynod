@@ -603,6 +603,19 @@ export async function pinsIdentity(runtime, { importer = (spec) => import(spec) 
 
 const repoSlug = (repo) => repo.replace(/[^A-Za-z0-9_.-]+/g, "__");
 
+/**
+ * Remove a scratch directory, tolerating Windows holding a handle in it for a
+ * moment after the runtime exits. A leftover directory is reused (and cleared)
+ * next time; an EPERM here used to take the whole task — and the hub — down.
+ */
+function rmScratch(dir) {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch {
+    // best effort: the next run clears what it can
+  }
+}
+
 const PRE_PUSH = `#!/bin/sh
 # Veynod runner: a task's worktree pushes only its own branch.
 branch=$(git rev-parse --abbrev-ref HEAD)
@@ -972,7 +985,7 @@ export async function runRunner(options, {
         // service's working directory. Kernel coding tasks already have cwd.
         if (!tree) {
           scratch = join(stateDir, "runner", "scratch", repoSlug(`${step}-${slot}`));
-          rmSync(scratch, { recursive: true, force: true });
+          rmScratch(scratch);
           mkdirSync(scratch, { recursive: true });
         }
         cwd = tree?.dir ?? scratch;
@@ -1044,7 +1057,7 @@ export async function runRunner(options, {
           // cleaned on the next makeRoom
         }
       }
-      if (scratch) rmSync(scratch, { recursive: true, force: true });
+      if (scratch) rmScratch(scratch);
       running.delete(slot);
       void beat();
     }
