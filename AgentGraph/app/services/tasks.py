@@ -698,6 +698,16 @@ async def claim_task(
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
     ensure_namespace(principal, task.namespace, write=True)
     ensure_task_role(principal, task.assigned_role)
+    # One execution owner: a task with a live Agent Run belongs to that Run.
+    # The scheduler already skips such tasks, but a manual claim used to take
+    # them anyway and both sides then delivered the same work.
+    if task.active_run_id is not None and task.claimed_by != agent:
+        raise ApiError(
+            409,
+            "task_owned_by_run",
+            "an Agent Run owns this task; wait for it to finish",
+            details={"task_key": task.task_key, "run_id": str(task.active_run_id)},
+        )
     if task.status is TaskStatus.ESCALATED_TO_HUMAN:
         raise EscalatedToHuman(task_out(task).model_dump(mode="json"))
     if task.status not in _CLAIMABLE and task.status is not TaskStatus.IN_PROGRESS:
@@ -885,6 +895,16 @@ async def release_task(
         lease_service.check_fencing(task, request.fencing_token)
         await lease_service.require_holder(session, task, agent, now)
     before = task_snapshot(task)
+    # Hand the Kernel worktree lease back too, or the node stays LEASED until it
+    # expires and blocks every other node with the same write set.
+    try:
+        from app.services import kernel_delivery
+
+        await kernel_delivery.release_task_lease(
+            session, task, reason=(request.reason or "task released")[:2000]
+        )
+    except Exception:  # noqa: BLE001 - the product lease is the important one
+        logger.exception("could not release the Kernel lease for %s", task.task_key)
     task.status = TaskStatus.READY
     _clear_lease(task)
     task.version += 1

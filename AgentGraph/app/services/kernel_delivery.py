@@ -11,12 +11,22 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime
+import sys
+from datetime import datetime, timezone
+from pathlib import Path as _Path
 from typing import Any
 
 import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+try:  # the shared contract package lives at the repository root
+    from contracts.work_scope import WorkScope
+except ImportError:  # pragma: no cover - only when running outside the monorepo
+    _root = _Path(__file__).resolve().parents[3]
+    if str(_root) not in sys.path:
+        sys.path.insert(0, str(_root))
+    from contracts.work_scope import WorkScope
 
 from app.config import get_settings
 
@@ -34,7 +44,17 @@ PRIMITIVES = (
 )
 
 _SECRET_KEYS = {"lease_token", "token", "authorization", "service_key"}
-_NOT_WIRED = {"", "legacy", "unbound", "unconfigured"}
+# Delivery states where the Kernel is NOT yet executing, so the reviewer/merger
+# steps still have to run on a host: nothing was provisioned, nothing leased.
+_NOT_WIRED = {
+    "",
+    "legacy",
+    "unbound",
+    "unconfigured",
+    "needs_write_set",
+    "lease_denied",
+    "admission",
+}
 
 
 class KernelDeliveryError(RuntimeError):
@@ -71,12 +91,18 @@ def work_scope_for(task: Any) -> dict[str, Any] | None:
     if not isinstance(context, dict):
         return None
     if isinstance(context.get("diagram"), dict):
+        paths = [
+            str(item) for item in (context.get("allowed_write_paths") or [])
+            if str(item).strip()
+        ]
+        # The Kernel parser requires a non-empty include list; an empty Diagram
+        # scope must therefore fall back to the legacy write-set path rather
+        # than send a scope it will reject with 422.
+        if not paths:
+            return None
         return {
             "scope_version": 1,
-            "paths": {
-                "include": context.get("allowed_write_paths") or [],
-                "exclude": [],
-            },
+            "paths": {"include": paths, "exclude": []},
         }
     explicit = context.get("work_scope")
     return explicit if isinstance(explicit, dict) else None
@@ -116,7 +142,9 @@ def _scope_matches_delivery(task: Any, delivery: dict[str, Any]) -> bool:
             actual = (granted.get(section) or {}).get(name) or []
             if sorted(source) != sorted(actual):
                 return False
-    return sorted(requested.get("protected_paths") or []) == sorted(granted.get("protected_paths") or [])
+    return sorted(requested.get("protected_paths") or []) == sorted(
+        granted.get("protected_paths") or []
+    )
 
 
 def public_delivery(record: dict[str, Any] | None) -> dict[str, Any]:
@@ -213,9 +241,13 @@ def fold_evidence(evidence: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _spec(task: Any) -> str:
-    text_value = (getattr(task, "description", None) or getattr(task, "title", None) or "").strip()
+    text_value = (
+        getattr(task, "description", None) or getattr(task, "title", None) or ""
+    ).strip()
     if len(text_value) < 10:
-        text_value = f"{text_value} Implement this product task inside the leased write set.".strip()
+        text_value = (
+            f"{text_value} Implement this product task inside the leased write set."
+        ).strip()
     return text_value[:20_000]
 
 
@@ -232,11 +264,13 @@ class KernelPlane:
         worker_hub_id: str = "veynod-runtime",
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = 60.0,
+        admin_key: str = "",
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.workspace_id = workspace_id
         self.service_key = service_key
         self.runner_token = runner_token
+        self.admin_key = admin_key
         self.worker_hub_id = worker_hub_id
         self._client = httpx.AsyncClient(timeout=timeout, transport=transport)
 
@@ -276,7 +310,9 @@ class KernelPlane:
                 method, self.base_url + path, headers=headers, json=json_body
             )
         except (httpx.TimeoutException, httpx.TransportError) as exc:
-            raise KernelDeliveryError(f"Kernel unreachable: {exc}", 502, "kernel_unreachable") from exc
+            raise KernelDeliveryError(
+                f"Kernel unreachable: {exc}", 502, "kernel_unreachable"
+            ) from exc
         payload: dict[str, Any] = {}
         if response.content:
             try:
@@ -299,6 +335,36 @@ class KernelPlane:
         )
         return payload
 
+    async def task(self, task_id: str) -> dict[str, Any] | None:
+        """The Kernel's durable verdict for one node, or None when it is unknown.
+
+        The Kernel has no get-task route; the admin evidence endpoint is the one
+        that carries the task status and the merged commit, and it is exactly the
+        row a projection may rely on (never infer a PASS from a status alone).
+        """
+        # The admin plane reads X-Admin-Key, not the service key.
+        headers = {"X-Admin-Key": self.admin_key} if self.admin_key else {}
+        try:
+            response = await self._client.get(
+                f"{self.base_url}/v1/admin/tasks/{task_id}/evidence", headers=headers)
+            if response.status_code == 404:
+                return None
+            if response.status_code >= 400:
+                raise KernelDeliveryError(
+                    f"Kernel HTTP {response.status_code}: {response.text[:300]}", 502)
+            payload = response.json()
+        except (httpx.TimeoutException, httpx.TransportError) as exc:
+            raise KernelDeliveryError(f"Kernel unreachable: {exc}", 502) from exc
+        status = str(payload.get("task_status") or payload.get("status") or "")
+        commit = payload.get("merged_commit_sha") or payload.get("result_commit_sha")
+        return {
+            "task_id": task_id,
+            "status": status,
+            "result_commit_sha": commit,
+            "evidence_status": payload.get("status"),
+            "gate_results": payload.get("gate_results") or [],
+        }
+
     async def pull(self, task_id: str) -> dict[str, Any]:
         _status, payload = await self._request(
             "POST",
@@ -317,7 +383,9 @@ class KernelPlane:
         )
         return payload
 
-    async def submit(self, body: dict[str, Any], idempotency_key: str) -> tuple[int, dict[str, Any]]:
+    async def submit(
+        self, body: dict[str, Any], idempotency_key: str
+    ) -> tuple[int, dict[str, Any]]:
         return await self._request(
             "POST",
             "/v2/syscalls/submit_patch",
@@ -326,6 +394,21 @@ class KernelPlane:
             idempotency_key=idempotency_key,
         )
 
+    async def release(self, task_id: str, lease_token: str, reason: str) -> bool:
+        """Give the Kernel lease back (the product side is freeing the task)."""
+        status, _payload = await self._request(
+            "POST",
+            "/v1/runner/release",
+            service=False,
+            json_body={
+                "task_id": task_id,
+                "lease_token": lease_token,
+                "reason": reason,
+                "retryable": True,
+            },
+        )
+        return status < 400
+
     async def evidence(self, task_id: str) -> dict[str, Any]:
         _status, payload = await self._request(
             "GET", f"/v1/runtime/tasks/{task_id}/evidence", service=True
@@ -333,7 +416,11 @@ class KernelPlane:
         return payload
 
 
-def plane_for(binding: dict[str, Any], *, transport: httpx.AsyncBaseTransport | None = None) -> KernelPlane:
+def plane_for(
+    binding: dict[str, Any], *,
+    transport: httpx.AsyncBaseTransport | None = None,
+    admin_key: str | None = None,
+) -> KernelPlane:
     settings = get_settings()
     credential = str(binding.get("credential_ref") or "KERNEL_RUNTIME_TOKEN")
     return KernelPlane(
@@ -343,6 +430,8 @@ def plane_for(binding: dict[str, Any], *, transport: httpx.AsyncBaseTransport | 
         runner_token=os.environ.get(credential, "").strip(),
         worker_hub_id=str(binding.get("worker_hub_id") or "veynod-runtime"),
         transport=transport,
+        admin_key=(admin_key or os.environ.get("KERNEL_ADMIN_KEY", "").strip()
+                   or settings.kernel_admin_key),
     )
 
 
@@ -440,6 +529,24 @@ def _json(value: Any) -> str:
     return json.dumps(value)
 
 
+def _lease_expired(value: str | None, *, grace_seconds: int = 5) -> bool:
+    """A held lease past its expiry must be re-provisioned, not reused.
+
+    The Kernel rejects an expired token on submit anyway; reusing it locally just
+    burns the agent's work first.
+    """
+    if not value:
+        return False
+    text_value = str(value).replace("Z", "+00:00")
+    try:
+        deadline = datetime.fromisoformat(text_value)
+    except ValueError:
+        return True
+    if deadline.tzinfo is None:
+        deadline = deadline.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - deadline).total_seconds() > -grace_seconds
+
+
 def _expires(value: str | None) -> str | None:
     if not value:
         return None
@@ -476,8 +583,13 @@ async def provision_product_task(
     *,
     plane: KernelPlane | None = None,
     binding: dict[str, Any] | None = None,
+    lease: bool = True,
 ) -> dict[str, Any] | None:
-    """Create the Kernel task and take a worktree lease. No-op without a binding.
+    """Create the Kernel task and (by default) take a worktree lease.
+
+    ``lease=False`` only binds the node. Dispatch uses that: a node leased while
+    it waits for a host holds a write-set lock nobody is working under, and the
+    eventually executing side could never take it.
 
     Returns the public delivery record, or None when this repository is not
     wired to a Kernel (the row is left unchanged).
@@ -514,6 +626,27 @@ async def provision_product_task(
         kernel_task_id = str(created.get("task_id") or "")
         if not kernel_task_id:
             raise KernelDeliveryError("Kernel created a task without task_id", 502)
+        if not lease:
+            record = {
+                "mode": "kernel",
+                "status": "bound",
+                "leased": False,
+                "kernel_task_id": kernel_task_id,
+                "kernel_workspace_id": binding["workspace_id"],
+                "base_url": binding["base_url"],
+                "write_set": write_set,
+                "work_scope": work_scope,
+                "scope_hash": (
+                    WorkScope.from_dict(work_scope).scope_hash
+                    if work_scope is not None else None
+                ),
+                "worktree": "none",
+                "lease": "none",
+                "primitives": list(PRIMITIVES),
+            }
+            await _stamp(session, task, record)
+            await session.commit()
+            return record
         bundle = await plane.pull(kernel_task_id)
     finally:
         if owned:
@@ -595,11 +728,13 @@ async def open_lease(
         and current.get("lease") == "held"
         and current.get("kernel_task_id")
         and current.get("write_set")
+        and not _lease_expired(current.get("lease_expires_at"))
         and await _load_token(session, task)
     ):
         if not _scope_matches_delivery(task, current):
             raise KernelDeliveryError(
-                "The frozen WorkScope changed or this lease predates WorkScope; create a new attempt.",
+                "The frozen WorkScope changed or this lease predates WorkScope; "
+                "create a new attempt.",
                 409, "scope_reissue_required",
             )
         return public_delivery(current)
@@ -705,6 +840,53 @@ async def submit_diff(
     }
 
 
+async def release_task_lease(
+    session: AsyncSession,
+    task: Any,
+    *,
+    reason: str,
+    plane: KernelPlane | None = None,
+) -> bool:
+    """Release the Kernel lease when the product side gives the task back.
+
+    Without it a released task left its Kernel node LEASED until expiry, and
+    every other node with the same write set stayed blocked behind it.
+    """
+    correlation = getattr(task, "correlation", None) or {}
+    current = correlation.get("kernel_delivery") if isinstance(correlation, dict) else {}
+    if not isinstance(current, dict) or not current.get("kernel_task_id"):
+        return False
+    token = await _load_token(session, task)
+    if not token:
+        return False
+    binding = await _binding(session, task)
+    if binding is None:
+        return False
+    owned = plane is None
+    plane = plane or plane_for(binding)
+    try:
+        released = await plane.release(str(current["kernel_task_id"]), token, reason)
+    except Exception:  # noqa: BLE001 - releasing the product lease still proceeds
+        logger.warning("could not release Kernel lease for %s", task.task_key)
+        return False
+    finally:
+        if owned:
+            await plane.aclose()
+    if released:
+        record = {**public_delivery(current), "lease": "none", "worktree": "released",
+                  "leased": False, "status": "released"}
+        await _stamp(session, task, record)
+        await session.execute(
+            text(
+                "DELETE FROM kernel_delivery_leases "
+                "WHERE workspace_id = :ws AND task_key = :key"
+            ),
+            {"ws": task.workspace_id, "key": task.task_key},
+        )
+        await session.flush()
+    return released
+
+
 async def refresh_delivery(
     session: AsyncSession,
     task: Any,
@@ -713,11 +895,15 @@ async def refresh_delivery(
 ) -> dict[str, Any]:
     """Read gate and merge evidence and fold it onto the product task."""
     correlation = getattr(task, "correlation", None) or {}
-    current = dict(correlation.get("kernel_delivery") or {}) if isinstance(correlation, dict) else {}
+    current = (
+        dict(correlation.get("kernel_delivery") or {})
+        if isinstance(correlation, dict) else {}
+    )
     kernel_task_id = str(current.get("kernel_task_id") or correlation.get("kernel_task_id") or "")
     if not kernel_task_id:
         return public_delivery(current) or {
-            "mode": "kernel", "status": "absent", "worktree": "idle", "lease": "none", "leased": False,
+            "mode": "kernel", "status": "absent", "worktree": "idle",
+            "lease": "none", "leased": False,
         }
     binding = await _binding(session, task)
     if binding is None or plane is None and not get_settings().kernel_service_key:
@@ -747,12 +933,17 @@ async def refresh_delivery(
     return view
 
 
-def kernel_section(delivery: dict[str, Any] | None, evidence: dict[str, Any] | None = None) -> dict[str, Any] | None:
+def kernel_section(
+    delivery: dict[str, Any] | None, evidence: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
     """Shape embedded in the task execution view."""
     public = public_delivery(delivery)
     if evidence:
         folded = fold_evidence(evidence)
-        public = {**public, **{key: value for key, value in folded.items() if key != "gate_results"}}
+        public = {
+            **public,
+            **{key: value for key, value in folded.items() if key != "gate_results"},
+        }
         public["gate_results"] = folded.get("gate_results") or []
     if not public:
         return None
