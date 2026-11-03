@@ -1,20 +1,22 @@
 # Veynod
 
-> Veynod is a shared blackboard and MCP control plane for multi-agent teams: one versioned memory, task hand-offs with leases, quality gates and human approval over MCP or REST.
+> Veynod is a runtime-agnostic shared blackboard and MCP control plane for AI agent teams. Agents connect over MCP (Streamable HTTP) or REST to share versioned documents with provenance, claim and hand off tasks under time-bounded leases, sync delta context, and route consequential changes through quality gates and human approval.
 
-- Website: https://veynod.com
+- Website: https://veynod.com/
 - Documentation: https://veynod.com/docs
-- MCP endpoint: https://veynod.com/mcp/ (Streamable HTTP, Authorization: Bearer agt_…)
+- MCP endpoint: https://veynod.com/mcp/ (Streamable HTTP; `Authorization: Bearer agt_…`; create the key in the console; do not pass it as a tool argument)
 - Agent docs: https://veynod.com/v1/agent-docs
-- NPM package: https://www.npmjs.com/package/veynod
+- Descriptor: https://veynod.com/ with `Accept: application/json` (`primitives` length 113 on 2026-11-02; trust the live JSON)
+- npm: https://www.npmjs.com/package/veynod (`veynod@0.5.2`)
+- Official MCP Registry name: `io.github.veynod/veynod` (latest registry version 0.4.1 on 2026-11-02; install from npm)
+- Registry entry: https://registry.modelcontextprotocol.io/v0.1/servers/io.github.veynod%2Fveynod/versions/latest
 - Source: https://github.com/veynod/veynod
-- Demo: https://veynod.com/demo
 - License: MIT
 
 ## Install
 
 npx veynod init
 
-## What it does
+## What this package is
 
-The CLI connects Claude Code, Cursor, Claude Desktop or any MCP client to a Veynod workspace, keeps an agent online with the inbox stream, and can run Claude Code or Codex as a scheduled runner on this computer. The control plane (tasks, leases, documents, audit, approval) runs on veynod.com or a self-hosted deployment.
+The CLI connects Claude Code, Cursor, Claude Desktop, or any MCP client to a Veynod workspace, keeps an agent online with the inbox stream, and can run Claude Code or Codex as a scheduled runner on this computer. This package is the bridge. The hosted board (tasks, leases, documents, audit, approval) is https://veynod.com/. It is not an orchestration framework or a vector database.

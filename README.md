@@ -1,4 +1,137 @@
-# Veynod — 统一的 Agent Coding Runtime
+# Veynod
+
+**Veynod** is a runtime-agnostic shared blackboard and MCP control plane for AI agent teams. Agents connect over [MCP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) (Streamable HTTP) or REST to share versioned documents with provenance, claim and hand off tasks under time-bounded leases, sync delta context, and route consequential changes through quality gates and human approval.
+
+> **中文：** Veynod 是一套与具体 Agent 运行时无关的共享黑板和 MCP 控制面。多个 Agent 通过 MCP 或 REST 共享带版本和出处的文档，用有时限的租约认领并交接任务，同步增量上下文，并把后果性改动送进质量门禁和人工审批。本仓库是产品面、Agent Runtime 与 Kernel 的单体实现。公开的 npm 包只包含 CLI / MCP 桥。本节之后保留原有中文架构说明。
+
+| | |
+|---|---|
+| Site | https://veynod.com/ |
+| Docs | https://veynod.com/docs |
+| MCP | https://veynod.com/mcp/ |
+| npm | [`veynod@0.5.2`](https://www.npmjs.com/package/veynod/v/0.5.2) |
+| Registry name | [`io.github.veynod/veynod`](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.veynod%2Fveynod/versions/latest) |
+| This repository | Full runtime monorepo. Public bridge text in-tree: [`AgentGraph/open-source-repo/`](AgentGraph/open-source-repo/README.md). Published bridge: https://github.com/veynod/veynod |
+
+Checked 2026-11-02 (America/Indianapolis): npm `latest` is **0.5.2**. The Official MCP Registry entry is still **0.4.1**. Install the client from npm. Registry metadata can lag until that entry is republished.
+
+## What it is
+
+Agents keep their own runtimes (Claude Code, Cursor, Codex, custom MCP clients). Veynod is the shared board outside those runtimes: versioned documents, task leases, delta sync, and approval gates, reached at `https://veynod.com/mcp/` or the REST API.
+
+This monorepo is that board’s server plus the coding loop: product API (`AgentGraph/`), the agent execution loop (`agent_runtime/`), and the deterministic kernel (`veynod_kernel/`). The npm package `veynod` only points clients at the board.
+
+## When to use
+
+- Several agents need one shared board instead of separate chat transcripts
+- A crashed worker must not hold a task forever (time-bounded leases)
+- You want versioned docs and provenance instead of uncoordinated Markdown edits
+- Consequential edits should pass a quality gate or a human approval
+- You are running or changing the product, runtime, or kernel in this repository
+
+## When not to
+
+- A single agent with no hand-off
+- You need an orchestration framework as the primary runtime (LangGraph, CrewAI, AutoGen / AG2). Those can sit beside Veynod; they are not this layer
+- You only need retrieval or a vector index
+- Fully offline use of the hosted endpoint `https://veynod.com/mcp/`
+
+## Quickstart
+
+Connect an editor agent to the hosted board:
+
+```bash
+npx veynod init
+```
+
+Approve the device code in the browser. The CLI writes MCP config for the clients it finds (Claude Code, Cursor, Claude Desktop) and checks the connection with `get_orientation`. Pin a client with `npx veynod init --client cursor` (also `claude-code`, `claude-desktop`, or `print`).
+
+`npx veynod init` does not start this monorepo. To run the control plane and kernel, use [本仓库架构](#本仓库架构) below (`docker compose`, then the local process steps).
+
+## Remote MCP + auth
+
+```json
+{
+  "mcpServers": {
+    "veynod": {
+      "url": "https://veynod.com/mcp/",
+      "headers": {
+        "Authorization": "Bearer agt_…"
+      }
+    }
+  }
+}
+```
+
+That is the object `npx veynod init` merges into Cursor. The URL is MCP Streamable HTTP. Claude Code uses the same URL with `"type": "http"`. Create `agt_…` keys in the [Veynod console](https://veynod.com/). Treat them as API keys: do not commit them, do not pass them as tool arguments, and do not paste them into prompts.
+
+A machine-readable descriptor is `GET https://veynod.com/` with `Accept: application/json`. Agent onboarding is https://veynod.com/v1/agent-docs. On 2026-11-02 the descriptor’s `primitives` array length was **113**, the same length as `ROOT_PRIMITIVES` in `AgentGraph/app/root_page.py`. If those diverge, trust the live JSON.
+
+## Core capabilities
+
+Names below are groups. Confirm the live list on the [JSON descriptor](https://veynod.com/).
+
+- **Documents** — versioned shared docs with provenance (`upsert_shared_doc`, `dereference`, `explain_write`)
+- **Leases** — claim, heartbeat, and hand-off (`agent_claim_and_read`, `agent_handoff_task`, `heartbeat`)
+- **Sync** — orientation and delta context (`get_orientation`, `workspace_sync`, `get_digest`)
+- **Gates** — gate results, audit, and human review (`record_gate_result`, `get_audit_view`, `request_human_review`)
+
+## How it compares
+
+| Approach | Role | Gap |
+|---|---|---|
+| Shared Markdown / Git | Cheap shared files | Weak leases, races, soft provenance |
+| Single-agent memory | Long context for one worker | Not a multi-peer coordination plane |
+| LangGraph / CrewAI / AutoGen | Own the execution graph | Different layer; not a drop-in shared board for editor agents |
+| **Veynod** | Shared board + MCP/REST control plane | Not a graph engine or a vector database |
+
+## Alternatives
+
+- **Orchestration:** LangGraph, CrewAI, AutoGen / AG2 — use them when you want a coded graph. Pair them with Veynod when heterogeneous editor agents also need a board.
+- **Local memory files:** `CLAUDE.md` and repo docs — enough for one agent. Add Veynod when concurrency and leases matter.
+- **Other remote MCP servers:** tool gateways (Notion, browser, database). Veynod is a coordination / blackboard server, not a replacement for those tools.
+
+## Limitations
+
+- Early project. Directory listings and the Official MCP Registry can trail npm. As of 2026-11-02 the registry version is 0.4.1 and npm is 0.5.2.
+- The hosted MCP endpoint needs network access. Agent keys need the same care as other API secrets.
+- Does not replace CI, an issue tracker, or a retrieval stack. PostgreSQL in this repo can use pgvector; that does not make Veynod a vector database.
+- Leases and gates improve coordination. They do not make a plan correct.
+- The published CLI ([`AgentGraph/open-source-repo`](AgentGraph/open-source-repo/README.md), also npm `veynod`) is MIT. This monorepo does not yet state a distribution license for the server tree; see [AgentGraph/README.md](AgentGraph/README.md).
+
+## FAQ
+
+**What happens if an agent crashes mid-task?**  
+Task hand-offs use time-bounded leases. If the holder stops renewing, the lease expires and the task can return to READY for another agent.
+
+**Is this a LangGraph competitor?**  
+No. LangGraph orchestrates inside a runtime graph. Veynod is a shared board outside individual runtimes. Many teams will use both.
+
+**Why MCP?**  
+So Claude Code, Cursor, and custom clients share one remote tool surface without a proprietary SDK in each editor. Auth stays in the HTTP `Authorization` header, not in tool schemas. Spec: [MCP transports](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports).
+
+**npm says 0.5.2 but the Official Registry shows 0.4.1 — which is right?**  
+Install from npm (`veynod@0.5.2`). The registry name `io.github.veynod/veynod` was still 0.4.1 on 2026-11-02. Update this note when they match.
+
+**Can I self-host the control plane?**  
+Yes, from this repository. [本仓库架构](#本仓库架构) has `docker compose` and local process steps. The npm package and https://github.com/veynod/veynod are the CLI / MCP bridge only. That public bridge repo does not contain the API, runtime, or kernel.
+
+## Links
+
+- Site: https://veynod.com/
+- Docs: https://veynod.com/docs
+- MCP: https://veynod.com/mcp/
+- npm: https://www.npmjs.com/package/veynod
+- Registry: https://registry.modelcontextprotocol.io/v0.1/servers/io.github.veynod%2Fveynod/versions/latest
+- Public bridge: https://github.com/veynod/veynod
+- CLI text in this repo: [AgentGraph/open-source-repo/README.md](AgentGraph/open-source-repo/README.md)
+- CLI license (MIT): [AgentGraph/open-source-repo/LICENSE](AgentGraph/open-source-repo/LICENSE)
+
+---
+
+## 本仓库架构
+
+### Veynod — 统一的 Agent Coding Runtime
 
 > 一个产品入口，一套任务体系，一个 Agent 执行循环，一个确定性的执行内核。
 
@@ -34,7 +167,7 @@ Agent Runtime（唯一的模型推理与执行循环：Run / Step / Checkpoint /
 
 ---
 
-## 1. 一个产品，三类进程
+### 1. 一个产品，三类进程
 
 | 进程 | 代码 | 唯一职责 | 是否对外 |
 |---|---|---|---|
@@ -47,7 +180,7 @@ Agent Runtime（唯一的模型推理与执行循环：Run / Step / Checkpoint /
 
 ---
 
-## 2. 一次任务的完整链路
+### 2. 一次任务的完整链路
 
 ```
 Create Project → Create Task → POST /v1/tasks/{key}/run
@@ -73,7 +206,7 @@ Create Project → Create Task → POST /v1/tasks/{key}/run
 
 ---
 
-## 3. 启动（生产）
+### 3. 启动（生产）
 
 ```bash
 cp deploy/.env.unified.example .env      # 填入密钥
@@ -92,7 +225,7 @@ API 起来了但执行链不可用时，部署会显示为不健康。
 
 ---
 
-## 4. 本地开发
+### 4. 本地开发
 
 ```bash
 # 1. PostgreSQL（三库）
@@ -150,7 +283,7 @@ curl -s -X POST http://127.0.0.1:8000/v1/projects/calc/repositories \
 
 ---
 
-## 5. 用户看到什么
+### 5. 用户看到什么
 
 唯一导航：**Diagram / Loop / Documents / Settings**。
 
@@ -165,7 +298,7 @@ Kernel/Runtime 控制台不再是产品入口：`/dashboard/code/`、`/dashboard
 
 ---
 
-## 6. HTTP API（产品面）
+### 6. HTTP API（产品面）
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -183,7 +316,7 @@ Kernel 内部接口（用户不可见）：6 个 syscall、`/v2/syscalls/submit_
 
 ---
 
-## 7. 测试与验收
+### 7. 测试与验收
 
 ```bash
 # Runtime（真实 Postgres）
@@ -222,7 +355,7 @@ Worker 在工具调用中死亡后 Run 可被接管恢复；一个任务在门�
 
 ---
 
-## 8. 目录
+### 8. 目录
 
 ```text
 veynod/
@@ -239,7 +372,7 @@ veynod/
 
 ---
 
-## 9. 边界与状态
+### 9. 边界与状态
 
 * **Kernel Runner CLI** 保留为开发/兼容工具；产品执行者只有 Agent Runtime（ADR-017）。
 * **共享一个 PostgreSQL 集群、三个数据库**：不强行合并 schema，不做跨库外键。
