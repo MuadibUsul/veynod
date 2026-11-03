@@ -32,8 +32,11 @@ services:
       VN_ADMIN_API_KEY: ${KERNEL_ADMIN_KEY:?}
       VN_RUNTIME_SERVICE_KEY: ${KERNEL_SERVICE_KEY:?}
       VN_REQUIRE_BOUND_TOKENS: "true"
-      VN_GATE_SANDBOX: local
-      VN_ALLOW_LOCAL_GATE_IN_PROD: "1"
+      VN_GATE_SANDBOX: docker
+      VN_GATE_SANDBOX_IMAGE: veynod-kernel:${VEYNOD_TAG}
+      VN_GATE_DOCKER_USER: ${VN_GATE_DOCKER_USER:?set to the repository owner UID:GID}
+      VN_GATE_HOST_REPOS_DIR: ${REPOS_DIR:?REPOS_DIR must be absolute}
+      VN_GATE_CONTAINER_REPOS_DIR: /repos
       VN_GATE_MEMORY_MB: ${VN_GATE_MEMORY_MB:-2048}
       VN_FAST_FORWARD_MERGE: "true"
       # The mounted repository is owned by the host deploy user; the container
@@ -57,6 +60,11 @@ services:
   kernel-gate:
     image: veynod-kernel:${VEYNOD_TAG}
     container_name: veynod-kernel-gate
+    # Run as the repository owner: worktrees it creates must be writable by
+    # the sandbox containers, which the security guard forces to non-root.
+    user: "${VN_GATE_DOCKER_USER}"
+    # The docker CLI reaches the host socket through the docker group.
+    group_add: ["docker"]
     command:
       - python
       - -m
@@ -71,8 +79,12 @@ services:
       VN_AUTH_MODE: prod
       VN_ADMIN_API_KEY: ${KERNEL_ADMIN_KEY}
       VN_RUNTIME_SERVICE_KEY: ${KERNEL_SERVICE_KEY}
-      VN_GATE_SANDBOX: local
-      VN_ALLOW_LOCAL_GATE_IN_PROD: "1"
+      VN_GATE_SANDBOX: docker
+      VN_GATE_SANDBOX_IMAGE: veynod-kernel:${VEYNOD_TAG}
+      VN_GATE_DOCKER_USER: ${VN_GATE_DOCKER_USER:?set to the repository owner UID:GID}
+      VN_GATE_HOST_REPOS_DIR: ${REPOS_DIR:?REPOS_DIR must be absolute}
+      VN_GATE_CONTAINER_REPOS_DIR: /repos
+      TMPDIR: /repos
       VN_GATE_MEMORY_MB: ${VN_GATE_MEMORY_MB:-2048}
       VN_FAST_FORWARD_MERGE: "true"
       GIT_CONFIG_COUNT: "1"
@@ -81,6 +93,7 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ${REPOS_DIR}:/repos
+      - /var/run/docker.sock:/var/run/docker.sock
     # The Gate Worker process serves no HTTP API; its metrics port is the only
     # socket it opens.  The image-level healthcheck (kernel API :8001) does not
     # apply to this command.
@@ -122,6 +135,7 @@ services:
       - path: .env.runtime
         required: false
     environment:
+      RUNTIME_ENVIRONMENT: production
       # Model endpoint/key, the runner token and the workspace stay in
       # .env.runtime (env_file above): the product container never sees them.
       RUNTIME_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@veynod-db-1:5432/veynod_runtime
@@ -129,6 +143,9 @@ services:
       RUNTIME_TOOL_MODE: kernel
       KERNEL_URL: http://veynod-kernel-api:8001
       KERNEL_SERVICE_KEY: ${KERNEL_SERVICE_KEY}
+      KERNEL_ALLOWED_BASE_URLS: ${KERNEL_ALLOWED_BASE_URLS:-}
+      KERNEL_ALLOWED_CREDENTIAL_REFS: ${KERNEL_ALLOWED_CREDENTIAL_REFS:-}
+      KERNEL_WORKSPACE_BINDINGS: ${KERNEL_WORKSPACE_BINDINGS:-{}}
       KERNEL_WORKER_HUB_ID: veynod-runtime
       RUNTIME_WORKER_COUNT: ${RUNTIME_WORKER_COUNT:-2}
       RUNTIME_WORKER_LEASE_SECONDS: "120"
@@ -188,6 +205,9 @@ services:
       KERNEL_ADMIN_KEY: ${KERNEL_ADMIN_KEY}
       KERNEL_SERVICE_KEY: ${KERNEL_SERVICE_KEY}
       KERNEL_WORKSPACE_ID: ${KERNEL_WORKSPACE_ID:-}
+      KERNEL_ALLOWED_BASE_URLS: ${KERNEL_ALLOWED_BASE_URLS:-}
+      KERNEL_ALLOWED_CREDENTIAL_REFS: ${KERNEL_ALLOWED_CREDENTIAL_REFS:-}
+      KERNEL_WORKSPACE_BINDINGS: ${KERNEL_WORKSPACE_BINDINGS:-{}}
       # Same runner token the runtime worker uses. Stays on the API; the
       # console and the model never see it. Required for worktree leases.
       KERNEL_RUNTIME_TOKEN: ${KERNEL_RUNTIME_TOKEN:-}

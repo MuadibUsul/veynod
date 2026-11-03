@@ -116,6 +116,13 @@ WHERE submission_id AND status='RUNNING' AND work_lease_id=:lease;
 
 `VN_GATE_SANDBOX=docker` + `VN_GATE_SANDBOX_IMAGE=<含 pyright/ruff/pytest 的镜像>`：
 
+Compose 部署还需把宿主机仓库目录设为绝对路径 `REPOS_DIR`，把
+`VN_GATE_DOCKER_USER` 设为该目录所有者的 UID:GID。Gate Worker 以该用户运行
+（compose `user` + `group_add: ["docker"]`），这样它创建的 worktree 归同一
+UID 所有，子容器才能写入；docker CLI 经宿主 `docker` 组访问挂载的 socket。
+Gate Worker 挂载 Docker socket，并把 `/repos` 下的单个 worktree 映射给无网络、
+只读根文件系统的子容器；Kernel API 不挂载 Docker socket。
+
 - `--network none`；
 - worktree 是唯一挂载（`/workspace`）；
 - 只读根文件系统 + `--tmpfs /tmp`；

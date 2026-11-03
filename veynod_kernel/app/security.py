@@ -7,6 +7,8 @@ tests, but must never be accepted silently in production.
 
 from __future__ import annotations
 
+import os
+import posixpath
 from typing import Any
 
 WEAK_ADMIN_KEYS = frozenset(
@@ -51,15 +53,27 @@ def validate_worker_production_settings(settings: Any) -> None:
             "set VN_ALLOW_LOCAL_GATE_IN_PROD=true only for an isolated host."
         )
     if getattr(settings, "gate_sandbox", "local") == "docker":
-        if not str(getattr(settings, "gate_docker_user", "") or "").strip():
+        user = str(getattr(settings, "gate_docker_user", "") or "").strip()
+        uid_gid = user.split(":")
+        if (len(uid_gid) != 2 or not all(part.isdigit() for part in uid_gid)
+                or any(int(part) == 0 for part in uid_gid)):
             raise InsecureProductionConfig(
                 "VN_GATE_SANDBOX=docker in production requires "
-                "VN_GATE_DOCKER_USER=<uid:gid> so tests do not run as root."
+                "VN_GATE_DOCKER_USER=<nonroot uid:gid> so tests do not run as root."
             )
         if getattr(settings, "gate_docker_network", "none") != "none":
             raise InsecureProductionConfig(
                 "VN_GATE_SANDBOX=docker in production requires "
                 "VN_GATE_DOCKER_NETWORK=none."
+            )
+        if not str(getattr(settings, "gate_sandbox_image", "") or "").strip():
+            raise InsecureProductionConfig(
+                "VN_GATE_SANDBOX=docker in production requires VN_GATE_SANDBOX_IMAGE."
+            )
+        if not posixpath.isabs(os.environ.get("VN_GATE_HOST_REPOS_DIR", "")):
+            raise InsecureProductionConfig(
+                "VN_GATE_SANDBOX=docker in production requires an absolute "
+                "VN_GATE_HOST_REPOS_DIR."
             )
 
 

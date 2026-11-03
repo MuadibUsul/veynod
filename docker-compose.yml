@@ -60,12 +60,15 @@ services:
       VN_DEFAULT_WORKSPACE_ID: ${KERNEL_WORKSPACE_ID:-}
       VN_CELL_ID: ${VN_CELL_ID:-}
       VN_REQUIRE_BOUND_TOKENS: "true"
-      VN_GATE_SANDBOX: local
+      VN_GATE_SANDBOX: ${VN_GATE_SANDBOX:-docker}
+      VN_GATE_SANDBOX_IMAGE: ${VEYNOD_IMAGE_PREFIX:-veynod}-kernel:${VEYNOD_VERSION:-dev}
+      VN_GATE_DOCKER_USER: ${VN_GATE_DOCKER_USER:-}
+      VN_GATE_HOST_REPOS_DIR: ${REPOS_DIR:-}
+      VN_GATE_CONTAINER_REPOS_DIR: /repos
       # Required for several tasks on one repository: HEAD may advance during
       # a gate; the verified patch is tree-merged under CAS instead of being
       # rejected after bounded revalidations (ADR-020).
       VN_FAST_FORWARD_MERGE: "true"
-      VN_ALLOW_LOCAL_GATE_IN_PROD: "1"
       VN_GATE_MEMORY_MB: ${VN_GATE_MEMORY_MB:-2048}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
@@ -85,6 +88,10 @@ services:
     build:
       context: .
       dockerfile: deploy/Dockerfile.kernel
+    # When sandboxing with Docker, worktrees must be owned by the non-root
+    # sandbox user; the docker CLI needs the host docker group for the socket.
+    user: ${VN_GATE_DOCKER_USER:-}
+    group_add: ["docker"]
     command:
       - python
       - -m
@@ -100,16 +107,21 @@ services:
       VN_ADMIN_API_KEY: ${KERNEL_ADMIN_KEY}
       VN_RUNTIME_SERVICE_KEY: ${KERNEL_SERVICE_KEY}
       VN_CELL_ID: ${VN_CELL_ID:-}
-      VN_GATE_SANDBOX: local
+      VN_GATE_SANDBOX: ${VN_GATE_SANDBOX:-docker}
+      VN_GATE_SANDBOX_IMAGE: ${VEYNOD_IMAGE_PREFIX:-veynod}-kernel:${VEYNOD_VERSION:-dev}
+      VN_GATE_DOCKER_USER: ${VN_GATE_DOCKER_USER:-}
+      VN_GATE_HOST_REPOS_DIR: ${REPOS_DIR:-}
+      VN_GATE_CONTAINER_REPOS_DIR: /repos
+      TMPDIR: /repos
       # Required for several tasks on one repository: HEAD may advance during
       # a gate; the verified patch is tree-merged under CAS instead of being
       # rejected after bounded revalidations (ADR-020).
       VN_FAST_FORWARD_MERGE: "true"
-      VN_ALLOW_LOCAL_GATE_IN_PROD: "1"
       VN_GATE_MEMORY_MB: ${VN_GATE_MEMORY_MB:-2048}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ${REPOS_DIR:-./.veynod/repos}:/repos
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       db:
         condition: service_healthy
@@ -148,6 +160,7 @@ services:
       dockerfile: deploy/Dockerfile.runtime
     command: ["python", "-m", "agent_runtime.worker_main"]
     environment:
+      RUNTIME_ENVIRONMENT: ${ENVIRONMENT:-production}
       RUNTIME_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-veynod}:${POSTGRES_PASSWORD}@db:5432/veynod_runtime
       RUNTIME_MODEL_URL: ${MODEL_BASE_URL:?MODEL_BASE_URL is required}
       RUNTIME_MODEL_API_KEY: ${MODEL_API_KEY:?MODEL_API_KEY is required}
@@ -156,6 +169,9 @@ services:
       RUNTIME_TOOL_MODE: kernel
       KERNEL_URL: http://kernel-api:8001
       KERNEL_WORKSPACE_ID: ${KERNEL_WORKSPACE_ID:-}
+      KERNEL_ALLOWED_BASE_URLS: ${KERNEL_ALLOWED_BASE_URLS:-}
+      KERNEL_ALLOWED_CREDENTIAL_REFS: ${KERNEL_ALLOWED_CREDENTIAL_REFS:-}
+      KERNEL_WORKSPACE_BINDINGS: ${KERNEL_WORKSPACE_BINDINGS:-{}}
       KERNEL_RUNTIME_TOKEN: ${KERNEL_RUNTIME_TOKEN:?KERNEL_RUNTIME_TOKEN is required}
       KERNEL_SERVICE_KEY: ${KERNEL_SERVICE_KEY}
       RUNTIME_KERNEL_TOOLS: ${RUNTIME_KERNEL_TOOLS:-}
@@ -201,6 +217,9 @@ services:
       KERNEL_ADMIN_KEY: ${KERNEL_ADMIN_KEY}
       KERNEL_SERVICE_KEY: ${KERNEL_SERVICE_KEY}
       KERNEL_WORKSPACE_ID: ${KERNEL_WORKSPACE_ID:-}
+      KERNEL_ALLOWED_BASE_URLS: ${KERNEL_ALLOWED_BASE_URLS:-}
+      KERNEL_ALLOWED_CREDENTIAL_REFS: ${KERNEL_ALLOWED_CREDENTIAL_REFS:-}
+      KERNEL_WORKSPACE_BINDINGS: ${KERNEL_WORKSPACE_BINDINGS:-{}}
       # Same runner token the runtime worker uses. The API leases worktrees
       # with it and never returns the token to a browser or a model.
       KERNEL_RUNTIME_TOKEN: ${KERNEL_RUNTIME_TOKEN:-}

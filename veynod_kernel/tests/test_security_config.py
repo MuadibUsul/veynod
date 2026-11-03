@@ -18,6 +18,7 @@ def _settings(**kwargs) -> Settings:
         "allow_local_gate_in_prod": "VN_ALLOW_LOCAL_GATE_IN_PROD",
         "gate_docker_user": "VN_GATE_DOCKER_USER",
         "gate_docker_network": "VN_GATE_DOCKER_NETWORK",
+        "gate_sandbox_image": "VN_GATE_SANDBOX_IMAGE",
     }
     return Settings(
         _env_file=None, **{aliases.get(key, key): value for key, value in kwargs.items()}
@@ -60,10 +61,12 @@ def test_production_worker_allows_explicit_local_gate_opt_out() -> None:
     validate_worker_production_settings(settings)
 
 
-def test_production_worker_accepts_hardened_docker() -> None:
+def test_production_worker_accepts_hardened_docker(monkeypatch) -> None:
+    monkeypatch.setenv("VN_GATE_HOST_REPOS_DIR", "/srv/veynod/repos")
     settings = _settings(
         auth_mode="prod",
         gate_sandbox="docker",
+        gate_sandbox_image="veynod-kernel:test",
         gate_docker_user="65534:65534",
         gate_docker_network="none",
     )
@@ -73,6 +76,19 @@ def test_production_worker_accepts_hardened_docker() -> None:
 def test_production_worker_rejects_root_docker() -> None:
     settings = _settings(auth_mode="prod", gate_sandbox="docker")
     with pytest.raises(InsecureProductionConfig, match="GATE_DOCKER_USER"):
+        validate_worker_production_settings(settings)
+    root = _settings(auth_mode="prod", gate_sandbox="docker",
+                     gate_docker_user="0:0")
+    with pytest.raises(InsecureProductionConfig, match="GATE_DOCKER_USER"):
+        validate_worker_production_settings(root)
+
+
+def test_production_worker_rejects_missing_host_repository_path(monkeypatch) -> None:
+    monkeypatch.delenv("VN_GATE_HOST_REPOS_DIR", raising=False)
+    settings = _settings(auth_mode="prod", gate_sandbox="docker",
+                         gate_sandbox_image="veynod-kernel:test",
+                         gate_docker_user="1000:1000")
+    with pytest.raises(InsecureProductionConfig, match="GATE_HOST_REPOS_DIR"):
         validate_worker_production_settings(settings)
 
 

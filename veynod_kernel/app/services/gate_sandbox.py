@@ -164,6 +164,20 @@ async def _run_docker(
             125,
             "[Sandbox] VN_GATE_SANDBOX=docker but VN_GATE_SANDBOX_IMAGE is empty.",
         )
+    host_repos = Path(os.environ.get("VN_GATE_HOST_REPOS_DIR", ""))
+    container_repos = Path(os.environ.get("VN_GATE_CONTAINER_REPOS_DIR", "/repos"))
+    if not host_repos.is_absolute() or not container_repos.is_absolute():
+        # The worker runs on the host itself (no container mount topology):
+        # mount the worktree path directly.  Production refuses this layout at
+        # startup (security.py), so only development reaches this fallback.
+        host_worktree = cwd.resolve()
+    else:
+        try:
+            relative = cwd.resolve().relative_to(container_repos.resolve())
+        except ValueError:
+            return CommandResult(
+                125, "[Sandbox] Gate worktree is outside the repository mount.")
+        host_worktree = host_repos / relative
     name = f"veynod-gate-{uuid.uuid4().hex[:12]}"
     args = [
         "docker",
@@ -194,7 +208,7 @@ async def _run_docker(
             else []
         ),
         "-v",
-        f"{cwd}:/workspace:rw",
+        f"{host_worktree}:/workspace:rw",
         "-w",
         "/workspace",
         "-e",
