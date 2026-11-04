@@ -104,12 +104,11 @@ async def test_full_mode_places_on_a_fitting_host_and_pokes_it(client):
     assert placement["host_id"] == fits["host_id"]
     assert placement["placement_id"].startswith("plc_")
 
-    inbox = (await client.get("/v1/inbox", headers=fits["headers"])).json()["items"]
-    placed = [item for item in inbox if item["kind"] == "task.placed"]
-    assert placed and key in (placed[0]["task_key"], placed[0]["doc_key"])
-    assert placement["placement_id"] in placed[0]["note"]
-    other_inbox = (await client.get("/v1/inbox", headers=elsewhere["headers"])).json()["items"]
-    assert not [item for item in other_inbox if item["kind"] == "task.placed"]
+    # Work reaches a computer only over its nerve socket (this host has none
+    # connected, so nothing was delivered yet): no agent inbox carries placements.
+    for host in (fits, elsewhere):
+        inbox = (await client.get("/v1/inbox", headers=host["headers"])).json()["items"]
+        assert not [item for item in inbox if item["kind"] == "task.placed"], inbox
 
     await _claim(client, fits, key)
     await _schedule(client, ws)

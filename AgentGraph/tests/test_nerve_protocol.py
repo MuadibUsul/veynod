@@ -126,7 +126,7 @@ async def test_a_busy_agent_refuses_before_a_frame_is_sent() -> None:
     async def run():
         ws = FakeWS("both")
         sock = await _HUB.register(_sock(ws))
-        sock.worker_busy = True
+        sock.active = sock.slots  # every slot runs something (from its last ping)
         result = await _HUB.dispatch(sock, task_key="T-1", placement_id="p1", title="t", epoch=1)
         await _HUB.unregister(sock, "test")
         return result, ws

@@ -124,8 +124,13 @@ async def test_a_silent_socket_times_out_in_about_200ms_and_the_task_returns(
         assert result.get("nerve", {}).get("failed") == 1, result
         row = await _task_row(client, ws, key)
         assert row["status"] == "READY", row
-        # assignee stays: it is what an SSE-only host still wakes on
-        assert row["assignee"] == f"agent:{host['agent_id']}"
+        # Nerve is the only channel: an undelivered offer frees the task and the
+        # placement moves, so the next pass places it again (no SSE fallback).
+        assert row["assignee"] is None, row
+        placements = (await client.get("/v1/runner/placements", headers=ws["owner"],
+                                       params={"task_key": key})).json()["items"]
+        moved = [item for item in placements if item["status"] == "moved"]
+        assert moved and moved[0]["reason"].startswith("nerve:"), placements
     finally:
         await socket.close()
 
