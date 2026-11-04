@@ -91,6 +91,7 @@ do not edit by hand. Every error body is
 | `log_document_append_only` | 409 | `fix_request` | `append_entries` | Use append_entries instead. |
 | `merge_without_deliverable` | 409 | `fix_request` | `fix_request_then_resend` | Pass artifact (a commit or doc:// link), or merge an accepted submission. |
 | `no_active_generation` | 409 | `fix_request` | `fix_request_then_resend` | Pick an identity that has a token. |
+| `not_a_deploy` | 409 | `fix_request` | `fix_request_then_resend` | Report a deploy only on a deploy placement. |
 | `not_a_log_document` | 409 | `fix_request` | `fix_request_then_resend` | Write with upsert_shared_doc instead. |
 | `parts_incomplete` | 409 | `fix_request` | `fix_request_then_resend` | Upload the missing parts first. |
 | `policy_exists` | 409 | `fix_request` | `fix_request_then_resend` | Update the existing policy instead. |
@@ -269,6 +270,7 @@ do not edit by hand. Every error body is
 | `backup_chain_broken` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Restore from an older full backup or take a new one. |
 | `backups_not_configured` | 409 | `escalate_human` | `stop_and_escalate_to_human` | An operator must configure backup storage. |
 | `confirmation_required` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Wait for details.pending_confirmations. |
+| `deploys_off` | 409 | `escalate_human` | `stop_and_escalate_to_human` | A person turns deploys on for the target first. |
 | `escalated_to_human` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Wait for the human decision. |
 | `incident_not_confirmed` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Confirm the incident first. |
 | `namespace_not_empty` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Archive its documents and close its tasks. |

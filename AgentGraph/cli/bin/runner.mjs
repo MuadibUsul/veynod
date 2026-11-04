@@ -169,7 +169,9 @@ export async function inventory({ importer = (spec) => import(spec), run = execF
   return found;
 }
 
-const STEPS = new Set(["work", "review", "merge", "supervise"]);
+const STEPS = new Set(["work", "review", "merge", "supervise", "deploy"]);
+// Steps that belong to no task.
+const TASKLESS = new Set(["supervise", "deploy"]);
 
 /**
  * What a nerve poke asks of this computer: its placement id (the frame id and
@@ -181,9 +183,9 @@ export function placementOf(poke) {
   if (!PLACEMENT.test(placementId)) return null;
   const step = STEPS.has(poke.step) ? poke.step : "work";
   const key = poke.task_key || null;
-  if (!key && step !== "supervise") return null;
+  if (!key && !TASKLESS.has(step)) return null;
   return {
-    taskKey: step === "supervise" ? null : key,
+    taskKey: TASKLESS.has(step) ? null : key,
     placementId,
     step,
     ...(poke.diagram_key && poke.chunk_key
@@ -640,11 +642,14 @@ export async function createRunner(options, {
 } = {}) {
   const slots = Math.max(1, Number(options.slots) || 1);
   const repos = options.repos || [];
-  let runtimes = options.runtime === "custom"
-    ? [{ id: "custom", available: true, via: "exec" }]
-    : await takeInventory();
+  const deploys = Boolean(options.deploy);
+  let runtimes = deploys ? [{ id: "deploy", available: true, via: "docker" }]
+    : options.runtime === "custom"
+      ? [{ id: "custom", available: true, via: "exec" }]
+      : await takeInventory();
   // A saved choice can predate what is installed: use what is here, and say so.
-  const picked = chooseRuntime(options.runtime || "", runtimes, { fallback: true });
+  const picked = deploys ? { runtime: "deploy" }
+    : chooseRuntime(options.runtime || "", runtimes, { fallback: true });
   if (picked.note) say(`warning: ${picked.note}`);
   if (!picked.runtime) {
     say(`warning: ${picked.reason} The board shows this computer without a runtime until one is installed:`);
@@ -652,7 +657,8 @@ export async function createRunner(options, {
   }
   const makeAdapter = (runtime) => adapterFor(runtime, { exec: options.exec, importer,
     ...(spawner ? { spawner } : {}), ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}) });
-  let adapter = makeAdapter(picked.runtime || options.runtime || "claude");
+  // A deploy computer drives docker, not an agent runtime.
+  let adapter = deploys ? { id: "deploy" } : makeAdapter(picked.runtime || options.runtime || "claude");
   const pin = { host: options.host, key: options.key };
   const configDir = join(stateDir, "run");
   const receipts = join(stateDir, "runner-receipts.jsonl");
@@ -669,9 +675,11 @@ export async function createRunner(options, {
     runtime: adapter.id,
     delivery: "kernel",
     leases: [...leaseBook.values()],
+    // A deploy computer runs deploys and nothing else; the scheduler gives it no work.
+    ...(deploys ? { deploy: true } : {}),
   });
-  const mcpPinning = await pinsIdentity(adapter.id, { importer });
-  if (!mcpPinning) say(`warning: ${adapter.id} without OAR cannot pin Veynod's MCP to this runner's key; install OAR (Node 24+)`);
+  const mcpPinning = deploys ? null : await pinsIdentity(adapter.id, { importer });
+  if (mcpPinning === false) say(`warning: ${adapter.id} without OAR cannot pin Veynod's MCP to this runner's key; install OAR (Node 24+)`);
   // The host record: only the process that owns the computer's socket says
   // hello. A worker that did would overwrite the record with its own options.
   const hello = async () => {
@@ -692,7 +700,7 @@ export async function createRunner(options, {
   let lastInventory = Date.now();
   const beat = async () => {
     try {
-      if (options.runtime !== "custom" && Date.now() - lastInventory > 10 * 60_000) {
+      if (!deploys && options.runtime !== "custom" && Date.now() - lastInventory > 10 * 60_000) {
         runtimes = await takeInventory();
         lastInventory = Date.now();
         // Installed (or removed) while the hub runs: the next task uses what is here now.
@@ -883,11 +891,17 @@ export async function createRunner(options, {
  * process does the work for one placement and reports how it ended.
  */
 export async function runPlacement(options, poke, deps = {}) {
-  const runner = await createRunner(options, deps);
+  const placed = placementOf(poke);
   // The second receipt: this process is up and about to work the placement.
   if (process.send) process.send({ type: "IPC_ORIENTATION_READY", task_key: poke.task_key });
-  const placed = placementOf(poke);
   if (!placed) throw new Error("the poke names no placement");
+  if (placed.step === "deploy") {
+    // A deploy needs no agent runtime: pull, restart, check, report.
+    const { runDeploy } = await import("./deploy.mjs");
+    await runDeploy(options, placed.placementId, deps);
+    return;
+  }
+  const runner = await createRunner(options, deps);
   await runner.work(placed);
 }
 
@@ -934,6 +948,10 @@ export function workerRunnerOptions(env = process.env) {
   if (Array.isArray(given.repos)) out.repos = given.repos.map(String);
   for (const field of ["runtime", "exec", "delivery", "gitBase", "reposDir"]) {
     if (typeof given[field] === "string" && given[field]) out[field] = given[field];
+  }
+  if (given.deploy && typeof given.deploy === "object") {
+    out.deploy = { dir: String(given.deploy.dir || ""), file: String(given.deploy.file || ""),
+      before: String(given.deploy.before || "") };
   }
   return out;
 }

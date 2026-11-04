@@ -2295,3 +2295,48 @@ button.timeline-row:disabled {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text);
 }
+
+/* Deploy gate v2: per-project deploy settings on the Loop. */
+.deploy-project + .deploy-project {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.deploy-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px 16px;
+  padding: 10px 14px 14px;
+  font-size: 12px;
+}
+
+.deploy-form label {
+  display: grid;
+  gap: 4px;
+  color: var(--ds-text-secondary);
+}
+
+.deploy-form label.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.deploy-form .deploy-window {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.deploy-form .lin-actions {
+  grid-column: 1 / -1;
+}
+
+.deploy-token code {
+  user-select: all;
+  word-break: break-all;
+}

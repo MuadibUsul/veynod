@@ -29,7 +29,7 @@ import {
 } from "node:crypto";
 import { existsSync, chmodSync, copyFileSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, hostname, platform } from "node:os";
-import { dirname, join, posix } from "node:path";
+import { dirname, isAbsolute, join, posix } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
@@ -319,6 +319,11 @@ export function parseArgs(argv) {
     diskMb: Number(process.env.VEYNOD_DISK_MB) || 5120,
     gitBase: process.env.VEYNOD_GIT_BASE || "https://github.com/",
     runTasks: false,
+    // veynod up --deploy: this computer runs deploys of the board's releases.
+    deploy: false,
+    composeDir: process.env.VEYNOD_COMPOSE_DIR || "",
+    composeFile: process.env.VEYNOD_COMPOSE_FILE || "",
+    beforeDeploy: "",
     yes: false,
     name: "",
     fresh: false,
@@ -353,6 +358,10 @@ export function parseArgs(argv) {
     else if (arg === "--disk-mb") options.diskMb = Number(value());
     else if (arg === "--git-base") options.gitBase = value();
     else if (arg === "--run-tasks") options.runTasks = true;
+    else if (arg === "--deploy") options.deploy = true;
+    else if (arg === "--compose-dir") options.composeDir = value();
+    else if (arg === "--compose-file") options.composeFile = value();
+    else if (arg === "--before-deploy") options.beforeDeploy = value();
     else if (arg === "--yes" || arg === "-y") options.yes = true;
     else if (arg === "--name") options.name = value();
     else if (arg === "--fresh") options.fresh = true;
@@ -372,6 +381,13 @@ export function parseArgs(argv) {
   if (!["", "claude", "codex", "custom"].includes(options.runtime)) {
     throw new Error(`unknown runtime ${options.runtime} (claude, codex or custom)`);
   }
+  if (options.deploy) {
+    if (!options.composeDir || !isAbsolute(options.composeDir)) {
+      throw new Error("--deploy needs --compose-dir /absolute/path (where the compose file lives)");
+    }
+    if (options.repos.length) throw new Error("a deploy computer takes no --repo: it only deploys");
+    options.runTasks = true;
+  }
   options.repos = [...new Set(options.repos)];
   const badRepo = options.repos.find((repo) => !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo));
   if (badRepo) throw new Error(`--repo takes owner/name, not ${badRepo}`);
@@ -386,6 +402,10 @@ ${bold("Usage")}
   npx veynod up [--run-tasks] [--repo owner/name,...] [--runtime claude|codex|custom]
                 [--slots N] [--name NAME] [--client ...] [--host URL] [--yes] [--fresh]
                 [--no-service] [--dry-run]
+  npx veynod up --deploy --compose-dir DIR [--compose-file FILE] [--before-deploy CMD]
+      A server's deploy computer: it dials out to the board, takes only deploys
+      of your project's merged releases (pull and restart the changed services,
+      health check, roll back on failure) and no other work. No SSH key, no port.
       One command: connects this computer (one console approval for all its
       identities), wires your MCP clients, installs the hub service and runs the
       doctor. --no-service leaves starting \`veynod hub\` to your own supervisor.
@@ -1381,7 +1401,7 @@ async function up(options) {
       commands: service.commands } }, null, 2));
     return 0;
   }
-  if (plan.run_tasks && options.runtime !== "custom") {
+  if (plan.run_tasks && !options.deploy && options.runtime !== "custom") {
     // Before any key is asked for: a computer with no runtime would come online and do nothing.
     const { chooseRuntime, inventory, installSteps, RUNTIME_NAMES } = await import("./runner.mjs");
     const picked = chooseRuntime(options.runtime, await inventory());
@@ -1425,7 +1445,8 @@ async function up(options) {
       if (wanted.role === "computer") wireClients(clients, result.mcpUrl, key, out);
       try {
         await call(options.host, "/v1/agents/register", { agent_id: agentId,
-          capabilities: wanted.role === "review" ? ["review"] : [options.runtime] }, key);
+          capabilities: wanted.role === "review" ? ["review"]
+            : [options.deploy ? "deploy" : options.runtime] }, key);
       } catch {
         // already registered, or registration is not open to this token
       }
@@ -1441,7 +1462,9 @@ async function up(options) {
     }
   }
   saveConfig({ host: options.host, run_tasks: plan.run_tasks, runtime: options.runtime, exec: options.exec,
-    slots: options.slots, repos: options.repos, identities: [...identities, ...reused.parked] });
+    slots: options.slots, repos: options.repos, identities: [...identities, ...reused.parked],
+    ...(options.deploy ? { deploy: { dir: options.composeDir, file: options.composeFile || "docker-compose.yml",
+      before: options.beforeDeploy } } : {}) });
   out();
   let serviceInstalled;
   if (options.service && isNpxCachePath(script)) {

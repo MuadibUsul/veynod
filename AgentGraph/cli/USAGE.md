@@ -105,6 +105,24 @@ with the prompt in `VEYNOD_PROMPT`. Repositories are cloned from
 Install it as a service with `veynod service install --runner --key KEY` plus
 the same runner options.
 
+## Deploy a project's releases: `up --deploy`
+
+On the server that runs your project, one computer can deploy what your board
+releases (docs/DEPLOYS.md in the repository):
+
+```bash
+veynod up --deploy --compose-dir /srv/app --compose-file docker-compose.yml \
+  [--before-deploy ./scripts/migrate.sh]
+```
+
+It dials out to the board like any computer (no inbound port, no SSH key on
+Veynod's side) and takes only deploys. A deploy pins each changed service's
+image by digest in `/srv/app/.veynod/deploy.env`, runs the before-deploy
+command (no shell), pulls and restarts only the changed compose services,
+checks the target's health URL and, when it fails, restarts the previous images
+and reports a rollback. Turn deploys on per project in the console (Loop →
+Deploys); only a person can.
+
 ## Run it as a service: `service`
 
 ```sh

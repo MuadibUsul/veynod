@@ -381,6 +381,9 @@ REGISTRY: dict[str, ErrorSpec] = {
     "invalid_transition": _spec(409, ABANDON, "Give up this action."),
     "invalid_state_transition": _spec(409, ABANDON, "Re-read the task; give up this action."),
     "lease_lost": _spec(409, ABANDON, "Drop local state and claim again."),
+    # Deploy gate v2.
+    "deploys_off": _spec(409, ESCALATE_HUMAN, "A person turns deploys on for the target first."),
+    "not_a_deploy": _spec(409, FIX_REQUEST, "Report a deploy only on a deploy placement."),
     "run_not_claimed": _spec(
         409, ABANDON, "Only the runner holding a running deploy-gate run reports it; claim again."
     ),

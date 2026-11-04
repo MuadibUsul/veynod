@@ -1,0 +1,36 @@
+# What Veynod's own images are built from (deploy gate v2, docs/DEPLOYS.md).
+#
+# CI builds a service only when no image carries the content hash of its
+# inputs yet (scripts/release.py); the deploy computer restarts a service only
+# when its digest changed. `compose` names the compose services that run the
+# image in deploy/vps/docker-compose.unified.yml.
+services:
+  api:
+    image: ghcr.io/muadibusul/veynod-api
+    dockerfile: deploy/Dockerfile.api
+    compose: [api]
+    paths:
+      - AgentGraph/app/**
+      - AgentGraph/sql/**
+      - AgentGraph/scripts/**
+      - AgentGraph/requirements.txt
+      - AgentGraph/dashboard/**
+  kernel:
+    image: ghcr.io/muadibusul/veynod-kernel
+    dockerfile: deploy/Dockerfile.kernel
+    compose: [kernel-api, kernel-gate]
+    paths:
+      - veynod_kernel/app/**
+      - veynod_kernel/sql/**
+      - veynod_kernel/scripts/**
+      - veynod_kernel/requirements.txt
+      - veynod_kernel/rust/**
+  runtime:
+    image: ghcr.io/muadibusul/veynod-runtime
+    dockerfile: deploy/Dockerfile.runtime
+    compose: [runtime-api, runtime-worker]
+    paths:
+      - agent_runtime/**
+shared:
+  - contracts/**
+  - .dockerignore

@@ -184,6 +184,10 @@ EPHEMERAL = frozenset({
     "diagram_chunk_projections",
     # Per-tenant runtime limits are the operator's ceiling, like budget limits.
     "tenant_runtime_limits",
+    # Deploy gate v2 (v3.82): targets name this deployment's computers and hold
+    # a release-token hash; releases and runs record what ran on its servers.
+    # A moved workspace sets its deploys up again; it never inherits them.
+    "deploy_targets", "deploy_releases", "deploy_runs",
     # Federation (v3.83): identities and their sealed keys never leave this
     # deployment, and grants, messages and the replay guard are bound to those
     # identities. Moving a workspace between deployments is not supported in
