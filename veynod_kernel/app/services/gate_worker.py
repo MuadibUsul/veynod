@@ -354,19 +354,22 @@ class GateWorker:
             or str(getattr(task, "leased_by_runner", "")) != runner_id
         ):
             code = "lease_expired" if expired else "lease_lost"
+            # A LEASED task whose work lease is gone must be re-claimable;
+            # leaving it LEASED strands it until a reaper runs. Release it
+            # before the submission becomes final, so nobody can read a final
+            # submission whose task is still LEASED. The release is fenced by
+            # this submission's lease hash: a task another runner has since
+            # claimed is left alone, and the record says so.
+            released = task_state == "LEASED" and await self.release_task(
+                task_id, lease_hash, f"submission {submission_id}: {code}"
+            )
             await self._finalize(
                 record,
                 status="FAILED",
-                # A LEASED task whose work lease is gone must be re-claimable;
-                # leaving it LEASED strands it until a reaper runs.
-                task_status="READY" if task_state == "LEASED" else task_state,
+                task_status="READY" if released else task_state,
                 error_code=code,
                 error_detail="The task lease is no longer held by this submission.",
             )
-            if task_state == "LEASED":
-                await self.release_task(
-                    task_id, lease_hash, f"submission {submission_id}: {code}"
-                )
             return
 
         # Gate stages run here; the Git CAS and DB finalization are performed
