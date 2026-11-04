@@ -61,24 +61,42 @@ async def _pg(sql: str, database: str = "postgres"):
         await conn.close()
 
 
-async def _wait_url(url: str, timeout: float = 120) -> None:
+def _log_tail(log: Path | None, lines: int = 40) -> str:
+    if log is None or not log.exists():
+        return ""
+    tail = log.read_text(encoding="utf-8", errors="replace").splitlines()[-lines:]
+    return f"\n--- {log} (last {len(tail)} lines) ---\n" + "\n".join(tail)
+
+
+async def _wait_url(url: str, timeout: float = 120, *, process=None,
+                    log: Path | None = None) -> None:
+    """Wait for ``url`` to answer 200; fail at once if ``process`` exits first.
+
+    A Kernel that cannot start (a missing dependency, say) exits within a
+    second; waiting out the timeout would only hide why.
+    """
     import httpx
 
     deadline = asyncio.get_running_loop().time() + timeout
     async with httpx.AsyncClient(timeout=2) as probe:
         while True:
+            if process is not None and process.returncode is not None:
+                raise AssertionError(
+                    f"exited with {process.returncode} before {url} answered"
+                    + _log_tail(log))
             try:
                 if (await probe.get(url)).status_code == 200:
                     return
             except httpx.HTTPError:
                 pass
             if asyncio.get_running_loop().time() > deadline:
-                raise AssertionError(f"did not start: {url}")
+                raise AssertionError(f"did not start: {url}" + _log_tail(log))
             await asyncio.sleep(0.25)
 
 
-async def _kernel_ready(base_url: str, timeout: float = 90) -> None:
-    await _wait_url(f"{base_url}/healthz", timeout)
+async def _kernel_ready(base_url: str, timeout: float = 90, *, process=None,
+                        log: Path | None = None) -> None:
+    await _wait_url(f"{base_url}/healthz", timeout, process=process, log=log)
 
 
 @pytest.fixture(scope="module")
@@ -129,13 +147,16 @@ async def kernel():
         "VN_RUNTIME_SERVICE_KEY": SERVICE_KEY,
         "VN_REPO_ROOT": str(repo),
     }
+    # The Kernel's output goes to a log so a failed start says why
+    # (``KERNEL_PYTHON`` without the Kernel's requirements, for example).
+    api_log = Path(os.environ.get("TEMP", "/tmp")) / f"chunk-kernel-{port}.log"
     api = await asyncio.create_subprocess_exec(
         kernel_python, "-m", "uvicorn", "app.main:app",
         "--host", "127.0.0.1", "--port", str(port), cwd=str(KERNEL), env=common,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        stdout=api_log.open("w"), stderr=subprocess.STDOUT)
     gate = None
     try:
-        await _kernel_ready(base_url)
+        await _kernel_ready(base_url, process=api, log=api_log)
         import httpx
 
         async with httpx.AsyncClient(base_url=base_url, timeout=60,
