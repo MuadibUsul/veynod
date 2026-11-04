@@ -1,4 +1,4 @@
--- v3.82 Federation core tables (federation diagram chunks F-01a, F-01b, F-01c).
+-- v3.83 Federation core tables (federation diagram chunks F-01a, F-01b, F-01c).
 --
 -- Contracts: doc://federation-i-id-identity-icd (ADR-001a: self-certifying ids),
 -- docs/federation/ICD_I_GRANT.md, docs/federation/ICD_I_MSG.md.

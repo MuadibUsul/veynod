@@ -1,6 +1,6 @@
 # 联邦第一轮：身份、授权与消息的地基
 
-> 日期：2026-11-04。执行方：`agent:claude-2`。基线：main `52b1b71`（schema 3.81.0）→ 本轮 schema 3.82.0。
+> 日期：2026-11-04。执行方：`agent:claude-2`。基线：main `52b1b71`（schema 3.81.0）→ 本轮 schema 3.83.0（3.82 留给部署门 v2）。
 > 对应联邦图（`diagrams/federation`）的块：I-ID（定稿）、I-GRANT、I-MSG（契约），F-01a/b/c（表），F-02a/b/c（服务）。
 > 联邦开关 `FEDERATION_ENABLED` 默认关闭：本轮合并后，生产行为不变，也不会为任何现有工作区生成联邦身份。
 
@@ -11,7 +11,7 @@
 | I-ID | owner 确认自证式 ID，TBD 按 P1 占位 | ADR-001a（[ARCHITECTURE_DECISIONS.md](ARCHITECTURE_DECISIONS.md)），`doc://federation-i-id-identity-icd` §11 |
 | I-GRANT | 授权状态机契约 | [ICD_I_GRANT.md](ICD_I_GRANT.md) |
 | I-MSG | 签名信封、验证顺序、投递语义、加密策略契约 | [ICD_I_MSG.md](ICD_I_MSG.md) |
-| F-01a | 身份、密钥、身份日志、本地映射、别名与别名历史（平台专用表） | `sql/migrations/v3_82_federation_core.sql` |
+| F-01a | 身份、密钥、身份日志、本地映射、别名与别名历史（平台专用表） | `sql/migrations/v3_83_federation_core.sql` |
 | F-01b | `federation_grants` + 只追加的 `federation_grant_history`（版本严格加 1） | 同上 |
 | F-01c | 线程、消息（两个幂等唯一键）、投递记录、重放防护（租户表，RLS） | 同上 |
 | F-02a | 身份创建、解析、别名、密钥轮换、撤销、冻结、墓碑 | `app/services/federation/identity.py` |
@@ -49,4 +49,4 @@ PYTHONPATH=.. TEST_DATABASE_URL=postgresql+asyncpg://… python -m pytest -q \
 - F-01d（委派、成本、拉黑、举报、安全事件表）要等 I-BRIDGE 契约。
 - F-03（审批流、scope 与 TTL、撤销 fence）、F-04（投递与重试）尚未实现；本轮只把它们需要的表和约束落好。
 - `FEDERATION_KEK` 需要 owner 生成并下发（ADR-013）；开启联邦前还需完成 ADR-010 的非超级用户连接切换。
-- 迁移号：本轮占用 3.82.0。如果其他分支（例如部署门 v2）也用了 3.82，合并时由后合并的一方顺延。
+- 迁移号：本轮用 3.83.0；3.82.0 是部署门 v2（分支 `claude/cool-cerf-it7a0j`）的。两边合并时 `app/database.py` 的迁移列表末尾会有一行文本冲突，按 3.82、3.83 的顺序保留两行即可。
