@@ -74,7 +74,8 @@ import {
   tierLabel,
 } from "./types";
 
-const CONSOLE_BUILD = "3.6.0";
+// Set from package.json by next.config.mjs at build time.
+const CONSOLE_BUILD = process.env.CONSOLE_BUILD ?? "dev";
 const TOKEN_KEY = "agentgraph.admin_token";
 const SESSION_KEY = "agentgraph.session_token";
 const BASE_KEY = "agentgraph.api_base";
