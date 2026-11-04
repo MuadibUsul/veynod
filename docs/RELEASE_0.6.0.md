@@ -89,7 +89,7 @@ SQL
 ## 6. 迁移（先 Kernel，后产品面）
 
 迁移只做扩展（expand-only），旧镜像仍能在新 schema 上运行。会补上生产缺的
-`v4_017`（Kernel）与 `v3_80`、`v3_81`（产品面）。
+`v4_017`（Kernel）与 `v3_80`、`v3_81`、`v3_82`（产品面；`v3_82` 是部署门 v2 的表，见 [DEPLOYS.md](DEPLOYS.md)）。
 
 ```bash
 export VEYNOD_TAG=$TAG COMPOSE_FILE=docker-compose.unified.yml
