@@ -12,6 +12,7 @@ from typing import Any
 CODES: dict[str, int] = {
     "FED_E_DISABLED": 404,
     "FED_E_KEK_MISSING": 503,
+    "FED_E_UNREACHABLE": 503,
     # identity (I-ID)
     "FED_E_IDENTITY_UNKNOWN": 404,
     "FED_E_IDENTITY_INVALID": 422,
@@ -49,6 +50,13 @@ CODES: dict[str, int] = {
     "FED_E_SCOPE_DENIED": 403,
     "FED_E_SCOPE_UNKNOWN": 422,
     "FED_E_APPROVAL_NOT_HUMAN": 403,
+    # task bridge (I-BRIDGE)
+    "FED_E_JOB_UNKNOWN": 404,
+    "FED_E_JOB_TRANSITION": 409,
+    "FED_E_JOB_STALE": 409,
+    "FED_E_ACCEPTANCE_MISMATCH": 409,
+    "FED_E_TERMS_INVALID": 422,
+    "FED_E_SETTLEMENT_DISABLED": 422,
 }
 
 

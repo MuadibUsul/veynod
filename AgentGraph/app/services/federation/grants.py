@@ -75,6 +75,10 @@ class LocalTransport:
             )
         if workspace_id is None:
             raise FederationError("FED_E_IDENTITY_UNKNOWN", "no such workspace on this deployment")
+        if str(envelope.get("type", "")).startswith("delegate."):
+            from app.services.federation import delegations
+
+            return await delegations.receive(str(workspace_id), envelope)
         return await receive(str(workspace_id), envelope)
 
 

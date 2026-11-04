@@ -4681,6 +4681,115 @@
       {
        "body": [],
        "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/delegations",
+       "responses": [
+        "200"
+       ],
+       "summary": "Work this workspace delegated or was delegated"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "peer_workspace",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "The delegation object of ICD_I_BRIDGE §2.",
+         "name": "terms",
+         "required": true,
+         "type": "object"
+        },
+        {
+         "description": "Optional: this workspace's own task for the outsourced work. Kept here; never sent to the peer.",
+         "name": "local_task_key",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/delegations",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Delegate work to a connected workspace (a person; needs delegate scope)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "job_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/delegations/{job_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "One delegation, its history and cost receipts"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "job_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/delegations/{job_id}/sync",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Re-send this side's undelivered objects"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "job_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "action",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/delegations/{job_id}/{action}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Provider: accept, reject (people) or submit; requester: accept_result, revise, dispute (people)"
+      },
+      {
+       "body": [],
+       "description": "",
        "method": "POST",
        "parameters": [],
        "path": "/v1/federation/enable",

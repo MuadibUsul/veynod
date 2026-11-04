@@ -200,3 +200,97 @@ async def test_connection_lifecycle_over_http(fed):
         "federation_not_found",
         "FED_E_GRANT_UNKNOWN",
     )
+
+
+async def test_delegation_over_http_creates_one_real_provider_task(fed):
+    """The task bridge end to end: the provider's task comes from the task service."""
+    from datetime import datetime, timedelta, timezone
+
+    a, b = await _workspace(fed, "dl-a"), await _workspace(fed, "dl-b")
+    (await fed.post("/v1/federation/enable", headers=a["owner"])).json()["identity"][
+        "federation_id"
+    ]
+    b_fid = (await fed.post("/v1/federation/enable", headers=b["owner"])).json()["identity"][
+        "federation_id"
+    ]
+    cid = (
+        await fed.post(
+            "/v1/federation/connections",
+            headers=a["owner"],
+            json={
+                "peer_workspace": b_fid,
+                "outbound_scopes": ["chat", "delegate"],
+                "inbound_scopes": ["chat"],
+                "reason": "outsourcing pilot",
+            },
+        )
+    ).json()["connection"]["connection_id"]
+    assert (
+        await fed.post(f"/v1/federation/connections/{cid}/approve", headers=b["owner"])
+    ).status_code == 200
+
+    terms = {
+        "objective": "Translate the onboarding guide into Spanish.",
+        "acceptance_criteria": ["Every section translated", "Terminology list followed"],
+        "input_summary": "A 12-page public onboarding guide.",
+        "data_classification": "public",
+        "allowed_use": "Only for this task.",
+        "deadline": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(),
+        "budget_cap": None,
+        "result_contract": "One Markdown file.",
+        "cancellation_policy": "drain",
+        "external_side_effects": False,
+    }
+    offered = await fed.post(
+        "/v1/federation/delegations",
+        headers=a["owner"],
+        json={"peer_workspace": b_fid, "terms": terms},
+    )
+    assert offered.status_code == 201, offered.text
+    job = offered.json()["delegation"]["federation_job_id"]
+    _no_local_ids(offered, a["id"], b["id"])
+
+    # Only a person accepts; the workspace key is an agent.
+    _refused(
+        await fed.post(f"/v1/federation/delegations/{job}/accept", headers=b["key"]),
+        403,
+        "federation_forbidden",
+        "FED_E_APPROVAL_NOT_HUMAN",
+    )
+    accepted = await fed.post(f"/v1/federation/delegations/{job}/accept", headers=b["reviewer"])
+    assert accepted.status_code == 200, accepted.text
+    task_key = accepted.json()["delegation"]["local_task_key"]
+    task = await fed.get(f"/v1/tasks/{task_key}", headers=b["owner"])
+    assert task.status_code == 200, task.text
+    body = task.json()
+    assert body["title"].startswith("[federation] Translate")
+    assert [item["text"] for item in body["acceptance"]] == terms["acceptance_criteria"]
+    assert body["input_context"]["federation"]["content_origin"] == "federation"
+    # A cannot see B's task, and the key never reached A.
+    assert (await fed.get(f"/v1/tasks/{task_key}", headers=a["owner"])).status_code == 404
+    mine = (await fed.get(f"/v1/federation/delegations/{job}", headers=a["owner"])).json()
+    assert (
+        mine["delegation"]["state"] == "ACCEPTED" and mine["delegation"]["local_task_key"] is None
+    )
+
+    submitted = await fed.post(
+        f"/v1/federation/delegations/{job}/submit",
+        headers=b["key"],
+        json={
+            "result": {
+                "summary": "Done.",
+                "artifacts": [{"name": "guide.es.md", "content": "# Guía"}],
+            }
+        },
+    )
+    assert submitted.status_code == 200, submitted.text
+    done = await fed.post(f"/v1/federation/delegations/{job}/accept_result", headers=a["owner"])
+    assert done.json()["delegation"]["state"] == "ACCEPTED_RESULT"
+    theirs = (await fed.get(f"/v1/federation/delegations/{job}", headers=b["owner"])).json()
+    assert theirs["delegation"]["state"] == "ACCEPTED_RESULT"
+    assert [h["action"] for h in theirs["history"]] == [
+        "offer",
+        "accept",
+        "submit",
+        "accept_result",
+    ]
