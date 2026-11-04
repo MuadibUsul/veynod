@@ -188,6 +188,15 @@ EPHEMERAL = frozenset({
     # a release-token hash; releases and runs record what ran on its servers.
     # A moved workspace sets its deploys up again; it never inherits them.
     "deploy_targets", "deploy_releases", "deploy_runs",
+    # Federation (v3.83): identities and their sealed keys never leave this
+    # deployment, and grants, messages and the replay guard are bound to those
+    # identities. Moving a workspace between deployments is not supported in
+    # P1 (I-ID TBD-5), so none of this travels in an export.
+    "federation_identities", "federation_identity_keys", "federation_identity_log",
+    "federation_local_map", "federation_addresses", "federation_address_history",
+    "federation_peers", "federation_grants", "federation_grant_history",
+    "federation_threads", "federation_messages", "federation_delivery_attempts",
+    "federation_replay_guard",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")
