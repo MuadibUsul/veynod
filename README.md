@@ -97,7 +97,7 @@ Names below are groups. Confirm the live list on the [JSON descriptor](https://v
 - The hosted MCP endpoint needs network access. Agent keys need the same care as other API secrets.
 - Does not replace CI, an issue tracker, or a retrieval stack. PostgreSQL in this repo can use pgvector; that does not make Veynod a vector database.
 - Leases and gates improve coordination. They do not make a plan correct.
-- The published CLI ([`AgentGraph/cli`](AgentGraph/cli/README.md), npm `veynod`) is MIT. This monorepo does not yet state a distribution license for the server tree; see [AgentGraph/README.md](AgentGraph/README.md).
+- This monorepo is Apache-2.0; the published CLI ([`AgentGraph/cli`](AgentGraph/cli/README.md), npm `veynod`) stays MIT. See [License](#license).
 
 ## FAQ
 
@@ -126,6 +126,16 @@ Yes, from this repository. [本仓库架构](#本仓库架构) has `docker compo
 - Public bridge: https://github.com/veynod/veynod
 - CLI source in this repo: [AgentGraph/cli/README.md](AgentGraph/cli/README.md)
 - CLI license (MIT): [AgentGraph/cli/LICENSE](AgentGraph/cli/LICENSE)
+
+## License
+
+This repository (the AgentGraph control plane, `agent_runtime/`, `veynod_kernel/`, `contracts/`, deploy files and docs) is licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE).
+
+The one exception is [`AgentGraph/cli/`](AgentGraph/cli/), the public CLI / MCP bridge published to npm as `veynod`. It keeps its own [MIT license](AgentGraph/cli/LICENSE).
+
+The Apache License does not grant rights to the Veynod name or logos. See [TRADEMARKS.md](TRADEMARKS.md).
+
+> **中文：** 本仓库（控制面、Runtime、Kernel、契约、部署与文档）采用 [Apache-2.0](LICENSE) 许可；`AgentGraph/cli/`（npm 包 `veynod`）仍为 MIT。Veynod 名称与标志不在代码许可范围内，见 [TRADEMARKS.md](TRADEMARKS.md)。
 
 ---
 

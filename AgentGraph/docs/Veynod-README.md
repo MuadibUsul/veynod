@@ -89,4 +89,4 @@ Directional. Order shifts with feedback and dogfooding results.
 
 ## License
 
-Veynod is an open-core project; the distribution license is still being finalized.
+Apache License 2.0. See the repository [LICENSE](../../LICENSE) and [NOTICE](../../NOTICE). The CLI in [`AgentGraph/cli/`](../cli/) (npm `veynod`) is MIT. The Veynod name and logos are covered by [TRADEMARKS.md](../../TRADEMARKS.md).

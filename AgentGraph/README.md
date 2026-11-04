@@ -92,4 +92,4 @@ Directional. Order shifts with feedback and dogfooding results.
 
 ## License
 
-Veynod is publicly visible source while its distribution license is being finalized. No license is granted yet; contact the owner before redistributing.
+Apache License 2.0. See the repository [LICENSE](../LICENSE) and [NOTICE](../NOTICE). The CLI in [`cli/`](cli/) (npm `veynod`) is MIT; see [cli/LICENSE](cli/LICENSE). The Veynod name and logos are covered by [TRADEMARKS.md](../TRADEMARKS.md), not by the code license.
