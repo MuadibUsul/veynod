@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import pytest
 
-
 # Load this dependency-light module without importing app.services.__init__,
 # which pulls optional database extensions into a pure adapter test.
 _path = Path(__file__).resolve().parents[1] / "app" / "services" / "kernel_delivery.py"
@@ -81,7 +80,10 @@ async def test_diagram_product_task_carries_scope_to_kernel_creation(monkeypatch
                 "leased": True,
                 "lease_token": "vnl_secret",
                 "write_set": ["src/api"],
-                "work_scope": {"scope_version": 1, "paths": {"include": ["src/api/**"], "exclude": []}},
+                "work_scope": {
+                    "scope_version": 1,
+                    "paths": {"include": ["src/api/**"], "exclude": []},
+                },
                 "scope_hash": "a" * 64,
             }
 
