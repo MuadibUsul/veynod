@@ -2340,3 +2340,53 @@ button.timeline-row:disabled {
   user-select: all;
   word-break: break-all;
 }
+
+/* Federation (rounds 2-4): identity, connections and delegated work. */
+.federation-view {
+  display: grid;
+  gap: 16px;
+}
+
+.federation-view .federation-id {
+  user-select: all;
+  word-break: break-all;
+  font-size: 12px;
+}
+
+.federation-view form.lin-row input {
+  min-width: 180px;
+}
+
+.federation-scopes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 6px 10px 8px;
+  color: var(--ds-text-secondary);
+}
+
+.federation-scopes legend {
+  padding: 0 4px;
+}
+
+.deploy-form .federation-wide {
+  grid-column: 1 / -1;
+}
+
+.federation-delegation + .federation-delegation {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.federation-result {
+  display: grid;
+  gap: 6px;
+}
+
+.federation-result pre {
+  white-space: pre-wrap;
+  max-height: 260px;
+  overflow: auto;
+  font-size: 12px;
+}

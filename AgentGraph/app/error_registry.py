@@ -381,6 +381,25 @@ REGISTRY: dict[str, ErrorSpec] = {
     "invalid_transition": _spec(409, ABANDON, "Give up this action."),
     "invalid_state_transition": _spec(409, ABANDON, "Re-read the task; give up this action."),
     "lease_lost": _spec(409, ABANDON, "Drop local state and claim again."),
+    # Federation (round 2): one API code per kind of refusal; the precise
+    # federation code is in details.federation_code (docs/federation/ICD_*).
+    "federation_disabled": _spec(
+        404, ESCALATE_HUMAN, "A person turns federation on for the deployment first."
+    ),
+    "federation_forbidden": _spec(
+        403, ESCALATE_HUMAN,
+        "Read details.federation_code: an owner must act, or the connection does not allow it.",
+    ),
+    "federation_not_found": _spec(
+        404, ABANDON, "The identity, handle or connection does not exist."
+    ),
+    "federation_conflict": _spec(
+        409, REFRESH_AND_RETRY, "Re-read the connection; its state changed or the object is stale."
+    ),
+    "federation_invalid": _spec(422, FIX_REQUEST, "Fix the request per details.federation_code."),
+    "federation_unavailable": _spec(
+        503, ESCALATE_HUMAN, "The owner must configure the federation key on this deployment."
+    ),
     # Deploy gate v2.
     "deploys_off": _spec(409, ESCALATE_HUMAN, "A person turns deploys on for the target first."),
     "not_a_deploy": _spec(409, FIX_REQUEST, "Report a deploy only on a deploy placement."),

@@ -47,6 +47,15 @@ KNOWN_TYPES = PUBLIC_TYPES | frozenset(
         "grant.revoke",
         "chat.message",
         "delivery.receipt",
+        "delegate.offer",
+        "delegate.accept",
+        "delegate.reject",
+        "delegate.result",
+        "delegate.accept_result",
+        "delegate.revise",
+        "delegate.dispute",
+        "delegate.cancel",
+        "delegate.cancel_ack",
     }
 )
 FIELDS = (
