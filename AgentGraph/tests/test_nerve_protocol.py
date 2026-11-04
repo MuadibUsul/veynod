@@ -257,3 +257,32 @@ async def test_the_reaper_loop_starts_and_survives_a_pass() -> None:
     finally:
         hub_module.reap_stale = original
     assert len(calls) >= 2
+
+
+async def test_a_dispatch_that_loses_the_race_does_not_move_the_placement(monkeypatch) -> None:
+    """The scheduling pass and the dispatch loop can reach one offer together.
+    The loser hears TASK_ALREADY_DISPATCHING; that is not a failed delivery."""
+    from app.services import scheduler
+
+    moved: list[str] = []
+
+    async def undeliverable(_session, placement, reason):
+        moved.append(reason)
+
+    monkeypatch.setattr(scheduler, "_undeliverable", undeliverable)
+    placement = {"placement_id": "plc_X", "workspace_id": "ws", "agent_id": "a", "step": "work",
+                 "task_key": "T-1", "task_title": "t", "lease_epoch": 0, "holder": "a",
+                 "diagram_key": None, "chunk_key": None}
+
+    class Hub:
+        def __init__(self, reason):
+            self.reason = reason
+
+        async def deliver_task_poke(self, *_args, **_kwargs):
+            return {"dispatched": False, "reason": self.reason}
+
+    counts = {"ok": 0, "failed": 0, "skipped": 0}
+    await scheduler._deliver_one(None, placement, Hub("TASK_ALREADY_DISPATCHING"), counts)
+    assert moved == [] and counts["skipped"] == 1
+    await scheduler._deliver_one(None, placement, Hub("QOS_TIMEOUT_NET_ACK_200MS"), counts)
+    assert moved == ["nerve:QOS_TIMEOUT_NET_ACK_200MS"] and counts["failed"] == 1
