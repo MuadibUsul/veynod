@@ -192,3 +192,41 @@ async def test_token_refresh_returns_a_secret_that_still_works(api_base_url, cli
         await socket.close()
     called = await client.get("/v1/tasks", headers={"Authorization": f"Bearer {fresh}"})
     assert called.status_code == 200, called.text
+
+
+async def test_another_process_delivery_is_judged_by_its_receipts_not_the_epoch(client) -> None:
+    """A dispatch moves the lease epoch before the computer answers. A scheduler
+    in another process must not read that as a claim: while the receipts are
+    pending it leaves the offer alone, and a revoked delivery moves it."""
+    from tests.test_scheduler import _sql
+
+    ws = await _workspace(client, "full")
+    host = await _host(client, ws, f"nerve-{uuid.uuid4().hex[:4]}")  # no socket: offer waits
+    key = await _task(client, ws)
+    await _schedule(client, ws)
+
+    async def offer() -> dict:
+        items = (await client.get("/v1/runner/placements", headers=ws["owner"],
+                                  params={"task_key": key})).json()["items"]
+        return items[0]
+
+    placement = await offer()
+    assert placement["status"] == "offered", placement
+    # What a dispatch in another process has committed while it waits for receipts.
+    await _sql("UPDATE collab_tasks SET lease_epoch = lease_epoch + 1, "
+               "dispatch_state = 'AWAITING_NET_ACK' WHERE task_key = $1", key)
+    await _schedule(client, ws)
+    assert (await offer())["status"] == "offered"
+
+    # Its socket stayed silent: it revoked the delivery and reopened the task.
+    await _sql("UPDATE collab_tasks SET dispatch_state = 'IDLE' WHERE task_key = $1", key)
+    await _sql(
+        "INSERT INTO poke_deliveries (workspace_id, event_seq, recipient, channel, status, detail, "
+        "lease_epoch, qos_status, task_key, frame_id) VALUES ($1::uuid, 0, $2, 'nerve', "
+        "'delivered', 'NET_ACK_TIMEOUT', 1, 'TIMEOUT_REVOKED', $3, $4) ON CONFLICT DO NOTHING",
+        ws["id"], f"agent:{host['agent_id']}", key, placement["placement_id"])
+    await _schedule(client, ws)
+    items = (await client.get("/v1/runner/placements", headers=ws["owner"],
+                              params={"task_key": key})).json()["items"]
+    first = next(item for item in items if item["placement_id"] == placement["placement_id"])
+    assert (first["status"], first["reason"]) == ("moved", "nerve:NET_ACK_TIMEOUT"), items

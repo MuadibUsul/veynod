@@ -41,6 +41,7 @@ from app.errors import ApiError, Forbidden, NotFound
 from app.models import CollabTask, TaskStatus
 from app.services import automation
 from app.services.common import append_event, record_audit, task_snapshot
+from app.services.deploys import is_deploy_host
 from app.services.runners import MIN_RUNNER_VERSION, ONLINE_WINDOW, runner_outdated
 
 logger = logging.getLogger("agentgraph.scheduler")
@@ -212,6 +213,24 @@ async def _reconcile(session: AsyncSession, workspace_id: Any,
             await _end(session, placement, "moved", "host_removed")
             counts["moved"] += 1
             continue
+        if status == "offered":
+            # The nerve dispatch moves the lease epoch before the computer has
+            # answered, so the epoch alone is not a claim. Its delivery record
+            # says what happened, whichever process is delivering it.
+            delivery = (await session.execute(text(
+                "SELECT t.dispatch_state, d.qos_status, d.detail FROM collab_tasks t "
+                "LEFT JOIN poke_deliveries d ON d.workspace_id = t.workspace_id "
+                "AND d.frame_id = :f WHERE t.id = :t"),
+                {"t": task.id, "f": placement["placement_id"]})).mappings().one()
+            if delivery["dispatch_state"] in ("AWAITING_NET_ACK", "AWAITING_EXEC_ACK"):
+                continue  # receipts pending; the dispatcher (or reaper) settles it
+            if delivery["qos_status"] == "TIMEOUT_REVOKED":
+                if assigned_here:
+                    await _unassign(session, task, "scheduler")
+                await _end(session, placement, "moved",
+                           f"nerve:{delivery['detail'] or 'not_delivered'}"[:120])
+                counts["moved"] += 1
+                continue
         # A host that claimed (the lease epoch moved) counts as having had the
         # task, even if it gave it back before this pass saw the claim.
         taken = (task.lease_epoch or 0) > (placement["lease_epoch"] or 0)
@@ -339,7 +358,8 @@ def _online(hosts: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
     (a CLI older than nerve-only dispatch would be offered work it never gets)."""
     return [host for host in hosts if host["status"] == "active"
             and now - host["last_seen_at"] <= ONLINE_WINDOW
-            and not runner_outdated(host.get("runner_version"))]
+            and not runner_outdated(host.get("runner_version"))
+            and not is_deploy_host(host)]
 
 
 async def _load(session: AsyncSession, workspace_id: Any,
@@ -753,6 +773,8 @@ async def _reconcile_step(session: AsyncSession, workspace_id: Any, placement: d
                           host: dict[str, Any] | None, chunks: dict[str, dict[str, Any]],
                           now: datetime) -> str | None:
     step, status = placement["step"], placement["status"]
+    if step == "deploy":
+        return None  # app.services.deploys owns a deploy run from offer to report
     if step == "supervise":
         if status == "unplaced":
             return None  # the round planner refreshes or places it

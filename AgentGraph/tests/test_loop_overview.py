@@ -100,7 +100,7 @@ async def test_the_loop_overview_groups_work_the_way_it_was_planned(client):
     assert alone["state"] == "doing" and alone["holder"] == lead["agent_id"]
     assert inbox["stuck"]["key"] == loose
     assert body["open"] == 7
-    assert body["needs_you"] == {"deploy": [], "waiting": []}
+    assert body["needs_you"] == {"deploy": [], "waiting": [], "deploys": []}
     assert len(body["today"]["hours"]) == 24
 
     # The computer's seat is not on the agent roster.
