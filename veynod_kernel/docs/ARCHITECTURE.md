@@ -627,20 +627,11 @@ E:\Codes\veynod\
 │           └── sandbox.rs         200 行：超时/进程组/输出上限
 ├── sql\
 │   └── v4_001_genesis.sql         202 行：幂等创世 DDL + GIN 索引
-├── cli\
-│   ├── package.json
-│   └── bin\
-│       ├── runner.mjs             677 行：Git worktree 沙箱、SSE 抢占、本地预检、submit
-│       └── veynod.mjs             215 行：serve/workspace/token/tasks/dag/runner
-├── dashboard-lite\
-│   └── index.html                 295 行：零构建只读 DAG 画布
 ├── scripts\
 │   ├── build_rust.py              maturin build + 安装 wheel
 │   ├── bench_rust.py              Rust vs Python 微基准
 │   ├── bench_swarm.py             100 Runner HTTP/SSE/Git/Postgres/pytest 压测 + merge/claim/gate 计时
-│   ├── smoke_e2e.py               API 端到端冒烟
-│   ├── smoke_runner.py            真实 Node Runner 冒烟
-│   └── smoke_scan_runner.py       scan-stubs → 红灯 → 实现 → 绿灯
+│   └── smoke_e2e.py               API 端到端冒烟
 ├── tests\
 │   ├── test_lock_algebra.py       锁/路径/diff 守卫
 │   ├── test_ast_slicer.py         AST 骨架/哈希/stub/引用
@@ -670,7 +661,7 @@ E:\Codes\veynod\
 | AST/契约守恒 | `rust/veynod_core/src/ast.rs` → `app/services/ast_slicer.py` |
 | 门禁/合并 | `app/services/verification_gate.py` → `app/services/git_ops.py` |
 | SPLIT/ESCALATE/INJECT | `app/engine/mutator.py` |
-| Agent 生命周期 | `cli/bin/runner.mjs` → `app/api/runner_routes.py` |
+| Agent 生命周期 | 产品面 `AgentGraph/app/services/kernel_delivery.py` 或 `agent_runtime/tools/kernel.py` → `app/api/runner_routes.py` |
 | 数据模型 | `sql/v4_001_genesis.sql` → `app/models.py` |
 
 ---
@@ -705,21 +696,11 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 ```bash
 git clone --bare /path/to/project /srv/demo.git
-
-export VEYNOD_API_URL=http://127.0.0.1:8000
-export VEYNOD_AGENT_TOKEN=vnk_...
-export VEYNOD_REPO_ROOT=/srv/demo.git
-export VEYNOD_LOCAL_TEST_CMD="pytest -q --tb=short"
-export VEYNOD_WRITE_TEST_CMD="pytest --collect-only -q"
-
-node cli/bin/runner.mjs --runner-id runner-01 \
-  --agent claude \
-  --supported-types IMPLEMENT_BODY,WRITE_TEST
 ```
 
-- 每个 Runner 建议独立 token（`worker_hub_id` 不同，看板可区分）。
-- 实现池：`IMPLEMENT_BODY,WRITE_TEST,FIX_INTEGRATION`；契约池：`DESIGN_CONTRACT,REVISE_CONTRACT,DESIGN_ARCHITECTURE`。
-- 希望人工先审契约修订时，不要让实现池支持 `REVISE_CONTRACT`。
+执行者不再是 Kernel 自带的 Node Runner（已删除，ADR-017）：产品面的电脑经
+`/v1/tasks/{key}/kernel/*`，Agent Runtime 经 `agent_runtime/tools/kernel.py`，都走
+lease → `submit_patch`（v2 异步）→ gate → merge。
 
 ### 11.4 容量建议
 
@@ -747,8 +728,6 @@ cargo test --release million_node_claim -- --ignored --nocapture
 
 # 端到端冒烟
 python scripts/smoke_e2e.py
-python scripts/smoke_runner.py
-python scripts/smoke_scan_runner.py
 ```
 
 已验证：

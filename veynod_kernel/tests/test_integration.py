@@ -604,7 +604,6 @@ def test_runner_token_workspace_binding_and_debug_auth(tmp_path: Path) -> None:
         task = _calc_task(harness)
 
         assert harness.client.get("/v1/dag").status_code == 401
-        assert harness.client.get("/dashboard").status_code == 404
 
         other = harness.admin(
             "POST",

@@ -153,7 +153,7 @@ python scripts/migrate_db.py --database-url postgresql+asyncpg://...
 - `reject`（默认）：`POST /v1/syscalls/submit_patch` 返回 **410 Gone**，body 含 v2 端点、状态端点、按 key 查询端点、幂等 header 和临时开关；
 - `sync`：暂时保留旧的同步 200 行为，仅用于迁移窗口；会重新引入“API 等待 pytest/Git”，不应用于新客户端。
 
-Node Runner 已切到 v2：[`cli/bin/runner.mjs`](../cli/bin/runner.mjs)。它在提交前计算：
+Node Runner（已删除，ADR-017）当时切到 v2。提交方在提交前计算：
 `idempotency_key = SHA-256(task_id + lease_token + patch_sha)`；POST 失败/响应丢失时先
 `GET /v2/submissions/find?idempotency_key=...`，再重试同一 POST；获得 202 后轮询 `status_url` 直到 `final=true`。超时默认 900s（`VEYNOD_SUBMISSION_TIMEOUT_SECONDS` / `--submission-timeout`）。
 

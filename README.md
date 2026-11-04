@@ -388,7 +388,7 @@ veynod/
 
 ### 9. 边界与状态
 
-* **Kernel Runner CLI** 保留为开发/兼容工具；产品执行者只有 Agent Runtime（ADR-017）。
+* **执行者**：产品面的电脑（经 `/v1/tasks/{key}/kernel/*`）与 Agent Runtime；Kernel 自带的 Runner CLI 与 dashboard-lite 已删除（ADR-017）。
 * **共享一个 PostgreSQL 集群、三个数据库**：不强行合并 schema，不做跨库外键。
 * **历史数据**不删除：迁移只做 expand → migrate → contract，回滚方案见迁移计划。
 * `POST /v1/code/runs` 语义已收敛为"建任务 + 启动 Run"；旧行为可用

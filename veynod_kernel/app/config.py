@@ -237,12 +237,6 @@ class Settings(BaseSettings):
     sse_poll_seconds: float = Field(
         default=1.0, validation_alias=AliasChoices("VN_SSE_POLL_SECONDS", "SSE_POLL_SECONDS")
     )
-    debug_dashboard_enabled: bool = Field(
-        default=False,
-        validation_alias=AliasChoices(
-            "VN_DEBUG_DASHBOARD", "DEBUG_DASHBOARD"
-        ),
-    )
 
     # --- asynchronous patch submissions ------------------------------------
     submission_worker_concurrency: int = Field(

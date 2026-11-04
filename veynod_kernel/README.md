@@ -181,19 +181,11 @@ veynod/
 │           └── sandbox.rs           # 超时、进程树终止、输出上限
 ├── sql/v4_001_genesis.sql          # 幂等创世 DDL
 ├── sql/v4_002…v4_008_*.sql         # 异步提交/工作租约/合并协调/准入·outbox/准入许可迁移
-├── cli/
-│   ├── package.json
-│   └── bin/
-│       ├── runner.mjs              # Git worktree 沙箱 + SSE 抢占 + 本地写集守卫
-│       └── veynod.mjs              # serve/workspace/token/tasks/dag/runner
-├── dashboard-lite/index.html       # 只读 DAG 画布（无构建步骤）
 ├── scripts/
 │   ├── build_rust.py               # maturin build + 安装 veynod_core
 │   ├── bench_rust.py               # Rust vs Python 微基准
 │   ├── bench_swarm.py              # 容量验收：隔离库 + 客户端/DB 双口径 + JSON 指标 + 非零退出码
-│   ├── smoke_e2e.py                # 独立 API 端到端冒烟
-│   ├── smoke_runner.py             # 真实 Node Runner 实现任务冒烟
-│   └── smoke_scan_runner.py        # 扫描 stub -> 红灯测试 -> 实现 -> 绿灯全流程
+│   └── smoke_e2e.py                # 独立 API 端到端冒烟
 ├── tests/                          # Python 单元 + Rust 对拍 + 集成测试
 ├── docs/
 │   ├── ARCHITECTURE.md             # 架构评审文档
@@ -314,48 +306,13 @@ curl -s -X POST $API/v1/admin/workspaces/$WS/scan-stubs \
 
 `DESIGN_ARCHITECTURE` 任务与手写 `DESIGN_CONTRACT` 任务可以通过 `POST /v1/admin/tasks` 创建，L1 Agent 再通过 `request_task_split` 或管理员 API 展开为契约节点。
 
-### 3.5 启动 Runner
+### 3.5 谁来执行任务
 
-```bash
-export VEYNOD_API_URL=http://127.0.0.1:8000
-export VEYNOD_AGENT_TOKEN=vnk_...          # 由 /v1/admin/tokens 返回
-export VEYNOD_REPO_ROOT=/srv/demo.git
-export VEYNOD_LOCAL_TEST_CMD="pytest -q --tb=short"
+Kernel 不再自带 Runner CLI（ADR-017，2026-11-04 删除）。执行者只有两种，都走同一套
+lease → `submit_patch`（v2 异步）→ gate → merge：
 
-node cli/bin/runner.mjs \
-  --runner-id runner-01 \
-  --agent claude \
-  --supported-types IMPLEMENT_BODY,WRITE_TEST
-```
-
-Runner 的单个任务周期：
-
-1. `pull_task_bundle` 获取最小上下文
-2. `git worktree add --detach <tmp> <base_commit_sha>`
-3. 在 worktree 外生成 task bundle 与 `.mcp.json`，把 6 个原语挂给 Claude/Codex
-4. 启动 Agent（默认 `claude --print --mcp-config ... --strict-mcp-config`；需自行安装 Claude Code，可用 `--agent` 替换为 Codex 等）
-5. 本地写集守卫：任何越权文件立即回滚；清理测试缓存
-6. 按任务类型做本地预检，只有通过才设置 `local_test_passed=true`：
-   - `WRITE_TEST`：`VEYNOD_WRITE_TEST_CMD`（默认 `pytest --collect-only -q`）只验证测试可收集——测试对 stub 应该是红的
-   - `IMPLEMENT_BODY` / `FIX_INTEGRATION`：`VEYNOD_LOCAL_TEST_CMD`，只追加 `frozen_tests` 对应的测试文件
-   - `DESIGN_CONTRACT` / `REVISE_CONTRACT` / `DESIGN_ARCHITECTURE`：跳过运行时测试，由门禁做静态类型检查
-7. `git diff --cached --binary HEAD` → `submit_patch`
-8. 门禁失败时把诊断留在任务上并释放租约，下一轮重新拉取时 bundle 带 `last_error_traceback`
-9. SSE 收到 `TASK_ABORT` 时通过 `AbortController` 立即终止 Agent 进程并清理 worktree
-
-`--once` 可用于单轮调试。Agent 命令可用 `--agent` / `--agent-args` 替换；非 Claude 的命令会把 prompt 作为最后一个参数。
-
-Runner 侧环境变量：
-
-| 变量 | 默认 | 说明 |
-| :--- | :--- | :--- |
-| `VEYNOD_API_URL` | `http://127.0.0.1:8000` | Kernel 地址 |
-| `VEYNOD_AGENT_TOKEN` | 必填 | `/v1/admin/tokens` 返回的 `vnk_...` |
-| `VEYNOD_REPO_ROOT` | 必填 | bare/mirror Git 仓库 |
-| `VEYNOD_LOCAL_TEST_CMD` | `pytest -q --tb=short` | 实现任务的本地预检 |
-| `VEYNOD_WRITE_TEST_CMD` | `pytest --collect-only -q` | WRITE_TEST 的收集预检（允许红灯） |
-| `VEYNOD_AGENT_CMD` | `claude` | 编码 Agent 可执行文件 |
-| `VEYNOD_AGENT_ARGS` | 空 | 追加给 Agent 的参数（空格分隔） |
+- 产品面的电脑（`npx veynod up --run-tasks`）：通过产品 API 的 `/v1/tasks/{key}/kernel/*`；
+- Agent Runtime：通过 `agent_runtime/tools/kernel.py`。
 
 ### 3.6 监控
 
@@ -535,13 +492,6 @@ TEST_DATABASE_URL=postgresql+asyncpg://postgres:postgres@127.0.0.1:55432/veynod_
 ```bash
 # API 层：建 workspace -> 冻结契约 -> 租任务 -> 真实 diff -> 门禁 -> 合并
 python scripts/smoke_e2e.py
-
-# Runner 层：真实 Node 守护进程 + Git worktree + 假 Agent 实现
-python scripts/smoke_runner.py
-
-# 冷启动全链路：scan-stubs -> Runner 写红灯测试（收集通过）-> 门禁合并
-# -> Runner 实现 stub -> 测试转绿 -> 再次合并
-python scripts/smoke_scan_runner.py
 ```
 
 两个 Runner 冒烟会分别启动 uvicorn（:8011 / :8012），并断言任务状态、主干内容与 worktree 清理。

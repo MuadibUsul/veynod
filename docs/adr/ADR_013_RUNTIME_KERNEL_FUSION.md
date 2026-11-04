@@ -94,6 +94,9 @@ C. 在 Runtime 实现 `KernelToolRuntime`，以**服务身份 + 工作区上下�
 
 **验收**：`scheduler` 测试覆盖"有活动 Run 的任务不被放置"；E2E 中同一任务只被 Runtime 认领。
 
+**2026-11-04 更新**：`veynod_kernel/cli`、`dashboard-lite` 与依赖它们的 `smoke_runner.py`、
+`smoke_scan_runner.py` 已删除；Kernel 的 `/dashboard` 路由与 `VN_DEBUG_DASHBOARD` 一并移除。
+
 ---
 
 ## ADR-018 废弃 `veynod_platform` 与三个独立技术入口
