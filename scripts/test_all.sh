@@ -40,7 +40,12 @@ for suite in "${suites[@]}"; do
       run runtime env TEST_DATABASE_URL="$url" "$python" -m pytest -q -c "$root/agent_runtime/pytest.ini" "$root/agent_runtime/tests" ;;
     kernel) url="$(database veynod_test_kernel)"
       run kernel env TEST_DATABASE_URL="$url" bash -c "cd '$root/veynod_kernel' && '$python' -m pytest -q tests" ;;
-    product) url="$(database veynod_test_product)"
+    product)
+      # The real-Kernel delivery test runs the five gates, and STATIC_TYPECHECK
+      # needs pyright (deploy/Dockerfile.kernel pins it); say so up front
+      # instead of failing later as an unexplained gate_rejected.
+      command -v pyright >/dev/null || { echo "product suite needs pyright: npm install -g pyright@1.1.380" >&2; exit 2; }
+      url="$(database veynod_test_product)"
       run product env TEST_DATABASE_URL="$url" KERNEL_PYTHON="$(command -v "$python")" \
         bash -c "cd '$root/AgentGraph' && '$python' -m pytest -q tests" ;;
     cli) run cli npm test --prefix "$root/AgentGraph/cli" --silent ;;
