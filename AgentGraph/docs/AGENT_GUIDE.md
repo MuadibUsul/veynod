@@ -345,6 +345,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `log_document_append_only` | 409 | `fix_request` |
 | `merge_without_deliverable` | 409 | `fix_request` |
 | `no_active_generation` | 409 | `fix_request` |
+| `not_a_deploy` | 409 | `fix_request` |
 | `not_a_log_document` | 409 | `fix_request` |
 | `parts_incomplete` | 409 | `fix_request` |
 | `policy_exists` | 409 | `fix_request` |
@@ -523,6 +524,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `backup_chain_broken` | 409 | `escalate_human` |
 | `backups_not_configured` | 409 | `escalate_human` |
 | `confirmation_required` | 409 | `escalate_human` |
+| `deploys_off` | 409 | `escalate_human` |
 | `escalated_to_human` | 409 | `escalate_human` |
 | `incident_not_confirmed` | 409 | `escalate_human` |
 | `namespace_not_empty` | 409 | `escalate_human` |
