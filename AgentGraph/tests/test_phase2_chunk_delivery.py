@@ -246,8 +246,9 @@ async def _deliver_through_kernel(kernel: dict, bound: dict) -> str:
         worktree = Path(bundle["worktree_path"])
         (worktree / "main.py").write_text("VALUE = 2\n", encoding="utf-8")
         subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
-        subprocess.run(["git", "commit", "-m", "chunk"], cwd=worktree,
-                       check=True, capture_output=True)
+        # An explicit identity: a CI runner has no global git user.
+        subprocess.run(["git", "-c", "user.name=Chunk", "-c", "user.email=chunk@example.test",
+                        "commit", "-m", "chunk"], cwd=worktree, check=True, capture_output=True)
         sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree,
                              check=True, capture_output=True, text=True).stdout.strip()
         diff = subprocess.run(["git", "diff", bundle["base_commit_sha"], sha], cwd=worktree,

@@ -57,6 +57,10 @@ async def _prepare(tmp_path: Path) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, Pat
     base = _run(["git", "rev-parse", "HEAD"], work).strip()
     bare = tmp_path / "bare.git"
     _run(["git", "clone", "--bare", str(work), str(bare)], tmp_path)
+    # The task commit is made in a worktree of this bare clone, which does not
+    # inherit the work repo's identity; a CI runner has no global one either.
+    _run(["git", "config", "user.name", "Coord"], bare)
+    _run(["git", "config", "user.email", "coord@example.com"], bare)
 
     wt = tmp_path / "task-wt"
     _run(["git", "worktree", "add", "--detach", str(wt), base], bare)
