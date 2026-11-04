@@ -1739,7 +1739,9 @@ export default function ConsolePage() {
                       onCreate={() => setShowCreateTask(true)}
                     />
                   )}
-                  {tab === "federation" && <FederationView t={t} />}
+                  {tab === "federation" && (
+                    <FederationView request={api} notify={setNotice} sessionMode={sessionMode} />
+                  )}
                   {tab === "documents" && (
                     <DocumentsView
                       workspaceId={selectedWorkspace.id}
