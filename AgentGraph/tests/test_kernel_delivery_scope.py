@@ -188,13 +188,22 @@ async def test_bind_only_creates_the_node_without_taking_a_lease(monkeypatch) ->
     assert result["scope_hash"]
 
 
-def test_kernel_error_codes_survive_the_product_api() -> None:
-    code = _module._kernel_code
-    assert code({"detail": {"error": "submission_in_progress", "message": "wait"}}) == \
-        "submission_in_progress"
-    assert code({"error": {"code": "lease_not_active"}}) == "lease_not_active"
-    assert code({"detail": "plain text"}) is None
-    assert code({"detail": {"error": "not a code; DROP"}}) is None
+@pytest.mark.asyncio
+async def test_kernel_error_codes_survive_the_product_api() -> None:
+    """A Kernel refusal keeps its own code (the runner waits or re-leases on it)."""
+    import httpx
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": {"error": "submission_in_progress",
+                                                    "message": "wait"}})
+
+    plane = _module.KernelPlane("http://kernel", "w", service_key="s", runner_token="r",
+                                transport=httpx.MockTransport(answer))
+    with pytest.raises(_module.KernelDeliveryError) as raised:
+        await plane.submit({"task_id": "t"}, "key")
+    await plane.aclose()
+    assert raised.value.status_code == 409
+    assert raised.value.code == "submission_in_progress"
 
 
 @pytest.mark.asyncio

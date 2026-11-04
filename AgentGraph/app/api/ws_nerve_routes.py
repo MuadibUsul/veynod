@@ -13,28 +13,9 @@ and carries the worker's busy state.
 from __future__ import annotations
 
 import logging
-import sys
 import uuid
-from pathlib import Path
 from typing import Any
 
-try:  # the shared contract package lives at the repository root
-    from contracts.nerve_protocol import (
-        CLOSE_UNAUTHORIZED,
-        NerveEnvelope,
-        NerveFrameType,
-        parse_frame,
-    )
-except ImportError:  # pragma: no cover - only when the cwd is AgentGraph/
-    _root = Path(__file__).resolve().parents[3]
-    if str(_root) not in sys.path:
-        sys.path.insert(0, str(_root))
-    from contracts.nerve_protocol import (
-        CLOSE_UNAUTHORIZED,
-        NerveEnvelope,
-        NerveFrameType,
-        parse_frame,
-    )
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import text
 
@@ -42,6 +23,12 @@ from app.auth import Principal, resolve_principal
 from app.database import async_session_factory
 from app.services import nerve_hub as hub
 from app.services import token_tree
+from contracts.nerve_protocol import (
+    CLOSE_UNAUTHORIZED,
+    NerveEnvelope,
+    NerveFrameType,
+    parse_frame,
+)
 
 logger = logging.getLogger("agentgraph.ws_nerve")
 router = APIRouter(prefix="/v1", tags=["Realtime"])

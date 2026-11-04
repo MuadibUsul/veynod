@@ -29,6 +29,7 @@ from app.schemas import (
 )
 from app.services import quality
 from app.services import tasks as task_service
+from contracts import kernel_http
 
 logger = logging.getLogger("agentgraph.code_engine")
 settings = get_settings()
@@ -56,24 +57,19 @@ class KernelEngineClient:
         self.admin_key = admin_key
         self.timeout = timeout
 
-    async def _request(self, method: str, path: str, **kwargs: Any) -> Any:
+    async def _request(self, method: str, path: str, *, json: Any = None,
+                       params: dict[str, Any] | None = None) -> Any:
         async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.request(
-                method,
-                self.base_url + path,
-                headers={"X-Admin-Key": self.admin_key},
-                **kwargs,
-            )
-        if response.status_code >= 400:
-            detail = response.text[:1000]
             try:
-                payload = response.json()
-                if isinstance(payload, dict):
-                    detail = str(payload.get("detail") or payload)[:1000]
-            except Exception:  # noqa: BLE001
-                pass
-            raise CodeEngineError(f"Kernel HTTP {response.status_code}: {detail}")
-        return response.json() if response.content else {}
+                _status, body = await kernel_http.request(
+                    client, method, self.base_url + path,
+                    auth=kernel_http.KernelAuth(admin_key=self.admin_key),
+                    params=params, json_body=json)
+            except kernel_http.KernelHTTPError as exc:
+                raise CodeEngineError(
+                    str(exc), 502 if exc.unreachable or exc.status >= 500 else exc.status,
+                ) from exc
+        return body
 
     async def create_artifact(
         self, workspace_id: str, symbol: str, *, kind: str
@@ -122,7 +118,7 @@ class KernelEngineClient:
                 "GET", f"/v1/admin/tasks/{task_id}/delivery"
             )
         except CodeEngineError as exc:
-            if "404" in str(exc):
+            if exc.status_code == 404:
                 return None
             raise
         return result if isinstance(result, dict) else None

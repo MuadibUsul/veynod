@@ -12,6 +12,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+import app  # noqa: F401  (makes the repository's shared `contracts` importable)
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 os.environ["ENVIRONMENT"] = "test"

@@ -34,34 +34,16 @@ from fastapi import WebSocket
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-try:  # the shared contract package lives at the repository root
-    from contracts.nerve_protocol import (
-        EXEC_ACK_TIMEOUT_S,
-        NET_ACK_MAX_S,
-        NerveEnvelope,
-        NerveError,
-        NerveFrameType,
-        net_ack_deadline_s,
-        poke_frame,
-        smooth_rtt_ms,
-    )
-except ImportError:  # pragma: no cover - only when running outside the monorepo
-    import sys as _sys
-    from pathlib import Path as _Path
-
-    _root = _Path(__file__).resolve().parents[3]
-    if str(_root) not in _sys.path:
-        _sys.path.insert(0, str(_root))
-    from contracts.nerve_protocol import (
-        EXEC_ACK_TIMEOUT_S,
-        NET_ACK_MAX_S,
-        NerveEnvelope,
-        NerveError,
-        NerveFrameType,
-        net_ack_deadline_s,
-        poke_frame,
-        smooth_rtt_ms,
-    )
+from contracts.nerve_protocol import (
+    EXEC_ACK_TIMEOUT_S,
+    NET_ACK_MAX_S,
+    NerveEnvelope,
+    NerveError,
+    NerveFrameType,
+    net_ack_deadline_s,
+    poke_frame,
+    smooth_rtt_ms,
+)
 
 logger = logging.getLogger("agentgraph.nerve_hub")
 

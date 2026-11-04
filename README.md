@@ -159,6 +159,7 @@ Agent Runtime（唯一的模型推理与执行循环：Run / Step / Checkpoint /
              （kernel_events → event_inbox → runtime_wakeups → 投影 → REVIEWING → DONE）
 ```
 
+文档地图：[docs/README.md](docs/README.md)（从这里找任何文档）。
 架构与决策：[docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md)、
 [docs/adr/ADR_013_RUNTIME_KERNEL_FUSION.md](docs/adr/ADR_013_RUNTIME_KERNEL_FUSION.md)。
 审计与迁移：[docs/UNIFIED_ARCHITECTURE_AUDIT.md](docs/UNIFIED_ARCHITECTURE_AUDIT.md)、

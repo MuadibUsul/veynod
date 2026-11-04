@@ -12,24 +12,16 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-import sys
 from datetime import datetime, timezone
-from pathlib import Path as _Path
 from typing import Any
 
 import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-try:  # the shared contract package lives at the repository root
-    from contracts.work_scope import WorkScope
-except ImportError:  # pragma: no cover - only when running outside the monorepo
-    _root = _Path(__file__).resolve().parents[3]
-    if str(_root) not in sys.path:
-        sys.path.insert(0, str(_root))
-    from contracts.work_scope import WorkScope
-
 from app.config import get_settings
+from contracts import kernel_http
+from contracts.work_scope import WorkScope
 
 logger = logging.getLogger("agentgraph.kernel_delivery")
 
@@ -56,24 +48,6 @@ _NOT_WIRED = {
     "lease_denied",
     "admission",
 }
-
-
-def _kernel_code(payload: dict[str, Any]) -> str | None:
-    """The Kernel's own error code (``submission_in_progress``, ``lease_not_active``…).
-
-    Folding every rejection into ``kernel_rejected`` left the runner unable to
-    tell "wait for the gate" from "lease again".
-    """
-    detail = payload.get("detail")
-    for holder in (detail, payload):
-        if not isinstance(holder, dict):
-            continue
-        code = holder.get("error")
-        if isinstance(code, dict):
-            code = code.get("code")
-        if isinstance(code, str) and code.replace("_", "").isalnum() and len(code) <= 64:
-            return code
-    return None
 
 
 class KernelDeliveryError(RuntimeError):
@@ -322,6 +296,27 @@ class KernelPlane:
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    async def _call(
+        self,
+        method: str,
+        path: str,
+        auth: kernel_http.KernelAuth,
+        *,
+        json_body: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """The shared Kernel transport, with its refusal as a delivery error."""
+        try:
+            status, payload = await kernel_http.request(
+                self._client, method, self.base_url + path, auth=auth,
+                json_body=json_body, idempotency_key=idempotency_key)
+        except kernel_http.KernelHTTPError as exc:
+            raise KernelDeliveryError(
+                str(exc), 502 if exc.unreachable or exc.status >= 500 else exc.status,
+                exc.code or "kernel_rejected",
+            ) from exc
+        return status, payload if isinstance(payload, dict) else {"detail": payload}
+
     async def _request(
         self,
         method: str,
@@ -331,47 +326,18 @@ class KernelPlane:
         json_body: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> tuple[int, dict[str, Any]]:
-        headers = {"X-Workspace-Id": self.workspace_id}
-        if service:
-            if not self.service_key:
-                raise KernelDeliveryError(
-                    "KERNEL_SERVICE_KEY is not configured on the product API",
-                    503,
-                    "kernel_unconfigured",
-                )
-            headers["X-Veynod-Service-Key"] = self.service_key
-        else:
-            if not self.runner_token:
-                raise KernelDeliveryError(
-                    "KERNEL_RUNTIME_TOKEN is not configured on the product API",
-                    503,
-                    "kernel_unconfigured",
-                )
-            headers["Authorization"] = f"Bearer {self.runner_token}"
-        if idempotency_key:
-            headers["Idempotency-Key"] = idempotency_key
-        try:
-            response = await self._client.request(
-                method, self.base_url + path, headers=headers, json=json_body
-            )
-        except (httpx.TimeoutException, httpx.TransportError) as exc:
+        secret = self.service_key if service else self.runner_token
+        if not secret:
+            name = "KERNEL_SERVICE_KEY" if service else "KERNEL_RUNTIME_TOKEN"
             raise KernelDeliveryError(
-                f"Kernel unreachable: {exc}", 502, "kernel_unreachable"
-            ) from exc
-        payload: dict[str, Any] = {}
-        if response.content:
-            try:
-                parsed = response.json()
-                payload = parsed if isinstance(parsed, dict) else {"detail": parsed}
-            except ValueError:
-                payload = {"detail": response.text[:500]}
-        if response.status_code >= 400:
-            raise KernelDeliveryError(
-                f"Kernel HTTP {response.status_code}: {_safe_detail(payload)}",
-                502 if response.status_code >= 500 else response.status_code,
-                _kernel_code(payload) or "kernel_rejected",
-            )
-        return response.status_code, payload
+                f"{name} is not configured on the product API", 503, "kernel_unconfigured")
+        auth = kernel_http.KernelAuth(
+            workspace_id=self.workspace_id,
+            service_key=secret if service else None,
+            bearer=None if service else secret,
+        )
+        return await self._call(method, path, auth, json_body=json_body,
+                                idempotency_key=idempotency_key)
 
     async def create_task(self, body: dict[str, Any]) -> dict[str, Any]:
         _status, payload = await self._request(
@@ -388,18 +354,14 @@ class KernelPlane:
         row a projection may rely on (never infer a PASS from a status alone).
         """
         # The admin plane reads X-Admin-Key, not the service key.
-        headers = {"X-Admin-Key": self.admin_key} if self.admin_key else {}
         try:
-            response = await self._client.get(
-                f"{self.base_url}/v1/admin/tasks/{task_id}/evidence", headers=headers)
-            if response.status_code == 404:
+            _status, payload = await self._call(
+                "GET", f"/v1/admin/tasks/{task_id}/evidence",
+                kernel_http.KernelAuth(admin_key=self.admin_key or None))
+        except KernelDeliveryError as exc:
+            if exc.status_code == 404:
                 return None
-            if response.status_code >= 400:
-                raise KernelDeliveryError(
-                    f"Kernel HTTP {response.status_code}: {response.text[:300]}", 502)
-            payload = response.json()
-        except (httpx.TimeoutException, httpx.TransportError) as exc:
-            raise KernelDeliveryError(f"Kernel unreachable: {exc}", 502) from exc
+            raise
         status = str(payload.get("task_status") or payload.get("status") or "")
         commit = payload.get("merged_commit_sha") or payload.get("result_commit_sha")
         return {
@@ -478,10 +440,6 @@ def plane_for(
         admin_key=(admin_key or os.environ.get("KERNEL_ADMIN_KEY", "").strip()
                    or settings.kernel_admin_key),
     )
-
-
-def _safe_detail(payload: dict[str, Any]) -> str:
-    return str(public_delivery(payload))[:500]
 
 
 async def _stamp(session: AsyncSession, task: Any, record: dict[str, Any]) -> dict[str, Any]:

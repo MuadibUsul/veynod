@@ -65,7 +65,7 @@ Endpoint: `https://veynod.com/mcp/` (Streamable HTTP).
 }
 ```
 
-Claude Code uses the same URL with `"type": "http"`. See [examples/](examples/).
+Claude Code uses the same URL with `"type": "http"`. See [examples/](examples).
 
 Create `agt_…` keys in the [Veynod console](https://veynod.com/). Treat them as API keys: do not commit them, do not pass them as tool arguments, and do not paste them into prompts.
 
