@@ -237,3 +237,23 @@ async def test_a_far_peer_is_not_kicked_for_its_round_trip() -> None:
     # A socket known to be near still fails fast when it does not answer in time.
     (ok, reason, _), _ = await run(20.0)
     assert ok is False and reason == protocol.NerveError.NET_ACK_TIMEOUT.value
+
+
+async def test_the_reaper_loop_starts_and_survives_a_pass() -> None:
+    """It imported a helper that did not exist and died at start-up, silently."""
+    calls = []
+
+    async def fake_reap():
+        calls.append(1)
+        return {}
+
+    original = hub_module.reap_stale
+    hub_module.reap_stale = fake_reap
+    try:
+        task = asyncio.ensure_future(hub_module.nerve_reaper_loop(0.01))
+        await asyncio.sleep(0.05)
+        assert not task.done(), task.exception() if task.done() else None
+        task.cancel()
+    finally:
+        hub_module.reap_stale = original
+    assert len(calls) >= 2

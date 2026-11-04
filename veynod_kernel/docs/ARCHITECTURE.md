@@ -463,8 +463,7 @@ Independent Gate Worker (python -m app.worker; 持久化，重启可恢复)
 Agent commands (pytest/pyright/ruff) run in gate_sandbox (Docker or sanitized local env);
 AST_SCOPE_DIFF independently derives changed symbols from base vs patched file snapshots.
 
-旧接口：/v1/syscalls/submit_patch 默认 410 + 迁移指引；
-VN_LEGACY_SUBMIT_MODE=sync 仅作迁移窗口回退。
+旧接口：/v1/syscalls/submit_patch 一律 410 + 迁移指引（同步回退已删除）。
 ```
 
 ### 6.3 失败与自愈

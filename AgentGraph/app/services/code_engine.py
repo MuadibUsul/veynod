@@ -272,8 +272,7 @@ async def create_run(
     """Create the product task and start the one Agent Run that will execute it.
 
     The Kernel task is created by the Runtime through ``KernelToolRuntime``
-    (pull_task_bundle), not here.  ``CODE_ENGINE_LEGACY_DIRECT=1`` restores the
-    previous behaviour for one release (see UNIFIED_MIGRATION_PLAN.md §5).
+    (pull_task_bundle), not here.
     """
     require_permission(principal, "task:create")
     task_key = "code-" + uuid4().hex[:16]
@@ -301,51 +300,6 @@ async def create_run(
             ],
         ),
     )
-    if settings.code_engine_legacy_direct:
-        workspace_id = _workspace_id()
-        engine = _engine()
-        for symbol, kind in ((request.symbol, "stub"), (request.test_symbol, "test")):
-            try:
-                await engine.create_artifact(workspace_id, symbol, kind=kind)
-            except CodeEngineError as exc:
-                if "409" not in str(exc):  # duplicate artifact is idempotent
-                    raise
-        kernel_task = await engine.create_task(
-            workspace_id,
-            {
-                "title": request.title,
-                "spec_prompt": request.spec,
-                "type": "IMPLEMENT_BODY",
-                "target_symbols": [request.symbol],
-                "test_symbols": [request.test_symbol],
-                "write_set_symbols": [request.symbol],
-                "priority": request.priority,
-            },
-        )
-        kernel_task_id = str(kernel_task.get("task_id") or "")
-        context = dict(task.input_context or {})
-        context["kernel"] = {
-            "base_url": settings.kernel_url,
-            "workspace_id": workspace_id,
-            "task_id": kernel_task_id,
-        }
-        task.input_context = context
-        await session.flush()
-        return {
-            "id": task_key,
-            "agentgraph_task_key": task_key,
-            "agentgraph_task_id": str(task.id),
-            "kernel_workspace_id": workspace_id,
-            "kernel_task_id": kernel_task_id,
-            "status": _status(task),
-            "kernel_status": str(kernel_task.get("status") or "READY"),
-            "title": task.title,
-            "repo_path": request.repo_path,
-            "symbol": request.symbol,
-            "test_symbol": request.test_symbol,
-            "legacy_direct": True,
-        }
-
     from app.services import task_lifecycle
 
     started = await task_lifecycle.start_run(session, principal, task_key)
@@ -364,7 +318,6 @@ async def create_run(
         "repo_path": request.repo_path,
         "symbol": request.symbol,
         "test_symbol": request.test_symbol,
-        "legacy_direct": False,
     }
 
 

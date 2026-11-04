@@ -254,14 +254,6 @@ class Settings(BaseSettings):
             "VN_SUBMISSION_POLL_SECONDS", "SUBMISSION_POLL_SECONDS"
         ),
     )
-    # "reject" returns 410 and points at /v2; "sync" is the temporary escape
-    # hatch for old clients during the migration window.
-    legacy_submit_mode: Literal["reject", "sync"] = Field(
-        default="reject",
-        validation_alias=AliasChoices(
-            "VN_LEGACY_SUBMIT_MODE", "LEGACY_SUBMIT_MODE"
-        ),
-    )
 
     # --- independent gate workers / sandbox --------------------------------
     work_lease_seconds: int = Field(

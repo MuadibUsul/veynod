@@ -1459,6 +1459,11 @@ class RunnerHeartbeatRequest(StrictModel):
     runtimes: list[dict[str, Any]] | None = Field(
         default=None, max_length=8, description="Fresh runtime list, e.g. new quota windows")
     max_concurrency: int | None = Field(default=None, ge=1, le=64)
+    # Every runner sends it (pinning, runtime, Kernel leases). Without the field
+    # this strict model refused every heartbeat with 422, so a computer went
+    # "offline" 90 s after its hello and its tasks were taken back.
+    capabilities_report: dict[str, Any] | None = Field(
+        default=None, description="How this runner runs sessions and which Kernel leases it holds")
 
 
 class PlacementReportRequest(StrictModel):

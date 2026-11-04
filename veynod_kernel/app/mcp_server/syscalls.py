@@ -635,11 +635,6 @@ class KernelEngineService:
     async def lease_next_disjoint_task(self, req: PullTaskBundleRequest, worker_id: str) -> TaskBundleResponse:
         raise NotImplementedError
 
-    async def verify_and_commit_patch(
-        self, lease: ActiveLeaseContext, req: SubmitPatchRequest, touched_files: set[str]
-    ) -> SubmitPatchResponse:
-        raise NotImplementedError
-
     async def execute_graph_split(
         self, lease: ActiveLeaseContext, req: RequestTaskSplitRequest
     ) -> RequestTaskSplitResponse:
@@ -1007,42 +1002,34 @@ async def get_submission_status(
 
 @router.post(
     "/v1/syscalls/submit_patch",
-    response_model=SubmitPatchResponse,
     deprecated=True,
-    summary="[Deprecated] Synchronous submit; use POST /v2/syscalls/submit_patch",
+    summary="[Retired] Synchronous submit; use POST /v2/syscalls/submit_patch",
 )
 async def syscall_submit_patch(
-    req: SubmitPatchRequest,
-    response: Response,
     worker_id: Annotated[str, Depends(get_authenticated_worker_id)],
-    engine: Annotated[KernelEngineService, Depends(get_kernel_engine)],
-) -> SubmitPatchResponse:
-    if settings.legacy_submit_mode == "reject":
-        raise HTTPException(
-            status_code=status.HTTP_410_GONE,
-            detail={
-                "error": "legacy_submit_endpoint_retired",
-                "message": (
-                    "POST /v1/syscalls/submit_patch no longer blocks on the "
-                    "deterministic gate. Use POST /v2/syscalls/submit_patch, "
-                    "then poll GET /v2/submissions/{submission_id}."
-                ),
-                "migration": {
-                    "endpoint": "/v2/syscalls/submit_patch",
-                    "status_endpoint": "/v2/submissions/{submission_id}",
-                    "find_by_key": "/v2/submissions/find?idempotency_key=...",
-                    "idempotency_header": "Idempotency-Key",
-                    "temporary_escape_hatch": "VN_LEGACY_SUBMIT_MODE=sync",
-                },
+) -> None:
+    """A tombstone: the synchronous path is gone, this only points at v2."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail={
+            "error": "legacy_submit_endpoint_retired",
+            "message": (
+                "POST /v1/syscalls/submit_patch no longer blocks on the "
+                "deterministic gate. Use POST /v2/syscalls/submit_patch, "
+                "then poll GET /v2/submissions/{submission_id}."
+            ),
+            "migration": {
+                "endpoint": "/v2/syscalls/submit_patch",
+                "status_endpoint": "/v2/submissions/{submission_id}",
+                "find_by_key": "/v2/submissions/find?idempotency_key=...",
+                "idempotency_header": "Idempotency-Key",
             },
-            headers={
-                "Deprecation": "true",
-                "Link": '</v2/syscalls/submit_patch>; rel="successor-version"',
-            },
-        )
-    response.headers["Deprecation"] = "true"
-    lease, touched_files = await _validate_submission(engine, req, worker_id)
-    return await engine.verify_and_commit_patch(lease, req, touched_files)
+        },
+        headers={
+            "Deprecation": "true",
+            "Link": '</v2/syscalls/submit_patch>; rel="successor-version"',
+        },
+    )
 
 
 @router.post(

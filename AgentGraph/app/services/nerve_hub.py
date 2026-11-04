@@ -77,6 +77,10 @@ class ActiveSocket:
     worker_busy: bool = False
     active_task_key: str | None = None
     active_lease_epoch: int | None = None
+    #: How many placements this computer runs at once, and how many it runs now
+    #: (from its pings, plus what this hub delivered since the last one).
+    slots: int = 1
+    active: int = 0
     last_rtt_ms: int = 0
     #: Smoothed first-receipt round trip; sizes this socket's next deadlines.
     rtt_ms: float = 0.0
@@ -99,6 +103,9 @@ class NerveHub:
         self._by_key: dict[tuple[str, str], ActiveSocket] = {}
         self._net_acks: dict[str, asyncio.Future] = {}
         self._exec_acks: dict[str, asyncio.Future] = {}
+        # frame id -> the connection it was sent on, so a closing socket fails
+        # exactly its own pending receipts.
+        self._owner: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
     # ---------------------------------------------------------------- registry
@@ -138,10 +145,10 @@ class NerveHub:
             if current is None or current.conn_id != sock.conn_id:
                 return False
             del self._by_key[sock.key]
-        # A dispatch waiting on the dead peer fails now, not at its deadline.
-        for frame_id in (sock.active_task_key,):
-            if frame_id and frame_id in self._net_acks:
-                self._fail(self._net_acks.get(frame_id), NerveError.NOT_CONNECTED.value)
+        # Dispatches waiting on the dead peer fail now, not at their deadline.
+        for frame_id, future in list(self._net_acks.items()):
+            if self._owner.get(frame_id) == sock.conn_id:
+                self._fail(future, NerveError.NOT_CONNECTED.value)
         logger.info("agent %s left the nerve (conn=%s, %s)", sock.agent_id, sock.conn_id, reason)
         return True
 
@@ -152,7 +159,14 @@ class NerveHub:
         sock.last_seen_ms = _ms()
         frame_type, frame_id, payload = frame["type"], frame["frame_id"], frame["payload"]
         if frame_type == NerveFrameType.PING.value:
-            sock.worker_busy = bool(payload.get("worker_busy", False))
+            try:
+                sock.slots = max(1, int(payload.get("slots") or 1))
+            except (TypeError, ValueError):
+                sock.slots = 1
+            count = payload.get("active_count")
+            sock.active = (int(count) if isinstance(count, int) and count >= 0
+                           else int(bool(payload.get("worker_busy", False))))
+            sock.worker_busy = sock.active >= sock.slots
             active = payload.get("active_task_key")
             sock.active_task_key = str(active) if active else None
             epoch = payload.get("lease_epoch")
@@ -167,7 +181,6 @@ class NerveHub:
         if frame_type == NerveFrameType.TASK_ACK_NET.value:
             self._resolve(self._net_acks, frame_id, payload)
         elif frame_type == NerveFrameType.TASK_ACK_EXEC.value:
-            sock.worker_busy = True
             self._resolve(self._exec_acks, frame_id, payload)
         elif frame_type == NerveFrameType.TASK_BUSY_REJECT.value:
             reason = str(payload.get("reason") or NerveError.REJECTED.value)
@@ -210,7 +223,7 @@ class NerveHub:
         """
         if sock.closed:
             return False, NerveError.NOT_CONNECTED.value, {}
-        if sock.worker_busy:
+        if sock.active >= sock.slots:
             return False, NerveError.BUSY.value, {}
 
         frame = poke_frame(
@@ -222,8 +235,13 @@ class NerveHub:
         exec_future: asyncio.Future = loop.create_future()
         self._net_acks[frame.frame_id] = net_future
         self._exec_acks[frame.frame_id] = exec_future
-        sock.worker_busy = True
+        self._owner[frame.frame_id] = sock.conn_id
+        # The slot is taken from the moment the poke is sent; the next ping
+        # says what the computer really runs.
+        sock.active += 1
+        sock.worker_busy = sock.active >= sock.slots
         sock.active_task_key = frame.frame_id
+        delivered = False
 
         started = time.perf_counter()
         net_received = False
@@ -246,6 +264,7 @@ class NerveHub:
                 "net_ack": net_ack,
             }
             sock.active_lease_epoch = epoch
+            delivered = True
             return True, "DISPATCHED", facts
         except asyncio.TimeoutError:
             # wait_for() cancels the future, so done() cannot tell the stages
@@ -262,13 +281,16 @@ class NerveHub:
         finally:
             self._net_acks.pop(frame.frame_id, None)
             self._exec_acks.pop(frame.frame_id, None)
+            self._owner.pop(frame.frame_id, None)
+            if not delivered:
+                sock.active = max(0, sock.active - 1)
+                sock.worker_busy = sock.active >= sock.slots
             if sock.active_task_key == frame.frame_id:
                 sock.active_task_key = None
 
     async def revoke(self, sock: ActiveSocket, *, task_key: str, epoch: int,
                      reason: str) -> bool:
         """Tell the messenger to kill the worker tree for this lease."""
-        sock.worker_busy = False
         sock.active_task_key = None
         sock.active_lease_epoch = None
         try:
@@ -381,7 +403,9 @@ async def deliver_task_poke(
         "claimed_by = COALESCE(claimed_by, :agent), lease_owner = :agent, "
         "lease_expires_at = NOW() + make_interval(secs => :ttl), updated_at = NOW() "
         "WHERE id = :id AND lease_epoch = :e"),
-        {"id": task["id"], "e": epoch, "agent": f"agent:{payload_agent(payload)}",
+        # The holder is the computer's agent signature, the same string a claim
+        # by that agent uses. "agent:<id>" made the agent's own claim a 409.
+        {"id": task["id"], "e": epoch, "agent": payload_holder(payload),
          "ttl": _lease_ttl()})
     # The Product lease row is the addressable record; the epoch write above
     # already ended the previous one through the v3_15 trigger.
@@ -406,6 +430,47 @@ async def deliver_task_poke(
         task_key, payload_agent(payload), epoch, facts["net_rtt_ms"],
         facts["exec_startup_ms"])
     return {"dispatched": True, "reason": "DISPATCHED", **facts}
+
+
+async def deliver_step_poke(
+    session: AsyncSession,
+    *,
+    workspace_id: Any,
+    placement_id: str,
+    agent_id: str,
+    step: str,
+    task_key: str | None,
+    title: str = "",
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Deliver a review, merge or supervise placement: the same two receipts as work.
+
+    Unlike work, a step holds no task lease, so a failed delivery has nothing to
+    roll back on the task; the caller ends the placement and the next
+    scheduling pass places the step again.
+    """
+    sock = nerve_hub.get(workspace_id, agent_id)
+    if sock is None:
+        return {"dispatched": False, "reason": NerveError.NOT_CONNECTED.value}
+    await session.execute(text(
+        "INSERT INTO poke_deliveries (workspace_id, event_seq, recipient, channel, status, "
+        "detail, lease_epoch, qos_status, task_key, frame_id) "
+        "VALUES (:ws, 0, :r, 'nerve', 'delivered', 'sent', 0, 'SENT', :k, :f) "
+        "ON CONFLICT DO NOTHING"),
+        {"ws": workspace_id, "r": f"agent:{agent_id}", "k": task_key, "f": placement_id})
+    await session.commit()
+    ok, reason, facts = await nerve_hub.dispatch(
+        sock, task_key=task_key or "", placement_id=placement_id, title=title or step,
+        step=step, epoch=0, payload={"agent_id": agent_id, **(extra or {})})
+    await session.execute(text(
+        "UPDATE poke_deliveries SET qos_status = :q, detail = :d, net_rtt_ms = :rtt "
+        "WHERE workspace_id = :ws AND frame_id = :f"),
+        {"q": "EXEC_ACKED" if ok else "TIMEOUT_REVOKED", "d": reason[:500],
+         "rtt": facts.get("net_rtt_ms"), "ws": workspace_id, "f": placement_id})
+    await session.commit()
+    if not ok and reason == NerveError.NET_ACK_TIMEOUT.value:
+        await mark_offline(session, sock, reason)
+    return {"dispatched": ok, "reason": reason, **facts}
 
 
 async def _rollback(
@@ -452,6 +517,11 @@ async def mark_offline(session: AsyncSession, sock: ActiveSocket, reason: str) -
 
 def payload_agent(payload: dict[str, Any] | None) -> str:
     return str((payload or {}).get("agent_id") or "")
+
+
+def payload_holder(payload: dict[str, Any] | None) -> str:
+    """Who holds a lease granted on the agent's behalf: its token's signature."""
+    return str((payload or {}).get("holder") or payload_agent(payload))
 
 
 def _lease_ttl() -> int:
@@ -542,8 +612,8 @@ async def _reopen_expired_dispatches() -> int:
 
 
 async def nerve_reaper_loop(interval_seconds: float = 3.0) -> None:
-    from app.services.common import sleep_or_stop
-
+    # It imported a `sleep_or_stop` that never existed, so this task died at
+    # start-up and nothing ever reopened a dispatch past its ACK deadline.
     while True:
         try:
             await reap_stale()
@@ -551,13 +621,14 @@ async def nerve_reaper_loop(interval_seconds: float = 3.0) -> None:
             raise
         except Exception:  # noqa: BLE001 - a sweep never stops the loop
             logger.exception("nerve reaper pass failed")
-        await sleep_or_stop(interval_seconds)
+        await asyncio.sleep(interval_seconds)
 
 
 __all__ = [
     "ActiveSocket",
     "NerveHub",
     "NerveEnvelope",
+    "deliver_step_poke",
     "deliver_task_poke",
     "mark_offline",
     "nerve_hub",

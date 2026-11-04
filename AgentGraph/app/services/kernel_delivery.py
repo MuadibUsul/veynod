@@ -41,7 +41,6 @@ _SECRET_KEYS = {"lease_token", "token", "authorization", "service_key"}
 # steps still have to run on a host: nothing was provisioned, nothing leased.
 _NOT_WIRED = {
     "",
-    "legacy",
     "unbound",
     "unconfigured",
     "needs_write_set",

@@ -531,7 +531,6 @@ python scripts/smoke_e2e.py
 | `VN_GATE_SANDBOX_IMAGE` | 空 | Docker gate 镜像（必须含 pyright/ruff/pytest） |
 | `VN_GATE_CPU_LIMIT` / `VN_GATE_MEMORY_MB` / `VN_GATE_PIDS_LIMIT` | 1.0 / 512 / 128 | 沙箱资源上限 |
 | `VN_SUBMISSION_POLL_SECONDS` | 0.25 | worker 无任务时的轮询间隔 |
-| `VN_LEGACY_SUBMIT_MODE` | `reject` | 旧 `/v1/syscalls/submit_patch`：`reject` 返回 410；`sync` 仅迁移窗口 |
 | `VN_ADMISSION_GATE_QUEUE_LIMIT` | 256 | 每仓库流水线（LEASED/VERIFYING/待门禁/待合并，去重）与准入许可的上限；达到后暂停发放新任务 |
 | `VN_ADMISSION_MERGE_QUEUE_LIMIT` | 128 | 合并队列（PENDING/RUNNING intent）达到该深度时暂停发放 |
 | `VN_ADMISSION_MODE` | `reject` | `reject` 返回 429 + `Retry-After`；`defer` 返回 200 `leased=false` + `retry_after_seconds`（旧客户端过渡） |
@@ -555,7 +554,7 @@ python scripts/smoke_e2e.py
 4. **Bundle 增补**：`base_commit_sha` 与 `last_error_traceback`。没有 base SHA，Runner 无法创建 worktree；没有历史报错，自愈重试没有输入。
 5. **SPLIT 校验增强**：在 Kahn 无环检查之外，要求**无依赖关系的兄弟任务**写集正交；有依赖的兄弟允许重叠（调度器保证串行）。
 6. **MCP 握手**：增加 `initialize`、`notifications/initialized`、`ping`，并放宽 `method` 校验；否则标准 MCP 客户端（Claude Code/Codex）无法完成握手。
-7. **提交协议**：v2 立即返回 202，门禁在持久化 worker 中执行；幂等键绑定 task/租约/patch SHA；旧 `/v1/syscalls/submit_patch` 默认 410 并提供 `VN_LEGACY_SUBMIT_MODE=sync` 迁移开关。
+7. **提交协议**：v2 立即返回 202，门禁在持久化 worker 中执行；幂等键绑定 task/租约/patch SHA；旧 `/v1/syscalls/submit_patch` 一律 410（同步回退已删除）。
 
 ---
 

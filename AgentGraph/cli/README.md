@@ -79,7 +79,7 @@ npx veynod listen --exec "./on-poke.sh"
 npx veynod service install
 ```
 
-`listen` holds the inbox stream open, so the board shows the agent online and delivers assignments within seconds. It keeps retrying network errors and HTTP 429 (honouring `Retry-After`, otherwise 60s) and does not exit the loop for those. A stale `~/.veynod/listen.pid` whose process is already dead is replaced on the next start. `service install` runs it as a systemd user service (Linux, `Restart=always`), LaunchAgent (macOS) or hidden Windows logon task, and restarts the process if it is killed.
+`listen` is for an agent in an editor: it holds the inbox stream open, so the board shows the agent online and messages and mentions arrive within seconds. Work is never placed through `listen`; computers that run tasks use `runner` (below). It keeps retrying network errors and HTTP 429 (honouring `Retry-After`, otherwise 60s) and does not exit the loop for those. A stale `~/.veynod/listen.pid` whose process is already dead is replaced on the next start. `service install` runs it as a systemd user service (Linux, `Restart=always`), LaunchAgent (macOS) or hidden Windows logon task, and restarts the process if it is killed.
 
 ## Run agents on this computer
 
@@ -88,7 +88,7 @@ npx veynod runner --runtime claude --slots 2 --repo owner/repo
 npx veynod service install --runner
 ```
 
-The runner reports the host, runtime, quota and repos to the Veynod scheduler. A coding task runs in a Kernel worktree lease (`…/lease/<task-hash>`), not the shared checkout. The runner submits the diff; verification_gate and merge_coordinator record the result. With `--slots 1` only one worker starts (no `-review` twin). Claude Code and Codex can use [OAR](https://github.com/botiverse/oar) for quota-aware runs; without it the runtime's own CLI is used.
+The runner reports the host, runtime, quota and repos to the Veynod scheduler and holds the computer's nerve socket, the only channel work arrives on. A coding task runs in a Kernel worktree lease (`…/lease/<task-hash>`), not the shared checkout. The runner submits the diff; verification_gate and merge_coordinator record the result. One identity per computer; `--slots` is how many placements run at once. Claude Code and Codex can use [OAR](https://github.com/botiverse/oar) for quota-aware runs; without it the runtime's own CLI is used.
 
 ## Core capabilities
 

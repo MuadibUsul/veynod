@@ -1018,10 +1018,10 @@ ALTER TABLE diagram_chunks
 - [ ] 运行 `cd AgentGraph && pytest tests -q` 确保全部存量测试通过。
 
 ### Step 3：剥离 `main.py` 后台循环，消除 API 503（预计 0.5 天）
-- [ ] 将 `main.py` lifespan 中的非实时轮询任务受控于 `ENABLE_INLINE_BACKGROUND_LOOPS` 开关，保证 `api:8000` 专职服务 HTTP 与 `/v1/ws/nerve`。
+- [x]（2026-11-04 反向决定：调度与派发需要 nerve 套接字，所有循环留在 API 进程，开关与 `app/worker.py` 已删除）将 `main.py` lifespan 中的非实时轮询任务受控于 `ENABLE_INLINE_BACKGROUND_LOOPS` 开关，保证 `api:8000` 专职服务 HTTP 与 `/v1/ws/nerve`。
 
 ### Step 4：融合 Diagram 与 Veynod Kernel，跑通十万行级全自动 Loop（预计 2 天）
 - [ ] 执行 `v3_80_bind_diagram_to_kernel.sql`。
 - [ ] 在 `diagrams.py` 的 `freeze` 动作中调用 `code_engine.py`，将每个 `diagram_chunk` 注册为 Kernel 的 `dag_tasks`（绑定 `allowed_write_paths` -> `write_set`）。
-- [ ] 废弃 `CODE_ENGINE_LEGACY_DIRECT=1` 旧路径，统一由 Kernel 5 阶段 Gate + Merge Coordinator CAS 产出 `delivery_records` 后驱动 Diagram 图节点变绿并自动派发下一批就绪 Chunk。
+- [x] 废弃 `CODE_ENGINE_LEGACY_DIRECT=1` 旧路径（2026-11-04 已删除），统一由 Kernel 5 阶段 Gate + Merge Coordinator CAS 产出 `delivery_records` 后驱动 Diagram 图节点变绿并自动派发下一批就绪 Chunk。
 - [ ] 运行 `python scripts/chaos_suite.py` 与 `python scripts/e2e_unified.py` 完成全链路混沌与端到端验收。

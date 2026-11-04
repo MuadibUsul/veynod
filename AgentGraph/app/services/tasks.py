@@ -514,7 +514,8 @@ async def create_task(
     task = await _create_task_core(
         session, principal, request, agent=agent, batch=batch, commit=True
     )
-    if settings.kernel_provision_on_create and task.repo and (task.kind or "work") == "work":
+    # A task with a repository is a Kernel task (worktree lease + write-set lock).
+    if task.repo and (task.kind or "work") == "work":
         from app.services import kernel_delivery
 
         try:

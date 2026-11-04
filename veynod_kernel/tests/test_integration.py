@@ -387,7 +387,6 @@ def kernel(
     settings.gate_timeout_seconds = 300
     settings.submission_worker_concurrency = 2
     settings.submission_poll_seconds = 0.05
-    settings.legacy_submit_mode = "reject"
     asyncio.run(configure_database(TEST_DB_URL))
 
     base = Path(tempfile.mkdtemp(prefix="veynod-it-", dir=str(tmp_path)))
@@ -1069,7 +1068,6 @@ def _submission_world(tmp_path: Path, workers: int):
     settings.gate_timeout_seconds = 300
     settings.submission_worker_concurrency = workers
     settings.submission_poll_seconds = 0.05
-    settings.legacy_submit_mode = "reject"
     asyncio.run(configure_database(TEST_DB_URL))
     base = Path(tempfile.mkdtemp(prefix="veynod-submit-it-", dir=str(tmp_path)))
     bare, head = _make_repo(base, CALC_FILES)
@@ -1393,36 +1391,6 @@ def test_legacy_submit_endpoint_returns_migration_hint(tmp_path: Path) -> None:
         assert harness.task(task["task_id"])["status"] == "LEASED"
 
 
-def test_legacy_sync_escape_hatch_still_commits(tmp_path: Path) -> None:
-    with kernel(tmp_path, CALC_FILES) as harness:
-        settings.legacy_submit_mode = "sync"
-        _freeze_calc(harness)
-        task = _calc_task(harness)
-        bundle = harness.pull()
-        diff = _patch(
-            harness.base,
-            harness.bare,
-            harness.head,
-            "src/calc.py",
-            "    ...",
-            "    return a + b",
-        )
-        result = harness.syscall(
-            "/v1/syscalls/submit_patch",
-            {
-                "task_id": task["task_id"],
-                "lease_token": bundle["lease_token"],
-                "git_diff": diff,
-                "touched_symbols": ["src/calc.py::add"],
-                "local_test_passed": True,
-            },
-        )
-        assert result["new_status"] == "COMMITTED", result
-
-
-# ---------------------------------------------------------------------------
-# 9. Server-derived AST scope (do not trust Runner touched_symbols)
-# ---------------------------------------------------------------------------
 def test_ast_scope_rejects_changes_to_an_unleased_symbol(tmp_path: Path) -> None:
     with kernel(tmp_path, SCHEDULER_FILES) as harness:
         harness.artifact("src/a.py::f", "stub")

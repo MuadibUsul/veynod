@@ -74,23 +74,20 @@ for the board. It only connects out:
   and Codex with version, models and quota, how many tasks at once (`--slots`)
   and which repositories it may work on (`--repo`). Then a heartbeat every 30 s
   with what it is running.
-- When the platform places a coding task here, the runner asks the Kernel
-  for a worktree lease (`pull_task_bundle`). Claude's cwd is that isolated
-  directory (`…/.veynod-worktrees/lease/<task-hash>`), never the shared
-  checkout. The hub log contains `kernel worktree cwd=… pool=worktree_pool`.
-  On exit the runner submits the diff (`submission_service`); the Kernel
-  `verification_gate` (typecheck, unit tests, AST lock) and
-  `merge_coordinator` (fast-forward) record the result. Those three names
-  are printed in the hub log. `slots=1` starts one worker and does not keep
-  a `-review` Claude. `--slots 2` or `--legacy-review` adds the twin;
-  `--legacy-checkout` is the old local worktree path.
-- `python3 scripts/smoke_kernel_worktree_gate.py` checks the lease path.
-  After deploy: `ps aux | grep claude` shows one process; grep the hub log
-  for `kernel worktree cwd=`, `submission_service id=`, `verification_gate`
-  and `merge_coordinator sha=`.
+- It holds the computer's nerve socket (`/v1/ws/nerve`). That socket is the
+  only way work reaches the computer: every placement (work, review, merge,
+  a supervise round) arrives there, is answered at once, and runs in its own
+  worker process, at most `--slots` at a time.
+- A task with a repository runs in a Kernel worktree lease
+  (`…/.veynod-worktrees/lease/<task-hash>`), never the shared checkout. The
+  diff goes through `submission_service`; the Kernel `verification_gate`
+  (typecheck, unit tests, AST lock) and `merge_coordinator` (fast-forward)
+  record the result. A repository with no Kernel binding is not placed at all;
+  the Loop says so. A computer has one identity: the Kernel gate reviews code,
+  and a person reviews what no other computer can.
 - It never claims for the agent. Three failed starts leave the task unclaimed,
   and the platform moves it to another computer.
-- Receipts (delivered, accepted, started, finished or failed) go to
+- Receipts (accepted, started, finished or failed) go to
   `~/.veynod/runner-receipts.jsonl`.
 
 Without `--runtime` the runner uses whichever of Claude Code and Codex is

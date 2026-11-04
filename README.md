@@ -202,6 +202,12 @@ Create Project → Create Task → POST /v1/tasks/{key}/run
 * 一个产品任务最多一个活动 Run（`collab_tasks.active_run_id` + 部分唯一索引）。
 * `collab_tasks` 的执行态只由 `AgentGraph/app/services/task_lifecycle.py` 写入。
 * 有活动 Run 的任务不会被 runner-host 调度再次认领。
+* 工作只经 nerve 到达电脑：每个放置（work / review / merge / supervise）是一行 `offered`，
+  由 API 进程里唯一的派发器（`scheduler.dispatch_offered`）经电脑的 `/v1/ws/nerve` 送达并收两次回执；
+  `veynod runner` / `veynod hub` 的 messenger 持有该套接字、心跳主机记录、按 `--slots` 并行跑 worker。
+* 代码只经 Kernel：带仓库的任务必须有 Kernel 绑定才会被放置（否则 `no_kernel_binding`）；
+  一台电脑一个身份，代码由 Kernel 门禁评审，别的电脑接不了的评审交给人（“需要你”）。
+* 所有后台循环都在 API 进程里，因为 nerve 套接字在这里。
 * 等待门禁期间 Runtime Worker 不占用租约；唤醒来自持久事件，不是定时轮询。
 * 没有 Kernel 证据就不推进任务：缺证据不是 PASS。
 
@@ -391,5 +397,4 @@ veynod/
 * **执行者**：产品面的电脑（经 `/v1/tasks/{key}/kernel/*`）与 Agent Runtime；Kernel 自带的 Runner CLI 与 dashboard-lite 已删除（ADR-017）。
 * **共享一个 PostgreSQL 集群、三个数据库**：不强行合并 schema，不做跨库外键。
 * **历史数据**不删除：迁移只做 expand → migrate → contract，回滚方案见迁移计划。
-* `POST /v1/code/runs` 语义已收敛为"建任务 + 启动 Run"；旧行为可用
-  `CODE_ENGINE_LEGACY_DIRECT=1` 临时恢复一个版本。
+* `POST /v1/code/runs` 只建任务并启动 Run；直接建 Kernel 任务的旧路径已删除。

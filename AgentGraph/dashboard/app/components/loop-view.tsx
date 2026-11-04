@@ -39,6 +39,7 @@ const UNPLACED_LABEL: Record<string, string> = {
   no_host_for_namespace: "No runner may work in this namespace",
   no_host_with_capabilities: "No runner has the skills it needs",
   no_host_for_repo: "No runner can reach its repository",
+  no_kernel_binding: "Its repository is not connected to a Kernel",
   no_host_with_runtime: "No runner has Claude Code or Codex ready",
   every_host_failed: "Every runner that could take it already failed it",
   hosts_out_of_quota: "Every runner that could take it is out of quota",

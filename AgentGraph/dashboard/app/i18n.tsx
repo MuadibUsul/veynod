@@ -23,6 +23,7 @@ const ZH: Record<string, string> = {
   "Hide sidebar": "收起侧边栏",
   "No other computer can review it": "没有别的电脑能评审它（做它的那台不能自评），请你来评审",
   "A task waits for your review": "有一个任务等你评审",
+  "Its repository is not connected to a Kernel": "它的仓库还没接到 Kernel：请在项目的仓库里绑定",
   "No supervisor computer looks after the Loop": "没有监督电脑在照看 Loop",
   Supervisor: "监督",
   "Supervisor round running": "正在巡场",

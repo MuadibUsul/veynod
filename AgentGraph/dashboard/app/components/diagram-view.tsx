@@ -66,6 +66,7 @@ const UNPLACED_SHORT: Record<string, string> = {
   no_host_for_namespace: "No computer may work here",
   no_host_with_capabilities: "No computer has the skills",
   no_host_for_repo: "No computer reaches its repository",
+  no_kernel_binding: "Its repository is not connected to a Kernel",
   no_host_with_runtime: "No computer has Claude Code or Codex ready",
   every_host_failed: "Every computer already failed it",
   hosts_out_of_quota: "Computers are out of quota",

@@ -121,39 +121,31 @@ def _clean_report(given: Any) -> dict[str, Any] | None:
     if not isinstance(given, dict):
         return None
     pinning = given.get("mcp_pinning")
-    delivery = given.get("delivery")
-    if delivery not in ("kernel", "legacy"):
-        delivery = None
     leases = [lease for lease in (_clean_lease(item) for item in (given.get("leases") or [])[:8])
               if lease]
     report: dict[str, Any] = {
         "mcp_pinning": pinning if isinstance(pinning, bool) else None,
         "runtime": _clean_str(given.get("runtime"), 32),
     }
-    if delivery:
-        report["delivery"] = delivery
     if leases:
         report["leases"] = leases
     return report
 
 
 def kernel_card(hosts: list[dict[str, Any]]) -> dict[str, Any]:
-    """What the Computers card shows: host delivery mode and worktree leases."""
-    delivery = "kernel"
+    """What the Computers card shows: worktree leases (delivery is always the Kernel)."""
     leases: list[dict[str, Any]] = []
     for host in hosts:
         report = host.get("capabilities_report") or {}
         if not isinstance(report, dict):
             continue
-        if report.get("delivery") in ("kernel", "legacy"):
-            delivery = report["delivery"]
         for item in report.get("leases") or []:
             cleaned = _clean_lease(item)
             if cleaned:
                 leases.append(cleaned)
     first = leases[0] if leases else {}
     return {
-        "delivery": delivery,
+        "delivery": "kernel",
         "worktree": first.get("worktree") or ("leased" if leases else "idle"),
         "lease": first.get("lease") or ("held" if leases else "none"),
         "gate": first.get("gate"),
@@ -368,12 +360,10 @@ def computers_out(items: list[dict[str, Any]], roles: dict[str, str]) -> list[di
         seats.sort(key=lambda seat: (seat["seat"] != "work", seat["agent_id"] or ""))
         # What the computer can run now: a seat taken off the Loop no longer counts.
         live = [host for host in hosts if host["status"] != "revoked"] or hosts
-        if kernel_card(live)["delivery"] == "kernel" and any(
-                seat["seat"] == "work" and seat["state"] == "online" for seat in seats):
-            # The Kernel gate reviews a kernel-delivery computer's work, and
-            # `veynod up` (slots=1) no longer starts a -review seat. A review seat
-            # that is gone or silent while the work seat runs is a leftover of an
-            # older setup, not something to reconnect.
+        if any(seat["seat"] == "work" and seat["state"] == "online" for seat in seats):
+            # The Kernel gate reviews code and `veynod up` no longer starts a
+            # -review seat. A review seat that is gone or silent while the work
+            # seat runs is a leftover of an older setup, not something to reconnect.
             seats = [seat for seat in seats if seat["seat"] != "review"
                      or seat["state"] not in ("revoked", "offline")]
         runtimes: dict[str, dict[str, Any]] = {}

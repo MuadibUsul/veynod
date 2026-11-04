@@ -128,7 +128,6 @@ async def kernel():
         "VN_ADMIN_API_KEY": ADMIN_KEY,
         "VN_RUNTIME_SERVICE_KEY": SERVICE_KEY,
         "VN_REPO_ROOT": str(repo),
-        "VN_LEGACY_SUBMIT_MODE": "sync",
     }
     api = await asyncio.create_subprocess_exec(
         kernel_python, "-m", "uvicorn", "app.main:app",

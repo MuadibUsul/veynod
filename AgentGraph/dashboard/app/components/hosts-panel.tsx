@@ -9,9 +9,8 @@ import { AgentFace } from "./agent-face";
 
 /*
  * The computers that run this workspace's agents. A computer is a
- * workstation, not an agent: `veynod up` gives it a key for its own seat and,
- * only for the legacy review path or slots > 1, a "-review" seat (the Kernel
- * gate reviews kernel-delivery work); the server groups the keys
+ * workstation, not an agent: `veynod up` gives it one key (older setups may
+ * still show a "-review" seat; the Kernel gate reviews code); the server groups the keys
  * by machine. The owner can pause a computer (its tasks move to others) or
  * take it off the Loop for good; both act on every seat. It refreshes when the
  * Loop's event stream says something about hosts or placements; it does not
@@ -93,8 +92,6 @@ const RUNTIME_INSTALL = {
   codex: "npm install -g @openai/codex && codex login",
 };
 const RECONNECT = "veynod up --run-tasks";
-// A review seat exists only for the legacy review path or slots > 1.
-const REVIEW_RECONNECT = "veynod up --run-tasks --legacy-review";
 
 export function runtimeName(id: string): string {
   return id === "claude" ? "Claude Code" : id === "codex" ? "Codex" : id;
@@ -196,8 +193,9 @@ export function HostsPanel({
         const paused = computer.seats.every((seat) => seat.status !== "active");
         // What keeps an online computer from working: no runtime it can start, or a seat taken off.
         const noRuntime = computer.state !== "revoked" && computer.runtimes.length > 0 && runtimes.length === 0;
+        // Only the work seat matters: review is the Kernel gate's or a person's.
         const removedSeats = computer.state === "revoked" ? []
-          : computer.seats.filter((seat) => seat.status === "revoked");
+          : computer.seats.filter((seat) => seat.status === "revoked" && seat.seat === "work");
         const stateText = computer.last_seen_at && computer.state !== "online"
           ? `${t(STATE_LABEL[computer.state])} · ${relativeTime(computer.last_seen_at)}`
           : t(STATE_LABEL[computer.state]);
@@ -257,10 +255,8 @@ export function HostsPanel({
             )}
             {removedSeats.map((seat) => (
               <p key={seat.host_id} className="station-note">
-                {seat.seat === "work"
-                  ? t("Its work seat was taken off the Loop, so it cannot build tasks. To connect it again, run on it:")
-                  : t("Its review seat was taken off the Loop, so it cannot review here. To connect it again, run on it:")}{" "}
-                <code>{seat.seat === "work" ? RECONNECT : REVIEW_RECONNECT}</code>
+                {t("Its work seat was taken off the Loop, so it cannot build tasks. To connect it again, run on it:")}{" "}
+                <code>{RECONNECT}</code>
               </p>
             ))}
             {left === 0 && waitingForQuota > 0 && (
