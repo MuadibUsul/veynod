@@ -22,6 +22,9 @@ RUN if [ "$BUILD_RUST" = "1" ]; then \
     else mkdir -p /build/wheels; fi
 
 FROM python:3.12-slim
+# Production's Docker gate sandbox invokes the host daemon through its mounted
+# socket. Keep the client in both the API and gate worker image.
+COPY --from=docker:29.9.2-cli /usr/local/bin/docker /usr/local/bin/docker
 # --jitless: V8's JIT code-range reservation fails under Docker Desktop's
 # WSL2 memory settings ("Failed to reserve virtual memory for CodeRange"),
 # which made every STATIC_TYPECHECK gate die before checking anything.

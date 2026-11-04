@@ -416,6 +416,16 @@ async def _offer_work(session: AsyncSession, task: CollabTask, host: dict[str, A
     return placement_id
 
 
+#: Placements a dispatch in this process is delivering right now. The sockets
+#: live in this process, so this is the whole set: the scheduling pass and the
+#: dispatch loop both call dispatch_offered, and without the claim the loser
+#: read "already dispatching" as a failed delivery and moved a placement the
+#: winner was still delivering.
+_DISPATCHING: set[str] = set()
+#: Results that mean another dispatch owns the delivery, not that it failed.
+_NOT_MINE = {"TASK_ALREADY_DISPATCHING"}
+
+
 async def dispatch_offered(workspace_id: Any | None = None, limit: int = 50) -> dict[str, int]:
     """Deliver every offered placement over its computer's nerve socket.
 
@@ -445,34 +455,49 @@ async def dispatch_offered(workspace_id: Any | None = None, limit: int = 50) -> 
             {"ws": str(workspace_id) if workspace_id else None, "limit": limit})).mappings().all()
         for row in rows:
             placement = dict(row)
-            if nerve_hub.nerve_hub.get(placement["workspace_id"], placement["agent_id"]) is None:
+            if (placement["placement_id"] in _DISPATCHING
+                    or nerve_hub.nerve_hub.get(placement["workspace_id"],
+                                               placement["agent_id"]) is None):
                 counts["skipped"] += 1
                 continue
-            chunk = ({"diagram_key": placement["diagram_key"], "chunk_key": placement["chunk_key"]}
-                     if placement["diagram_key"] else {})
-            if placement["step"] == "work":
-                result = await nerve_hub.deliver_task_poke(
-                    session, workspace_id=placement["workspace_id"],
-                    task_key=placement["task_key"], placement_id=placement["placement_id"],
-                    epoch=int(placement["lease_epoch"] or 0) + 1,
-                    title=placement["task_title"] or placement["task_key"],
-                    payload={"agent_id": placement["agent_id"],
-                             "holder": placement["holder"] or placement["agent_id"], **chunk})
-            else:
-                result = await nerve_hub.deliver_step_poke(
-                    session, workspace_id=placement["workspace_id"],
-                    placement_id=placement["placement_id"], agent_id=placement["agent_id"],
-                    step=placement["step"], task_key=placement["task_key"],
-                    title=placement["task_title"] or placement["step"], extra=chunk)
-            if result.get("dispatched"):
-                counts["ok"] += 1
-                continue
-            counts["failed"] += 1
-            reason = str(result.get("reason") or "nerve")
-            logger.info("nerve delivery of %s (%s) did not land: %s",
-                        placement["placement_id"], placement["step"], reason)
-            await _undeliverable(session, placement, f"nerve:{reason}"[:120])
+            _DISPATCHING.add(placement["placement_id"])
+            try:
+                await _deliver_one(session, placement, nerve_hub, counts)
+            finally:
+                _DISPATCHING.discard(placement["placement_id"])
     return counts
+
+
+async def _deliver_one(session: AsyncSession, placement: dict[str, Any], nerve_hub: Any,
+                       counts: dict[str, int]) -> None:
+    """One offered placement over its computer's socket; a real failure moves it."""
+    chunk = ({"diagram_key": placement["diagram_key"], "chunk_key": placement["chunk_key"]}
+             if placement["diagram_key"] else {})
+    if placement["step"] == "work":
+        result = await nerve_hub.deliver_task_poke(
+            session, workspace_id=placement["workspace_id"],
+            task_key=placement["task_key"], placement_id=placement["placement_id"],
+            epoch=int(placement["lease_epoch"] or 0) + 1,
+            title=placement["task_title"] or placement["task_key"],
+            payload={"agent_id": placement["agent_id"],
+                     "holder": placement["holder"] or placement["agent_id"], **chunk})
+    else:
+        result = await nerve_hub.deliver_step_poke(
+            session, workspace_id=placement["workspace_id"],
+            placement_id=placement["placement_id"], agent_id=placement["agent_id"],
+            step=placement["step"], task_key=placement["task_key"],
+            title=placement["task_title"] or placement["step"], extra=chunk)
+    if result.get("dispatched"):
+        counts["ok"] += 1
+        return
+    reason = str(result.get("reason") or "nerve")
+    if reason in _NOT_MINE:
+        counts["skipped"] += 1
+        return
+    counts["failed"] += 1
+    logger.info("nerve delivery of %s (%s) did not land: %s",
+                placement["placement_id"], placement["step"], reason)
+    await _undeliverable(session, placement, f"nerve:{reason}"[:120])
 
 
 async def _undeliverable(session: AsyncSession, placement: dict[str, Any], reason: str) -> None:

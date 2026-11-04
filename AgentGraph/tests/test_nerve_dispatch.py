@@ -126,7 +126,8 @@ async def test_a_silent_socket_times_out_in_about_200ms_and_the_task_returns(
         assert row["status"] == "READY", row
         # Nerve is the only channel: an undelivered offer frees the task and the
         # placement moves, so the next pass places it again (no SSE fallback).
-        assert row["assignee"] is None, row
+        # (The background pass may already have placed it again, so the
+        # placement, not the assignee, is what says this one was taken back.)
         placements = (await client.get("/v1/runner/placements", headers=ws["owner"],
                                        params={"task_key": key})).json()["items"]
         moved = [item for item in placements if item["status"] == "moved"]

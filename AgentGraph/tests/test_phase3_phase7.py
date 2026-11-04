@@ -114,6 +114,31 @@ async def _event_status(inbox_id: int) -> tuple[str, int]:
     return row["status"], int(row["attempts"])
 
 
+async def _until_processed(inbox_id: int) -> tuple[str, int]:
+    """Dispatch until the event is PROCESSED.
+
+    The session's API server runs its own dispatch loop over this table with
+    the real projection (no Kernel here, so it fails): when it claims the row
+    first it records a failed attempt and a backoff. Clearing the backoff and
+    dispatching again is what any retry does; the event must still end up
+    PROCESSED once this process's projection succeeds.
+    """
+    status, attempts = await _event_status(inbox_id)
+    for _ in range(20):
+        async with async_session_factory() as session:
+            await session.execute(
+                text("UPDATE event_inbox SET next_attempt_at = NOW() "
+                     "WHERE inbox_id = :id AND status = 'PENDING'"),
+                {"id": inbox_id})
+            await session.commit()
+        await event_dispatch.dispatch_once(limit=10)
+        status, attempts = await _event_status(inbox_id)
+        if status == "PROCESSED":
+            break
+        await asyncio.sleep(0.1)
+    return status, attempts
+
+
 async def test_event_inbox_retry_dead_letter_and_replay(monkeypatch):
     async with async_session_factory() as session:
         await session.execute(text("DELETE FROM event_inbox"))
@@ -130,9 +155,8 @@ async def test_event_inbox_retry_dead_letter_and_replay(monkeypatch):
     seq = uuid.uuid4().int % 1_000_000_000
     inbox_id = await _insert_event(seq)
     monkeypatch.setattr(event_dispatch.code_engine, "sync_kernel_task_event", ok)
-    result = await event_dispatch.dispatch_once(limit=10)
-    assert result["processed"] >= 1, result
-    assert await _event_status(inbox_id) == ("PROCESSED", 0)
+    status, _attempts = await _until_processed(inbox_id)
+    assert status == "PROCESSED"
     assert "task-1" in calls
 
     failed_id = await _insert_event(seq + 1)
@@ -160,8 +184,8 @@ async def test_event_inbox_retry_dead_letter_and_replay(monkeypatch):
     replayed = await event_dispatch.replay(failed_id)
     assert replayed is not None and replayed["status"] == "PENDING"
     monkeypatch.setattr(event_dispatch.code_engine, "sync_kernel_task_event", ok)
-    await event_dispatch.dispatch_once(limit=10)
-    assert await _event_status(failed_id) == ("PROCESSED", 0)
+    status, _attempts = await _until_processed(failed_id)
+    assert status == "PROCESSED"
 
 
 async def test_runtime_usage_metering_is_idempotent(client, workspace):
