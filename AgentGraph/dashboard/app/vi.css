@@ -2390,3 +2390,134 @@ button.timeline-row:disabled {
   overflow: auto;
   font-size: 12px;
 }
+
+.federation-zones {
+  justify-self: start;
+}
+
+.federation-zones .tab-count {
+  margin-left: 6px;
+}
+
+.federation-chat {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) 1fr;
+  min-height: 320px;
+}
+
+.federation-threads {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  padding: 8px;
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.federation-threads button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--ds-text-secondary);
+  cursor: pointer;
+}
+
+.federation-threads button.active,
+.federation-threads button:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ds-text-primary, inherit);
+}
+
+.federation-messages {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-width: 0;
+}
+
+.federation-log {
+  list-style: none;
+  margin: 0;
+  padding: 10px 14px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  max-height: 460px;
+  overflow: auto;
+}
+
+.federation-message {
+  display: grid;
+  gap: 4px;
+  max-width: 78%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.federation-message.out {
+  justify-self: end;
+  background: rgba(80, 140, 255, 0.10);
+}
+
+.federation-message.in {
+  justify-self: start;
+  border: 1px dashed rgba(255, 190, 80, 0.35);
+}
+
+.federation-message-meta {
+  font-size: 11px;
+  color: var(--ds-text-secondary);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.federation-outside {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: rgb(255, 190, 80);
+  border: 1px solid rgba(255, 190, 80, 0.4);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.federation-text {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.federation-compose {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 10px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.federation-compose textarea {
+  flex: 1;
+  resize: vertical;
+}
+
+@media (max-width: 720px) {
+  .federation-chat {
+    grid-template-columns: 1fr;
+  }
+  .federation-threads {
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    grid-auto-flow: column;
+    overflow-x: auto;
+  }
+  .federation-message {
+    max-width: 100%;
+  }
+}

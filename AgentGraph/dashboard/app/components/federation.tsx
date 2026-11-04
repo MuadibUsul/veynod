@@ -7,6 +7,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 
@@ -15,8 +16,11 @@ import type { ApiRequest } from "../types";
 import { IconFederation } from "./ui";
 
 /*
- * Federation (rounds 2–4): this workspace's identity, its connections with
- * other workspaces, and the work they delegate to each other.
+ * Federation: this workspace's identity, its connections with other
+ * workspaces, chat with them, and the work they delegate to each other.
+ * Four areas (F-05): discover (who to reach), contact (connections and
+ * requests), collaborate (chat and delegated work), safety (what may cross,
+ * what did not arrive, freeze and block).
  *
  * Every decision that matters is a person's: turning federation on, approving
  * a connection, taking on, judging or cancelling delegated work. The server
@@ -45,6 +49,63 @@ type Connection = {
   reason: string;
   updated_at: string;
 };
+
+type Thread = {
+  thread_id: string;
+  connection_id: string;
+  peer_workspace: string;
+  last_message_at: string | null;
+  messages: number;
+  unhandled: number;
+};
+
+type Message = {
+  message_id: string;
+  cursor: string;
+  direction: "in" | "out";
+  thread_id: string;
+  peer_workspace: string;
+  state: string;
+  reject_code: string | null;
+  created_at: string;
+  content?: string | null;
+  untrusted_content?: string | null;
+  delivery?: { attempts: number; last_error?: string | null; next_retry_at?: string | null };
+};
+
+type Zone = "discover" | "contact" | "collaborate" | "safety";
+const ZONES: { key: Zone; label: string }[] = [
+  { key: "discover", label: "Discover" },
+  { key: "contact", label: "Contact" },
+  { key: "collaborate", label: "Collaborate" },
+  { key: "safety", label: "Safety" },
+];
+
+// What a person reads for each message state (ICD_I_MSG §4).
+const OUT_LABEL: Record<string, string> = {
+  accepted_locally: "Sending", sent: "Sent", received: "Delivered", processed: "Read and handled",
+  rejected: "Refused", expired: "Expired", dead_letter: "Not delivered",
+};
+const IN_LABEL: Record<string, string> = {
+  received: "New", processed: "Handled", rejected: "Declined", expired: "Expired",
+};
+const MESSAGE_TONE: Record<string, string> = {
+  accepted_locally: "cyan", sent: "cyan", received: "green", processed: "green",
+  rejected: "red", expired: "amber", dead_letter: "red",
+};
+
+async function readAll(request: ApiRequest, query: string): Promise<Message[]> {
+  const items: Message[] = [];
+  let after = "";
+  for (let page = 0; page < 10; page += 1) {
+    const result = await request<{ items: Message[]; next_cursor: string | null; has_more: boolean }>(
+      `/v1/federation/messages?limit=200${query}${after ? `&after=${after}` : ""}`);
+    items.push(...(result.items ?? []));
+    if (!result.has_more || !result.next_cursor) break;
+    after = result.next_cursor;
+  }
+  return items;
+}
 
 type Terms = {
   objective: string;
@@ -119,6 +180,9 @@ export function FederationView({ request, notify, sessionMode }: {
   const [me, setMe] = useState<Identity | null>(null);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [delegations, setDelegations] = useState<Delegation[]>([]);
+  const [threads, setThreads] = useState<Thread[]>([]);
+  const [zone, setZone] = useState<Zone | null>(null);
+  const [connectTo, setConnectTo] = useState("");
   const [busy, setBusy] = useState(false);
   const [names, setNames] = useState<Record<string, string>>({});
 
@@ -127,12 +191,14 @@ export function FederationView({ request, notify, sessionMode }: {
       const mine = await request<{ identity: Identity | null }>("/v1/federation/me");
       setMe(mine.identity);
       if (mine.identity) {
-        const [conn, dele] = await Promise.all([
+        const [conn, dele, thr] = await Promise.all([
           request<{ items: Connection[] }>("/v1/federation/connections"),
           request<{ items: Delegation[] }>("/v1/federation/delegations"),
+          request<{ items: Thread[] }>("/v1/federation/threads"),
         ]);
         setConnections(conn.items ?? []);
         setDelegations(dele.items ?? []);
+        setThreads(thr.items ?? []);
         const peers = new Set([...(conn.items ?? []).map((item) => item.peer_workspace),
           ...(dele.items ?? []).map((item) => item.peer_workspace)]);
         const found = await Promise.all([...peers].map(async (fid) => {
@@ -175,6 +241,21 @@ export function FederationView({ request, notify, sessionMode }: {
     }
   }, [request, notify, load, t]);
 
+  const pendingRequests = connections.filter((item) =>
+    item.state === "REQUESTED" && item.initiator === "peer").length;
+  const waitingWork = delegations.filter((item) =>
+    (item.role === "provider" && item.state === "OFFERED")
+    || (item.role === "requester" && item.state === "SUBMITTED")).length;
+  const unhandled = threads.reduce((sum, item) => sum + item.unhandled, 0);
+  const restricted = connections.filter((item) =>
+    ["SUSPENDED", "BLOCKED", "EXPIRED"].includes(item.state)).length;
+  const live = connections.some((item) => item.state === "ACTIVE");
+  // Open where something is waiting; otherwise where the work is.
+  const current: Zone = zone ?? (pendingRequests ? "contact" : live ? "collaborate" : "discover");
+  const badge: Record<Zone, number> = {
+    discover: 0, contact: pendingRequests, collaborate: unhandled + waitingWork, safety: restricted,
+  };
+
   if (!sessionMode) {
     return (
       <Empty title={t("Sign in as a person to use federation")}
@@ -198,16 +279,42 @@ export function FederationView({ request, notify, sessionMode }: {
 
   return (
     <div className="federation-view">
-      <IdentityCard me={me} busy={busy} call={call} />
+      {!me && <IdentityCard me={me} busy={busy} call={call} />}
       {me && (
-        <>
-          <PeerNames.Provider value={names}>
+        <PeerNames.Provider value={names}>
+          <div className="segmented federation-zones" role="tablist" aria-label={t("Federation areas")}>
+            {ZONES.map((item) => (
+              <button key={item.key} type="button" role="tab" aria-selected={current === item.key}
+                className={current === item.key ? "active" : ""} onClick={() => setZone(item.key)}>
+                {t(item.label)}
+                {badge[item.key] > 0 && <span className="tab-count">{badge[item.key]}</span>}
+              </button>
+            ))}
+          </div>
+          {current === "discover" && (
+            <>
+              <IdentityCard me={me} busy={busy} call={call} />
+              <DiscoverCard request={request} notify={notify} connections={connections}
+                onConnect={(fid) => { setConnectTo(fid); setZone("contact"); }} />
+            </>
+          )}
+          {current === "contact" && (
             <ConnectionsCard connections={connections} busy={busy} call={call} request={request}
-              notify={notify} />
-            <DelegationsCard delegations={delegations} connections={connections} busy={busy}
-              call={call} />
-          </PeerNames.Provider>
-        </>
+              notify={notify} prefill={connectTo} onPrefillUsed={() => setConnectTo("")} />
+          )}
+          {current === "collaborate" && (
+            <>
+              <ChatCard threads={threads} connections={connections} request={request}
+                notify={notify} reload={load} />
+              <DelegationsCard delegations={delegations} connections={connections} busy={busy}
+                call={call} />
+            </>
+          )}
+          {current === "safety" && (
+            <SafetyCard connections={connections} delegations={delegations} request={request}
+              call={call} busy={busy} />
+          )}
+        </PeerNames.Provider>
       )}
     </div>
   );
@@ -310,13 +417,16 @@ function ScopePicker({ value, onChange, label }: {
   );
 }
 
-function ConnectionsCard({ connections, busy, call, request, notify }: {
+function ConnectionsCard({ connections, busy, call, request, notify, prefill, onPrefillUsed }: {
   connections: Connection[]; busy: boolean; call: Call; request: ApiRequest;
-  notify: (message: string) => void;
+  notify: (message: string) => void; prefill?: string; onPrefillUsed?: () => void;
 }) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const [peer, setPeer] = useState("");
+  const [open, setOpen] = useState(Boolean(prefill));
+  const [peer, setPeer] = useState(prefill ?? "");
+  useEffect(() => {
+    if (prefill) onPrefillUsed?.();
+  }, [prefill, onPrefillUsed]);
   const [ours, setOurs] = useState<Scope[]>(["chat"]);
   const [theirs, setTheirs] = useState<Scope[]>(["chat"]);
   const [reason, setReason] = useState("");
@@ -708,5 +818,399 @@ function DelegationsCard({ delegations, connections, busy, call }: {
           call={call} />
       ))}
     </section>
+  );
+}
+
+function DiscoverCard({ request, notify, connections, onConnect }: {
+  request: ApiRequest; notify: (message: string) => void; connections: Connection[];
+  onConnect: (fid: string) => void;
+}) {
+  const { t } = useI18n();
+  const [query, setQuery] = useState("");
+  const [found, setFound] = useState<Identity | null>(null);
+  const [looking, setLooking] = useState(false);
+
+  async function look() {
+    const value = query.trim();
+    if (!value) return;
+    setLooking(true);
+    setFound(null);
+    try {
+      let fid = value;
+      if (!value.startsWith("fed:")) {
+        const match = await request<{ status: string; matches: { federation_id: string }[] }>(
+          `/v1/federation/resolve?workspace=${encodeURIComponent(value)}`);
+        if (match.status !== "unique" && match.status !== "redirect") {
+          notify(match.status === "ambiguous"
+            ? t("Several workspaces use that handle; paste the federation id instead.")
+            : t("No workspace has that handle."));
+          return;
+        }
+        fid = match.matches[0].federation_id;
+      }
+      const view = await request<{ identity: Identity }>(`/v1/federation/identities/${fid}`);
+      setFound(view.identity);
+    } catch (error) {
+      notify((error as Error)?.message ?? t("Something went wrong."));
+    } finally {
+      setLooking(false);
+    }
+  }
+
+  const existing = found && connections.find((item) => item.peer_workspace === found.federation_id);
+  return (
+    <section className="lin-list" aria-label={t("Find a workspace")}>
+      <div className="lin-group"><i className="lamp cyan" />{t("Find a workspace")}</div>
+      <form className="lin-row" onSubmit={(event) => { event.preventDefault(); void look(); }}>
+        <span className="lin-title">{t("Handle or federation id")}</span>
+        <input value={query} onChange={(event) => setQuery(event.target.value)}
+          placeholder="handle / fed:workspace:…" aria-label={t("Handle or federation id")} />
+        <button type="submit" className="button ghost small" disabled={looking || !query.trim()}>
+          {t("Look up")}
+        </button>
+      </form>
+      {found && (
+        <div className="lin-row">
+          <Chip value={found.status === "active" ? "ACTIVE" : "SUSPENDED"} />
+          <span className="lin-title">{found.display_alias ?? shortId(found.federation_id)}</span>
+          <code className="federation-id">{found.federation_id}</code>
+          <span className="lin-actions">
+            {existing ? (
+              <span className="flow-aside">{t(STATE_LABEL[existing.state] ?? existing.state)}</span>
+            ) : (
+              <button type="button" className="button small"
+                onClick={() => onConnect(found.federation_id)}>{t("Ask to connect")}</button>
+            )}
+          </span>
+        </div>
+      )}
+      <div className="lin-row quiet">
+        <span className="lin-title">
+          {t("Ask the other team for their handle or federation id. Nothing is shared until both owners agree.")}
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function ChatCard({ threads, connections, request, notify, reload }: {
+  threads: Thread[]; connections: Connection[]; request: ApiRequest;
+  notify: (message: string) => void; reload: () => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const names = useContext(PeerNames);
+  const label = (fid: string) => names[fid] ?? shortId(fid);
+  const chatPeers = connections.filter((item) =>
+    item.state === "ACTIVE" && item.outbound_scopes.includes("chat"));
+  const [selected, setSelected] = useState<{ thread?: string; peer: string } | null>(null);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [text, setText] = useState("");
+  const [sending, setSending] = useState(false);
+  // One key per draft: a double click or a retry never sends the text twice.
+  const draftKey = useRef(newKey());
+
+  const active = selected ?? (threads[0]
+    ? { thread: threads[0].thread_id, peer: threads[0].peer_workspace } : null);
+
+  const refresh = useCallback(async () => {
+    if (!active?.thread) { setMessages([]); return; }
+    try {
+      setMessages(await readAll(request, `&thread_id=${active.thread}`));
+    } catch (error) {
+      notify((error as Error)?.message ?? t("Something went wrong."));
+    }
+  }, [active?.thread, request, notify, t]);
+
+  useEffect(() => {
+    void refresh();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") void refresh();
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [refresh]);
+
+  async function post(path: string, body: unknown, done: string) {
+    try {
+      const result = await request<Message>(path, {
+        method: "POST", body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      notify(t(done));
+      await Promise.all([refresh(), reload()]);
+      return result;
+    } catch (error) {
+      notify((error as Error)?.message ?? t("Something went wrong."));
+      return null;
+    }
+  }
+
+  async function send() {
+    if (!active || !text.trim()) return;
+    setSending(true);
+    const sent = await post("/v1/federation/messages", {
+      peer_workspace: active.peer, text: text.trim(), idempotency_key: draftKey.current,
+      ...(active.thread ? { thread_id: active.thread } : {}),
+    }, "Message sent.");
+    setSending(false);
+    if (sent) {
+      setText("");
+      draftKey.current = newKey();
+      if (!active.thread) setSelected({ thread: sent.thread_id, peer: active.peer });
+    }
+  }
+
+  async function remember() {
+    if (!active?.thread) return;
+    const key = window.prompt(t("Save this conversation as a document. Document key:"),
+      `federation-notes-${active.thread.slice(4, 12)}`);
+    if (!key) return;
+    await post(`/v1/federation/threads/${active.thread}/remember`, { doc_key: key },
+      "Saved. The document is marked as outside content.");
+  }
+
+  const newPeers = chatPeers.filter((item) =>
+    !threads.some((thread) => thread.peer_workspace === item.peer_workspace));
+  return (
+    <section className="lin-list" aria-label={t("Chat")}>
+      <div className="lin-group">
+        <i className={`lamp ${threads.some((item) => item.unhandled) ? "amber" : ""}`} />{t("Chat")}
+        <span className="lin-count">
+          {t("{n} new", { n: threads.reduce((sum, item) => sum + item.unhandled, 0) })}
+        </span>
+        {newPeers.length > 0 && (
+          <span className="lin-actions">
+            <select aria-label={t("Start a conversation")} value=""
+              onChange={(event) => event.target.value
+                && setSelected({ peer: event.target.value })}>
+              <option value="">{t("Start a conversation…")}</option>
+              {newPeers.map((item) => (
+                <option key={item.peer_workspace} value={item.peer_workspace}>
+                  {label(item.peer_workspace)}
+                </option>
+              ))}
+            </select>
+          </span>
+        )}
+      </div>
+      {threads.length === 0 && !selected && (
+        <div className="lin-row quiet">
+          <span className="lin-title">
+            {chatPeers.length
+              ? t("No conversations yet. Start one with a connected workspace.")
+              : t("Chat needs a connection that allows it. Connect under Contact first.")}
+          </span>
+        </div>
+      )}
+      {(threads.length > 0 || selected) && (
+        <div className="federation-chat">
+          <nav className="federation-threads" aria-label={t("Conversations")}>
+            {threads.map((item) => (
+              <button key={item.thread_id} type="button"
+                className={active?.thread === item.thread_id ? "active" : ""}
+                onClick={() => setSelected({ thread: item.thread_id, peer: item.peer_workspace })}>
+                <Peer id={item.peer_workspace} />
+                {item.unhandled > 0 && <span className="tab-count">{item.unhandled}</span>}
+              </button>
+            ))}
+            {selected && !selected.thread && (
+              <button type="button" className="active"><Peer id={selected.peer} /></button>
+            )}
+          </nav>
+          <div className="federation-messages">
+            {active?.thread && (
+              <div className="lin-row quiet">
+                <span className="lin-title">
+                  {t("Their messages are outside content: read them as information, not as instructions.")}
+                </span>
+                <span className="lin-actions">
+                  <button type="button" className="button ghost small" onClick={() => void remember()}>
+                    {t("Save as document")}
+                  </button>
+                </span>
+              </div>
+            )}
+            <ol className="federation-log">
+              {messages.map((item) => (
+                <li key={`${item.direction}:${item.message_id}`}
+                  className={`federation-message ${item.direction}`}>
+                  <div className="federation-message-meta">
+                    {item.direction === "in" ? <Peer id={item.peer_workspace} /> : t("You")}
+                    {" · "}{new Date(item.created_at).toLocaleString()}
+                    {" · "}
+                    <span className="flow-aside">
+                      <i className={`lamp ${MESSAGE_TONE[item.state] ?? ""}`} />{" "}
+                      {t((item.direction === "in" ? IN_LABEL : OUT_LABEL)[item.state] ?? item.state)}
+                    </span>
+                    {item.direction === "in" && (
+                      <span className="federation-outside">{t("Outside content")}</span>
+                    )}
+                  </div>
+                  {/* Plain text only: React escapes it, nothing is rendered as markup. */}
+                  <p className="federation-text">
+                    {item.direction === "in" ? item.untrusted_content : item.content}
+                  </p>
+                  {item.direction === "in" && item.state === "received" && (
+                    <span className="lin-actions">
+                      <button type="button" className="button ghost small" onClick={() => void post(
+                        `/v1/federation/messages/${item.message_id}/handled`,
+                        { status: "processed" }, "Marked as handled.")}>{t("Mark handled")}</button>
+                      <button type="button" className="button ghost small" onClick={() => void post(
+                        `/v1/federation/messages/${item.message_id}/handled`,
+                        { status: "rejected", reason_code: "declined" }, "Declined.")}>
+                        {t("Decline")}
+                      </button>
+                    </span>
+                  )}
+                  {item.direction === "out" && ["dead_letter", "rejected"].includes(item.state) && (
+                    <span className="lin-actions">
+                      <span className="flow-aside">{item.reject_code}</span>
+                      <button type="button" className="button ghost small" onClick={() => void post(
+                        `/v1/federation/messages/${item.message_id}/resend`, undefined,
+                        "Sent again.")}>{t("Resend")}</button>
+                    </span>
+                  )}
+                  {item.direction === "out" && item.state === "accepted_locally"
+                    && item.delivery?.next_retry_at && (
+                    <span className="flow-aside">
+                      {t("Not reached yet; trying again at {time}.", {
+                        time: new Date(item.delivery.next_retry_at).toLocaleTimeString() })}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ol>
+            {active && (
+              <form className="federation-compose" onSubmit={(event) => {
+                event.preventDefault();
+                void send();
+              }}>
+                <textarea value={text} onChange={(event) => setText(event.target.value)}
+                  maxLength={8000} rows={3} aria-label={t("Message")}
+                  placeholder={t("Write to {peer}…", { peer: label(active.peer) })}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void send();
+                  }} />
+                <button type="submit" className="button small" disabled={sending || !text.trim()}>
+                  {t("Send")}
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function newKey(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? `ui-${crypto.randomUUID()}` : `ui-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function SafetyCard({ connections, delegations, request, call, busy }: {
+  connections: Connection[]; delegations: Delegation[]; request: ApiRequest; call: Call;
+  busy: boolean;
+}) {
+  const { t } = useI18n();
+  const [undelivered, setUndelivered] = useState<Message[] | null>(null);
+  useEffect(() => {
+    void readAll(request, "&direction=out")
+      .then((items) => setUndelivered(items.filter((item) =>
+        ["dead_letter", "rejected"].includes(item.state))))
+      .catch(() => setUndelivered([]));
+  }, [request]);
+  const stuck = delegations.filter((item) => item.delivery?.dead_letter);
+  const act = (item: Connection, action: string, done: string, confirmText?: string) => {
+    if (confirmText && !window.confirm(t(confirmText))) return;
+    void call(`/v1/federation/connections/${item.connection_id}/${action}`, undefined, done);
+  };
+  return (
+    <>
+      <section className="lin-list" aria-label={t("What may cross")}>
+        <div className="lin-group"><i className="lamp green" />{t("What may cross")}</div>
+        <div className="lin-row quiet"><span className="lin-title">
+          {t("Only chat and delegated work, and only what each connection allows. Documents, tools, credentials and your task board never leave this workspace.")}
+        </span></div>
+        <div className="lin-row quiet"><span className="lin-title">
+          {t("Anything another workspace writes is shown as outside content and can never act as an instruction, even after it is saved or summarised.")}
+        </span></div>
+        <div className="lin-row quiet"><span className="lin-title">
+          {t("A workspace that sends too much is slowed down on its own; it cannot crowd out anyone else.")}
+        </span></div>
+      </section>
+      <section className="lin-list" aria-label={t("Permissions by connection")}>
+        <div className="lin-group"><i className="lamp" />{t("Permissions by connection")}</div>
+        {connections.length === 0 && (
+          <div className="lin-row quiet"><span className="lin-title">{t("No connections yet.")}</span></div>
+        )}
+        {connections.map((item) => (
+          <div key={item.connection_id} className="lin-row">
+            <Chip value={item.state} />
+            <span className="lin-title"><Peer id={item.peer_workspace} /></span>
+            <span className="flow-aside">
+              {t("We may")}: {item.outbound_scopes.map((s) => t(SCOPE_LABEL[s])).join(", ") || "—"}
+              {" · "}
+              {t("They may")}: {item.inbound_scopes.map((s) => t(SCOPE_LABEL[s])).join(", ") || "—"}
+              {" · "}{t("until {date}", { date: new Date(item.expires_at).toLocaleDateString() })}
+            </span>
+            <span className="lin-actions">
+              {item.state === "ACTIVE" && (
+                <button type="button" className="button ghost small" disabled={busy}
+                  onClick={() => act(item, "freeze", "Connection frozen.")}>{t("Freeze")}</button>
+              )}
+              {item.state === "SUSPENDED" && (
+                <button type="button" className="button ghost small" disabled={busy}
+                  onClick={() => act(item, "unfreeze", "Connection unfrozen.")}>{t("Unfreeze")}</button>
+              )}
+              {["REQUESTED", "ACTIVE", "SUSPENDED", "EXPIRED"].includes(item.state) && (
+                <button type="button" className="button ghost small" disabled={busy}
+                  onClick={() => act(item, "block", "Workspace blocked.",
+                    "Block this workspace? They are not told, and their requests will be refused.")}>
+                  {t("Block")}
+                </button>
+              )}
+            </span>
+          </div>
+        ))}
+      </section>
+      <section className="lin-list" aria-label={t("Did not arrive")}>
+        <div className="lin-group">
+          <i className={`lamp ${(undelivered?.length || stuck.length) ? "red" : "green"}`} />
+          {t("Did not arrive")}
+          <span className="lin-count">{(undelivered?.length ?? 0) + stuck.length}</span>
+        </div>
+        {undelivered === null && <div className="skeleton block" />}
+        {undelivered?.length === 0 && stuck.length === 0 && (
+          <div className="lin-row quiet"><span className="lin-title">{t("Everything sent was delivered.")}</span></div>
+        )}
+        {undelivered?.map((item) => (
+          <div key={item.message_id} className="lin-row">
+            <Chip value={item.state === "rejected" ? "REJECTED" : "FAILED"} />
+            <span className="lin-title"><Peer id={item.peer_workspace} />: {item.content}</span>
+            <span className="flow-aside">{item.reject_code}</span>
+            <span className="lin-actions">
+              <button type="button" className="button ghost small" disabled={busy}
+                onClick={() => void call(`/v1/federation/messages/${item.message_id}/resend`,
+                  undefined, "Sent again.").then(() => setUndelivered((list) =>
+                  (list ?? []).filter((m) => m.message_id !== item.message_id)))}>
+                {t("Resend")}
+              </button>
+            </span>
+          </div>
+        ))}
+        {stuck.map((item) => (
+          <div key={item.federation_job_id} className="lin-row">
+            <Chip value="FAILED" />
+            <span className="lin-title"><Peer id={item.peer_workspace} />: {item.terms.objective}</span>
+            <span className="flow-aside">{item.delivery.last_error}</span>
+            <span className="lin-actions">
+              <button type="button" className="button ghost small" disabled={busy}
+                onClick={() => void call(
+                  `/v1/federation/delegations/${item.federation_job_id}/sync?resign=true`,
+                  undefined, "Sent again.")}>{t("Resend")}</button>
+            </span>
+          </div>
+        ))}
+      </section>
+    </>
   );
 }

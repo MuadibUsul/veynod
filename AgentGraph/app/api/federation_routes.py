@@ -114,7 +114,7 @@ class AliasRequest(BaseModel):
 
 
 @router.get("/me", summary="This workspace's federation identity (null until enabled)")
-async def me(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+async def federation_me(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     _enabled()
     return {"identity": await _call(identity.local_identity(_workspace_id(principal)))}
 
@@ -180,7 +180,9 @@ async def resolve(
 
 
 @router.get("/connections", summary="This workspace's connections with other workspaces")
-async def list_connections(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+async def list_federation_connections(
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
     _enabled()
     return {"items": await _call(grants.list_connections(_workspace_id(principal)))}
 
@@ -364,7 +366,9 @@ class CancelRequest(BaseModel):
 
 
 @router.get("/delegations", summary="Work this workspace delegated or was delegated")
-async def list_delegations(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+async def list_federation_delegations(
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
     _enabled()
     return {"items": await _call(delegations.list_delegations(_workspace_id(principal)))}
 
@@ -481,6 +485,21 @@ class ChatSend(BaseModel):
         description="Repeat a send with the same key and it is not sent twice.",
     )
     thread_id: str | None = Field(default=None, pattern=_THREAD)
+
+
+class ChatRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message_id: str = Field(pattern=_MSG)
+
+
+class ChatQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    after: str | None = Field(default=None, max_length=24, pattern=r"^[0-9]+$")
+    thread_id: str | None = Field(default=None, pattern=_THREAD)
+    direction: Literal["in", "out"] | None = None
+    limit: int = Field(default=50, ge=1, le=200)
 
 
 class ChatHandled(BaseModel):

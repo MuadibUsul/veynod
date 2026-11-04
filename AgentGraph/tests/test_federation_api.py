@@ -451,3 +451,127 @@ async def test_chat_over_http_and_memory_keeps_the_outside_label(fed):
     )
     threads = await fed.get("/v1/federation/threads", headers=b["owner"])
     assert threads.json()["items"][0]["thread_id"] == got["thread_id"]
+
+
+async def _mcp(client: httpx.AsyncClient, headers: dict, tool: str, args: dict) -> dict:
+    common = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    await client.post(
+        "/mcp/",
+        headers={**headers, **common},
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1"},
+            },
+        },
+    )
+    call = await client.post(
+        "/mcp/",
+        headers={**headers, **common},
+        json={
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "tools/call",
+            "params": {"name": tool, "arguments": args},
+        },
+    )
+    assert call.status_code == 200, call.text
+    result = call.json()["result"]
+    body = result.get("structuredContent") or json.loads(result["content"][0]["text"])
+    return {"error": body.get("error", body)} if result.get("isError") else body
+
+
+async def test_agents_chat_through_the_federation_tool(fed):
+    """F-05: the MCP entry is listed, works end to end, and its errors say what to do."""
+    a, b = await _workspace(fed, "mcp-a"), await _workspace(fed, "mcp-b")
+    a_fid = (await fed.post("/v1/federation/enable", headers=a["owner"])).json()["identity"][
+        "federation_id"
+    ]
+    b_fid = (await fed.post("/v1/federation/enable", headers=b["owner"])).json()["identity"][
+        "federation_id"
+    ]
+
+    # Discoverable: listed with a description that names every action.
+    common = {"Content-Type": "application/json", "Accept": "application/json, text/event-stream"}
+    listed = await fed.post(
+        "/mcp/",
+        headers={**a["key"], **common},
+        json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
+    )
+    [tool] = [t for t in listed.json()["result"]["tools"] if t["name"] == "federation"]
+    for action in ("connections", "threads", "messages", "send", "handled"):
+        assert action in tool["description"]
+
+    # Before a connection exists the error names the problem and the next step.
+    refused = await _mcp(
+        fed,
+        a["key"],
+        "federation",
+        {"action": "send", "args": {"peer_workspace": b_fid, "text": "hello"}},
+    )
+    assert refused["error"]["code"] == "federation_not_found", refused
+    assert refused["error"]["details"]["federation_code"] == "FED_E_GRANT_UNKNOWN"
+    assert refused["error"].get("action") or refused["error"].get("recovery"), refused
+    unknown = await _mcp(fed, a["key"], "federation", {"action": "befriend"})
+    assert unknown["error"]["code"] == "validation_error"
+    assert "send" in unknown["error"]["details"]["actions"]
+
+    cid = (
+        await fed.post(
+            "/v1/federation/connections",
+            headers=a["owner"],
+            json={
+                "peer_workspace": b_fid,
+                "outbound_scopes": ["chat"],
+                "inbound_scopes": ["chat"],
+                "reason": "agents talking",
+            },
+        )
+    ).json()["connection"]["connection_id"]
+    await fed.post(f"/v1/federation/connections/{cid}/approve", headers=b["owner"])
+
+    sent = await _mcp(
+        fed,
+        a["key"],
+        "federation",
+        {
+            "action": "send",
+            "args": {
+                "peer_workspace": b_fid,
+                "text": "Can you review §3?",
+                "idempotency_key": "rev-3",
+            },
+        },
+    )
+    assert sent["state"] == "received", sent
+    page = await _mcp(
+        fed, b["key"], "federation", {"action": "messages", "args": {"direction": "in"}}
+    )
+    [got] = page["items"]
+    assert got["untrusted_content"] == "Can you review §3?" and got["peer_workspace"] == a_fid
+    done = await _mcp(
+        fed,
+        b["key"],
+        "federation",
+        {"action": "handled", "args": {"message_id": got["message_id"], "status": "processed"}},
+    )
+    assert done["state"] == "processed"
+    mine = await _mcp(
+        fed,
+        a["key"],
+        "federation",
+        {"action": "get_message", "args": {"message_id": sent["message_id"]}},
+    )
+    assert mine["state"] == "processed"
+    bad = await _mcp(fed, a["key"], "federation", {"action": "messages", "args": {"limit": 5000}})
+    assert bad["error"]["code"] == "validation_error"
+
+
+async def test_federation_tool_on_a_disabled_server(client):
+    ws = await _workspace(client, "mcp-off")
+    off = await _mcp(client, ws["key"], "federation", {"action": "threads"})
+    assert off["error"]["code"] == "federation_disabled"
