@@ -401,3 +401,187 @@ async def test_what_may_not_cross(client, admin_headers, federation_on):
     assert await _code(
         delegations.act(b["id"], job, "submit", actor=b["agent"], result=RESULT)
     ) == ("FED_E_GRANT_INACTIVE")
+
+
+async def _sql(query: str, *args):
+    import asyncpg
+
+    conn = await asyncpg.connect(
+        os.environ["TEST_DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://", 1)
+    )
+    try:
+        return await conn.execute(query, *args)
+    finally:
+        await conn.close()
+
+
+async def test_undelivered_objects_retry_then_dead_letter(
+    client, admin_headers, federation_on, transport
+):
+    """Automatic retries with backoff; a dead letter waits for a person (ICD_I_MSG §4.1)."""
+    a, b = await _ws(client, admin_headers, "a"), await _ws(client, admin_headers, "b")
+    await _connect(a, b)
+    transport.up = False
+    sent = await delegations.offer(
+        a["id"], peer_workspace=b["fid"], terms=_terms(), actor=a["owner"]
+    )
+    job = sent["delegation"]["federation_job_id"]
+    delivery = sent["delegation"]["delivery"]
+    assert delivery["attempts"] == 1 and delivery["last_error"] == "FED_E_UNREACHABLE"
+    assert delivery["next_retry_at"] is not None and not delivery["dead_letter"]
+    # Not due yet: the pass leaves it alone.
+    await delegations.deliver_due()
+    assert (await _one(a, job))["delivery"]["attempts"] == 1
+    # Due and reachable again: the pass delivers it.
+    await _sql(
+        "UPDATE federation_delegations SET next_retry_at = NOW() - interval '1 second' "
+        "WHERE federation_job_id = $1",
+        job,
+    )
+    transport.up = True
+    await delegations.deliver_due()
+    mine = await _one(a, job)
+    assert mine["pending_deliveries"] == 0 and mine["delivery"]["attempts"] == 0
+    assert (await _one(b, job))["state"] == "OFFERED"
+
+    # Out of attempts: dead letter, no more automatic retries.
+    await delegations.act(
+        b["id"], job, "accept", actor=b["owner"], create_local_task=Tasks().create
+    )
+    transport.up = False
+    await delegations.act(b["id"], job, "submit", actor=b["agent"], result=RESULT)
+    await _sql(
+        "UPDATE federation_delegations SET delivery_attempts = $2, "
+        "next_retry_at = NOW() - interval '1 second' WHERE federation_job_id = $1 "
+        "AND role = 'provider'",
+        job,
+        delegations.MAX_DELIVERY_ATTEMPTS - 1,
+    )
+    await delegations.deliver_due()
+    theirs = await _one(b, job)
+    assert theirs["delivery"]["dead_letter"] and theirs["delivery"]["next_retry_at"] is None
+    transport.up = True
+    await delegations.deliver_due()
+    assert (await _one(b, job))["pending_deliveries"] == 1  # still waiting for a person
+    revived = await delegations.sync(b["id"], job, resign=True)
+    assert revived["delivered"] == 1 and not revived["delegation"]["delivery"]["dead_letter"]
+    assert (await _one(a, job))["state"] == "SUBMITTED"
+
+
+async def test_an_expired_queued_object_is_dead_lettered(
+    client, admin_headers, federation_on, transport
+):
+    a, b = await _ws(client, admin_headers, "a"), await _ws(client, admin_headers, "b")
+    await _connect(a, b)
+    transport.up = False
+    job = (
+        await delegations.offer(a["id"], peer_workspace=b["fid"], terms=_terms(), actor=a["owner"])
+    )["delegation"]["federation_job_id"]
+    await _sql(
+        "UPDATE federation_delegations SET outbox = jsonb_set(outbox, '{0,expires_at}', "
+        "'\"2020-01-01T00:00:00Z\"'), next_retry_at = NOW() - interval '1 second' "
+        "WHERE federation_job_id = $1",
+        job,
+    )
+    transport.up = True
+    await delegations.deliver_due()
+    view = await _one(a, job)
+    assert view["delivery"]["dead_letter"] and view["delivery"]["last_error"] == "FED_E_EXPIRED"
+    assert await delegations.list_delegations(b["id"]) == []
+    await delegations.sync(a["id"], job, resign=True)
+    assert (await _one(b, job))["state"] == "OFFERED"
+
+
+async def test_cancellation_is_asked_then_confirmed(client, admin_headers, federation_on):
+    """F-016: stopping is requested, never assumed; confirmed by the provider; audited."""
+    a, b = await _ws(client, admin_headers, "a"), await _ws(client, admin_headers, "b")
+    await _connect(a, b)
+    job = (
+        await delegations.offer(a["id"], peer_workspace=b["fid"], terms=_terms(), actor=a["owner"])
+    )["delegation"]["federation_job_id"]
+    await delegations.act(
+        b["id"], job, "accept", actor=b["owner"], create_local_task=Tasks().create
+    )
+
+    assert (
+        await _code(
+            delegations.request_cancel(a["id"], job, actor=a["agent"], reason="changed plans")
+        )
+        == "FED_E_APPROVAL_NOT_HUMAN"
+    )
+    assert (
+        await _code(delegations.request_cancel(b["id"], job, actor=b["owner"], reason="too busy"))
+        == "FED_E_JOB_TRANSITION"
+    )
+    asked = await delegations.request_cancel(
+        a["id"], job, actor=a["person"], reason="changed plans"
+    )
+    cancel = asked["delegation"]["cancel"]
+    assert cancel["work_may_continue"] and not cancel["stop_not_confirmed"]
+    assert asked["delegation"]["state"] == "ACCEPTED"  # asking is not stopping
+    theirs = await _one(b, job)
+    assert theirs["cancel"]["reason"] == "changed plans"
+    assert theirs["cancel"]["requested_by"] == f"peer:{a['fid']}"
+    assert (
+        await _code(delegations.request_cancel(a["id"], job, actor=a["owner"], reason="again"))
+        == "FED_E_JOB_TRANSITION"
+    )
+
+    # Unconfirmed for longer than the timeout: say so, do not pretend.
+    await _sql(
+        "UPDATE federation_delegations SET cancel_requested_at = NOW() - interval '2 hours' "
+        "WHERE federation_job_id = $1 AND role = 'requester'",
+        job,
+    )
+    late = (await _one(a, job))["cancel"]
+    assert late["stop_not_confirmed"] and late["work_may_continue"]
+
+    # The provider's person confirms; its own task is cancelled with it.
+    cancelled: list[str] = []
+
+    async def cancel_task(row):
+        cancelled.append(row["local_task_key"])
+
+    assert (
+        await _code(
+            delegations.act(
+                b["id"], job, "cancel_ack", actor=b["agent"], cancel_local_task=cancel_task
+            )
+        )
+        == "FED_E_APPROVAL_NOT_HUMAN"
+    )
+    await delegations.act(
+        b["id"], job, "cancel_ack", actor=b["person"], cancel_local_task=cancel_task
+    )
+    assert cancelled == [f"fed-{job[5:]}"]
+    for ws in (a, b):
+        view = await _one(ws, job)
+        assert view["state"] == "CANCELLED"
+        assert not view["cancel"]["work_may_continue"] and not view["cancel"]["stop_not_confirmed"]
+    assert (
+        await _code(delegations.act(b["id"], job, "submit", actor=b["agent"], result=RESULT))
+        == "FED_E_JOB_TRANSITION"
+    )
+    history = (await delegations.get(a["id"], job))["history"]
+    assert [h["action"] for h in history] == ["offer", "accept", "cancel_ack"]
+
+
+async def test_a_withdrawn_offer_cannot_be_taken_on(client, admin_headers, federation_on):
+    a, b = await _ws(client, admin_headers, "a"), await _ws(client, admin_headers, "b")
+    await _connect(a, b)
+    job = (
+        await delegations.offer(a["id"], peer_workspace=b["fid"], terms=_terms(), actor=a["owner"])
+    )["delegation"]["federation_job_id"]
+    await delegations.request_cancel(a["id"], job, actor=a["owner"], reason="no longer needed")
+    tasks = Tasks()
+    assert (
+        await _code(
+            delegations.act(
+                b["id"], job, "accept", actor=b["owner"], create_local_task=tasks.create
+            )
+        )
+        == "FED_E_JOB_TRANSITION"
+    )
+    assert tasks.created == []
+    await delegations.act(b["id"], job, "cancel_ack", actor=b["owner"])
+    assert (await _one(a, job))["state"] == "CANCELLED"

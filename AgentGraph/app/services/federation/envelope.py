@@ -54,6 +54,8 @@ KNOWN_TYPES = PUBLIC_TYPES | frozenset(
         "delegate.accept_result",
         "delegate.revise",
         "delegate.dispute",
+        "delegate.cancel",
+        "delegate.cancel_ack",
     }
 )
 FIELDS = (

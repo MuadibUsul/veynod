@@ -192,6 +192,11 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(scheduler_loop(), name="agentgraph-scheduler"),
         asyncio.create_task(deploy_loop(), name="agentgraph-deploys"),
     ]
+    if settings.federation_enabled:
+        from app.services.federation.delegations import delivery_loop as federation_delivery
+
+        background.append(asyncio.create_task(
+            federation_delivery(), name="agentgraph-federation-delivery"))
     if settings.diagram_reconcile_enabled:
         from app.services.diagram_reconcile import reconcile_loop
 

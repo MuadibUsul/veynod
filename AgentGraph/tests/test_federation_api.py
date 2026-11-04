@@ -294,3 +294,70 @@ async def test_delegation_over_http_creates_one_real_provider_task(fed):
         "submit",
         "accept_result",
     ]
+
+
+async def test_cancelling_a_delegation_cancels_the_provider_task(fed):
+    from datetime import datetime, timedelta, timezone
+
+    a, b = await _workspace(fed, "cx-a"), await _workspace(fed, "cx-b")
+    await fed.post("/v1/federation/enable", headers=a["owner"])
+    b_fid = (await fed.post("/v1/federation/enable", headers=b["owner"])).json()["identity"][
+        "federation_id"
+    ]
+    cid = (
+        await fed.post(
+            "/v1/federation/connections",
+            headers=a["owner"],
+            json={
+                "peer_workspace": b_fid,
+                "outbound_scopes": ["delegate"],
+                "inbound_scopes": [],
+                "reason": "cancel drill",
+            },
+        )
+    ).json()["connection"]["connection_id"]
+    await fed.post(f"/v1/federation/connections/{cid}/approve", headers=b["owner"])
+    terms = {
+        "objective": "Draft release notes.",
+        "acceptance_criteria": ["Covers every change"],
+        "input_summary": "The public changelog.",
+        "data_classification": "public",
+        "allowed_use": "Only for this task.",
+        "deadline": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+        "budget_cap": None,
+        "result_contract": "One Markdown file.",
+        "cancellation_policy": "drain",
+        "external_side_effects": False,
+    }
+    job = (
+        await fed.post(
+            "/v1/federation/delegations",
+            headers=a["owner"],
+            json={"peer_workspace": b_fid, "terms": terms},
+        )
+    ).json()["delegation"]["federation_job_id"]
+    task_key = (
+        await fed.post(f"/v1/federation/delegations/{job}/accept", headers=b["owner"])
+    ).json()["delegation"]["local_task_key"]
+
+    asked = await fed.post(
+        f"/v1/federation/delegations/{job}/cancel",
+        headers=a["reviewer"],
+        json={"reason": "plans changed"},
+    )
+    assert asked.status_code == 200, asked.text
+    assert asked.json()["delegation"]["cancel"]["work_may_continue"] is True
+    _refused(
+        await fed.post(f"/v1/federation/delegations/{job}/cancel_ack", headers=b["key"]),
+        403,
+        "federation_forbidden",
+        "FED_E_APPROVAL_NOT_HUMAN",
+    )
+    confirmed = await fed.post(f"/v1/federation/delegations/{job}/cancel_ack", headers=b["owner"])
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json()["delegation"]["state"] == "CANCELLED"
+    task = (await fed.get(f"/v1/tasks/{task_key}", headers=b["owner"])).json()
+    assert task["status"] == "CANCELLED"
+    mine = (await fed.get(f"/v1/federation/delegations/{job}", headers=a["owner"])).json()
+    assert mine["delegation"]["state"] == "CANCELLED"
+    assert mine["delegation"]["cancel"]["work_may_continue"] is False

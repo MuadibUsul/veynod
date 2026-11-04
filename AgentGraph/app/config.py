@@ -308,6 +308,8 @@ class Settings(BaseSettings):
     federation_key_overlap_days: int = Field(default=7, ge=1, le=30)
     federation_record_lifetime_days: int = Field(default=365, ge=1, le=3650)
     federation_clock_skew_seconds: int = Field(default=120, ge=0, le=900)
+    # Delegation delivery (ICD_I_BRIDGE §5): how often queued objects are retried.
+    federation_delivery_interval_seconds: int = Field(default=15, ge=1, le=3600)
 
     # ---------------------------------------------------- outbound actions
     outbound_dispatch_interval_seconds: int = Field(default=5, ge=1, le=300)

@@ -329,6 +329,33 @@ def _provider_task(session: AsyncSession, principal: Principal):
     return create
 
 
+def _cancel_provider_task(session: AsyncSession, principal: Principal):
+    """Confirming a cancellation cancels the provider's own task, as that person."""
+
+    async def cancel(row: dict[str, Any]) -> None:
+        try:
+            await tasks.cancel_task(
+                session,
+                principal.workspace.id,
+                row["local_task_key"],
+                reason="the requesting workspace cancelled the delegation",
+                expected_version=None,
+                actor=principal.agent_signature,
+            )
+        except ApiError as exc:
+            # Already done or cancelled locally: the delegation still ends.
+            if exc.status_code != 409:
+                raise
+
+    return cancel
+
+
+class CancelRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=3, max_length=1000)
+
+
 @router.get("/delegations", summary="Work this workspace delegated or was delegated")
 async def list_delegations(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     _enabled()
@@ -363,23 +390,54 @@ async def get_delegation(
     return await _call(delegations.get(_workspace_id(principal), job_id))
 
 
-@router.post("/delegations/{job_id}/sync", summary="Re-send this side's undelivered objects")
+@router.post(
+    "/delegations/{job_id}/sync",
+    summary="Re-send this side's undelivered objects (resign=true revives a dead letter)",
+)
 async def sync_delegation(
-    job_id: str = Path(pattern=_JOB), principal: Principal = Depends(get_principal)
+    job_id: str = Path(pattern=_JOB),
+    resign: bool = Query(default=False),
+    principal: Principal = Depends(get_principal),
 ) -> dict[str, Any]:
     _enabled()
-    return await _call(delegations.sync(_workspace_id(principal), job_id))
+    if resign and _actor(principal).kind != "user":
+        raise ApiError(
+            403,
+            "federation_forbidden",
+            "a person decides to re-sign undelivered objects",
+            details={"federation_code": "FED_E_APPROVAL_NOT_HUMAN"},
+        )
+    return await _call(delegations.sync(_workspace_id(principal), job_id, resign=resign))
+
+
+@router.post(
+    "/delegations/{job_id}/cancel",
+    summary="Requester: ask the provider to stop (a person; the work may still deliver)",
+)
+async def cancel_delegation(
+    body: CancelRequest,
+    job_id: str = Path(pattern=_JOB),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        delegations.request_cancel(
+            _workspace_id(principal), job_id, actor=_actor(principal), reason=body.reason
+        )
+    )
 
 
 @router.post(
     "/delegations/{job_id}/{action}",
-    summary="Provider: accept, reject (people) or submit; requester: accept_result, revise, "
-    "dispute (people)",
+    summary="Provider: accept, reject, cancel_ack (people) or submit; requester: "
+    "accept_result, revise, dispute (people)",
 )
 async def act_on_delegation(
     body: DelegationAction | None = None,
     job_id: str = Path(pattern=_JOB),
-    action: Literal["accept", "reject", "submit", "accept_result", "revise", "dispute"] = Path(),
+    action: Literal[
+        "accept", "reject", "submit", "cancel_ack", "accept_result", "revise", "dispute"
+    ] = Path(),
     principal: Principal = Depends(get_principal),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
@@ -394,5 +452,8 @@ async def act_on_delegation(
             result=body.result,
             note=body.note,
             create_local_task=_provider_task(session, principal) if action == "accept" else None,
+            cancel_local_task=(
+                _cancel_provider_task(session, principal) if action == "cancel_ack" else None
+            ),
         )
     )
