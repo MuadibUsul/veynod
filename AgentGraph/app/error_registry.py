@@ -398,7 +398,7 @@ REGISTRY: dict[str, ErrorSpec] = {
     ),
     "federation_invalid": _spec(422, FIX_REQUEST, "Fix the request per details.federation_code."),
     "federation_unavailable": _spec(
-        503, ESCALATE_HUMAN, "The owner must configure FEDERATION_KEK on this deployment."
+        503, ESCALATE_HUMAN, "The owner must configure the federation key on this deployment."
     ),
     # Deploy gate v2.
     "deploys_off": _spec(409, ESCALATE_HUMAN, "A person turns deploys on for the target first."),

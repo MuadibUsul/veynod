@@ -290,7 +290,7 @@ do not edit by hand. Every error body is
 | `circuit_open` | 429 | `escalate_human` | `stop_and_escalate_to_human` | Stop the loop; call agent_escalate_to_human. |
 | `mcp_not_configured` | 500 | `escalate_human` | `stop_and_escalate_to_human` | An operator must set MCP_API_KEY. |
 | `admin_disabled` | 503 | `escalate_human` | `stop_and_escalate_to_human` | ADMIN_TOKEN is not configured. |
-| `federation_unavailable` | 503 | `escalate_human` | `stop_and_escalate_to_human` | The owner must configure FEDERATION_KEK on this deployment. |
+| `federation_unavailable` | 503 | `escalate_human` | `stop_and_escalate_to_human` | The owner must configure the federation key on this deployment. |
 | `google_login_not_configured` | 503 | `escalate_human` | `stop_and_escalate_to_human` | An operator must configure Google sign-in. |
 
 ## Warnings

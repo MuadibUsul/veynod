@@ -295,6 +295,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `database_unavailable` | 503 | `retry_backoff` |
 | `google_unavailable` | 503 | `retry_backoff` |
 | `tenant_context_unavailable` | 503 | `retry_backoff` |
+| `federation_conflict` | 409 | `refresh_and_retry` |
 | `proposal_conflict` | 409 | `refresh_and_retry` |
 | `rebase_conflict` | 409 | `refresh_and_retry` |
 | `section_conflict` | 409 | `refresh_and_retry` |
@@ -380,6 +381,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `empty_impact` | 422 | `fix_request` |
 | `expected_version_required` | 422 | `fix_request` |
 | `export_format_unsupported` | 422 | `fix_request` |
+| `federation_invalid` | 422 | `fix_request` |
 | `insecure_target_url` | 422 | `fix_request` |
 | `invalid_address` | 422 | `fix_request` |
 | `invalid_dependency` | 422 | `fix_request` |
@@ -456,6 +458,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `scope_escalation` | 403 | `abandon` |
 | `self_vote_forbidden` | 403 | `abandon` |
 | `signup_disabled` | 403 | `abandon` |
+| `federation_not_found` | 404 | `abandon` |
 | `invalid_device_code` | 404 | `abandon` |
 | `lease_not_found` | 404 | `abandon` |
 | `not_found` | 404 | `abandon` |
@@ -516,11 +519,13 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `commander_grant_expired` | 403 | `escalate_human` |
 | `commander_grant_required` | 403 | `escalate_human` |
 | `feature_disabled` | 403 | `escalate_human` |
+| `federation_forbidden` | 403 | `escalate_human` |
 | `operator_content_denied` | 403 | `escalate_human` |
 | `operator_write_denied` | 403 | `escalate_human` |
 | `role_permission_denied` | 403 | `escalate_human` |
 | `tenant_deleting` | 403 | `escalate_human` |
 | `tenant_suspended` | 403 | `escalate_human` |
+| `federation_disabled` | 404 | `escalate_human` |
 | `backup_chain_broken` | 409 | `escalate_human` |
 | `backups_not_configured` | 409 | `escalate_human` |
 | `confirmation_required` | 409 | `escalate_human` |
@@ -539,4 +544,5 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `circuit_open` | 429 | `escalate_human` |
 | `mcp_not_configured` | 500 | `escalate_human` |
 | `admin_disabled` | 503 | `escalate_human` |
+| `federation_unavailable` | 503 | `escalate_human` |
 | `google_login_not_configured` | 503 | `escalate_human` |
