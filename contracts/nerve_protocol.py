@@ -49,8 +49,32 @@ class NerveFrameType(str, Enum):
 
 
 #: The hub closes the socket when the first receipt does not arrive in time:
-#: the peer is not reading, whatever TCP thinks.
+#: the peer is not reading, whatever TCP thinks. 200 ms is the budget for a
+#: near peer; the wait is a network round trip, so a far one (another
+#: continent, a proxy) gets a multiple of the round trip it has shown, never
+#: more than ``NET_ACK_MAX_S``. A flat 200 ms over a 250 ms link kicked a
+#: healthy agent offline on every dispatch, and the task bounced forever.
 NET_ACK_TIMEOUT_S = 0.200
+#: Before a socket has shown its round trip, its first poke waits this long.
+NET_ACK_FIRST_CONTACT_S = 1.000
+#: No socket waits longer than this for the first receipt.
+NET_ACK_MAX_S = 2.000
+#: How many round trips a far peer gets.
+NET_ACK_RTT_FACTOR = 3.0
+
+
+def net_ack_deadline_s(rtt_ms: float | None) -> float:
+    """The first-receipt wait for a socket whose smoothed round trip is ``rtt_ms``."""
+    if not rtt_ms or rtt_ms <= 0:
+        return NET_ACK_FIRST_CONTACT_S
+    return min(NET_ACK_MAX_S, max(NET_ACK_TIMEOUT_S, NET_ACK_RTT_FACTOR * rtt_ms / 1000.0))
+
+
+def smooth_rtt_ms(previous: float | None, sample: float) -> float:
+    """Exponentially smoothed round trip (RFC 6298 alpha = 1/8), first sample as is."""
+    if not previous or previous <= 0:
+        return float(sample)
+    return previous + (float(sample) - previous) / 8.0
 #: The worker must be past orientation in this window or it is killed; the
 #: frame carries the smaller orientation budget for the messenger's watchdog.
 EXEC_ACK_TIMEOUT_S = 5.000

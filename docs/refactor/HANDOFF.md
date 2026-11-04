@@ -1,6 +1,28 @@
-# 交接文档：Phase 0 审计 + G01–G09 修复 + IM/Phase 2 落地（未提交）
+# 交接文档
 
-写于 2026-11-02。**当前工作树有未提交改动**，下一个会话请先读完本文再动手。
+> **2026-11-04 现状**（先读这一节）：下面 2026-11-02 的内容已经在 #89 合并；之后又有三批改动，
+> 都在分支 `claude/cool-cerf-it7a0j`：
+>
+> 1. **电脑 / Agent / Loop 的循环**：`/kernel/*` 路由 500（缺 import）；交付错误码被压成
+>    `http_error`；slots=1 没有评审座位后，不归 Kernel 的 REVIEWING 任务永远等不到评审电脑、
+>    Kernel 已合并的任务也不进“需要你”；控制台对已不需要的 -review 座位报错；`up` 在改 slots 时
+>    重复铸造 `-review-N` 身份；nerve 200 ms 固定超时在远距离链路上反复踢下线；nerve worker
+>    连错服务器、清空电脑的 repos、找不到 `plc_` placement；CLI 包漏发 `veynod-messenger.mjs`。
+> 2. **Kernel 交付的循环**：提交幂等键不含补丁摘要，门禁失败后的修订永远 409；Kernel 错误码丢失；
+>    runner 把“代理已提交、门禁进行中”当失败；租约回收在门禁进行中把任务交给别的电脑重做。
+> 3. **一个仓库**：API 镜像从根目录构建（原来无法构建）；根目录唯一 CI；`AgentGraph/cli` 是 CLI
+>    唯一源；三服务依赖精确一致；删除 `veynod_platform`；三个 Kernel HTTP 客户端合并为
+>    `contracts/kernel_http.py`；文档地图 [docs/README.md](../README.md)，阶段报告归档。
+>
+> 4. **只留 Kernel 与 nerve**（2026-11-04）：旧交付路径、SSE 派发、独立 worker 模式全部删除；CLI 升到 0.6.0，
+>    服务端拒绝给旧 CLI 派活并在 doctor 与控制台点名。上线按 [RELEASE_0.6.0.md](../RELEASE_0.6.0.md) 逐项执行。
+>
+> 仍需人来决定：`AgentGraph/docker-compose.prod.yml` 仍管理生产数据库容器 `veynod-db-1`，
+> 把它并入 unified 编排需要一次有备份的维护窗口；G10 生产对齐（迁移 `v4_017`、`v3_80`、`v3_81`）。
+
+---
+
+## 2026-11-02：Phase 0 审计 + G01–G09 修复 + IM/Phase 2 落地（已在 #89 合并）
 
 > **2026-11-02 后续一轮**：`docs/veynod_im.md` 的四步与 `phase-2/PLAN.md` 的第 2/5 项
 > 也已做完，各有一份记录（[IM_IMPLEMENTATION.md](IM_IMPLEMENTATION.md)、

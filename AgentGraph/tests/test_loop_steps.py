@@ -32,7 +32,7 @@ async def _host(client, ws: dict, name: str, *, role: str = "EXECUTOR",
 
 
 async def _placed(client, host: dict) -> list[dict]:
-    """The task.placed pokes a host received, newest last."""
+    """task.placed pokes in a host's inbox: none, since work arrives only over nerve."""
     inbox = (await client.get("/v1/inbox", headers=host["headers"],
                               params={"status": "all", "limit": 200})).json()["items"]
     return [item for item in inbox if item["kind"] == "task.placed"]
@@ -91,9 +91,7 @@ async def test_a_diagram_goes_from_freeze_to_merged_without_a_person(client):
         assert review is not None and review["step"] == "review", review
         assert review["host_id"] == reviewer["host_id"]
         assert (review["diagram_key"], review["chunk_key"]) == (key, chunk_key)
-        note = (await _placed(client, reviewer))[-1]["note"]
-        assert note == (f"placement {review['placement_id']} step review "
-                        f"diagram {key} chunk {chunk_key}")
+        assert await _placed(client, reviewer) == []
         gated = await client.post(f"/v1/diagrams/{key}/chunks/{chunk_key}/gate",
                                   headers=reviewer["headers"],
                                   json={"result": "pass", "checks": ["pytest: 12 passed"]})
@@ -182,7 +180,12 @@ async def test_no_reviewer_is_said_in_plain_words(client):
     needs = [item for item in needs if item["step"] != "supervise"]
     assert [(item["task_key"], item["step"], item["reason"]) for item in needs] == [
         (key, "review", "no_reviewer_host")]
-    assert needs[0]["note"] == "No reviewer computer is online that did not build it."
+    assert needs[0]["note"].startswith("No other computer can review it")
+    # With no reviewer computer the person is the reviewer: the Loop says so
+    # under "needs you" instead of waiting for a computer that never comes.
+    overview = (await client.get("/v1/loop/overview", headers=ws["owner"])).json()
+    waiting = {item["key"]: item for item in overview["needs_you"]["waiting"]}
+    assert waiting[key]["why"] == "review"
 
 
 async def test_the_supervisor_walks_the_floor_only_when_something_waits(client):
@@ -221,8 +224,7 @@ async def test_the_supervisor_walks_the_floor_only_when_something_waits(client):
     assert {"kind": "no_host", "task_key": stuck, "step": "work",
             "reason": "no_host_for_repo",
             "note": "No online runner can reach acme/unreachable."} in items
-    note = (await _placed(client, boss))[-1]["note"]
-    assert note == f"placement {round_['placement_id']} step supervise"
+    assert await _placed(client, boss) == []
 
     # One round at a time; after it finishes, none again within the interval.
     assert (await _schedule(client, ws))["rounds"] == 0

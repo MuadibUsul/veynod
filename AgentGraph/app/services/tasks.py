@@ -514,7 +514,8 @@ async def create_task(
     task = await _create_task_core(
         session, principal, request, agent=agent, batch=batch, commit=True
     )
-    if settings.kernel_provision_on_create and task.repo and (task.kind or "work") == "work":
+    # A task with a repository is a Kernel task (worktree lease + write-set lock).
+    if task.repo and (task.kind or "work") == "work":
         from app.services import kernel_delivery
 
         try:
@@ -1593,13 +1594,26 @@ async def reap_expired_task_leases(
             .limit(limit)
         )
     ).scalars().all()
+    from app.services.kernel_delivery import gate_pending
+
+    hold = get_settings().kernel_gate_hold_seconds
+    orphaned = 0
     for task in tasks:
+        if gate_pending(task, now, hold):
+            # The Kernel owns the next step; its commit moves the task on.
+            # Push the deadline out so this pass does not pick it up again.
+            task.lease_expires_at = now + timedelta(minutes=5)
+            lease = await lease_service.active_task_lease(session, task)
+            if lease is not None:
+                lease.expires_at = task.lease_expires_at
+            continue
         await lease_service.orphan_task(
             session, task, state="expired", reason="timeout", actor="lease_reaper"
         )
+        orphaned += 1
     await lease_service.flag_missed_heartbeats(session)
     await session.commit()
-    return len(tasks)
+    return orphaned
 
 
 async def reap_task_timeouts(

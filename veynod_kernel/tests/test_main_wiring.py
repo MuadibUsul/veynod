@@ -21,12 +21,21 @@ def test_main_assembly_stays_under_fifteen_non_blank_lines() -> None:
     assert len(lines) <= 15, lines
 
 
+def _route_paths(routes, prefix: str = "") -> set[str]:
+    """Flatten routes, including FastAPI >=0.14x lazily included routers."""
+    paths: set[str] = set()
+    for route in routes:
+        if hasattr(route, "path") and (hasattr(route, "methods") or hasattr(route, "app")):
+            paths.add(prefix + route.path)
+        inner = getattr(route, "original_router", None)
+        if inner is not None:
+            context = getattr(route, "include_context", None)
+            paths |= _route_paths(inner.routes, prefix + (getattr(context, "prefix", "") or ""))
+    return paths
+
+
 def test_all_six_syscalls_and_ops_routes_are_mounted() -> None:
-    paths = {
-        route.path
-        for route in app.routes
-        if hasattr(route, "methods")
-    }
+    paths = _route_paths(app.routes)
     assert {
         "/v1/syscalls/pull_task_bundle",
         "/v1/syscalls/submit_patch",

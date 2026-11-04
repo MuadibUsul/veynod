@@ -1,1 +1,0 @@
-"""Veynod Platform composition gateway."""

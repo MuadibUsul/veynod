@@ -1,6 +1,6 @@
 # Open-source facade repo — owner handoff
 
-Payload: [`open-source-repo/`](../open-source-repo/) at the repository root.
+Payload: [`AgentGraph/cli/`](../cli), exported with `scripts/export_public_bridge.sh <public checkout>` (the old `open-source-repo/` copy is gone).
 It contains only the public CLI/MCP bridge, examples, MIT license, README,
 `llms.txt` and a validated `server.json`; no server code, deployment scripts,
 tokens or private history.

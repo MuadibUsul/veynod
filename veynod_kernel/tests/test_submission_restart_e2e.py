@@ -113,7 +113,6 @@ def _start_server(
         "VN_REAPER_INTERVAL_SECONDS": "3600",
         "VN_SUBMISSION_WORKERS": str(workers),
         "VN_SUBMISSION_POLL_SECONDS": "0.05",
-        "VN_LEGACY_SUBMIT_MODE": "reject",
         "VN_TEST_CMD": "pytest -q --tb=short",
         "PYTHONUNBUFFERED": "1",
     }

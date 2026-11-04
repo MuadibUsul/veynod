@@ -1,13 +1,14 @@
-// veynod runner: this computer runs agents for a Veynod workspace (full-managed
-// Loop, runner-1 and runner-4).
+// veynod runner: how this computer runs one placement (full-managed Loop).
 //
-// It only connects out. On start it says hello with what the machine can do
-// (system, Claude Code / Codex with versions, models and quota, slots, repos),
-// then sends a heartbeat every 30 s with what it is running. The platform's
-// scheduler places a task on it with a `task.placed` poke whose note carries the
-// placement id; the runner wakes a local runtime in a fresh git worktree with a
-// prompt to claim and do that task. It never claims for the agent: if the wake
-// fails three times the task stays unclaimed and the scheduler moves it on.
+// It only connects out, through the nerve messenger (veynod-messenger.mjs),
+// which says hello with what the machine can do (system, Claude Code / Codex
+// with versions, models and quota, slots, repos), heartbeats every 30 s and
+// holds the computer's socket. Each `task.poke` on that socket becomes one
+// worker process running `runPlacement`: a task with a repository runs in a
+// Kernel worktree lease and is submitted through submit_patch (gate + merge);
+// work without one runs in a scratch directory. It never claims for the
+// agent: if the wake fails three times the placement is reported failed and
+// the scheduler moves it on.
 //
 // Runtimes go through OAR (@botiverse/oar, Node 24+) when it is installed, else
 // through the runtime's own CLI (`claude -p`, `codex exec`); `--runtime custom
@@ -16,7 +17,7 @@
 // then finished or failed.
 
 import { execFileSync, spawn } from "node:child_process";
-import { appendFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { arch as osArch, homedir, hostname, platform } from "node:os";
 import { join, resolve, sep, win32 } from "node:path";
 
@@ -168,27 +169,25 @@ export async function inventory({ importer = (spec) => import(spec), run = execF
   return found;
 }
 
-const STEP = /\bstep (work|review|merge|supervise)\b/;
-const CHUNK = /\bdiagram (\S+) chunk (\S+)/;
+const STEPS = new Set(["work", "review", "merge", "supervise"]);
 
 /**
- * What a placement poke asks of this computer: its placement id (the
- * idempotency key), the step (work, review, merge, supervise), and the task
- * and diagram chunk it is about.
+ * What a nerve poke asks of this computer: its placement id (the frame id and
+ * the idempotency key), the step, and the task and diagram chunk it is about.
  */
 export function placementOf(poke) {
-  if (!poke || poke.kind !== "task.placed") return null;
-  const match = PLACEMENT.exec(poke.note || "");
-  if (!match) return null;
-  const step = STEP.exec(poke.note)?.[1] ?? "work";
-  const chunk = CHUNK.exec(poke.note);
-  const key = poke.task_key || poke.doc_key || null;
+  if (!poke || typeof poke !== "object") return null;
+  const placementId = String(poke.placement_id || "");
+  if (!PLACEMENT.test(placementId)) return null;
+  const step = STEPS.has(poke.step) ? poke.step : "work";
+  const key = poke.task_key || null;
   if (!key && step !== "supervise") return null;
   return {
     taskKey: step === "supervise" ? null : key,
-    placementId: match[0],
+    placementId,
     step,
-    ...(chunk ? { diagramKey: chunk[1], chunkKey: chunk[2] } : {}),
+    ...(poke.diagram_key && poke.chunk_key
+      ? { diagramKey: String(poke.diagram_key), chunkKey: String(poke.chunk_key) } : {}),
   };
 }
 
@@ -197,16 +196,16 @@ const NO_MCP = "Without Veynod's MCP tools, use the REST API instead: diagram ac
   + "/v1/diagrams/<key>/chunks/<chunk>/<gate|queue-check|merge>, loop actions are under /v1/runner "
   + "(agenda, placements/<id>/move, placements/<id>/withdraw).";
 
-export function promptFor({ taskKey, placementId, branch, host, step = "work", diagramKey, chunkKey, agenda = [] }) {
-  const where = branch
-    ? `This directory is a fresh checkout of the default branch (local branch ${branch}).`
-    : "Work in this directory.";
+export function promptFor({ taskKey, placementId, host, step = "work", diagramKey, chunkKey, agenda = [] }) {
+  // Code never reaches these prompts: a task with a repository is a Kernel
+  // task (kernelPrompt), reviewed by verification_gate and merged by
+  // merge_coordinator. These are the steps for work without a repository.
   const chunk = diagramKey ? ` It is chunk ${chunkKey} of diagram ${diagramKey}.` : "";
   if (step === "review") {
     return [
       `Veynod asks this computer to review task ${taskKey} (placement ${placementId}).${chunk}`,
-      `1. Read it on Veynod (${host}) with get_audit_view("${taskKey}"): its acceptance, the brief, the pull request.`,
-      `2. ${where} Check out the work under review and run the project's checks.`,
+      `1. Read it on Veynod (${host}) with get_audit_view("${taskKey}"): its acceptance, the brief and what it delivered.`,
+      "2. Check what it delivered against every acceptance item.",
       diagramKey
         ? `3. If it passes: review_task("${taskKey}", approve) first, then the diagram gate: diagram(action="review", diagram_key="${diagramKey}", chunk_key="${chunkKey}", args={result: "pass", checks, evidence}). If not: review_task reject with what to fix, then the gate with result "fail" and the evidence.`
         : `3. Approve or reject with review_task("${taskKey}"), giving a result for every acceptance item and, when rejecting, exactly what to fix.`,
@@ -217,13 +216,12 @@ export function promptFor({ taskKey, placementId, branch, host, step = "work", d
   if (step === "merge") {
     return [
       `Veynod asks this computer to merge chunk ${chunkKey} of diagram ${diagramKey} (task ${taskKey}, placement ${placementId}).`,
-      `1. Read the chunk on Veynod (${host}): diagram(action="get", diagram_key="${diagramKey}") and the task's pull request.`,
-      `2. ${where} If the chunk waits in the merge queue, rebase its branch on the default branch,`,
-      `   run the chunk's commands, and report diagram(action="queue_check", diagram_key="${diagramKey}", chunk_key="${chunkKey}",`,
-      "   args={result: \"pass\"} or rebase_conflict / test_failed with the evidence; stop there if it is not a pass).",
-      "3. Merge the pull request into the default branch (squash), then record it:",
-      `   diagram(action="merge", diagram_key="${diagramKey}", chunk_key="${chunkKey}", args={artifact: <merge commit>}).`,
-      "You did not build this chunk. Never push anything but the merge itself.",
+      `1. Read the chunk on Veynod (${host}): diagram(action="get", diagram_key="${diagramKey}") and what its task delivered.`,
+      "2. If the chunk waits in the merge queue, run its checks and report",
+      `   diagram(action="queue_check", diagram_key="${diagramKey}", chunk_key="${chunkKey}", args={result: "pass"})`,
+      "   or test_failed with the evidence; stop there if it is not a pass.",
+      `3. Record the delivery: diagram(action="merge", diagram_key="${diagramKey}", chunk_key="${chunkKey}", args={artifact: <document or link>}).`,
+      "You did not build this chunk. Do not change what it delivered.",
       NO_MCP,
     ].join("\n");
   }
@@ -247,20 +245,11 @@ export function promptFor({ taskKey, placementId, branch, host, step = "work", d
   return [
     `Veynod placed task ${taskKey} on this computer (placement ${placementId}).${chunk}`,
     `1. Claim it on Veynod (${host}) with agent_claim_and_read("${taskKey}") and read what it asks.`,
-    branch
-      ? `2. Work in this directory. It is a fresh checkout on branch ${branch}; commit there and push only that branch.`
-      : "2. Work in this directory.",
-    "3. Run the project's checks, open a pull request if the task changes code,",
-    "   then hand the task off for review with a brief (summary, key_metrics,",
+    "2. Work in this directory.",
+    "3. Run the checks the task names, then hand the task off for review with a brief (summary, key_metrics,",
     "   unverified_hypotheses, risk_flag) and owner_report in plain words.",
     "If you cannot finish, release the task with a reason so another computer can take it.",
   ].join("\n");
-}
-
-/** Kernel is the daily path. VEYNOD_LEGACY_CHECKOUT=1 or delivery=legacy opts out. */
-export function kernelDeliveryMode(options = {}, env = process.env) {
-  if (options.delivery === "legacy" || env.VEYNOD_LEGACY_CHECKOUT === "1") return "legacy";
-  return "kernel";
 }
 
 export function isInside(child, parent) {
@@ -274,13 +263,7 @@ export function isInside(child, parent) {
  * Where an agent may write. Kernel mode refuses the host shared checkout and
  * refuses to start without a worktree lease and a write-set lock.
  */
-export function codingWorkspace({ delivery, lease, scratch, hostCheckout, prepareLegacy }) {
-  if (delivery === "legacy") {
-    if (typeof prepareLegacy !== "function") {
-      throw Object.assign(new Error("legacy checkout was requested without a worktree"), { code: "legacy_checkout" });
-    }
-    return prepareLegacy();
-  }
+export function codingWorkspace({ lease, scratch, hostCheckout }) {
   const writeSet = Array.isArray(lease?.write_set) ? lease.write_set.filter(Boolean) : [];
   const held = lease?.leased === true || lease?.lease === "held";
   if (!lease?.kernel_task_id || !held || writeSet.length === 0) {
@@ -300,8 +283,7 @@ export function codingWorkspace({ delivery, lease, scratch, hostCheckout, prepar
  * slots=1 does not keep a reviewer process. The gate replaces it. A revision
  * turn runs only after the gate fails; escalation stops for a person.
  */
-export function reviewAction({ delivery, step, gate }) {
-  if (delivery !== "kernel") return { spawn: step, outcome: null, note: null };
+export function reviewAction({ step, gate }) {
   if (step === "merge") {
     if (gate?.merged) {
       return { spawn: null, outcome: "finished", note: "merge_coordinator merged" };
@@ -435,6 +417,25 @@ export function combinedMcpConfig({ product, kernelUrl, kernelToken }) {
     mcpServers["veynod-kernel"] = server;
   }
   return { mcpServers };
+}
+
+/**
+ * Submit the worktree's diff. The agent may already have submitted its own
+ * (the prompt tells it how): a gate still working on that one answers 409
+ * submission_in_progress, which is not a failure of this placement. Reading
+ * it as one reported "failed", moved the task and started the work again.
+ */
+export async function submitKernelDiff(fetchImpl, options, taskKey, diff) {
+  try {
+    return await callApi(fetchImpl, options.host, options.key,
+      `/v1/tasks/${encodeURIComponent(taskKey)}/kernel/submit`, {
+        method: "POST",
+        body: { git_diff: diff, touched_symbols: touchedSymbolsFromDiff(diff), local_test_passed: true },
+      });
+  } catch (error) {
+    if (error.code === "submission_in_progress") return { status: "in_progress", already_submitted: true };
+    throw error;
+  }
 }
 
 function cachedDiff(cwd) {
@@ -585,140 +586,7 @@ export async function pinsIdentity(runtime, { importer = (spec) => import(spec) 
   return Boolean(await oarRuntime(runtime, importer));
 }
 
-// ------------------------------------------------------------------ worktrees
-
 const repoSlug = (repo) => repo.replace(/[^A-Za-z0-9_.-]+/g, "__");
-
-const PRE_PUSH = `#!/bin/sh
-# Veynod runner: a task's worktree pushes only its own branch.
-branch=$(git rev-parse --abbrev-ref HEAD)
-while read -r local_ref local_sha remote_ref remote_sha; do
-  if [ "$remote_ref" != "refs/heads/$branch" ]; then
-    echo "veynod runner: this worktree may only push $branch (refused $remote_ref)" >&2
-    exit 1
-  fi
-done
-exit 0
-`;
-
-function directoryBytes(path) {
-  let total = 0;
-  let stack = [path];
-  while (stack.length) {
-    const current = stack.pop();
-    let entries;
-    try {
-      entries = readdirSync(current, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const full = join(current, entry.name);
-      if (entry.isDirectory()) stack.push(full);
-      else {
-        try {
-          total += lstatSync(full).size;
-        } catch {
-          // vanished
-        }
-      }
-    }
-  }
-  return total;
-}
-
-/**
- * Per-task git worktrees from a cached bare clone of each repository. Pushes
- * are limited to the task's branch by a pre-push hook; finished worktrees are
- * removed, and the oldest finished ones go first when the disk cap is reached.
- */
-export class Worktrees {
-  constructor({ root, repos = [], maxBytes = 5 * 1024 ** 3, gitBase = "https://github.com/", git = execFileSync }) {
-    this.root = root;
-    this.allowed = new Set(repos.map((repo) => repo.toLowerCase()));
-    this.maxBytes = maxBytes;
-    this.gitBase = gitBase.endsWith("/") ? gitBase : `${gitBase}/`;
-    this.git = (args, cwd) => String(git("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })).trim();
-  }
-
-  cache(repo) {
-    return join(this.root, "repos", `${repoSlug(repo)}.git`);
-  }
-
-  workdir(taskKey) {
-    return join(this.root, "work", repoSlug(taskKey));
-  }
-
-  allows(repo) {
-    return this.allowed.has(String(repo).toLowerCase());
-  }
-
-  /** A fresh worktree on branch veynod/<task> from the repo's default branch. */
-  prepare(taskKey, repo, busy = new Set()) {
-    if (!this.allows(repo)) {
-      throw Object.assign(new Error(`repository ${repo} is not on this runner's list`), { code: "repo_not_allowed" });
-    }
-    this.makeRoom(busy);
-    const cache = this.cache(repo);
-    mkdirSync(join(this.root, "repos"), { recursive: true });
-    mkdirSync(join(this.root, "work"), { recursive: true });
-    if (!existsSync(cache)) {
-      this.git(["clone", "--bare", "--quiet", `${this.gitBase}${repo}.git`, cache]);
-      writeFileSync(join(cache, "hooks", "pre-push"), PRE_PUSH);
-      chmodSync(join(cache, "hooks", "pre-push"), 0o755);
-    }
-    this.git(["fetch", "--quiet", "--prune", "origin", "+refs/heads/*:refs/remotes/origin/*"], cache);
-    const head = this.git(["symbolic-ref", "--short", "HEAD"], cache);
-    const branch = `veynod/${taskKey}`;
-    const dir = this.workdir(taskKey);
-    if (existsSync(dir)) this.remove(taskKey, repo);
-    this.git(["worktree", "add", "--quiet", "-B", branch, dir, `refs/remotes/origin/${head}`], cache);
-    return { dir, branch, base: head };
-  }
-
-  remove(taskKey, repo) {
-    const dir = this.workdir(taskKey);
-    if (repo && existsSync(this.cache(repo))) {
-      try {
-        this.git(["worktree", "remove", "--force", dir], this.cache(repo));
-      } catch {
-        // not registered: fall back to deleting the directory
-      }
-    }
-    rmSync(dir, { recursive: true, force: true });
-    for (const name of existsSync(join(this.root, "repos")) ? readdirSync(join(this.root, "repos")) : []) {
-      try {
-        this.git(["worktree", "prune"], join(this.root, "repos", name));
-      } catch {
-        // a broken cache is recloned next time
-      }
-    }
-  }
-
-  /** Over the cap: drop finished worktrees, oldest first; refuse if still over. */
-  makeRoom(busy) {
-    const work = join(this.root, "work");
-    if (!existsSync(work) || directoryBytes(work) <= this.maxBytes) return;
-    const idle = readdirSync(work)
-      .filter((name) => !busy.has(name))
-      .map((name) => ({ name, at: lstatSync(join(work, name)).mtimeMs }))
-      .sort((a, b) => a.at - b.at);
-    for (const { name } of idle) {
-      rmSync(join(work, name), { recursive: true, force: true });
-      if (directoryBytes(work) <= this.maxBytes) break;
-    }
-    for (const name of existsSync(join(this.root, "repos")) ? readdirSync(join(this.root, "repos")) : []) {
-      try {
-        this.git(["worktree", "prune"], join(this.root, "repos", name));
-      } catch {
-        // ignore
-      }
-    }
-    if (directoryBytes(work) > this.maxBytes) {
-      throw Object.assign(new Error("the runner's disk cap is reached by running tasks"), { code: "disk_full" });
-    }
-  }
-}
 
 // ------------------------------------------------------------------ host
 
@@ -752,17 +620,19 @@ async function callApi(fetchImpl, host, key, path, { method = "GET", body } = {}
 }
 
 /**
- * The runner loop. `follow(options, say)` is the CLI's stream follower; it calls
- * options.onPoke for every poke. Resolves when the follower ends.
+ * What runs placements on this computer: inventory, the runtime adapter, the
+ * host record (hello + heartbeat) and `work(placement)`.
+ *
+ * It has no delivery loop of its own. The nerve messenger (veynod-messenger.mjs)
+ * owns the socket, the receipts and the slots; each poke becomes one worker
+ * process that runs `runPlacement`, which calls `work` once.
  */
-export async function runRunner(options, {
-  follow,
+export async function createRunner(options, {
   version,
   say = () => {},
   fetchImpl = fetch,
   importer = (spec) => import(spec),
   spawner,
-  every = RUNNER_HEARTBEAT_MS,
   leaseEvery = LEASE_KEEP_MS,
   sleepMs = 2_000,
   stateDir = process.env.VEYNOD_STATE_DIR || join(homedir(), ".veynod"),
@@ -785,17 +655,10 @@ export async function runRunner(options, {
   let adapter = makeAdapter(picked.runtime || options.runtime || "claude");
   const pin = { host: options.host, key: options.key };
   const configDir = join(stateDir, "run");
-  const worktrees = new Worktrees({
-    root: join(stateDir, "runner"),
-    repos,
-    maxBytes: (Number(options.diskMb) || 5120) * 1024 * 1024,
-    gitBase: options.gitBase || "https://github.com/",
-  });
   const receipts = join(stateDir, "runner-receipts.jsonl");
   mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const receipt = (fields) => appendFileSync(receipts, `${JSON.stringify({ at: new Date().toISOString(), ...fields })}\n`);
 
-  const deliveryMode = kernelDeliveryMode(options);
   const hostCheckout = options.hostCheckout || process.env.VEYNOD_HOST_CHECKOUT || null;
   const reposDir = options.reposDir || process.env.VEYNOD_REPOS_DIR || process.env.REPOS_DIR || "";
   const kernelUrl = options.kernelUrl || process.env.VEYNOD_KERNEL_URL || process.env.KERNEL_URL || "";
@@ -804,21 +667,28 @@ export async function runRunner(options, {
   const reportFields = () => ({
     mcp_pinning: mcpPinning,
     runtime: adapter.id,
-    delivery: deliveryMode,
+    delivery: "kernel",
     leases: [...leaseBook.values()],
   });
   const mcpPinning = await pinsIdentity(adapter.id, { importer });
   if (!mcpPinning) say(`warning: ${adapter.id} without OAR cannot pin Veynod's MCP to this runner's key; install OAR (Node 24+)`);
-  const hello = await callApi(fetchImpl, options.host, options.key, "/v1/runner/hello", {
-    // Inside `host`: the request schema is strict, and servers that do not read the
-    // report yet drop unknown host fields instead of refusing the hello.
-    method: "POST", body: { host: { ...hostReport({ runtimes, slots, repos, version }),
-      capabilities_report: reportFields() } },
-  });
-  say(`runner ${hello.host_id} (${hello.agent_id ?? "unnamed"}) ready: ${slots} slot(s), ${runtimes.filter((item) => item.available).map((item) => item.id).join(", ") || "no runtime"}`);
+  // The host record: only the process that owns the computer's socket says
+  // hello. A worker that did would overwrite the record with its own options.
+  const hello = async () => {
+    const answer = await callApi(fetchImpl, options.host, options.key, "/v1/runner/hello", {
+      // Inside `host`: the request schema is strict, and servers that do not read the
+      // report yet drop unknown host fields instead of refusing the hello.
+      method: "POST", body: { host: { ...hostReport({ runtimes, slots, repos, version }),
+        capabilities_report: reportFields() } },
+    });
+    say(`runner ${answer.host_id} (${answer.agent_id ?? "unnamed"}) ready: ${slots} slot(s), ${runtimes.filter((item) => item.available).map((item) => item.id).join(", ") || "no runtime"}`);
+    return answer;
+  };
 
-  const running = new Map();
-  const seen = new Set();
+  // Placements running on this computer, for the heartbeat. The messenger owns
+  // this map (it starts and ends the workers); `work` never touches it, so a
+  // worker process cannot rewrite the host record with its own view.
+  const running = options.running instanceof Map ? options.running : new Map();
   let lastInventory = Date.now();
   const beat = async () => {
     try {
@@ -839,9 +709,6 @@ export async function runRunner(options, {
       say(`heartbeat: ${error.message}`);
     }
   };
-  const timer = setInterval(() => void beat(), every);
-  timer.unref?.();
-
   const report = async (placementId, outcome, note) => {
     try {
       await callApi(fetchImpl, options.host, options.key,
@@ -874,7 +741,6 @@ export async function runRunner(options, {
   async function work({ taskKey, placementId, step, diagramKey, chunkKey }) {
     const slot = taskKey ?? placementId;
     let repo = null;
-    let tree = null;
     let scratch = null;
     let stopLease = () => {};
     let result = { ok: false, reason: "not run" };
@@ -900,12 +766,12 @@ export async function runRunner(options, {
       }
       // Coding tasks go through the Kernel. A task with no repository never
       // touches a checkout, so it keeps an empty scratch directory.
-      const kernelCoding = deliveryMode === "kernel" && step !== "supervise" && Boolean(repo);
+      const kernelCoding = step !== "supervise" && Boolean(repo);
       if (kernelCoding && (step === "review" || step === "merge")) {
         // No second Claude. The gate and merge coordinator already ran,
         // unless the gate failed and this same worker must revise once.
         const gate = await readGate(taskKey);
-        const action = reviewAction({ delivery: deliveryMode, step, gate });
+        const action = reviewAction({ step, gate });
         for (const line of pipelineLines({ gate })) say(line);
         if (action.spawn !== "revision") {
           skipAgent = true;
@@ -932,27 +798,19 @@ export async function runRunner(options, {
         cwd = null;
       } else if (step === "supervise") {
         agenda = placement.detail?.agenda ?? [];
-      } else if (deliveryMode === "legacy" && repo) {
-        // Opt-out only: a local worktree. The default path never reaches here.
-        const treeKey = step === "work" ? taskKey : `${step}-${taskKey}`;
-        tree = worktrees.prepare(treeKey, repo, new Set([...running.keys()].map(repoSlug)));
-        if (tree) tree.key = treeKey;
       }
       if (!cwd && !skipAgent) {
         // Work without a repository gets an empty directory of its own, never the
         // service's working directory. Kernel coding tasks already have cwd.
-        if (!tree) {
-          scratch = join(stateDir, "runner", "scratch", repoSlug(`${step}-${slot}`));
-          rmSync(scratch, { recursive: true, force: true });
-          mkdirSync(scratch, { recursive: true });
-        }
-        cwd = tree?.dir ?? scratch;
-        prompt = promptFor({ taskKey, placementId, branch: tree?.branch, host: options.host,
+        scratch = join(stateDir, "runner", "scratch", repoSlug(`${step}-${slot}`));
+        rmSync(scratch, { recursive: true, force: true });
+        mkdirSync(scratch, { recursive: true });
+        cwd = scratch;
+        prompt = promptFor({ taskKey, placementId, host: options.host,
           step, diagramKey, chunkKey, agenda });
       }
       const env = { VEYNOD_KEY: options.key, VEYNOD_HOST: options.host, VEYNOD_TASK_KEY: taskKey ?? "",
-        VEYNOD_PLACEMENT_ID: placementId, VEYNOD_STEP: step, VEYNOD_CWD: cwd,
-        VEYNOD_DELIVERY: deliveryMode };
+        VEYNOD_PLACEMENT_ID: placementId, VEYNOD_STEP: step, VEYNOD_CWD: cwd };
       const mcpConfig = kernelCoding ? combinedMcpConfig({
         product: pin, kernelUrl, kernelToken,
       }) : null;
@@ -973,15 +831,7 @@ export async function runRunner(options, {
         if (result.ok && !String(diff).trim()) {
           result = { ok: false, reason: "no_kernel_submission" };
         } else if (result.ok) {
-          const submitted = await callApi(fetchImpl, options.host, options.key,
-            `/v1/tasks/${encodeURIComponent(taskKey)}/kernel/submit`, {
-              method: "POST",
-              body: {
-                git_diff: diff,
-                touched_symbols: touchedSymbolsFromDiff(diff),
-                local_test_passed: true,
-              },
-            });
+          const submitted = await submitKernelDiff(fetchImpl, options, taskKey, diff);
           const gate = await settleGate(() => readGate(taskKey), {
             waitMs: Number(options.gateWaitMs ?? process.env.VEYNOD_GATE_WAIT_MS ?? 0),
           });
@@ -994,7 +844,8 @@ export async function runRunner(options, {
             result = { ok: false, reason: "needs_human" };
           } else if (gate?.gate === "fail" || gate?.status === "gate_failed") {
             result = { ok: false, reason: "verification_gate failed" };
-          } else if (gate?.merged || gate?.gate === "pass" || submitted?.submission_id) {
+          } else if (gate?.merged || gate?.gate === "pass" || submitted?.submission_id
+              || submitted?.already_submitted) {
             result = { ok: true, reason: gate?.merge_sha ? `merge_coordinator ${gate.merge_sha}` : "submitted_to_kernel_gate" };
           }
         }
@@ -1008,91 +859,39 @@ export async function runRunner(options, {
     } finally {
       stopLease();
       leaseBook.delete(slot);
-      if (tree) {
-        try {
-          worktrees.remove(tree.key, repo);
-        } catch {
-          // cleaned on the next makeRoom
-        }
-      }
       if (scratch) rmSync(scratch, { recursive: true, force: true });
-      running.delete(slot);
-      void beat();
     }
     // Tell the platform how the step ended, so a failure moves on at once.
     await report(placementId, result.ok ? "finished" : "failed", result.reason);
   }
 
-  try {
-    return await follow({
-      ...options,
-      heartbeat: false,
-      onPoke: async (poke) => {
-        const placed = placementOf(poke);
-        if (!placed || seen.has(placed.placementId)) return 0;
-        seen.add(placed.placementId);
-        const slot = placed.taskKey ?? placed.placementId;
-        receipt({ task_key: placed.taskKey, placement_id: placed.placementId, step: placed.step, stage: "delivered" });
-        if (running.size >= slots || running.has(slot)) {
-          // Say so at once: the platform places it elsewhere instead of waiting
-          // for the claim to time out on this computer.
-          receipt({ task_key: placed.taskKey, placement_id: placed.placementId, step: placed.step, stage: "failed", reason: "no free slot" });
-          await report(placed.placementId, "failed", "no_free_slot");
-          return 0;
-        }
-        running.set(slot, work(placed));
-        void beat();
-        return 0;
-      },
-    }, say);
-  } finally {
-    clearInterval(timer);
-    await Promise.allSettled([...running.values()]);
-    await beat(); // leave the board knowing this computer runs nothing
-  }
+  return {
+    hello,
+    beat,
+    work,
+    report,
+    running,
+    adapter: () => adapter,
+  };
 }
 
 // ------------------------------------------------------------------ one task
 /**
- * Run exactly one poke and exit (the messenger's worker mode).
+ * Run exactly one placement and exit (the messenger's worker process).
  *
- * The messenger owns the socket and the two receipts; this process only does
- * the work for one placement and reports it. `follow` is faked so the normal
- * runner path is reused unchanged: deliver the poke, wait until the platform
- * closes the placement, then resolve.
+ * The messenger owns the socket, both receipts and the host record; this
+ * process does the work for one placement and reports how it ended.
  */
-export async function runOnePoke(options, poke, {
-  followPoke = null,
-  say = () => {},
-  sleepMs = 1_000,
-  maxWaitMs = 30 * 60 * 1_000,
-  now = Date.now,
-} = {}) {
-  const deadline = now() + maxWaitMs;
-  const fakeFollow = async ({ onPoke }) => {
-    // The second receipt: the messenger's watchdog stops once the platform has
-    // accepted this placement for work. That is the earliest point a wedge in
-    // orientation becomes visible here rather than as a silent hang.
-    if (process.send) process.send({ type: "IPC_ORIENTATION_READY", task_key: poke.task_key });
-    await onPoke(poke);
-    if (followPoke) {
-      await followPoke(poke, { deadline, now, sleepMs });
-      return;
-    }
-    // Without a watcher, wait for the placement to stop being open.
-    while (now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, sleepMs));
-      const placement = await callApi(fetch, options.host, options.key,
-        `/v1/runner/placements/${encodeURIComponent(poke.note?.match(/\bp-\S+/)?.[0] || "")}`)
-        .catch(() => null);
-      if (placement && !OPEN_PLACEMENT.has(placement.status)) return;
-      if (placement === null) return;
-    }
-  };
-  return runRunner(options, { follow: fakeFollow, say, sleepMs });
+export async function runPlacement(options, poke, deps = {}) {
+  const runner = await createRunner(options, deps);
+  // The second receipt: this process is up and about to work the placement.
+  if (process.send) process.send({ type: "IPC_ORIENTATION_READY", task_key: poke.task_key });
+  const placed = placementOf(poke);
+  if (!placed) throw new Error("the poke names no placement");
+  await runner.work(placed);
 }
 
-/** `runner.mjs --task KEY --placement ID [--agent AGENT]` */
+/** `runner.mjs --placement ID [--task KEY] [--step STEP] [--agent AGENT]` */
 export function onePokeFromArgs(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
@@ -1100,26 +899,54 @@ export function onePokeFromArgs(argv) {
     if (!flag.startsWith("--")) continue;
     args[flag.slice(2)] = argv[index + 1]?.startsWith("--") ? true : argv[++index];
   }
-  if (!args.task || !args.placement) {
-    throw new Error("usage: runner.mjs --task KEY --placement ID [--agent AGENT]");
+  if (!args.placement) {
+    throw new Error("usage: runner.mjs --placement ID [--task KEY] [--step STEP]");
   }
   return {
-    kind: "task.placed",
-    task_key: args.task,
-    note: `placement ${args.placement}`,
+    task_key: args.task && args.task !== true ? args.task : null,
+    placement_id: args.placement,
+    step: args.step || "work",
     agent_id: args.agent,
   };
 }
 
+/** The poke the messenger handed this worker: the full frame payload, else the arguments. */
+export function workerPoke(argv, env = process.env) {
+  const fromArgs = onePokeFromArgs(argv);
+  try {
+    const frame = JSON.parse(env.VEYNOD_TASK_POKE || "null");
+    if (frame && frame.placement_id === fromArgs.placement_id) return { ...fromArgs, ...frame };
+  } catch {
+    // fall back to the arguments
+  }
+  return fromArgs;
+}
+
+/** The messenger's runner options for this worker (repos, runtime, delivery). */
+export function workerRunnerOptions(env = process.env) {
+  let given = {};
+  try {
+    given = JSON.parse(env.VEYNOD_RUNNER_OPTIONS || "{}") || {};
+  } catch {
+    given = {};
+  }
+  const out = {};
+  if (Array.isArray(given.repos)) out.repos = given.repos.map(String);
+  for (const field of ["runtime", "exec", "delivery", "gitBase", "reposDir"]) {
+    if (typeof given[field] === "string" && given[field]) out[field] = given[field];
+  }
+  return out;
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"))) {
-  const poke = onePokeFromArgs(process.argv.slice(2));
+  const poke = workerPoke(process.argv.slice(2));
   const host = process.env.VEYNOD_HOST || "http://127.0.0.1:8000";
   const key = process.env.VEYNOD_AGENT_TOKEN || process.env.VEYNOD_KEY;
   if (!key) {
     process.stderr.write("runner.mjs needs VEYNOD_AGENT_TOKEN\n");
     process.exit(2);
   }
-  runOnePoke({ host, key, agent: process.env.VEYNOD_AGENT_ID, slots: 1 }, poke)
+  runPlacement({ ...workerRunnerOptions(), host, key, agent: process.env.VEYNOD_AGENT_ID, slots: 1 }, poke)
     .then(() => process.exit(0))
     .catch((error) => {
       process.stderr.write(`runner failed: ${error.message}\n`);

@@ -41,8 +41,6 @@ from app.mcp_server.syscalls import (
     RequestTaskSplitRequest,
     RequestTaskSplitResponse,
     SlicedArtifactView,
-    SubmitPatchRequest,
-    SubmitPatchResponse,
     SymbolSignatureRecord,
     TaskBundleResponse,
     TaskStatus as ApiTaskStatus,
@@ -434,27 +432,6 @@ class PostgresKernelEngineService(KernelEngineService):
         return f"# Target artifact {artifact.symbol_path}\n# Create it in {artifact.file_path}."
 
     # --------------------------------------------------------------- submit
-    async def verify_and_commit_patch(
-        self,
-        lease: ActiveLeaseContext,
-        req: SubmitPatchRequest,
-        touched_files: set[str],
-    ) -> SubmitPatchResponse:
-        task = await self.session.get(DagTask, lease.task_id)
-        if task is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task {lease.task_id} not found.",
-            )
-        workspace = await self._workspace(task.workspace_id)
-        return await self.gate.verify_and_merge_patch(
-            task=task,
-            workspace=workspace,
-            git_diff=req.git_diff,
-            touched_symbols=req.touched_symbols,
-            lease_token_hash=hash_token(req.lease_token),
-        )
-
     # ---------------------------------------------------------------- split
     async def execute_graph_split(
         self, lease: ActiveLeaseContext, req: RequestTaskSplitRequest

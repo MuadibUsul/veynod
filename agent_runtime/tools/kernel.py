@@ -16,7 +16,6 @@ Veynod Kernel syscall/runner planes.  It is deliberately strict:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import time
@@ -24,6 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 import httpx
+from contracts import kernel_http
 
 from ..loop import ToolResult
 from ..tool_context import ToolContext, current_tool_context
@@ -47,7 +47,7 @@ TOOL_NAMES = frozenset(
     }
 )
 
-RETRYABLE_STATUS = frozenset({429, 500, 502, 503, 504})
+RETRYABLE_STATUS = kernel_http.RETRYABLE_STATUS
 
 
 @dataclass(frozen=True)
@@ -142,18 +142,6 @@ def classify_status(status_code: int) -> str:
     if status_code >= 500:
         return "TRANSPORT"
     return "INTERNAL"
-
-
-def _detail(response: httpx.Response) -> str:
-    text = response.text[:800]
-    try:
-        payload = response.json()
-    except ValueError:
-        return text
-    if isinstance(payload, dict):
-        detail = payload.get("detail") or payload
-        return str(detail)[:800]
-    return text
 
 
 @dataclass
@@ -357,55 +345,25 @@ class KernelToolRuntime:
         idempotency_key: str | None = None,
         timeout: float | None = None,
     ) -> tuple[int, dict[str, Any]]:
-        headers = {"X-Workspace-Id": binding.workspace_id}
-        if service:
-            if not self.config.service_key:
-                raise KernelToolConfigError("KERNEL_SERVICE_KEY is not configured")
-            headers["X-Veynod-Service-Key"] = self.config.service_key
-        else:
-            headers["Authorization"] = f"Bearer {binding.token()}"
-        if idempotency_key:
-            headers["Idempotency-Key"] = idempotency_key
-        url = binding.base_url.rstrip("/") + path
-
-        last_error: Exception | None = None
-        for attempt in range(self.config.max_retries + 1):
-            try:
-                response = await self._client.request(
-                    method,
-                    url,
-                    headers=headers,
-                    params=params,
-                    json=json_body,
-                    timeout=timeout or self.config.timeout_seconds,
-                )
-            except (httpx.TimeoutException, httpx.TransportError) as exc:
-                last_error = exc
-            else:
-                if response.status_code in RETRYABLE_STATUS and (
-                    attempt < self.config.max_retries
-                ):
-                    last_error = KernelToolError(
-                        f"Kernel HTTP {response.status_code}: {_detail(response)}",
-                        "ADMISSION"
-                        if response.status_code == 429
-                        else "TRANSPORT",
-                    )
-                elif response.status_code >= 400:
-                    raise KernelToolError(
-                        f"Kernel HTTP {response.status_code}: {_detail(response)}",
-                        classify_status(response.status_code),
-                    )
-                else:
-                    try:
-                        payload = response.json() if response.content else {}
-                    except ValueError:
-                        payload = {}
-                    return response.status_code, payload
-            await asyncio.sleep(min(8.0, 0.5 * (2**attempt)))
-        raise KernelToolError(
-            f"Kernel unreachable: {last_error}", "TRANSPORT"
+        if service and not self.config.service_key:
+            raise KernelToolConfigError("KERNEL_SERVICE_KEY is not configured")
+        auth = kernel_http.KernelAuth(
+            workspace_id=binding.workspace_id,
+            service_key=self.config.service_key if service else None,
+            bearer=None if service else binding.token(),
         )
+        try:
+            status, payload = await kernel_http.request(
+                self._client, method, binding.base_url.rstrip("/") + path, auth=auth,
+                params=params, json_body=json_body, idempotency_key=idempotency_key,
+                timeout=timeout or self.config.timeout_seconds,
+                retries=self.config.max_retries,
+            )
+        except kernel_http.KernelHTTPError as exc:
+            if exc.unreachable:
+                raise KernelToolError(str(exc), "TRANSPORT") from exc
+            raise KernelToolError(str(exc), classify_status(exc.status)) from exc
+        return status, payload if isinstance(payload, dict) else {"items": payload}
 
     async def _do_create_task(
         self,

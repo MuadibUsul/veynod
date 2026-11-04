@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Principal
 from app.services import diagrams, presence, runners
+from app.services.kernel_delivery import kernel_owns_steps
 
 # One state for every piece of work, in the order a piece moves through them.
 STATES = ("not_ready", "ready", "doing", "review", "you", "deploy", "done")
@@ -50,6 +51,9 @@ TIMELINE_TYPES = (
 )
 APPROVED = ("TASK_APPROVED", "HUMAN_APPROVED")
 RETURNED = ("TASK_REJECTED", "HUMAN_REJECTED", "TASK_RETURNED_FOR_REWORK")
+# A review placement left unplaced for these reasons will never find a computer
+# on its own: on a one-computer Loop the builder may not review its own work.
+PERSON_REVIEW_REASONS = ("no_reviewer_host",)
 # Too generic to name a family of tasks.
 NO_FAMILY = {"task", "dg", "ops", "tmp", "test"}
 
@@ -82,7 +86,9 @@ def task_state(row: dict[str, Any]) -> str:
     if status == "IN_PROGRESS":
         return "doing"
     if status == "REVIEWING":
-        return "review"
+        # The person is the reviewer when the Kernel already gated and merged the
+        # work, or when no other computer can review it ("review" moves alone).
+        return "you" if row.get("review_by") == "person" else "review"
     if status in PERSON:
         return "you"
     if status == "HANDOFF":
@@ -160,12 +166,20 @@ async def overview(session: AsyncSession, principal: Principal) -> dict[str, Any
     rows = [dict(row) for row in (await session.execute(text(
         "SELECT task_key, title, status::text AS status, priority, namespace, parent_task_key, "
         "root_task_key, claimed_by, lease_owner, assignee, reviewed_by, review_feedback, "
-        "handoff_brief, handed_off_by, updated_at, created_at FROM collab_tasks "
+        "handoff_brief, handed_off_by, correlation, updated_at, created_at FROM collab_tasks "
         "WHERE workspace_id = :ws AND (status::text = ANY(CAST(:open AS text[])) "
         "OR (status = 'DONE' AND updated_at > NOW() - INTERVAL '7 days')) "
         "ORDER BY priority DESC, updated_at DESC LIMIT 1500"),
         {"ws": ws, "open": list(OPEN)})).mappings().all()]
     by_key = {row["task_key"]: row for row in rows}
+    stranded = set((await session.execute(text(
+        "SELECT task_key FROM runner_placements WHERE workspace_id = :ws AND step = 'review' "
+        "AND status = 'unplaced' AND reason = ANY(CAST(:reasons AS text[]))"),
+        {"ws": ws, "reasons": list(PERSON_REVIEW_REASONS)})).scalars().all())
+    for row in rows:
+        if row["status"] == "REVIEWING" and (
+                kernel_owns_steps(row) or row["task_key"] in stranded):
+            row["review_by"] = "person"
 
     def holder_of(row: dict[str, Any]) -> tuple[str | None, str | None]:
         agent = resolve(row.get("claimed_by") or row.get("lease_owner"))
@@ -267,8 +281,11 @@ async def overview(session: AsyncSession, principal: Principal) -> dict[str, Any
     needs_you = {
         "deploy": [{"key": entry["key"], "title": entry["title"], "since": entry["since"]}
                    for entry in pieces if entry["state"] == "deploy"],
+        # ``why``: "review" when the person is the task's reviewer, "answer" when
+        # an agent asked the person something.
         "waiting": [{"key": entry["key"], "title": entry["title"], "since": entry["since"],
-                     "asked_by": entry["holder"]}
+                     "asked_by": entry["holder"],
+                     "why": "review" if entry["status"] == "REVIEWING" else "answer"}
                     for entry in pieces if entry["state"] == "you"],
     }
 

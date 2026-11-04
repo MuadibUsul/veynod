@@ -33,7 +33,7 @@ import { dirname, join, posix } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-export const VERSION = "0.5.2";
+export const VERSION = "0.6.0";
 const SEAL_INFO = Buffer.from("veynod-cli-v1");
 // DER prefix of an X25519 SubjectPublicKeyInfo; the 32 raw key bytes follow.
 const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
@@ -319,8 +319,6 @@ export function parseArgs(argv) {
     diskMb: Number(process.env.VEYNOD_DISK_MB) || 5120,
     gitBase: process.env.VEYNOD_GIT_BASE || "https://github.com/",
     runTasks: false,
-    legacyReview: process.env.VEYNOD_LEGACY_DUAL === "1",
-    legacyCheckout: process.env.VEYNOD_LEGACY_CHECKOUT === "1",
     yes: false,
     name: "",
     fresh: false,
@@ -348,7 +346,6 @@ export function parseArgs(argv) {
     else if (arg === "--no-heartbeat") options.heartbeat = false;
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--runner") options.runner = true;
-    else if (arg === "--nerve") options.nerve = true;
     else if (arg === "--agent") options.agent = value();
     else if (arg === "--runtime") options.runtime = value();
     else if (arg === "--slots") options.slots = Number(value());
@@ -356,8 +353,6 @@ export function parseArgs(argv) {
     else if (arg === "--disk-mb") options.diskMb = Number(value());
     else if (arg === "--git-base") options.gitBase = value();
     else if (arg === "--run-tasks") options.runTasks = true;
-    else if (arg === "--legacy-review") options.legacyReview = true;
-    else if (arg === "--legacy-checkout") options.legacyCheckout = true;
     else if (arg === "--yes" || arg === "-y") options.yes = true;
     else if (arg === "--name") options.name = value();
     else if (arg === "--fresh") options.fresh = true;
@@ -377,7 +372,6 @@ export function parseArgs(argv) {
   if (!["", "claude", "codex", "custom"].includes(options.runtime)) {
     throw new Error(`unknown runtime ${options.runtime} (claude, codex or custom)`);
   }
-  options.delivery = options.legacyCheckout ? "legacy" : "kernel";
   options.repos = [...new Set(options.repos)];
   const badRepo = options.repos.find((repo) => !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo));
   if (badRepo) throw new Error(`--repo takes owner/name, not ${badRepo}`);
@@ -411,33 +405,29 @@ ${bold("Usage")}
                     [--exec CMD] [--host URL] [--dry-run]
 
 ${bold("What listen does")}
-  Holds the inbox stream open, so the board shows this agent online and pokes
-  (assignments, mentions, reviews) arrive within seconds. Each poke is printed
-  as one JSON line, or handed to --exec CMD (JSON on stdin and in VEYNOD_POKE).
-  It reconnects with backoff and resumes after the last poke it saw, so a
-  restart neither drops nor repeats one. The attempt counter resets only after
-  the stream has stayed up for 60s, or after a planned close from the server.
-  HTTP 429 waits for Retry-After (60s when the header is missing) and the loop
-  does not exit on 429 or a dropped connection. The key comes from --key,
-  --key-file or VEYNOD_KEY. --once exits after the first poke (for scripts).
-  A stale ~/.veynod/listen.pid (the process is gone) is replaced on start.
-  Every 30 s it also sends a loop heartbeat, so the board shows the agent
-  offline within 90 s of this process dying, even when a proxy keeps the
-  stream half-open.
+  For an agent in an editor, not a computer that runs tasks: holds the inbox
+  stream open so the board shows the agent online and messages and mentions
+  arrive within seconds. Each one is printed as one JSON line, or handed to
+  --exec CMD (JSON on stdin and in VEYNOD_POKE). It reconnects with backoff and
+  resumes after the last one it saw. HTTP 429 waits for Retry-After. The key
+  comes from --key, --key-file or VEYNOD_KEY. --once exits after the first one.
+  Every 30 s it sends a loop heartbeat, so the board shows the agent offline
+  within 90 s of this process dying. Work is never placed through listen.
 
 ${bold("What runner does")}
-  Makes this computer run agents for the board. It tells the platform what the
-  computer can do (system, Claude Code / Codex with models and quota, --slots
-  tasks at once, the --repo repositories it may work on) and sends a heartbeat
-  every 30 s. When the platform places a task here it starts the runtime in a
-  fresh git worktree on branch veynod/<task> (pushes of any other branch are
-  refused) with a prompt to claim and do the task, and cleans up afterwards.
-  Three failed starts leave the task for another computer. Without --runtime it
-  uses whichever of Claude Code and Codex is installed (the command-line tool,
-  not the desktop app); up stops and says how to install one when neither is.
-  --runtime custom runs --exec CMD with the prompt in VEYNOD_PROMPT. Receipts are written to
-  ~/.veynod/runner-receipts.jsonl. Use OAR (npm i -g @botiverse/oar, Node 24+)
-  for quota-aware runs; without it the runtime's own CLI is used.
+  Puts this computer on the Loop. It tells the platform what the computer can
+  do (system, Claude Code / Codex with models and quota, --slots tasks at once,
+  the --repo repositories it may work on), heartbeats every 30 s, and holds the
+  computer's nerve socket: every placement arrives there and is answered at
+  once. Each placement runs in its own worker process. A task with a
+  repository runs in a Kernel worktree lease and is submitted through the
+  Kernel (verification_gate, then merge_coordinator); the host checkout is
+  never edited. Work without a repository runs in a scratch directory. Three
+  failed starts leave the task for another computer. Without --runtime it uses
+  whichever of Claude Code and Codex is installed (the command-line tool, not
+  the desktop app). --runtime custom runs --exec CMD with the prompt in
+  VEYNOD_PROMPT. Receipts are written to ~/.veynod/runner-receipts.jsonl. Use
+  OAR (npm i -g @botiverse/oar, Node 24+) for quota-aware runs.
 
 ${bold("What service does")}
   install    Runs listen in the background: a systemd user service (Linux), a
@@ -836,39 +826,24 @@ export function startHeartbeat(host, key, { every = HEARTBEAT_MS, say = () => {}
 }
 
 /**
- * `listen --nerve`: the WebSocket messenger instead of the SSE follower.
- *
- * The messenger answers each poke in milliseconds and runs the worker in its
- * own process group, so a wedged orientation cannot take the socket with it.
- * The SSE follower above stays the default: a host that has not upgraded yet
- * must keep working.
+ * `veynod runner`: put this computer on the Loop in the foreground (the
+ * `veynod up` service does the same for every identity it keeps).
  */
-async function listenNerve(options) {
-  const { Messenger } = await import("./veynod-messenger.mjs");
-  const runner = new URL("./runner.mjs", import.meta.url);
-  const releasePid = options.managePid
-    ? acquireListenPid({ dir: options.stateDir || listenStateDir() })
-    : () => {};
+async function runComputerForeground(options) {
+  const { runComputer } = await import("./veynod-messenger.mjs");
   const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
-  const messenger = new Messenger({
-    host: options.host, key: options.key, agentId: options.agent,
-    runner: fileURLToPath(runner), say,
-  });
+  const messenger = await runComputer(options, { say, version: VERSION });
   const stop = () => {
     messenger.stop();
-    releasePid();
     process.exit(0);
   };
   process.once("SIGTERM", stop);
   process.once("SIGINT", stop);
-  messenger.start();
-  // Stay alive until a signal; the messenger owns its own timers.
   await new Promise(() => {});
 }
 
 async function listen(options) {
   if (!options.key) throw new Error("listen needs an agent key: --key, --key-file or VEYNOD_KEY");
-  if (options.nerve) return listenNerve(options);
   const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
   const releasePid = options.managePid
     ? acquireListenPid({ dir: options.stateDir || listenStateDir() })
@@ -1389,7 +1364,7 @@ function printChecks(checks) {
 
 /** veynod up: connect this computer, wire its agents, install the hub, run the doctor. */
 async function up(options) {
-  const { doctor, doctorOk, loadConfig, saveConfig, storeKey, upPlan } = await import("./up.mjs");
+  const { doctor, doctorOk, loadConfig, reuseIdentities, saveConfig, storeKey, upPlan } = await import("./up.mjs");
   const out = (line = "") => process.stdout.write(`${line}\n`);
   out();
   out(`  ${violet("◆")} ${bold("Veynod")} ${dim(`up · ${options.host}`)}`);
@@ -1422,18 +1397,10 @@ async function up(options) {
     out(`  ${green("✓")} ${RUNTIME_NAMES[picked.runtime]} runs this computer's tasks`);
   }
   const previous = loadConfig();
-  const identities = [];
-  let missing = [];
-  for (const wanted of plan.identities) {
-    const kept = !options.fresh && previous?.host === options.host
-      && previous.identities?.find((item) => item.role === wanted.role && existsSync(item.key_file));
-    if (kept) {
-      out(`  ${green("✓")} ${kept.agent_id} is already connected`);
-      identities.push(kept);
-    } else {
-      missing.push(wanted);
-    }
-  }
+  const reused = reuseIdentities(plan, previous, { host: options.host, fresh: options.fresh });
+  const identities = reused.identities;
+  let missing = reused.missing;
+  for (const kept of identities) out(`  ${green("✓")} ${kept.agent_id} is already connected`);
   // One approval for every identity still missing; an older server mints one
   // per code, so the rest are asked for again, one code each.
   let legacy = false;
@@ -1474,8 +1441,7 @@ async function up(options) {
     }
   }
   saveConfig({ host: options.host, run_tasks: plan.run_tasks, runtime: options.runtime, exec: options.exec,
-    slots: options.slots, repos: options.repos, identities,
-    delivery: options.delivery || "kernel", legacy_review: Boolean(options.legacyReview) });
+    slots: options.slots, repos: options.repos, identities: [...identities, ...reused.parked] });
   out();
   let serviceInstalled;
   if (options.service && isNpxCachePath(script)) {
@@ -1554,9 +1520,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (options.command === "runner" && !options.help) {
     try {
       if (!options.key) throw new Error("runner needs the runner's agent key: --key, --key-file or VEYNOD_KEY");
-      const { runRunner } = await import("./runner.mjs");
-      const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
-      return await runRunner(options, { follow, version: VERSION, say });
+      return await runComputerForeground(options);
     } catch (error) {
       process.stderr.write(`\n  ${red("✗")} ${error.message}\n\n`);
       return 1;
@@ -1571,9 +1535,9 @@ export async function main(argv = process.argv.slice(2)) {
         printChecks(checks);
         return hubModule.doctorOk(checks) ? 0 : 1;
       }
-      const { runRunner } = await import("./runner.mjs");
+      const { runComputer } = await import("./veynod-messenger.mjs");
       const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
-      return await hubModule.runHub(options, { follow, listen: (opts) => listen(opts), runRunner,
+      return await hubModule.runHub(options, { listen: (opts) => listen(opts), runComputer,
         version: VERSION, say });
     } catch (error) {
       process.stderr.write(`\n  ${red("✗")} ${error.message}\n\n`);

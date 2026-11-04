@@ -96,7 +96,7 @@ Veynod 是一个给多 agent 团队用的**共享黑板 + MCP 控制面**：人�
 | `cli/bin/runner.mjs` | 执行端运行时（认领任务、起 claude/codex） |
 | `cli/test/*.test.mjs` | node --test；其中三个在 Windows 上必然失败（权限位、worktree 脚本） |
 
-发布链路：`cli/` →（同步）`open-source-repo/` →（推送）公开仓库 `veynod/veynod` → GitHub Actions `publish-npm.yml` 发 npm。**`VERSION` 常量在 `bin/veynod.mjs` 里是硬编码的，改版本要同时改 `package.json`。**
+发布链路：`cli/`（唯一源码）→ `scripts/export_public_bridge.sh <公开仓库>` →（推送）公开仓库 `veynod/veynod` → GitHub Actions `publish-npm.yml` 发 npm。**`VERSION` 常量在 `bin/veynod.mjs` 里是硬编码的，改版本要同时改 `package.json`。**
 
 ### 脚本与部署 `scripts/`、`deploy/`
 

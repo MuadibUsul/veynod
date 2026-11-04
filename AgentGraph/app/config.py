@@ -108,18 +108,9 @@ class Settings(BaseSettings):
     # /dashboard/internal/* and only when this flag is on (or never in
     # production unless an operator explicitly enables it).
     internal_views_enabled: bool = False
-    # Compatibility switch (one release): create Kernel tasks directly from
-    # POST /v1/code/runs instead of starting an Agent Run. See ADR-018.
-    code_engine_legacy_direct: bool = False
-    # Board tasks with a repository become Kernel tasks (worktree lease +
-    # write-set lock). The hub's shared-checkout path is the opt-out.
-    kernel_provision_on_create: bool = True
-    # verification_gate + merge_coordinator replace a permanent reviewer host.
-    kernel_delivery_default: bool = True
-    # Polling sweepers start in this process. With a separate worker container
-    # (ADR-019) set this to 0 so the API process only serves requests and the
-    # nerve socket; the presence sweep and the scheduler then belong there.
-    inline_background_loops: bool = True
+    # While the Kernel gate works on a task's submission, the lease reaper does
+    # not hand the task to another computer; past this age it does.
+    kernel_gate_hold_seconds: int = Field(default=3600, ge=60, le=86_400)
     # Replays Kernel commit projections the event stream lost (Phase 2, item 5).
     diagram_reconcile_enabled: bool = True
     diagram_reconcile_interval_seconds: int = Field(default=300, ge=30, le=3_600)

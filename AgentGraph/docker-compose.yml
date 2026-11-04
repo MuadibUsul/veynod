@@ -21,7 +21,9 @@ services:
     #   - "5432:5432"
 
   api:
-    build: .
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
     # Forward every setting in .env to the container; explicit environment
     # values below still take precedence for the wiring-critical ones.
     env_file:

@@ -34,8 +34,9 @@ NerveFrameType = protocol.NerveFrameType
 class FakeWS:
     """Records what was sent; ``behaviour`` decides what the peer answers."""
 
-    def __init__(self, behaviour: str) -> None:
+    def __init__(self, behaviour: str, delay: float = 0.0) -> None:
         self.behaviour = behaviour
+        self.delay = delay
         self.sent: list[dict] = []
         self.closed: list[tuple[int, str]] = []
 
@@ -43,6 +44,14 @@ class FakeWS:
         self.sent.append(payload)
         if payload.get("type") != NerveFrameType.TASK_POKE.value:
             return
+        if self.delay:
+            # A far peer: the receipts come back after the round trip.
+            asyncio.get_running_loop().call_later(
+                self.delay, lambda: asyncio.ensure_future(self._answer(payload)))
+            return
+        await self._answer(payload)
+
+    async def _answer(self, payload: dict) -> None:
         if self.behaviour in ("net", "both"):
             await _reply(payload, "task.ack.net", {"received_at_ms": 0})
         if self.behaviour == "both":
@@ -117,7 +126,7 @@ async def test_a_busy_agent_refuses_before_a_frame_is_sent() -> None:
     async def run():
         ws = FakeWS("both")
         sock = await _HUB.register(_sock(ws))
-        sock.worker_busy = True
+        sock.active = sock.slots  # every slot runs something (from its last ping)
         result = await _HUB.dispatch(sock, task_key="T-1", placement_id="p1", title="t", epoch=1)
         await _HUB.unregister(sock, "test")
         return result, ws
@@ -193,3 +202,58 @@ def test_nerve_url_and_worker_command() -> None:
     ok = subprocess.run(["node", "--check", str(ROOT / "AgentGraph/cli/bin/veynod-messenger.mjs")],
                         capture_output=True, text=True)
     assert ok.returncode == 0, ok.stderr
+
+
+def test_the_first_receipt_deadline_follows_the_round_trip() -> None:
+    deadline = protocol.net_ack_deadline_s
+    # A near peer keeps the 200 ms budget; a far one gets three round trips.
+    assert deadline(20) == pytest.approx(protocol.NET_ACK_TIMEOUT_S)
+    assert deadline(250) == pytest.approx(0.75)
+    # Unknown round trip (first poke on a socket), and a hard ceiling.
+    assert deadline(0) == pytest.approx(protocol.NET_ACK_FIRST_CONTACT_S)
+    assert deadline(None) == pytest.approx(protocol.NET_ACK_FIRST_CONTACT_S)
+    assert deadline(10_000) == pytest.approx(protocol.NET_ACK_MAX_S)
+    assert protocol.smooth_rtt_ms(0, 300) == 300
+    assert protocol.smooth_rtt_ms(100, 900) == pytest.approx(200)
+
+
+async def test_a_far_peer_is_not_kicked_for_its_round_trip() -> None:
+    """A 300 ms link answered every poke 'too late' under a flat 200 ms timer."""
+    async def run(rtt_known: float):
+        ws = FakeWS("both", delay=0.3)
+        sock = await _HUB.register(_sock(ws))
+        sock.rtt_ms = rtt_known
+        result = await _HUB.dispatch(sock, task_key="T-1", placement_id="p1", title="t", epoch=1)
+        rtt_after = sock.rtt_ms
+        await _HUB.unregister(sock, "test")
+        return result, rtt_after
+
+    (ok, reason, facts), rtt_after = await run(0.0)
+    assert ok is True, reason
+    assert facts["net_rtt_ms"] >= 300 and rtt_after >= 300
+    # Once the socket has shown a 300 ms round trip, the next deadline is ~0.9 s.
+    (ok, reason, _), _ = await run(rtt_after)
+    assert ok is True, reason
+    # A socket known to be near still fails fast when it does not answer in time.
+    (ok, reason, _), _ = await run(20.0)
+    assert ok is False and reason == protocol.NerveError.NET_ACK_TIMEOUT.value
+
+
+async def test_the_reaper_loop_starts_and_survives_a_pass() -> None:
+    """It imported a helper that did not exist and died at start-up, silently."""
+    calls = []
+
+    async def fake_reap():
+        calls.append(1)
+        return {}
+
+    original = hub_module.reap_stale
+    hub_module.reap_stale = fake_reap
+    try:
+        task = asyncio.ensure_future(hub_module.nerve_reaper_loop(0.01))
+        await asyncio.sleep(0.05)
+        assert not task.done(), task.exception() if task.done() else None
+        task.cancel()
+    finally:
+        hub_module.reap_stale = original
+    assert len(calls) >= 2

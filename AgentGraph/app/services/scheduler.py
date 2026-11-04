@@ -41,7 +41,7 @@ from app.errors import ApiError, Forbidden, NotFound
 from app.models import CollabTask, TaskStatus
 from app.services import automation
 from app.services.common import append_event, record_audit, task_snapshot
-from app.services.runners import ONLINE_WINDOW
+from app.services.runners import MIN_RUNNER_VERSION, ONLINE_WINDOW, runner_outdated
 
 logger = logging.getLogger("agentgraph.scheduler")
 settings = get_settings()
@@ -65,11 +65,14 @@ UNPLACED = {
     "no_host_for_namespace": "No online runner may work in the {namespace} namespace.",
     "no_host_with_capabilities": "No online runner has {capabilities}.",
     "no_host_for_repo": "No online runner can reach {repo}.",
+    "no_kernel_binding": ("{repo} is not connected to a Kernel, so no computer can build it: "
+                          "bind it under the project's repositories."),
     "no_host_with_runtime": "No online runner has Claude Code or Codex ready.",
     "every_host_failed": "Every runner that could take it already failed it twice.",
     "hosts_out_of_quota": "Every runner that could take it is out of quota.",
     "hosts_busy": "Every runner that could take it is busy; it waits for a free slot.",
-    "no_reviewer_host": "No reviewer computer is online that did not build it.",
+    "no_reviewer_host": ("No other computer can review it (the one that built it may not), "
+                         "so it waits for your review."),
     "no_supervisor_host": "No supervisor computer is online to look after the Loop.",
 }
 # Reasons that wait on their own; the rest need the owner.
@@ -285,6 +288,18 @@ def _fits(task: CollabTask, host: dict[str, Any]) -> list[str]:
     return misses
 
 
+async def _repo_bound(session: AsyncSession, task: CollabTask,
+                      cache: dict[tuple[str | None, str], bool]) -> bool:
+    """Whether the task's repository is bound to a Kernel (once per pass)."""
+    key = (task.project, task.repo)
+    if key not in cache:
+        from app.services.task_lifecycle import kernel_binding_for
+
+        cache[key] = await kernel_binding_for(
+            session, task.workspace_id, task.project, task.repo) is not None
+    return cache[key]
+
+
 def _choose(task: CollabTask, candidates: list[dict[str, Any]],
             failures: dict[str, int], load: dict[str, int]) -> tuple[dict[str, Any] | None, str]:
     """The best host, or the reason there is none."""
@@ -320,8 +335,11 @@ def _words(reason: str, task: CollabTask) -> str:
 
 
 def _online(hosts: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
+    """Hosts that can take work now: active, heard from, and able to receive it
+    (a CLI older than nerve-only dispatch would be offered work it never gets)."""
     return [host for host in hosts if host["status"] == "active"
-            and now - host["last_seen_at"] <= ONLINE_WINDOW]
+            and now - host["last_seen_at"] <= ONLINE_WINDOW
+            and not runner_outdated(host.get("runner_version"))]
 
 
 async def _load(session: AsyncSession, workspace_id: Any,
@@ -390,50 +408,87 @@ async def _offer_work(session: AsyncSession, task: CollabTask, host: dict[str, A
                        after=task_snapshot(task))
     await append_event(
         session, workspace_id=task.workspace_id, agent=actor, event_type="TASK_PLACED",
+        # A timeline fact. The computer hears about it over its nerve socket
+        # (dispatch_offered), never through an agent inbox.
         payload={"task_key": task.task_key, "host_id": host["host_id"],
-                 "placement_id": placement_id, "idempotency_key": placement_id,
-                 "targets": [assignee],
-                 "details": {"delivery_kind": "task.placed", "priority": 1,
-                             "note": f"placement {placement_id}"}},
+                 "placement_id": placement_id, "idempotency_key": placement_id},
         namespace=task.namespace)
     return placement_id
 
 
-async def _dispatch_over_nerve(workspace_id: Any, pending: list[dict[str, Any]]) -> dict[str, int]:
-    """Poke each offered task on its agent's nerve socket, after the pass committed.
+async def dispatch_offered(workspace_id: Any | None = None, limit: int = 50) -> dict[str, int]:
+    """Deliver every offered placement over its computer's nerve socket.
 
-    The SSE poke still happens (``_offer_work`` writes TASK_PLACED), so a host
-    without the nerve keeps working. A nerve failure here reopens the task and
-    leaves ``CHUNK``/placement bookkeeping for the normal reaper paths; it never
-    fails the pass.
+    An offer is a row (status ``offered``), whoever made it: a scheduling pass,
+    a person accepting a suggestion, a supervisor's move, a supervise round.
+    This is the one path that tells a computer. Each placement is delivered
+    once (its ``poke_deliveries`` row is the record); a delivery that fails is
+    taken back and the placement moved, so the next pass places it again. A
+    computer whose socket is not connected right now is retried on the next
+    call; the claim timeout still covers one that never comes back.
     """
-    if not pending:
-        return {"ok": 0, "failed": 0, "skipped": 0}
-    from app.database import async_session_factory
     from app.services import nerve_hub
 
-    ok = failed = skipped = 0
+    counts = {"ok": 0, "failed": 0, "skipped": 0}
     async with async_session_factory() as session:
-        for item in pending:
-            if nerve_hub.nerve_hub.get(workspace_id, item["agent_id"]) is None:
-                skipped += 1
+        rows = (await session.execute(text(
+            "SELECT p.*, t.title AS task_title, k.agent_signature AS holder "
+            "FROM runner_placements p "
+            "LEFT JOIN collab_tasks t ON t.id = p.task_id "
+            "LEFT JOIN runner_hosts h ON h.host_id = p.host_id "
+            "LEFT JOIN agent_tokens k ON k.canonical_id = h.token_id "
+            "AND k.workspace_id = h.workspace_id "
+            "WHERE p.status = 'offered' AND p.agent_id IS NOT NULL "
+            "AND (CAST(:ws AS uuid) IS NULL OR p.workspace_id = CAST(:ws AS uuid)) "
+            "AND NOT EXISTS (SELECT 1 FROM poke_deliveries d WHERE d.workspace_id = p.workspace_id "
+            "AND d.frame_id = p.placement_id) ORDER BY p.created_at LIMIT :limit"),
+            {"ws": str(workspace_id) if workspace_id else None, "limit": limit})).mappings().all()
+        for row in rows:
+            placement = dict(row)
+            if nerve_hub.nerve_hub.get(placement["workspace_id"], placement["agent_id"]) is None:
+                counts["skipped"] += 1
                 continue
-            result = await nerve_hub.deliver_task_poke(
-                session,
-                workspace_id=workspace_id,
-                task_key=item["task_key"],
-                placement_id=item["placement_id"],
-                epoch=item["epoch"],
-                title=item["title"],
-                payload={"agent_id": item["agent_id"]},
-            )
-            if result.get("dispatched"):
-                ok += 1
+            chunk = ({"diagram_key": placement["diagram_key"], "chunk_key": placement["chunk_key"]}
+                     if placement["diagram_key"] else {})
+            if placement["step"] == "work":
+                result = await nerve_hub.deliver_task_poke(
+                    session, workspace_id=placement["workspace_id"],
+                    task_key=placement["task_key"], placement_id=placement["placement_id"],
+                    epoch=int(placement["lease_epoch"] or 0) + 1,
+                    title=placement["task_title"] or placement["task_key"],
+                    payload={"agent_id": placement["agent_id"],
+                             "holder": placement["holder"] or placement["agent_id"], **chunk})
             else:
-                failed += 1
-                logger.info("nerve dispatch for %s did not land: %s",
-                            item["task_key"], result.get("reason"))
-    return {"ok": ok, "failed": failed, "skipped": skipped}
+                result = await nerve_hub.deliver_step_poke(
+                    session, workspace_id=placement["workspace_id"],
+                    placement_id=placement["placement_id"], agent_id=placement["agent_id"],
+                    step=placement["step"], task_key=placement["task_key"],
+                    title=placement["task_title"] or placement["step"], extra=chunk)
+            if result.get("dispatched"):
+                counts["ok"] += 1
+                continue
+            counts["failed"] += 1
+            reason = str(result.get("reason") or "nerve")
+            logger.info("nerve delivery of %s (%s) did not land: %s",
+                        placement["placement_id"], placement["step"], reason)
+            await _undeliverable(session, placement, f"nerve:{reason}"[:120])
+    return counts
+
+
+async def _undeliverable(session: AsyncSession, placement: dict[str, Any], reason: str) -> None:
+    """The computer did not take the poke: free the task and move the placement."""
+    current = (await session.execute(text(
+        "SELECT status FROM runner_placements WHERE placement_id = :id FOR UPDATE"),
+        {"id": placement["placement_id"]})).scalar_one_or_none()
+    if current != "offered":
+        await session.rollback()
+        return
+    if placement["step"] == "work" and placement["task_id"]:
+        task = await session.get(CollabTask, placement["task_id"], with_for_update=True)
+        if task is not None and task.assignee == f"agent:{placement['agent_id']}":
+            await _unassign(session, task, "scheduler")
+    await _end(session, placement, "moved", reason)
+    await session.commit()
 
 
 async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
@@ -462,7 +517,7 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
         ).order_by(CollabTask.priority.desc(), CollabTask.created_at)
         .limit(100).with_for_update(skip_locked=True))).scalars().all()
     placed = suggested = unplaced = gave_up = 0
-    to_dispatch: list[dict[str, Any]] = []
+    bound: dict[tuple[str | None, str], bool] = {}
     workspace_mode = mode
     for task in tasks:
         if await _held(session, task):
@@ -488,7 +543,12 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
                 namespace=task.namespace)
             gave_up += 1
             continue
-        host, reason = _choose(task, online, failures, load)
+        if task.repo and not await _repo_bound(session, task, bound):
+            # Code runs only through the Kernel: no computer can take it until
+            # the project's repository is bound, so do not place it to fail.
+            host, reason = None, "no_kernel_binding"
+        else:
+            host, reason = _choose(task, online, failures, load)
         waiting = (await session.execute(text(
             "SELECT * FROM runner_placements WHERE task_id = :t AND step = 'work' "
             "AND status IN ('suggested', 'unplaced')"), {"t": task.id})).mappings().one_or_none()
@@ -531,13 +591,7 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
                  "host": host["host_id"], "agent": host["agent_id"]})
             suggested += 1
             continue
-        placement_id = await _offer_work(session, task, host, now)
-        if host.get("agent_id"):
-            to_dispatch.append({
-                "placement_id": placement_id, "task_key": task.task_key,
-                "title": task.title, "agent_id": host["agent_id"],
-                "epoch": int(task.lease_epoch or 0) + 1,
-            })
+        await _offer_work(session, task, host, now)
         placed += 1
     steps = await _place_steps(session, workspace_id, online, load, workspace_mode, now) \
         if workspace_mode == "full" else {}
@@ -545,8 +599,8 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
         if workspace_mode == "full" else 0
     await session.commit()
     # Delivery is a separate step: the pass must not hold its transaction open
-    # across a 200 ms (or 5 s) receipt wait per task.
-    delivered = await _dispatch_over_nerve(workspace_id, to_dispatch)
+    # across a receipt wait per placement.
+    delivered = await dispatch_offered(workspace_id)
     return {"mode": workspace_mode, "hosts": len(online), "placed": placed,
             "suggested": suggested, "nerve": delivered,
             "unplaced": unplaced, "stopped": gave_up, **counts, **steps, "rounds": rounds}
@@ -578,6 +632,21 @@ async def scheduler_loop() -> None:
         except Exception:  # pragma: no cover - background resilience
             logger.exception("scheduling pass failed")
         await asyncio.sleep(settings.lease_reaper_interval_seconds)
+
+
+async def nerve_dispatch_loop(interval_seconds: float = 1.0) -> None:
+    """Deliver offers made outside a scheduling pass (a person accepting a
+    suggestion, a supervisor's move) and offers whose computer reconnected."""
+    import asyncio
+
+    while True:
+        try:
+            await dispatch_offered()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # pragma: no cover - background resilience
+            logger.exception("nerve dispatch pass failed")
+        await asyncio.sleep(interval_seconds)
 
 
 async def run_all() -> int:
@@ -767,13 +836,6 @@ def _choose_reviewer(task: CollabTask, online: list[dict[str, Any]], names: set[
                                        quota_used(host) or 0.0, host["host_id"])), ""
 
 
-def _step_note(placement_id: str, step: str, chunk: dict[str, Any] | None) -> str:
-    note = f"placement {placement_id} step {step}"
-    if chunk:
-        note += f" diagram {chunk['diagram_key']} chunk {chunk['chunk_key']}"
-    return note
-
-
 async def _place_steps(session: AsyncSession, workspace_id: Any, online: list[dict[str, Any]],
                        load: dict[str, int], mode: str, now: datetime) -> dict[str, int]:
     """Place reviews of delivered work and merges of approved chunks."""
@@ -865,10 +927,7 @@ async def _offer_step(session: AsyncSession, task: CollabTask, host: dict[str, A
     await append_event(
         session, workspace_id=task.workspace_id, agent=actor, event_type="TASK_PLACED",
         payload={"task_key": task.task_key, "step": step, "host_id": host["host_id"],
-                 "placement_id": placement_id, "idempotency_key": placement_id,
-                 "targets": [f"agent:{host['agent_id']}"],
-                 "details": {"delivery_kind": "task.placed", "priority": 1,
-                             "note": _step_note(placement_id, step, chunk)}},
+                 "placement_id": placement_id, "idempotency_key": placement_id},
         namespace=task.namespace)
     return placement_id
 
@@ -965,10 +1024,7 @@ async def _supervise(session: AsyncSession, workspace_id: Any, hosts: list[dict[
     await append_event(
         session, workspace_id=workspace_id, agent="scheduler", event_type="LOOP_ROUND",
         payload={"placement_id": placement_id, "host_id": host["host_id"], "items": len(items),
-                 "idempotency_key": placement_id,
-                 "targets": [f"agent:{host['agent_id']}"],
-                 "details": {"delivery_kind": "task.placed", "priority": 1,
-                             "note": _step_note(placement_id, "supervise", None)}})
+                 "idempotency_key": placement_id})
     return 1
 
 
@@ -1003,21 +1059,23 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
           f"{len(online)} of {len(hosts)} computer(s) online." if hosts
           else "No computer is connected.",
           "Run `npx veynod up --run-tasks` on a computer.")
+    outdated = sorted(host["agent_id"] or host["host_id"] for host in hosts
+                      if runner_outdated(host.get("runner_version")))
+    minimum = ".".join(str(part) for part in MIN_RUNNER_VERSION)
+    check("cli_version", not outdated, False,
+          f"Every computer runs veynod {minimum} or newer." if not outdated
+          else (f"{', '.join(outdated)} run(s) a veynod older than {minimum}: work reaches "
+                "a computer only over its nerve socket now, so it gets none."),
+          "On each of them: `npm install -g veynod@latest`, then `veynod up --run-tasks`.")
     check("builder", bool(builders), True,
           f"{len(builders)} computer(s) can build (EXECUTOR) with quota left." if builders
           else "No online computer can build tasks.",
           "Connect a computer with `npx veynod up --run-tasks`.")
-    if settings.kernel_delivery_default and not reviewers:
-        check("reviewer", True, False,
-              "Kernel verification_gate and merge_coordinator review code. "
-              "A separate reviewer computer is not required.",
-              None)
-    else:
-        check("reviewer", bool(reviewers), not settings.kernel_delivery_default,
-              f"{len(reviewers)} computer(s) can review." if reviewers
-              else "No online computer can review, so built work waits in review.",
-              "Approve the `-review` identity when `veynod up --run-tasks` asks, or connect an "
-              "AUDITOR computer. With slots=1 the Kernel gate replaces that identity.")
+    can_review = (f"{len(reviewers)} computer(s) can review work without a repository. "
+                  if reviewers else "")
+    check("reviewer", True, False,
+          can_review + "The Kernel gate reviews code; a person reviews what no other computer can.",
+          None)
     unpinned = sorted(host["agent_id"] or host["host_id"] for host in online
                       if (host.get("capabilities_report") or {}).get("mcp_pinning") is False)
     check("pinning", not unpinned, False,

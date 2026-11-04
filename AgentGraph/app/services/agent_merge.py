@@ -7,7 +7,6 @@ are revoked. Documents are reported, never rewritten silently.
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from sqlalchemy import select, text
@@ -18,6 +17,7 @@ from app.errors import Forbidden
 from app.models import AgentToken, Workspace
 from app.services.common import append_event
 from app.services.directory import _resolve
+from app.services.token_naming import migrate_refs
 from app.services.token_tree import revoke_token
 
 
@@ -26,48 +26,6 @@ def _labels(entry: dict[str, Any]) -> list[str]:
         entry["agent_id"], entry["principal_id"],
         *(entry.get("signatures") or []), *(entry.get("legacy_names") or []),
     ]))
-
-
-async def _migrate_refs(session: AsyncSession, workspace: Workspace,
-                        old_refs: list[str], new_ref: str) -> dict[str, Any]:
-    assignee = await session.execute(text(
-        "UPDATE collab_tasks SET assignee = :new, version = version + 1, "
-        "updated_at = NOW() WHERE workspace_id = :ws "
-        "AND assignee = ANY(CAST(:old AS text[]))"),
-        {"new": new_ref, "ws": workspace.id, "old": old_refs})
-    lead = await session.execute(text(
-        "UPDATE collab_tasks SET lead = :new, version = version + 1, "
-        "updated_at = NOW() WHERE workspace_id = :ws "
-        "AND lead = ANY(CAST(:old AS text[]))"),
-        {"new": new_ref, "ws": workspace.id, "old": old_refs})
-    mention_rows = (await session.execute(text(
-        "SELECT id, mentions FROM collab_tasks WHERE workspace_id = :ws "
-        "AND jsonb_exists_any(mentions, CAST(:old AS text[]))"),
-        {"ws": workspace.id, "old": old_refs})).mappings().all()
-    mention_count = 0
-    for task in mention_rows:
-        replaced = [new_ref if item in old_refs else item for item in (task["mentions"] or [])]
-        if replaced != (task["mentions"] or []):
-            await session.execute(text(
-                "UPDATE collab_tasks SET mentions = CAST(:m AS jsonb), "
-                "version = version + 1, updated_at = NOW() WHERE id = :id"),
-                {"m": json.dumps(replaced), "id": task["id"]})
-            mention_count += 1
-    labels = [ref.removeprefix("agent:") for ref in old_refs]
-    patterns = list(dict.fromkeys(
-        pattern for label in labels
-        for pattern in (f"%agent:{label.lower()}%", f"%@{label.lower()}%")
-    ))
-    documents = (await session.execute(text(
-        "SELECT doc_key, title FROM shared_documents WHERE workspace_id = :ws "
-        "AND lower(content) LIKE ANY(CAST(:patterns AS text[])) "
-        "ORDER BY doc_key LIMIT 200"),
-        {"ws": workspace.id, "patterns": patterns})).mappings().all()
-    return {"assignee_updated": assignee.rowcount or 0,
-            "lead_updated": lead.rowcount or 0,
-            "mentions_updated": mention_count,
-            "documents": [dict(row) for row in documents],
-            "document_count": len(documents)}
 
 
 async def merge_identities(session: AsyncSession, workspace: Workspace,
@@ -146,7 +104,7 @@ async def merge_identities(session: AsyncSession, workspace: Workspace,
         "DELETE FROM agent_directory WHERE workspace_id = :ws "
         "AND principal_id = ANY(CAST(:ids AS text[]))"),
         {"ws": workspace.id, "ids": [entry["principal_id"] for entry in sources]})
-    migration = await _migrate_refs(session, workspace, old_refs, new_ref)
+    migration = await migrate_refs(session, workspace, old_refs, new_ref)
     await append_event(
         session, workspace_id=workspace.id, agent="directory",
         event_type="AGENT_MERGED",
