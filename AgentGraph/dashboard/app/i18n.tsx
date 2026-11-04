@@ -1549,6 +1549,12 @@ const ZH: Record<string, string> = {
   "Saved. The Loop follows it from the next step.": "已保存，Loop 从下一步开始照这个走。",
   // Federation (rounds 2-4): identity, connections, delegated work
   Retry: "重试",
+  "If we cancel": "如果我方取消",
+  "They may still deliver what is done": "对方仍可交付已完成的部分",
+  "They must stop and deliver nothing more": "对方必须停止，不再交付",
+  "Model token cap (optional, not money)": "模型 token 上限（可选，不是金额）",
+  "used {spent} of {cap} {unit}": "已用 {spent}/{cap} {unit}",
+  "cap reached: no new execution": "已达上限，不能再发起新的执行",
   "Waiting for you to decide": "等你决定",
   "Accept result": "接受结果",
   "Accepted": "已验收",

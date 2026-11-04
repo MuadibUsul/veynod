@@ -67,6 +67,7 @@ type Delegation = {
   local_task_key: string | null;
   result: { summary: string; artifacts: { name: string; sha256: string; content?: string }[] } | null;
   revisions: number;
+  budget?: { unit: string; cap: number; spent: number; remaining: number; over: boolean } | null;
   pending_deliveries: number;
   delivery: { attempts: number; next_retry_at: string | null; last_error: string | null;
     dead_letter: boolean };
@@ -450,6 +451,8 @@ function OfferForm({ connections, busy, call, onDone }: {
   const [deadline, setDeadline] = useState(tomorrow);
   const [classification, setClassification] = useState("internal");
   const [effects, setEffects] = useState(false);
+  const [policy, setPolicy] = useState("drain");
+  const [tokenCap, setTokenCap] = useState("");
   if (peers.length === 0) {
     return (
       <div className="lin-row quiet">
@@ -471,9 +474,11 @@ function OfferForm({ connections, busy, call, onDone }: {
           data_classification: classification,
           allowed_use: allowed.trim(),
           deadline: new Date(`${deadline}T23:59:00Z`).toISOString(),
-          budget_cap: null,
+          budget_cap: tokenCap.trim()
+            ? { amount: Number.parseInt(tokenCap, 10), unit: "model_tokens" }
+            : null,
           result_contract: contract.trim(),
-          cancellation_policy: "drain",
+          cancellation_policy: policy,
           external_side_effects: effects,
         },
       }, "Work sent. They decide whether to take it on.");
@@ -518,6 +523,16 @@ function OfferForm({ connections, busy, call, onDone }: {
         <input type="checkbox" checked={effects} onChange={(event) => setEffects(event.target.checked)} />
         {t("Has effects outside their workspace")}
       </label>
+      <label>{t("If we cancel")}
+        <select value={policy} onChange={(event) => setPolicy(event.target.value)}>
+          <option value="drain">{t("They may still deliver what is done")}</option>
+          <option value="hard_cancel">{t("They must stop and deliver nothing more")}</option>
+        </select>
+      </label>
+      <label>{t("Model token cap (optional, not money)")}
+        <input type="number" min={1} step={1} value={tokenCap}
+          onChange={(event) => setTokenCap(event.target.value)} />
+      </label>
       <span className="lin-actions">
         <button type="submit" className="button small" disabled={busy}>{t("Send work")}</button>
         <span className="flow-aside">
@@ -548,6 +563,11 @@ function DelegationRow({ item, busy, call }: { item: Delegation; busy: boolean; 
           {" · "}{t("due")} {new Date(item.terms.deadline).toLocaleDateString()}
           {item.local_task_key ? ` · ${t("task")} ${item.local_task_key}` : ""}
           {item.revisions ? ` · ${t("{n} revisions", { n: item.revisions })}` : ""}
+          {item.budget
+            ? ` · ${t("used {spent} of {cap} {unit}", { spent: item.budget.spent,
+              cap: item.budget.cap, unit: item.budget.unit })}${item.budget.over
+              ? ` (${t("cap reached: no new execution")})` : ""}`
+            : ""}
         </span>
         <span className="lin-actions">
           {provider && item.state === "OFFERED" && !cancelAsked && (
