@@ -50,6 +50,7 @@ def test_config_reads_json_text_and_names_its_mistakes() -> None:
     config = parse_config(json.dumps(CONFIG))
     assert config.names() == ["api", "kernel", "runtime"]
     assert config.services[2].paths == ("agent_runtime/**",)
+    assert config.services[0].compose == ("api",)
     assert config.health["url"] == "https://example.com/healthz"
     for bad in ({}, {"services": {}}, {"services": {"a b": {"paths": ["x"]}}},
                 {"services": {"api": {}}}, {"services": {"api": {"paths": "x"}}},
@@ -89,8 +90,15 @@ def test_first_deploy_changes_everything_and_same_release_changes_nothing() -> N
 
 def test_a_manifest_needs_an_image_and_a_real_digest() -> None:
     good = {"api": {"image": "ghcr.io/a/api", "digest": _digest("a"), "extra": "dropped"}}
-    assert validate_manifest(good) == {"api": {"image": "ghcr.io/a/api", "digest": _digest("a")}}
+    assert validate_manifest(good) == {"api": {"image": "ghcr.io/a/api", "digest": _digest("a"),
+                                               "compose": ["api"]}}
+    two = {"kernel": {"image": "i/k", "digest": _digest("b"), "compose": ["kernel-api", "kernel-gate"]}}
+    assert validate_manifest(two)["kernel"]["compose"] == ["kernel-api", "kernel-gate"]
     for bad in ({}, {"api": "x"}, {"api": {"image": "", "digest": _digest("a")}},
-                {"api": {"image": "i", "digest": "sha256:short"}}, None):
+                {"api": {"image": "i", "digest": "sha256:short"}}, None,
+                {"api": {"image": "i", "digest": "sha256:" + "Z" * 64}},
+                {"api": {"image": "i x", "digest": _digest("a")}},
+                {"api": {"image": "i", "digest": _digest("a"), "compose": ["a;rm"]}},
+                {"a b": {"image": "i", "digest": _digest("a")}}):
         with pytest.raises(DeployConfigError):
             validate_manifest(bad)

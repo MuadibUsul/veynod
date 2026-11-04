@@ -147,6 +147,10 @@ class Settings(BaseSettings):
     runner_step_timeout_seconds: int = Field(default=1800, ge=60, le=86_400)
     runner_supervise_every_seconds: int = Field(default=600, ge=60, le=86_400)
     runner_supervise_timeout_seconds: int = Field(default=1200, ge=60, le=86_400)
+    # Deploy gate v2: how long one deploy run may take, and how often the deploy
+    # loop queues scheduled runs and starts waiting ones.
+    deploy_run_timeout_seconds: int = Field(default=1800, ge=60, le=86_400)
+    deploy_loop_interval_seconds: int = Field(default=15, ge=1, le=3_600)
     max_reject_history: int = Field(default=20, ge=1, le=500)
     human_override_default_lock: bool = True
 

@@ -41,6 +41,7 @@ from app.errors import ApiError, Forbidden, NotFound
 from app.models import CollabTask, TaskStatus
 from app.services import automation
 from app.services.common import append_event, record_audit, task_snapshot
+from app.services.deploys import is_deploy_host
 from app.services.runners import MIN_RUNNER_VERSION, ONLINE_WINDOW, runner_outdated
 
 logger = logging.getLogger("agentgraph.scheduler")
@@ -339,7 +340,8 @@ def _online(hosts: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
     (a CLI older than nerve-only dispatch would be offered work it never gets)."""
     return [host for host in hosts if host["status"] == "active"
             and now - host["last_seen_at"] <= ONLINE_WINDOW
-            and not runner_outdated(host.get("runner_version"))]
+            and not runner_outdated(host.get("runner_version"))
+            and not is_deploy_host(host)]
 
 
 async def _load(session: AsyncSession, workspace_id: Any,
@@ -753,6 +755,8 @@ async def _reconcile_step(session: AsyncSession, workspace_id: Any, placement: d
                           host: dict[str, Any] | None, chunks: dict[str, dict[str, Any]],
                           now: datetime) -> str | None:
     step, status = placement["step"], placement["status"]
+    if step == "deploy":
+        return None  # app.services.deploys owns a deploy run from offer to report
     if step == "supervise":
         if status == "unplaced":
             return None  # the round planner refreshes or places it

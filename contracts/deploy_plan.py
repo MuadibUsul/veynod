@@ -30,8 +30,9 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-#: A release names, per service, the image and the digest CI pushed for it.
-Manifest = dict[str, dict[str, str]]
+#: A release names, per service, the image and the digest CI pushed for it,
+#: and the compose services that run that image.
+Manifest = dict[str, dict[str, Any]]
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,8 @@ class Service:
     paths: tuple[str, ...]
     image: str = ""
     dockerfile: str = ""
+    #: The compose services that run this image (default: the service's own name).
+    compose: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,19 @@ def _clean(path: str) -> str:
     while path.startswith("./"):
         path = path[2:]
     return path
+
+
+def _is_name(value: Any) -> bool:
+    return (isinstance(value, str) and 0 < len(value) <= 64
+            and value.replace("-", "").replace("_", "").isalnum())
+
+
+def _names(value: Any, where: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list) or not all(_is_name(item) for item in value):
+        raise DeployConfigError(f"{where} must be a list of names (letters, digits, - or _)")
+    return tuple(value)
 
 
 def _patterns(value: Any, where: str) -> tuple[str, ...]:
@@ -90,7 +106,7 @@ def parse_config(raw: str | dict[str, Any]) -> DeployConfig:
         raise DeployConfigError("services must name at least one service")
     services = []
     for name, spec in services_raw.items():
-        if not isinstance(name, str) or not name.replace("-", "").replace("_", "").isalnum():
+        if not _is_name(name):
             raise DeployConfigError(f"service name {name!r} must be letters, digits, - or _")
         spec = spec or {}
         if not isinstance(spec, dict):
@@ -98,8 +114,9 @@ def parse_config(raw: str | dict[str, Any]) -> DeployConfig:
         paths = _patterns(spec.get("paths"), f"services.{name}.paths")
         if not paths:
             raise DeployConfigError(f"services.{name}.paths must list what the service is built from")
+        compose = _names(spec.get("compose"), f"services.{name}.compose") or (name,)
         services.append(Service(name=name, paths=paths, image=str(spec.get("image") or ""),
-                                dockerfile=str(spec.get("dockerfile") or "")))
+                                dockerfile=str(spec.get("dockerfile") or ""), compose=compose))
     health = data.get("health") or {}
     if not isinstance(health, dict):
         raise DeployConfigError("health must be a mapping")
@@ -169,17 +186,23 @@ def plan(previous: Manifest | None, release: Manifest) -> Plan:
 
 
 def validate_manifest(value: Any) -> Manifest:
-    """A release manifest as CI posts it: {service: {image, digest}}."""
+    """A release manifest as CI posts it: {service: {image, digest, compose?}}."""
     if not isinstance(value, dict) or not value:
         raise DeployConfigError("manifest must map at least one service to its image")
     out: Manifest = {}
     for name, entry in value.items():
-        if not isinstance(name, str) or not isinstance(entry, dict):
+        if not _is_name(name) or not isinstance(entry, dict):
             raise DeployConfigError("manifest entries are {service: {image, digest}}")
         image, digest = str(entry.get("image") or ""), str(entry.get("digest") or "")
         if not image or not digest.startswith("sha256:") or len(digest) != 71:
             raise DeployConfigError(f"manifest.{name} needs an image and a sha256 digest")
-        out[name] = {"image": image[:300], "digest": digest}
+        if any(char.isspace() for char in image) or len(image) > 300:
+            raise DeployConfigError(f"manifest.{name}.image is not an image reference")
+        if not all(char in "0123456789abcdef" for char in digest[7:]):
+            raise DeployConfigError(f"manifest.{name}.digest must be sha256 hex")
+        out[name] = {"image": image, "digest": digest,
+                     "compose": list(_names(entry.get("compose"), f"manifest.{name}.compose")
+                                     or (name,))}
     return out
 
 

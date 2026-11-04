@@ -29,7 +29,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Principal
-from app.services import diagrams, presence, runners
+from app.services import deploys, diagrams, presence, runners
 from app.services.kernel_delivery import kernel_owns_steps
 
 # One state for every piece of work, in the order a piece moves through them.
@@ -48,6 +48,7 @@ TIMELINE_TYPES = (
     "HOST_CONNECTED", "HOST_PAUSED", "HOST_REVOKED", "LOOP_ROUND", "DEPLOY_VERIFIED",
     "CHUNK_DISPATCHED", "CHUNK_SUBMITTED", "CHUNK_MERGED", "CHUNK_CI_FAILED",
     "CHUNK_CIRCUIT_BROKEN", "DIAGRAM_CONFIRMED", "DIAGRAM_CHANGE_PROPOSED",
+    "DEPLOY_STARTED", "DEPLOY_DEPLOYED", "DEPLOY_ROLLED_BACK", "DEPLOY_FAILED",
 )
 APPROVED = ("TASK_APPROVED", "HUMAN_APPROVED")
 RETURNED = ("TASK_REJECTED", "HUMAN_REJECTED", "TASK_RETURNED_FOR_REWORK")
@@ -287,6 +288,8 @@ async def overview(session: AsyncSession, principal: Principal) -> dict[str, Any
                      "asked_by": entry["holder"],
                      "why": "review" if entry["status"] == "REVIEWING" else "answer"}
                     for entry in pieces if entry["state"] == "you"],
+        # Deploy gate v2: runs that failed or rolled back and no one has seen yet.
+        "deploys": await deploys.needs_you(session, ws),
     }
 
     # The last day, from the event log: approvals, returns, completions.

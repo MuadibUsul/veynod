@@ -129,6 +129,9 @@ def _clean_report(given: Any) -> dict[str, Any] | None:
     }
     if leases:
         report["leases"] = leases
+    if given.get("deploy") is True:
+        # A deploy computer (`veynod up --deploy`): it runs deploys and nothing else.
+        report["deploy"] = True
     return report
 
 

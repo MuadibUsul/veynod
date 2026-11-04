@@ -2056,7 +2056,7 @@ async def loop(action: str, placement_id: str | None = None, host_id: str | None
     if action in ("placement", "report", "move", "withdraw") and not placement_id:
         raise _api_error(ApiError(422, "validation_error", f"{action} needs placement_id",
                                   details={"field": "placement_id"}))
-    if step is not None and step not in ("work", "review", "merge", "supervise"):
+    if step is not None and step not in ("work", "review", "merge", "supervise", "deploy"):
         raise _api_error(ApiError(422, "validation_error",
                                   "step is work, review, merge or supervise",
                                   details={"field": "step"}))

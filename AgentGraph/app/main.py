@@ -46,6 +46,7 @@ from app.api.oauth_routes import router as oauth_router
 from app.api.org_routes import router as org_router
 from app.api.project_page import router as project_page_router
 from app.api.project_routes import router as project_router
+from app.api.deploy_routes import router as deploy_router
 from app.api.public_docs import router as public_docs_router
 from app.api.share_routes import public_router as share_public_router
 from app.api.share_routes import router as share_router
@@ -167,6 +168,7 @@ async def lifespan(app: FastAPI):
     from app.services.access_log import flush_loop as access_log_loop
     from app.services.backups import backup_scheduler_loop
     from app.services.blobs import blob_gc_loop
+    from app.services.deploys import deploy_loop
     from app.services.incidents import incident_check_loop
     from app.services.mailer import mail_worker_loop
     from app.services.presence import presence_loop
@@ -187,6 +189,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(blob_gc_loop(), name="agentgraph-blob-gc"),
         asyncio.create_task(presence_loop(), name="agentgraph-presence"),
         asyncio.create_task(scheduler_loop(), name="agentgraph-scheduler"),
+        asyncio.create_task(deploy_loop(), name="agentgraph-deploys"),
     ]
     if settings.diagram_reconcile_enabled:
         from app.services.diagram_reconcile import reconcile_loop
@@ -376,6 +379,7 @@ app.include_router(v1_router)
 app.include_router(code_router)
 app.include_router(agent_run_router)
 app.include_router(project_router)
+app.include_router(deploy_router)
 app.include_router(auth_router)
 app.include_router(human_router)
 app.include_router(org_router)
