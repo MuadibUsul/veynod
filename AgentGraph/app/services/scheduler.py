@@ -213,6 +213,24 @@ async def _reconcile(session: AsyncSession, workspace_id: Any,
             await _end(session, placement, "moved", "host_removed")
             counts["moved"] += 1
             continue
+        if status == "offered":
+            # The nerve dispatch moves the lease epoch before the computer has
+            # answered, so the epoch alone is not a claim. Its delivery record
+            # says what happened, whichever process is delivering it.
+            delivery = (await session.execute(text(
+                "SELECT t.dispatch_state, d.qos_status, d.detail FROM collab_tasks t "
+                "LEFT JOIN poke_deliveries d ON d.workspace_id = t.workspace_id "
+                "AND d.frame_id = :f WHERE t.id = :t"),
+                {"t": task.id, "f": placement["placement_id"]})).mappings().one()
+            if delivery["dispatch_state"] in ("AWAITING_NET_ACK", "AWAITING_EXEC_ACK"):
+                continue  # receipts pending; the dispatcher (or reaper) settles it
+            if delivery["qos_status"] == "TIMEOUT_REVOKED":
+                if assigned_here:
+                    await _unassign(session, task, "scheduler")
+                await _end(session, placement, "moved",
+                           f"nerve:{delivery['detail'] or 'not_delivered'}"[:120])
+                counts["moved"] += 1
+                continue
         # A host that claimed (the lease epoch moved) counts as having had the
         # task, even if it gave it back before this pass saw the claim.
         taken = (task.lease_epoch or 0) > (placement["lease_epoch"] or 0)

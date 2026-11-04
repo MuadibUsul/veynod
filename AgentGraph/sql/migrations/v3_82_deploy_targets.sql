@@ -7,11 +7,13 @@
 -- the image digest of every service. A deploy run moves one target to one
 -- release, and is delivered as a runner placement with step 'deploy'.
 --
--- Expand-only and idempotent.
+-- Every row carries its workspace's tenant (derived by trigger), like every
+-- other owned table. Expand-only and idempotent.
 
 CREATE TABLE IF NOT EXISTS deploy_targets (
     target_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    tenant_id VARCHAR(40) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     project_id UUID NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
     name VARCHAR(64) NOT NULL DEFAULT 'production',
     enabled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -44,6 +46,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_deploy_targets_release_token
 CREATE TABLE IF NOT EXISTS deploy_releases (
     release_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    tenant_id VARCHAR(40) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     project_id UUID NOT NULL REFERENCES projects(project_id) ON DELETE CASCADE,
     -- Monotonic per project: a release never deploys over a newer one.
     seq BIGINT NOT NULL,
@@ -60,6 +63,7 @@ CREATE TABLE IF NOT EXISTS deploy_releases (
 CREATE TABLE IF NOT EXISTS deploy_runs (
     run_id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+    tenant_id VARCHAR(40) NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     target_id UUID NOT NULL REFERENCES deploy_targets(target_id) ON DELETE CASCADE,
     release_id UUID NOT NULL REFERENCES deploy_releases(release_id) ON DELETE CASCADE,
     trigger VARCHAR(16) NOT NULL CHECK (trigger IN ('auto', 'scheduled', 'manual', 'rollback')),
@@ -85,6 +89,16 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_deploy_runs_queued
     ON deploy_runs (target_id) WHERE status = 'queued';
 CREATE INDEX IF NOT EXISTS idx_deploy_runs_target
     ON deploy_runs (target_id, created_at DESC);
+
+DROP TRIGGER IF EXISTS trg_derive_tenant ON deploy_targets;
+CREATE TRIGGER trg_derive_tenant BEFORE INSERT OR UPDATE OF workspace_id, tenant_id
+    ON deploy_targets FOR EACH ROW EXECUTE FUNCTION agentgraph_derive_tenant();
+DROP TRIGGER IF EXISTS trg_derive_tenant ON deploy_releases;
+CREATE TRIGGER trg_derive_tenant BEFORE INSERT OR UPDATE OF workspace_id, tenant_id
+    ON deploy_releases FOR EACH ROW EXECUTE FUNCTION agentgraph_derive_tenant();
+DROP TRIGGER IF EXISTS trg_derive_tenant ON deploy_runs;
+CREATE TRIGGER trg_derive_tenant BEFORE INSERT OR UPDATE OF workspace_id, tenant_id
+    ON deploy_runs FOR EACH ROW EXECUTE FUNCTION agentgraph_derive_tenant();
 
 -- A deploy is a placement too: same nerve delivery, receipts and report.
 ALTER TABLE runner_placements DROP CONSTRAINT IF EXISTS runner_placements_step_check;

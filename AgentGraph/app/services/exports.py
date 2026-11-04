@@ -184,6 +184,10 @@ EPHEMERAL = frozenset({
     "diagram_chunk_projections",
     # Per-tenant runtime limits are the operator's ceiling, like budget limits.
     "tenant_runtime_limits",
+    # Deploy gate v2 (v3.82): targets name this deployment's computers and hold
+    # a release-token hash; releases and runs record what ran on its servers.
+    # A moved workspace sets its deploys up again; it never inherits them.
+    "deploy_targets", "deploy_releases", "deploy_runs",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")
