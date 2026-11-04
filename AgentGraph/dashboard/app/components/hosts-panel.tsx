@@ -65,6 +65,9 @@ type Computer = {
   last_seen_at: string | null;
   seats: Seat[];
   kernel?: KernelCard;
+  runner_version?: string | null;
+  /** Its CLI predates nerve-only dispatch: it looks online but gets no work. */
+  outdated?: boolean;
 };
 
 const OS_LABEL: Record<string, string> = {
@@ -92,6 +95,7 @@ const RUNTIME_INSTALL = {
   codex: "npm install -g @openai/codex && codex login",
 };
 const RECONNECT = "veynod up --run-tasks";
+const UPGRADE = "npm install -g veynod@latest && veynod up --run-tasks";
 
 export function runtimeName(id: string): string {
   return id === "claude" ? "Claude Code" : id === "codex" ? "Codex" : id;
@@ -246,6 +250,13 @@ export function HostsPanel({
                 <span className={`station-bar${left < 10 ? " low" : ""}`}><i style={{ width: `${Math.max(2, left)}%` }} /></span>
                 <span>{left}%</span>
               </div>
+            )}
+            {computer.outdated && computer.state !== "revoked" && (
+              <p className="station-note">
+                {t("This computer runs veynod {version}, which cannot receive work any more (work now arrives only over the nerve socket). On it, run:",
+                  { version: computer.runner_version ?? "?" })}{" "}
+                <code>{UPGRADE}</code>
+              </p>
             )}
             {noRuntime && (
               <p className="station-note">

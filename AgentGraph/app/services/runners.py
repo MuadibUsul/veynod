@@ -183,6 +183,22 @@ def _clean_host(given: Any) -> dict[str, Any]:
     }
 
 
+#: From this CLI release on, work reaches a computer only over its nerve
+#: socket. An older CLI still says hello and heartbeats, so it would look
+#: online and be offered work it can never receive.
+MIN_RUNNER_VERSION = (0, 6, 0)
+
+
+def runner_outdated(version: str | None) -> bool:
+    """Whether a runner predates nerve-only dispatch. Unknown is not outdated."""
+    if not version:
+        return False
+    numbers = [int(part) for part in re.findall(r"\d+", version)[:3]]
+    if not numbers:
+        return False
+    return tuple(numbers + [0] * (3 - len(numbers))) < MIN_RUNNER_VERSION
+
+
 def _state(row: dict[str, Any], now: datetime) -> str:
     if row["status"] != "active":
         return row["status"]
@@ -202,6 +218,7 @@ def host_out(row: dict[str, Any], now: datetime | None = None) -> dict[str, Any]
         "arch": row["arch"],
         "hostname_digest": row["hostname_digest"],
         "runner_version": row["runner_version"],
+        "outdated": runner_outdated(row["runner_version"]),
         "runtimes": row["runtimes"] or [],
         "max_concurrency": row["max_concurrency"],
         "running": running,
@@ -380,6 +397,7 @@ def computers_out(items: list[dict[str, Any]], roles: dict[str, str]) -> list[di
             "os": first["os"],
             "arch": first["arch"],
             "runner_version": first["runner_version"],
+            "outdated": any(host.get("outdated") for host in live),
             "runtimes": list(runtimes.values()),
             "repos": list(dict.fromkeys(repo for host in hosts for repo in host["repos"])),
             # Online while any seat is; paused only when every live seat is.

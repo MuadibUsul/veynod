@@ -38,3 +38,13 @@ def test_a_running_or_paused_review_seat_stays() -> None:
             _host("r", "desk-review-3", state=state, status=status),
         ], ROLES)
         assert [seat["seat"] for seat in computer["seats"]] == ["work", "review"], state
+
+
+def test_the_cli_version_that_can_receive_work() -> None:
+    from app.services.runners import runner_outdated
+
+    assert runner_outdated("0.5.2") and runner_outdated("0.4.1")
+    assert not runner_outdated("0.6.0") and not runner_outdated("0.10.1")
+    assert not runner_outdated("1.0") and not runner_outdated("v0.6.3-beta")
+    # Unknown is not outdated: a hand-made runner or a test client says no version.
+    assert not runner_outdated(None) and not runner_outdated("") and not runner_outdated("dev")

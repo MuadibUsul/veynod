@@ -14,6 +14,9 @@
 >    唯一源；三服务依赖精确一致；删除 `veynod_platform`；三个 Kernel HTTP 客户端合并为
 >    `contracts/kernel_http.py`；文档地图 [docs/README.md](../README.md)，阶段报告归档。
 >
+> 4. **只留 Kernel 与 nerve**（2026-11-04）：旧交付路径、SSE 派发、独立 worker 模式全部删除；CLI 升到 0.6.0，
+>    服务端拒绝给旧 CLI 派活并在 doctor 与控制台点名。上线按 [RELEASE_0.6.0.md](../RELEASE_0.6.0.md) 逐项执行。
+>
 > 仍需人来决定：`AgentGraph/docker-compose.prod.yml` 仍管理生产数据库容器 `veynod-db-1`，
 > 把它并入 unified 编排需要一次有备份的维护窗口；G10 生产对齐（迁移 `v4_017`、`v3_80`、`v3_81`）。
 

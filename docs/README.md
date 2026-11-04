@@ -25,6 +25,7 @@
 |---|---|
 | [UNIFIED_OPERATIONS.md](UNIFIED_OPERATIONS.md) | 部署形态与参数 |
 | [PRODUCTION_OPERATIONS.md](PRODUCTION_OPERATIONS.md) | 已部署实例、诊断一个任务、恢复演练、部署禁忌 |
+| [RELEASE_0.6.0.md](RELEASE_0.6.0.md) | **下一次上线的清单**：服务端 + CLI 0.6.0 同步切换（nerve 唯一派发、只走 Kernel） |
 | [CHAOS_TEST_MATRIX.md](CHAOS_TEST_MATRIX.md)、[CAPACITY_BASELINE.md](CAPACITY_BASELINE.md) | 故障与容量实测 |
 
 ## 4. 各组件自己的文档

@@ -41,7 +41,7 @@ from app.errors import ApiError, Forbidden, NotFound
 from app.models import CollabTask, TaskStatus
 from app.services import automation
 from app.services.common import append_event, record_audit, task_snapshot
-from app.services.runners import ONLINE_WINDOW
+from app.services.runners import MIN_RUNNER_VERSION, ONLINE_WINDOW, runner_outdated
 
 logger = logging.getLogger("agentgraph.scheduler")
 settings = get_settings()
@@ -335,8 +335,11 @@ def _words(reason: str, task: CollabTask) -> str:
 
 
 def _online(hosts: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
+    """Hosts that can take work now: active, heard from, and able to receive it
+    (a CLI older than nerve-only dispatch would be offered work it never gets)."""
     return [host for host in hosts if host["status"] == "active"
-            and now - host["last_seen_at"] <= ONLINE_WINDOW]
+            and now - host["last_seen_at"] <= ONLINE_WINDOW
+            and not runner_outdated(host.get("runner_version"))]
 
 
 async def _load(session: AsyncSession, workspace_id: Any,
@@ -1056,6 +1059,14 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
           f"{len(online)} of {len(hosts)} computer(s) online." if hosts
           else "No computer is connected.",
           "Run `npx veynod up --run-tasks` on a computer.")
+    outdated = sorted(host["agent_id"] or host["host_id"] for host in hosts
+                      if runner_outdated(host.get("runner_version")))
+    minimum = ".".join(str(part) for part in MIN_RUNNER_VERSION)
+    check("cli_version", not outdated, False,
+          f"Every computer runs veynod {minimum} or newer." if not outdated
+          else (f"{', '.join(outdated)} run(s) a veynod older than {minimum}: work reaches "
+                "a computer only over its nerve socket now, so it gets none."),
+          "On each of them: `npm install -g veynod@latest`, then `veynod up --run-tasks`.")
     check("builder", bool(builders), True,
           f"{len(builders)} computer(s) can build (EXECUTOR) with quota left." if builders
           else "No online computer can build tasks.",
