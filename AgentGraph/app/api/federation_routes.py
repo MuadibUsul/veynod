@@ -264,7 +264,11 @@ class DelegationOffer(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     peer_workspace: str = Field(pattern=_FID)
-    terms: dict[str, Any] = Field(description="The delegation object of ICD_I_BRIDGE §2.")
+    terms: dict[str, Any] = Field(
+        description="The delegation object: objective, acceptance criteria, input summary, "
+        "data classification, allowed use, deadline, budget cap, result contract, "
+        "cancellation policy and external side effects."
+    )
     local_task_key: str | None = Field(
         default=None,
         max_length=128,

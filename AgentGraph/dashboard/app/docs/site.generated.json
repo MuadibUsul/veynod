@@ -4698,7 +4698,7 @@
          "type": "string"
         },
         {
-         "description": "The delegation object of ICD_I_BRIDGE §2.",
+         "description": "The delegation object: objective, acceptance criteria, input summary, data classification, allowed use, deadline, budget cap, result contract, cancellation policy and external side effects.",
          "name": "terms",
          "required": true,
          "type": "object"
