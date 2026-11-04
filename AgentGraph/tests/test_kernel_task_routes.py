@@ -1,8 +1,9 @@
 """The task-scoped Kernel routes look the task up before anything else.
 
-``_product_task`` once referenced ``task_lifecycle`` without importing it, so
-every call to these three routes answered 500 (NameError) instead of reaching
-the lookup. An unknown task must be a plain 404.
+``_product_task`` once referenced ``task_lifecycle`` without importing it
+(fixed in #91), so every call to these three routes answered 500 (NameError)
+instead of reaching the lookup. Lint caught it; nothing exercised the routes.
+An unknown task must be a plain 404.
 """
 
 from __future__ import annotations

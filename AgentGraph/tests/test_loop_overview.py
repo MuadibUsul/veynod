@@ -44,6 +44,8 @@ def test_one_state_for_every_kind_of_piece():
     held = {"status": "HANDOFF", "handoff_brief": {"approval": {"awaiting_deploy": True}}}
     assert flow.task_state(held) == "deploy"
     assert flow.task_state({"status": "HANDOFF", "reviewed_by": None}) == "ready"
+    # Kernel-gated work, or work no other computer can review, waits for the person.
+    assert flow.task_state({"status": "REVIEWING", "review_by": "person"}) == "you"
     assert flow.task_state({"status": "HANDOFF", "reviewed_by": "auditor",
                             "review_feedback": "fix the test"}) == "ready"
     assert [flow.chunk_state({"status": status}) for status in

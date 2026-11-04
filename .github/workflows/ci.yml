@@ -1,0 +1,89 @@
+name: CI
+
+# One workflow for the whole repository. GitHub only reads .github/ at the
+# root, so the old AgentGraph/.github workflows never ran in this monorepo.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff==0.17.1
+      # The product tree is held to its config; the other trees are reported
+      # until their backlog is cleared (see docs/README.md).
+      - run: ruff check AgentGraph/app AgentGraph/tests
+      - run: ruff check --exit-zero agent_runtime veynod_kernel/app contracts
+
+  python:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [contracts, runtime, kernel, product]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: agentgraph
+          POSTGRES_PASSWORD: agentgraph
+          POSTGRES_DB: agentgraph
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U agentgraph -d agentgraph"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PG_URL: postgresql+asyncpg://agentgraph:agentgraph@localhost:5432
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: >-
+          pip install -r AgentGraph/requirements-dev.txt
+          -r veynod_kernel/requirements.txt -r agent_runtime/requirements.txt
+      - run: scripts/test_all.sh ${{ matrix.suite }}
+
+  node:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [cli, dashboard]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: scripts/test_all.sh ${{ matrix.suite }}
+
+  protocol:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: AgentGraph/protocol/package-lock.json
+      - run: npm ci --prefix AgentGraph/protocol
+      - run: npm test --prefix AgentGraph/protocol

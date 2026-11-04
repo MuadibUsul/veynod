@@ -2,21 +2,26 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin_routes import require_admin
-from app.config import REPO_ROOT, settings
+from app.config import settings
 from app.database import get_db_session
 from app.engine import rust_bridge
 from app.engine.lock_algebra import plan_claimable
-from app.models import CodeArtifact, DagTask, KernelEvent, TaskDependency, TaskStatus, Workspace
+from app.models import (
+    CodeArtifact,
+    DagTask,
+    KernelEvent,
+    TaskDependency,
+    TaskStatus,
+    Workspace,
+)
 
 router = APIRouter(tags=["DAG / Observability"])
 
@@ -245,28 +250,6 @@ async def dag_events(
         ],
         "next_after_seq": events[-1].event_seq if events else after_seq,
     }
-
-
-@router.get("/dashboard", include_in_schema=False)
-async def dashboard(request: Request) -> FileResponse:
-    if not settings.debug_dashboard_enabled:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="The Kernel debug dashboard is disabled.",
-        )
-    client_host = request.client.host if request.client else ""
-    if client_host not in {"127.0.0.1", "::1", "localhost"}:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="The Kernel debug dashboard is loopback-only.",
-        )
-    path = Path(REPO_ROOT) / "dashboard-lite" / "index.html"
-    if not path.exists():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="dashboard-lite/index.html is not installed.",
-        )
-    return FileResponse(path, media_type="text/html")
 
 
 @router.get("/healthz")

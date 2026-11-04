@@ -9070,6 +9070,12 @@
          "name": "max_concurrency",
          "required": false,
          "type": "integer | null"
+        },
+        {
+         "description": "How this runner runs sessions and which Kernel leases it holds",
+         "name": "capabilities_report",
+         "required": false,
+         "type": "object | null"
         }
        ],
        "description": "",

@@ -143,8 +143,10 @@ async def test_a_review_moves_to_a_named_reviewer_but_never_to_the_builder(clien
     assert moved.status_code == 200, moved.text
     now_open = await _open(client, ws, key)
     assert now_open["step"] == "review" and now_open["host_id"] == target["host_id"]
+    # The move is an offered row; the dispatcher delivers it over the target's
+    # nerve socket (none is connected here), never through an inbox.
     placed = (await client.get("/v1/inbox", headers=target["headers"])).json()["items"]
-    assert any(now_open["placement_id"] in (item.get("note") or "") for item in placed)
+    assert not [item for item in placed if item["kind"] == "task.placed"]
 
 
 async def test_the_loop_tool_over_mcp(client):

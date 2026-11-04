@@ -80,10 +80,8 @@ async def test_diagram_product_task_carries_scope_to_kernel_creation(monkeypatch
                 "leased": True,
                 "lease_token": "vnl_secret",
                 "write_set": ["src/api"],
-                "work_scope": {
-                    "scope_version": 1,
-                    "paths": {"include": ["src/api/**"], "exclude": []},
-                },
+                "work_scope": {"scope_version": 1,
+                               "paths": {"include": ["src/api/**"], "exclude": []}},
                 "scope_hash": "a" * 64,
             }
 
@@ -129,6 +127,9 @@ def test_needs_write_set_is_not_kernel_owned() -> None:
     leased = SimpleNamespace(correlation={"kernel_delivery": {"mode": "kernel",
                                                              "status": "leased"}})
     assert _module.kernel_owns_steps(leased) is True
+    # The Loop's read model passes plain rows, not ORM objects.
+    assert _module.kernel_owns_steps({"correlation": leased.correlation}) is True
+    assert _module.kernel_owns_steps({"correlation": None}) is False
 
 
 def test_expired_lease_is_not_reused() -> None:
@@ -185,3 +186,79 @@ async def test_bind_only_creates_the_node_without_taking_a_lease(monkeypatch) ->
     assert result["leased"] is False
     assert result["status"] == "bound"
     assert result["scope_hash"]
+
+
+@pytest.mark.asyncio
+async def test_kernel_error_codes_survive_the_product_api() -> None:
+    """A Kernel refusal keeps its own code (the runner waits or re-leases on it)."""
+    import httpx
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(409, json={"detail": {"error": "submission_in_progress",
+                                                    "message": "wait"}})
+
+    plane = _module.KernelPlane("http://kernel", "w", service_key="s", runner_token="r",
+                                transport=httpx.MockTransport(answer))
+    with pytest.raises(_module.KernelDeliveryError) as raised:
+        await plane.submit({"task_id": "t"}, "key")
+    await plane.aclose()
+    assert raised.value.status_code == 409
+    assert raised.value.code == "submission_in_progress"
+
+
+@pytest.mark.asyncio
+async def test_a_revised_diff_gets_its_own_idempotency_key(monkeypatch) -> None:
+    """A failed gate's revision used to reuse the first key: 409 forever."""
+    task = SimpleNamespace(task_key="T-1", input_context={},
+                           correlation={"kernel_delivery": {"kernel_task_id": "k-1",
+                                                            "lease": "held"}})
+    keys: list[str] = []
+
+    class Plane:
+        async def submit(self, body, key):
+            keys.append(key)
+            return 202, {"submission_id": f"s-{len(keys)}", "status": "QUEUED"}
+
+    async def token(*_):
+        return "lease-token"
+
+    async def binding(*_):
+        return {"workspace_id": "w"}
+
+    async def stamp(*_):
+        return None
+
+    class Session:
+        async def commit(self):
+            return None
+
+    monkeypatch.setattr(_module, "_load_token", token)
+    monkeypatch.setattr(_module, "_binding", binding)
+    monkeypatch.setattr(_module, "_stamp", stamp)
+    for diff in ("diff --git a/x b/x\n+one\n", "diff --git a/x b/x\n+one\n",
+                 "diff --git a/x b/x\n+two\n"):
+        await _module.submit_diff(Session(), task, git_diff=diff, touched_symbols=["x"],
+                                  local_test_passed=True, plane=Plane())
+    assert keys[0] == keys[1], "the same diff retried dedupes"
+    assert keys[2] != keys[0], "a revision is a new submission"
+
+
+def test_the_reaper_waits_for_a_gate_that_holds_the_submission() -> None:
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+
+    def task(**delivery):
+        return SimpleNamespace(correlation={"kernel_delivery": {"mode": "kernel", **delivery}})
+
+    recent = (now - timedelta(minutes=10)).isoformat()
+    assert _module.gate_pending(task(status="gate", gate="pending", submitted_at=recent), now, 3600)
+    # Overdue, failed, merged, legacy and malformed records do not hold the task.
+    old = (now - timedelta(hours=2)).isoformat()
+    assert not _module.gate_pending(task(status="gate", gate="pending", submitted_at=old),
+                                    now, 3600)
+    assert not _module.gate_pending(task(status="gate_failed", gate="fail", submitted_at=recent),
+                                    now, 3600)
+    assert not _module.gate_pending(task(status="merged", submitted_at=recent), now, 3600)
+    assert not _module.gate_pending(task(status="gate", submitted_at="yesterday"), now, 3600)
+    assert not _module.gate_pending(SimpleNamespace(correlation={}), now, 3600)

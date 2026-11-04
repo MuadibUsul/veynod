@@ -41,7 +41,7 @@ async def _workspace(client, mode: str) -> dict:
 
 
 async def _host(client, ws: dict, name: str, *, repos=(REPO,), slots: int = 1,
-                used: float = 10.0) -> dict:
+                used: float = 10.0, version: str | None = None) -> dict:
     minted = await client.post(
         f"/v1/admin/workspaces/{ws['id']}/agent-tokens", headers=ADMIN,
         json={"role_scope": "EXECUTOR", "allowed_namespaces": ["*"]})
@@ -52,7 +52,8 @@ async def _host(client, ws: dict, name: str, *, repos=(REPO,), slots: int = 1,
     hello = await client.post("/v1/runner/hello", headers=headers, json={"host": {
         "os": "linux", "arch": "x64", "max_concurrency": slots, "repos": list(repos),
         "runtimes": [{"id": "claude", "available": True,
-                      "usage": {"windows": [{"name": "5h", "used_percent": used}]}}]}})
+                      "usage": {"windows": [{"name": "5h", "used_percent": used}]}}],
+        **({"runner_version": version} if version else {})}})
     assert hello.status_code == 200, hello.text
     return {"headers": headers, "agent_id": name, "host_id": hello.json()["host_id"],
             "assignee": f"agent:{name}"}
@@ -104,12 +105,11 @@ async def test_full_mode_places_on_a_fitting_host_and_pokes_it(client):
     assert placement["host_id"] == fits["host_id"]
     assert placement["placement_id"].startswith("plc_")
 
-    inbox = (await client.get("/v1/inbox", headers=fits["headers"])).json()["items"]
-    placed = [item for item in inbox if item["kind"] == "task.placed"]
-    assert placed and key in (placed[0]["task_key"], placed[0]["doc_key"])
-    assert placement["placement_id"] in placed[0]["note"]
-    other_inbox = (await client.get("/v1/inbox", headers=elsewhere["headers"])).json()["items"]
-    assert not [item for item in other_inbox if item["kind"] == "task.placed"]
+    # Work reaches a computer only over its nerve socket (this host has none
+    # connected, so nothing was delivered yet): no agent inbox carries placements.
+    for host in (fits, elsewhere):
+        inbox = (await client.get("/v1/inbox", headers=host["headers"])).json()["items"]
+        assert not [item for item in inbox if item["kind"] == "task.placed"], inbox
 
     await _claim(client, fits, key)
     await _schedule(client, ws)
@@ -265,3 +265,25 @@ async def test_a_paused_host_gives_its_task_away_and_can_resume(client):
                                 headers=ws["owner"])
     assert resumed.status_code == 200, resumed.text
     assert resumed.json()["state"] == "online"
+
+
+async def test_a_cli_older_than_nerve_dispatch_is_named_and_never_offered_work(client):
+    """0.5.x says hello and heartbeats but only listens on SSE: offering it work
+    would time out again and again. It is left out and the doctor says why."""
+    ws = await _workspace(client, "full")
+    old = await _host(client, ws, f"old-{uuid.uuid4().hex[:4]}", version="0.5.2")
+    key = await _task(client, ws)
+    result = await _schedule(client, ws)
+    assert result["placed"] == 0, result
+    assert (await _task_row(client, ws, key))["assignee"] is None
+    doctor = (await client.get("/v1/runner/doctor", headers=ws["owner"])).json()
+    check = {item["id"]: item for item in doctor["checks"]}["cli_version"]
+    assert check["ok"] is False and old["agent_id"] in check["text"]
+    assert "npm install -g veynod@latest" in check["fix"]
+    card = (await client.get("/v1/runner/hosts", headers=ws["owner"])).json()["computers"]
+    assert card[0]["outdated"] is True
+
+    # The upgraded computer says hello again and gets the task.
+    new = await _host(client, ws, f"new-{uuid.uuid4().hex[:4]}", version="0.6.0")
+    await _schedule(client, ws)
+    assert (await _task_row(client, ws, key))["assignee"] == new["assignee"]

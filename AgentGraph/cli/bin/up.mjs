@@ -84,45 +84,48 @@ export function readKey(identity) {
  * connect, the clients to wire, the service to install and what the doctor
  * will check. `--dry-run` prints it; the tests read it.
  */
-/** A permanent -review twin only when slots > 1 or the legacy dual path is asked for. */
-export function reviewTwinWanted(options = {}) {
-  if (!options.runTasks && !options.run_tasks) return false;
-  if (options.legacyReview || options.legacy_review || options.delivery === "legacy") return true;
-  return Number(options.slots || 1) > 1;
-}
-
 /**
- * Identities that get a worker process. slots=1 on the kernel path is exactly
- * one worker: the -review identity, even if an old config still has it, is not
- * started and therefore cannot spawn a second Claude.
+ * Identities the hub starts: the computer's own. A `-review` identity from an
+ * older setup stays parked in the config and is never started: the Kernel
+ * gate reviews code, and a person reviews what no other computer can.
  */
 export function hubWorkers(config = {}) {
   const identities = config.identities || [];
-  if (!config.run_tasks) return identities;
-  if (reviewTwinWanted(config)) return identities;
   const workers = identities.filter((item) => item.role !== "review");
   return workers.length ? workers : identities.slice(0, 1);
 }
 
+/**
+ * Which saved identities `up` reuses. One the plan wants is kept while its key
+ * file is there. One it no longer wants (the -review seat after going from
+ * --slots 2 to 1) is parked in the config instead of forgotten: the hub does
+ * not start it (hubWorkers), and asking for it again reuses its key rather than
+ * minting another `-review-2`, `-review-3`… identity on the board.
+ */
+export function reuseIdentities(plan, previous, { host, fresh = false, exists = existsSync } = {}) {
+  const usable = !fresh && previous?.host === host
+    ? (previous.identities || []).filter((item) => item?.key_file && exists(item.key_file)) : [];
+  const identities = [];
+  const missing = [];
+  for (const wanted of plan.identities) {
+    const kept = usable.find((item) => item.role === wanted.role);
+    if (kept) identities.push(kept);
+    else missing.push(wanted);
+  }
+  const parked = usable.filter((item) => !plan.identities.some((wanted) => wanted.role === item.role));
+  return { identities, missing, parked };
+}
+
 export function upPlan(options, { home = defaultHome(), clients = [], name = hostname() } = {}) {
-  // Names are agent ids too (a letter, then letters, digits and dashes, at most
-  // 40 long), with room for the `-review` suffix when slots > 1.
+  // Names are agent ids too (a letter, then letters, digits and dashes, at most 40 long).
   const base = agentName(options.name || name);
   const identities = [{ role: "computer", label: base, wants_role: "EXECUTOR",
     why: "this computer's agent: your MCP clients and the hub use it" }];
-  const reviewTwin = reviewTwinWanted(options);
-  if (reviewTwin) {
-    identities.push({ role: "review", label: `${base}-review`, wants_role: "AUDITOR",
-      why: "reviews what this computer built, so the Loop can finish a task here" });
-  }
-  const workers = reviewTwin ? identities : identities.filter((item) => item.role !== "review");
   return {
     host: options.host,
     run_tasks: Boolean(options.runTasks),
     slots: Number(options.slots || 1),
-    delivery: options.delivery || "kernel",
-    review_twin: reviewTwin,
-    workers: workers.length,
+    workers: 1,
     identities,
     clients,
     hub: {
@@ -130,7 +133,6 @@ export function upPlan(options, { home = defaultHome(), clients = [], name = hos
       runtime: options.runtime,
       slots: options.slots,
       repos: options.repos,
-      delivery: options.delivery || "kernel",
     },
     files: [configPath(home), ...identities.map((item) => keyPath(item.label, home))],
   };
@@ -174,8 +176,8 @@ function isAlive(pid) {
  * With run_tasks each identity runs as a runner (the scheduler places work and
  * reviews on it); otherwise each one listens, so pokes reach --exec hooks.
  */
-export async function runHub(options, { follow, listen, runRunner, version, say = () => {}, home = defaultHome(),
-  config = loadConfig(home) } = {}) {
+export async function runHub(options, { listen, runComputer, version, say = () => {}, home = defaultHome(),
+  config = loadConfig(home), forever = () => new Promise(() => {}) } = {}) {
   if (!config?.identities?.length) {
     throw new Error("no identities on this computer yet: run `npx veynod up` first");
   }
@@ -190,24 +192,22 @@ export async function runHub(options, { follow, listen, runRunner, version, say 
   process.once("SIGINT", stop);
   try {
     const workers = hubWorkers(config);
-    const slots = Number(config.slots || 1);
-    if (config.run_tasks && !reviewTwinWanted(config)) {
-      say(`slots=${slots} workers=${workers.length} review_twin=absent`);
-    }
-    const loops = workers.map((identity) => {
+    const loops = [];
+    for (const identity of workers) {
       releases.push(acquireLock(identity.agent_id, { home }));
       const key = readKey(identity);
-      const stateDir = join(veynodDir(home), "hub", safeName(identity.agent_id));
       const tag = (text) => say(`[${identity.agent_id}] ${text}`);
       if (config.run_tasks) {
-        return runRunner({ host, key, runtime: config.runtime || "", exec: config.exec || "",
-          slots: config.slots || 1, repos: config.repos || [], diskMb: config.disk_mb || 5120,
-          gitBase: config.git_base || "https://github.com/",
-          delivery: config.delivery || "kernel" },
-        { follow, version, say: tag, stateDir });
+        // Work arrives only over the nerve socket the messenger holds.
+        const messenger = await runComputer({ host, key, agent: identity.agent_id,
+          runtime: config.runtime || "", exec: config.exec || "", slots: config.slots || 1,
+          repos: config.repos || [] }, { version, say: tag });
+        releases.push(() => messenger.stop());
+        loops.push(forever());
+      } else {
+        loops.push(listen({ host, key, exec: config.exec || "", heartbeat: true }, tag));
       }
-      return listen({ host, key, exec: config.exec || "", heartbeat: true }, tag);
-    });
+    }
     const results = await Promise.all(loops);
     return results.some((code) => code) ? 1 : 0;
   } finally {
@@ -243,24 +243,27 @@ export async function doctor({ home = defaultHome(), config = loadConfig(home), 
   }
   add("config", true, true, `Connected to ${config.host}.`);
   let computerKey = null;
+  // A parked identity (not started by the hub) cannot make the doctor red.
+  const started = new Set(hubWorkers(config).map((item) => item.agent_id));
   for (const identity of config.identities || []) {
+    const required = started.has(identity.agent_id);
     let key = null;
     try {
       key = readKey(identity);
     } catch {
-      add(`key:${identity.agent_id}`, false, true, `The key for ${identity.agent_id} is missing.`,
+      add(`key:${identity.agent_id}`, false, required, `The key for ${identity.agent_id} is missing.`,
         "Run `npx veynod up` again to reconnect.");
       continue;
     }
     if (identity.role === "computer") computerKey = key;
     try {
       const who = await getJson(fetchImpl, `${config.host}/v1/whoami`, key);
-      add(`key:${identity.agent_id}`, who.status === 200, true,
+      add(`key:${identity.agent_id}`, who.status === 200, required,
         who.status === 200 ? `${identity.agent_id} is accepted by the board.`
           : `The board refused ${identity.agent_id} (HTTP ${who.status}).`,
         who.status === 200 ? null : "The key was revoked or expired: run `npx veynod up` again.");
     } catch (error) {
-      add(`key:${identity.agent_id}`, false, true, `Veynod at ${config.host} did not answer (${error.message}).`,
+      add(`key:${identity.agent_id}`, false, required, `Veynod at ${config.host} did not answer (${error.message}).`,
         "Check the network or --host.");
     }
   }
@@ -270,18 +273,8 @@ export async function doctor({ home = defaultHome(), config = loadConfig(home), 
       : `Node ${nodeVersion}: below ${NODE_FOR_OAR}, so OAR is unavailable and the runtime's CLI is used.`,
     major >= NODE_FOR_OAR ? null : `Install Node ${NODE_FOR_OAR} or newer for OAR (quota-aware, pinned sessions).`);
   if (config.run_tasks) {
-    const slots = Number(config.slots || 1);
-    const kernelReviews = (config.delivery || "kernel") !== "legacy" && !config.legacy_review && slots <= 1;
-    const roles = new Set((config.identities || []).map((item) => item.role));
-    if (kernelReviews) {
-      add("reviewer", true, true,
-        "slots=1: one worker. Kernel verification_gate and merge_coordinator review this computer's work. review_twin=absent.");
-    } else {
-      add("reviewer", roles.has("review"), true,
-        roles.has("review") ? "A second identity reviews what this computer builds."
-          : "No reviewer identity: a task built here cannot be reviewed here.",
-        roles.has("review") ? null : "Run `npx veynod up --run-tasks --slots 2` or `--legacy-review` to add one.");
-    }
+    add("reviewer", true, false,
+      "The Kernel gate reviews code built here; a person reviews what no other computer can.");
     // No saved runtime means the hub uses whichever is here.
     const wanted = config.runtime ? [config.runtime] : ["claude", "codex"];
     const runtime = config.runtime === "custom" ? "custom" : wanted.find((id) => onPath(run, id));

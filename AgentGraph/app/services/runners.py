@@ -121,39 +121,31 @@ def _clean_report(given: Any) -> dict[str, Any] | None:
     if not isinstance(given, dict):
         return None
     pinning = given.get("mcp_pinning")
-    delivery = given.get("delivery")
-    if delivery not in ("kernel", "legacy"):
-        delivery = None
     leases = [lease for lease in (_clean_lease(item) for item in (given.get("leases") or [])[:8])
               if lease]
     report: dict[str, Any] = {
         "mcp_pinning": pinning if isinstance(pinning, bool) else None,
         "runtime": _clean_str(given.get("runtime"), 32),
     }
-    if delivery:
-        report["delivery"] = delivery
     if leases:
         report["leases"] = leases
     return report
 
 
 def kernel_card(hosts: list[dict[str, Any]]) -> dict[str, Any]:
-    """What the Computers card shows: host delivery mode and worktree leases."""
-    delivery = "kernel"
+    """What the Computers card shows: worktree leases (delivery is always the Kernel)."""
     leases: list[dict[str, Any]] = []
     for host in hosts:
         report = host.get("capabilities_report") or {}
         if not isinstance(report, dict):
             continue
-        if report.get("delivery") in ("kernel", "legacy"):
-            delivery = report["delivery"]
         for item in report.get("leases") or []:
             cleaned = _clean_lease(item)
             if cleaned:
                 leases.append(cleaned)
     first = leases[0] if leases else {}
     return {
-        "delivery": delivery,
+        "delivery": "kernel",
         "worktree": first.get("worktree") or ("leased" if leases else "idle"),
         "lease": first.get("lease") or ("held" if leases else "none"),
         "gate": first.get("gate"),
@@ -191,6 +183,22 @@ def _clean_host(given: Any) -> dict[str, Any]:
     }
 
 
+#: From this CLI release on, work reaches a computer only over its nerve
+#: socket. An older CLI still says hello and heartbeats, so it would look
+#: online and be offered work it can never receive.
+MIN_RUNNER_VERSION = (0, 6, 0)
+
+
+def runner_outdated(version: str | None) -> bool:
+    """Whether a runner predates nerve-only dispatch. Unknown is not outdated."""
+    if not version:
+        return False
+    numbers = [int(part) for part in re.findall(r"\d+", version)[:3]]
+    if not numbers:
+        return False
+    return tuple(numbers + [0] * (3 - len(numbers))) < MIN_RUNNER_VERSION
+
+
 def _state(row: dict[str, Any], now: datetime) -> str:
     if row["status"] != "active":
         return row["status"]
@@ -210,6 +218,7 @@ def host_out(row: dict[str, Any], now: datetime | None = None) -> dict[str, Any]
         "arch": row["arch"],
         "hostname_digest": row["hostname_digest"],
         "runner_version": row["runner_version"],
+        "outdated": runner_outdated(row["runner_version"]),
         "runtimes": row["runtimes"] or [],
         "max_concurrency": row["max_concurrency"],
         "running": running,
@@ -366,9 +375,15 @@ def computers_out(items: list[dict[str, Any]], roles: dict[str, str]) -> list[di
             "last_seen_at": host["last_seen_at"],
         } for host in hosts]
         seats.sort(key=lambda seat: (seat["seat"] != "work", seat["agent_id"] or ""))
-        runtimes: dict[str, dict[str, Any]] = {}
         # What the computer can run now: a seat taken off the Loop no longer counts.
         live = [host for host in hosts if host["status"] != "revoked"] or hosts
+        if any(seat["seat"] == "work" and seat["state"] == "online" for seat in seats):
+            # The Kernel gate reviews code and `veynod up` no longer starts a
+            # -review seat. A review seat that is gone or silent while the work
+            # seat runs is a leftover of an older setup, not something to reconnect.
+            seats = [seat for seat in seats if seat["seat"] != "review"
+                     or seat["state"] not in ("revoked", "offline")]
+        runtimes: dict[str, dict[str, Any]] = {}
         for host in live:
             for runtime in host["runtimes"] or []:
                 known = runtimes.get(runtime["id"])
@@ -382,6 +397,7 @@ def computers_out(items: list[dict[str, Any]], roles: dict[str, str]) -> list[di
             "os": first["os"],
             "arch": first["arch"],
             "runner_version": first["runner_version"],
+            "outdated": any(host.get("outdated") for host in live),
             "runtimes": list(runtimes.values()),
             "repos": list(dict.fromkeys(repo for host in hosts for repo in host["repos"])),
             # Online while any seat is; paused only when every live seat is.
@@ -446,13 +462,34 @@ async def _attach_task_leases(session: AsyncSession, workspace_id: Any,
         computer["kernel"] = kernel
 
 
+async def _host_rows(session: AsyncSession, workspace_id: Any) -> list[dict[str, Any]]:
+    """Host rows with their key's state folded in, the way the scheduler sees them.
+
+    A key revoked or switched off elsewhere (the Agents page, a rotation) leaves
+    ``runner_hosts.status`` active; without this the card said "offline" while
+    the scheduler already treated the seat as removed.
+    """
+    rows = (await session.execute(text(
+        "SELECT h.*, (t.canonical_id IS NULL OR NOT t.is_active OR t.revoked_at IS NOT NULL) "
+        "AS key_dead FROM runner_hosts h LEFT JOIN agent_tokens t "
+        "ON t.canonical_id = h.token_id AND t.workspace_id = h.workspace_id "
+        "WHERE h.workspace_id = :ws ORDER BY h.last_seen_at DESC LIMIT 200"),
+        {"ws": workspace_id})).mappings().all()
+    out = []
+    for row in rows:
+        host = dict(row)
+        if host.pop("key_dead", False):
+            host["status"] = "revoked"
+        out.append(host)
+    return out
+
+
 async def computers(session: AsyncSession, workspace_id: Any) -> list[dict[str, Any]]:
     """The workspace's computers (revoked ones left out), each with its seats."""
-    rows = (await session.execute(text(
-        "SELECT * FROM runner_hosts WHERE workspace_id = :ws AND status <> 'revoked' "
-        "ORDER BY last_seen_at DESC LIMIT 200"), {"ws": workspace_id})).mappings().all()
+    rows = [row for row in await _host_rows(session, workspace_id)
+            if row["status"] != "revoked"]
     now = _now()
-    items = [host_out(dict(row), now) for row in rows]
+    items = [host_out(row, now) for row in rows]
     grouped = computers_out(items, await _roles(
         session, workspace_id, [item["token_id"] for item in items]))
     await _attach_task_leases(session, workspace_id, grouped)
@@ -461,12 +498,9 @@ async def computers(session: AsyncSession, workspace_id: Any) -> list[dict[str, 
 
 async def list_hosts(session: AsyncSession, principal: Principal, *,
                      include_revoked: bool = False) -> dict[str, Any]:
-    rows = (await session.execute(text(
-        "SELECT * FROM runner_hosts WHERE workspace_id = :ws "
-        "ORDER BY last_seen_at DESC LIMIT 200"),
-        {"ws": principal.workspace.id})).mappings().all()
+    rows = await _host_rows(session, principal.workspace.id)
     now = _now()
-    every = [host_out(dict(row), now) for row in rows]
+    every = [host_out(row, now) for row in rows]
     items = [item for item in every if include_revoked or item["status"] != "revoked"]
     grouped = computers_out(every, await _roles(
         session, principal.workspace.id, [item["token_id"] for item in every]))

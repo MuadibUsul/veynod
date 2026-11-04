@@ -12,6 +12,8 @@ from pathlib import Path
 import httpx
 import pytest
 
+import app  # noqa: F401  (makes the repository's shared `contracts` importable)
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 os.environ["ENVIRONMENT"] = "test"
@@ -65,6 +67,11 @@ async def run_server(extra_env: dict[str, str] | None = None, log_name: str = ".
             # The server has one event loop, so it pools connections like
             # production. Only the test process itself needs NullPool.
             "DB_NULL_POOL": "false",
+            # Code runs only through a Kernel, so repositories need a binding to be
+            # placed. The deployment default points at a closed port: provisioning
+            # fails fast and is logged, placement still sees a bound repository.
+            "KERNEL_URL": "http://127.0.0.1:9",
+            "KERNEL_WORKSPACE_ID": "00000000-0000-4000-8000-00000000000b",
             **(extra_env or {}),
         }
     )

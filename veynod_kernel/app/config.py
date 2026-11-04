@@ -237,12 +237,6 @@ class Settings(BaseSettings):
     sse_poll_seconds: float = Field(
         default=1.0, validation_alias=AliasChoices("VN_SSE_POLL_SECONDS", "SSE_POLL_SECONDS")
     )
-    debug_dashboard_enabled: bool = Field(
-        default=False,
-        validation_alias=AliasChoices(
-            "VN_DEBUG_DASHBOARD", "DEBUG_DASHBOARD"
-        ),
-    )
 
     # --- asynchronous patch submissions ------------------------------------
     submission_worker_concurrency: int = Field(
@@ -258,14 +252,6 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias=AliasChoices(
             "VN_SUBMISSION_POLL_SECONDS", "SUBMISSION_POLL_SECONDS"
-        ),
-    )
-    # "reject" returns 410 and points at /v2; "sync" is the temporary escape
-    # hatch for old clients during the migration window.
-    legacy_submit_mode: Literal["reject", "sync"] = Field(
-        default="reject",
-        validation_alias=AliasChoices(
-            "VN_LEGACY_SUBMIT_MODE", "LEGACY_SUBMIT_MODE"
         ),
     )
 

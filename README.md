@@ -11,7 +11,7 @@
 | MCP | https://veynod.com/mcp/ |
 | npm | [`veynod@0.5.2`](https://www.npmjs.com/package/veynod/v/0.5.2) |
 | Registry name | [`io.github.veynod/veynod`](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.veynod%2Fveynod/versions/latest) |
-| This repository | Full runtime monorepo. Public bridge text in-tree: [`AgentGraph/open-source-repo/`](AgentGraph/open-source-repo/README.md). Published bridge: https://github.com/veynod/veynod |
+| This repository | Full runtime monorepo. Public bridge (npm `veynod`) source: [`AgentGraph/cli/`](AgentGraph/cli/README.md). Published bridge: https://github.com/veynod/veynod |
 
 Checked 2026-11-02 (America/Indianapolis): npm `latest` is **0.5.2**. The Official MCP Registry entry is still **0.4.1**. Install the client from npm. Registry metadata can lag until that entry is republished.
 
@@ -97,7 +97,7 @@ Names below are groups. Confirm the live list on the [JSON descriptor](https://v
 - The hosted MCP endpoint needs network access. Agent keys need the same care as other API secrets.
 - Does not replace CI, an issue tracker, or a retrieval stack. PostgreSQL in this repo can use pgvector; that does not make Veynod a vector database.
 - Leases and gates improve coordination. They do not make a plan correct.
-- The published CLI ([`AgentGraph/open-source-repo`](AgentGraph/open-source-repo/README.md), also npm `veynod`) is MIT. This monorepo does not yet state a distribution license for the server tree; see [AgentGraph/README.md](AgentGraph/README.md).
+- The published CLI ([`AgentGraph/cli`](AgentGraph/cli/README.md), npm `veynod`) is MIT. This monorepo does not yet state a distribution license for the server tree; see [AgentGraph/README.md](AgentGraph/README.md).
 
 ## FAQ
 
@@ -124,8 +124,8 @@ Yes, from this repository. [本仓库架构](#本仓库架构) has `docker compo
 - npm: https://www.npmjs.com/package/veynod
 - Registry: https://registry.modelcontextprotocol.io/v0.1/servers/io.github.veynod%2Fveynod/versions/latest
 - Public bridge: https://github.com/veynod/veynod
-- CLI text in this repo: [AgentGraph/open-source-repo/README.md](AgentGraph/open-source-repo/README.md)
-- CLI license (MIT): [AgentGraph/open-source-repo/LICENSE](AgentGraph/open-source-repo/LICENSE)
+- CLI source in this repo: [AgentGraph/cli/README.md](AgentGraph/cli/README.md)
+- CLI license (MIT): [AgentGraph/cli/LICENSE](AgentGraph/cli/LICENSE)
 
 ---
 
@@ -159,6 +159,7 @@ Agent Runtime（唯一的模型推理与执行循环：Run / Step / Checkpoint /
              （kernel_events → event_inbox → runtime_wakeups → 投影 → REVIEWING → DONE）
 ```
 
+文档地图：[docs/README.md](docs/README.md)（从这里找任何文档）。
 架构与决策：[docs/UNIFIED_ARCHITECTURE.md](docs/UNIFIED_ARCHITECTURE.md)、
 [docs/adr/ADR_013_RUNTIME_KERNEL_FUSION.md](docs/adr/ADR_013_RUNTIME_KERNEL_FUSION.md)。
 审计与迁移：[docs/UNIFIED_ARCHITECTURE_AUDIT.md](docs/UNIFIED_ARCHITECTURE_AUDIT.md)、
@@ -201,6 +202,12 @@ Create Project → Create Task → POST /v1/tasks/{key}/run
 * 一个产品任务最多一个活动 Run（`collab_tasks.active_run_id` + 部分唯一索引）。
 * `collab_tasks` 的执行态只由 `AgentGraph/app/services/task_lifecycle.py` 写入。
 * 有活动 Run 的任务不会被 runner-host 调度再次认领。
+* 工作只经 nerve 到达电脑：每个放置（work / review / merge / supervise）是一行 `offered`，
+  由 API 进程里唯一的派发器（`scheduler.dispatch_offered`）经电脑的 `/v1/ws/nerve` 送达并收两次回执；
+  `veynod runner` / `veynod hub` 的 messenger 持有该套接字、心跳主机记录、按 `--slots` 并行跑 worker。
+* 代码只经 Kernel：带仓库的任务必须有 Kernel 绑定才会被放置（否则 `no_kernel_binding`）；
+  一台电脑一个身份，代码由 Kernel 门禁评审，别的电脑接不了的评审交给人（“需要你”）。
+* 所有后台循环都在 API 进程里，因为 nerve 套接字在这里。
 * 等待门禁期间 Runtime Worker 不占用租约；唤醒来自持久事件，不是定时轮询。
 * 没有 Kernel 证据就不推进任务：缺证据不是 PASS。
 
@@ -318,6 +325,15 @@ Kernel 内部接口（用户不可见）：6 个 syscall、`/v2/syscalls/submit_
 
 ### 7. 测试与验收
 
+一条命令跑全部套件（CI 跑的就是它；每个数据库套件用自己的临时库）：
+
+```bash
+PG_URL=postgresql+asyncpg://agentgraph:agentgraph@127.0.0.1:5432 scripts/test_all.sh
+scripts/test_all.sh runtime kernel        # 只跑部分：contracts runtime kernel product cli dashboard
+```
+
+分别运行：
+
 ```bash
 # Runtime（真实 Postgres）
 TEST_DATABASE_URL=postgresql+asyncpg://agentgraph:agentgraph@127.0.0.1:55433/agentgraph_test \
@@ -365,17 +381,20 @@ veynod/
 ├── contracts/         跨服务 ID / 事件 / 错误契约
 ├── deploy/            统一部署（Dockerfile、环境模板、初始化脚本）
 ├── docs/              统一架构、审计、迁移、ADR、验收报告
-├── scripts/           e2e_unified.py、migrate_all.sh、backfill_unified.py
-├── docker-compose.yml 一套生产部署
-└── veynod_platform/   DEPRECATED：早期第三产品原型，不再部署
+├── scripts/           test_all.sh、export_public_bridge.sh、e2e_unified.py、migrate_all.sh
+├── .github/workflows/ 唯一 CI（ci.yml：lint + 全部测试套件）与 CLI 发布
+└── docker-compose.yml 一套生产部署（三个镜像都从仓库根目录构建：deploy/Dockerfile.*）
 ```
+
+一个仓库的约束由 `contracts/tests/test_repository.py` 强制：三个服务的依赖精确且版本一致、
+所有镜像从根目录构建、只有根目录一套 CI、只有一个 CLI 源（`AgentGraph/cli`，
+用 `scripts/export_public_bridge.sh` 导出到公开仓库）。
 
 ---
 
 ### 9. 边界与状态
 
-* **Kernel Runner CLI** 保留为开发/兼容工具；产品执行者只有 Agent Runtime（ADR-017）。
+* **执行者**：产品面的电脑（经 `/v1/tasks/{key}/kernel/*`）与 Agent Runtime；Kernel 自带的 Runner CLI 与 dashboard-lite 已删除（ADR-017）。
 * **共享一个 PostgreSQL 集群、三个数据库**：不强行合并 schema，不做跨库外键。
 * **历史数据**不删除：迁移只做 expand → migrate → contract，回滚方案见迁移计划。
-* `POST /v1/code/runs` 语义已收敛为"建任务 + 启动 Run"；旧行为可用
-  `CODE_ENGINE_LEGACY_DIRECT=1` 临时恢复一个版本。
+* `POST /v1/code/runs` 只建任务并启动 Run；直接建 Kernel 任务的旧路径已删除。

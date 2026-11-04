@@ -9,26 +9,19 @@ is never copied onto a task the console can read.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
-import sys
 from datetime import datetime, timezone
-from pathlib import Path as _Path
 from typing import Any
 
 import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-try:  # the shared contract package lives at the repository root
-    from contracts.work_scope import WorkScope
-except ImportError:  # pragma: no cover - only when running outside the monorepo
-    _root = _Path(__file__).resolve().parents[3]
-    if str(_root) not in sys.path:
-        sys.path.insert(0, str(_root))
-    from contracts.work_scope import WorkScope
-
 from app.config import get_settings
+from contracts import kernel_http
+from contracts.work_scope import WorkScope
 
 logger = logging.getLogger("agentgraph.kernel_delivery")
 
@@ -48,7 +41,6 @@ _SECRET_KEYS = {"lease_token", "token", "authorization", "service_key"}
 # steps still have to run on a host: nothing was provisioned, nothing leased.
 _NOT_WIRED = {
     "",
-    "legacy",
     "unbound",
     "unconfigured",
     "needs_write_set",
@@ -163,8 +155,12 @@ def public_delivery(record: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def kernel_owns_steps(task: Any) -> bool:
-    """Kernel gate and merge replace a second reviewer/merger computer."""
-    correlation = getattr(task, "correlation", None) or {}
+    """Kernel gate and merge replace a second reviewer/merger computer.
+
+    ``task`` is a ``CollabTask`` or a row mapping with a ``correlation`` key.
+    """
+    correlation = (task.get("correlation") if isinstance(task, dict)
+                   else getattr(task, "correlation", None)) or {}
     if not isinstance(correlation, dict):
         return False
     delivery = correlation.get("kernel_delivery") or {}
@@ -172,6 +168,28 @@ def kernel_owns_steps(task: Any) -> bool:
         return False
     status = str(delivery.get("status") or "")
     return delivery.get("mode") == "kernel" and status not in _NOT_WIRED
+
+
+def gate_pending(task: Any, now: datetime, hold_seconds: int) -> bool:
+    """The Kernel gate holds this task's submission and is not overdue.
+
+    The runner stops renewing the product lease once it has submitted; a gate
+    slower than the lease TTL then made the reaper hand the task to another
+    computer, which redid work that was about to merge.
+    """
+    correlation = getattr(task, "correlation", None) or {}
+    delivery = correlation.get("kernel_delivery") if isinstance(correlation, dict) else None
+    if not isinstance(delivery, dict) or delivery.get("mode") != "kernel":
+        return False
+    if delivery.get("status") != "gate" or delivery.get("gate") not in (None, "pending"):
+        return False
+    try:
+        submitted = datetime.fromisoformat(str(delivery.get("submitted_at")))
+    except ValueError:
+        return False
+    if submitted.tzinfo is None:
+        submitted = submitted.replace(tzinfo=timezone.utc)
+    return (now - submitted).total_seconds() < hold_seconds
 
 
 def split_bundle(bundle: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
@@ -277,6 +295,27 @@ class KernelPlane:
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    async def _call(
+        self,
+        method: str,
+        path: str,
+        auth: kernel_http.KernelAuth,
+        *,
+        json_body: dict[str, Any] | None = None,
+        idempotency_key: str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """The shared Kernel transport, with its refusal as a delivery error."""
+        try:
+            status, payload = await kernel_http.request(
+                self._client, method, self.base_url + path, auth=auth,
+                json_body=json_body, idempotency_key=idempotency_key)
+        except kernel_http.KernelHTTPError as exc:
+            raise KernelDeliveryError(
+                str(exc), 502 if exc.unreachable or exc.status >= 500 else exc.status,
+                exc.code or "kernel_rejected",
+            ) from exc
+        return status, payload if isinstance(payload, dict) else {"detail": payload}
+
     async def _request(
         self,
         method: str,
@@ -286,47 +325,18 @@ class KernelPlane:
         json_body: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> tuple[int, dict[str, Any]]:
-        headers = {"X-Workspace-Id": self.workspace_id}
-        if service:
-            if not self.service_key:
-                raise KernelDeliveryError(
-                    "KERNEL_SERVICE_KEY is not configured on the product API",
-                    503,
-                    "kernel_unconfigured",
-                )
-            headers["X-Veynod-Service-Key"] = self.service_key
-        else:
-            if not self.runner_token:
-                raise KernelDeliveryError(
-                    "KERNEL_RUNTIME_TOKEN is not configured on the product API",
-                    503,
-                    "kernel_unconfigured",
-                )
-            headers["Authorization"] = f"Bearer {self.runner_token}"
-        if idempotency_key:
-            headers["Idempotency-Key"] = idempotency_key
-        try:
-            response = await self._client.request(
-                method, self.base_url + path, headers=headers, json=json_body
-            )
-        except (httpx.TimeoutException, httpx.TransportError) as exc:
+        secret = self.service_key if service else self.runner_token
+        if not secret:
+            name = "KERNEL_SERVICE_KEY" if service else "KERNEL_RUNTIME_TOKEN"
             raise KernelDeliveryError(
-                f"Kernel unreachable: {exc}", 502, "kernel_unreachable"
-            ) from exc
-        payload: dict[str, Any] = {}
-        if response.content:
-            try:
-                parsed = response.json()
-                payload = parsed if isinstance(parsed, dict) else {"detail": parsed}
-            except ValueError:
-                payload = {"detail": response.text[:500]}
-        if response.status_code >= 400:
-            raise KernelDeliveryError(
-                f"Kernel HTTP {response.status_code}: {_safe_detail(payload)}",
-                502 if response.status_code >= 500 else response.status_code,
-                "kernel_rejected",
-            )
-        return response.status_code, payload
+                f"{name} is not configured on the product API", 503, "kernel_unconfigured")
+        auth = kernel_http.KernelAuth(
+            workspace_id=self.workspace_id,
+            service_key=secret if service else None,
+            bearer=None if service else secret,
+        )
+        return await self._call(method, path, auth, json_body=json_body,
+                                idempotency_key=idempotency_key)
 
     async def create_task(self, body: dict[str, Any]) -> dict[str, Any]:
         _status, payload = await self._request(
@@ -343,18 +353,14 @@ class KernelPlane:
         row a projection may rely on (never infer a PASS from a status alone).
         """
         # The admin plane reads X-Admin-Key, not the service key.
-        headers = {"X-Admin-Key": self.admin_key} if self.admin_key else {}
         try:
-            response = await self._client.get(
-                f"{self.base_url}/v1/admin/tasks/{task_id}/evidence", headers=headers)
-            if response.status_code == 404:
+            _status, payload = await self._call(
+                "GET", f"/v1/admin/tasks/{task_id}/evidence",
+                kernel_http.KernelAuth(admin_key=self.admin_key or None))
+        except KernelDeliveryError as exc:
+            if exc.status_code == 404:
                 return None
-            if response.status_code >= 400:
-                raise KernelDeliveryError(
-                    f"Kernel HTTP {response.status_code}: {response.text[:300]}", 502)
-            payload = response.json()
-        except (httpx.TimeoutException, httpx.TransportError) as exc:
-            raise KernelDeliveryError(f"Kernel unreachable: {exc}", 502) from exc
+            raise
         status = str(payload.get("task_status") or payload.get("status") or "")
         commit = payload.get("merged_commit_sha") or payload.get("result_commit_sha")
         return {
@@ -433,10 +439,6 @@ def plane_for(
         admin_key=(admin_key or os.environ.get("KERNEL_ADMIN_KEY", "").strip()
                    or settings.kernel_admin_key),
     )
-
-
-def _safe_detail(payload: dict[str, Any]) -> str:
-    return str(public_delivery(payload))[:500]
 
 
 async def _stamp(session: AsyncSession, task: Any, record: dict[str, Any]) -> dict[str, Any]:
@@ -790,7 +792,11 @@ async def submit_diff(
     binding = await _binding(session, task)
     if binding is None:
         raise KernelDeliveryError("Kernel binding disappeared", 409, "kernel_unbound")
-    key = (idempotency_key or f"{task.task_key}:{kernel_task_id}")[:200]
+    # One key per patch: the Kernel binds a key to one patch SHA-256, so a key
+    # without the digest made every revision after a failed gate a 409
+    # idempotency_key_conflict. The same diff retried still dedupes.
+    digest = hashlib.sha256(git_diff.encode("utf-8")).hexdigest()[:32]
+    key = (idempotency_key or f"{task.task_key}:{kernel_task_id}:{digest}")[:200]
     owned = plane is None
     plane = plane or plane_for(binding)
     try:
@@ -824,6 +830,7 @@ async def submit_diff(
         "kernel_workspace_id": binding["workspace_id"],
         "submission_id": submission_id,
         "submission_status": payload.get("status"),
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
         "gate": "pending",
         "primitives": list(PRIMITIVES),
     }

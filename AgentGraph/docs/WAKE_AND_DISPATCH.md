@@ -1,5 +1,16 @@
 # Wake, Dispatch and the Loop in Production
 
+> **2026-11-04: what changed since this was written.** Work reaches a computer only
+> over its nerve socket (`/v1/ws/nerve`, held by the `veynod runner` / `veynod hub`
+> messenger); `TASK_PLACED` is a timeline event, not an inbox poke, and `listen` (SSE)
+> only carries messages to editor agents. A computer has one identity: the `-review`
+> twin, `--legacy-review` and `--legacy-checkout` are gone. Code runs only through the
+> Kernel (lease → submit_patch v2 → gate → merge); a repository without a Kernel binding
+> is not placed (`no_kernel_binding`). A review no other computer can take goes to the
+> person ("needs you"). Sections below that describe the review twin, PR merges or SSE
+> placement are history; [cli/USAGE.md](../cli/USAGE.md) is current.
+
+
 **Status:** Direction accepted by the owner (2026-10-30); Phase 0 and the core
 of Phase 1 built on branch `claude/eager-shannon-iy6zoa` (§15.1); the rest proposed (v3.1)
 **Date:** 2026-10-30
@@ -1027,7 +1038,7 @@ runtime, not Claude Code.
 
 **Before the drill (`up-hub-p1-release-drill`) on your computer:**
 1. Deploy the server (schema 3.65) and add a release-notes entry.
-2. Publish the CLI (sync `open-source-repo/bin`).
+2. Publish the CLI (`scripts/export_public_bridge.sh` from `AgentGraph/cli`).
 3. Set automation to full.
 4. Run `npx veynod up --run-tasks --repo owner/name` and approve the one code.
 

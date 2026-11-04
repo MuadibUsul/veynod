@@ -6,41 +6,44 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { Worktrees, adapterFor, chooseRuntime, claudeMcpConfig, commandWorks, installSteps, inventory,
-    pinsIdentity, pipelineLines, placementOf, promptFor, resolveCommand, resolveLeaseCwd, runRunner,
+import { adapterFor, chooseRuntime, claudeMcpConfig, commandWorks, createRunner, installSteps, inventory,
+    pinsIdentity, pipelineLines, placementOf, promptFor, resolveCommand, resolveLeaseCwd,
     shimTarget, veynodMcpServer }
   from "../bin/runner.mjs";
 import { parseArgs, servicePlan } from "../bin/veynod.mjs";
 
-const git = (args, cwd) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-
-/** A local "origin" with one commit on main, served from a directory. */
-function origin() {
-  const base = mkdtempSync(join(tmpdir(), "veynod-origin-"));
-  const repo = join(base, "acme", "site.git");
-  execFileSync("git", ["init", "--bare", "--quiet", "-b", "main", repo]);
-  const seed = mkdtempSync(join(tmpdir(), "veynod-seed-"));
-  git(["init", "--quiet", "-b", "main"], seed);
-  git(["config", "user.email", "t@example.test"], seed);
-  git(["config", "user.name", "t"], seed);
-  writeFileSync(join(seed, "README.md"), "hello\n");
-  git(["add", "."], seed);
-  git(["commit", "--quiet", "-m", "first"], seed);
-  git(["push", "--quiet", repo, "main"], seed);
-  return { base: `file://${base}/`, repo };
+/** What the messenger does with each poke: one `work` per placement, after a hello. */
+async function drive(options, pokes, deps = {}) {
+  const runner = await createRunner(options, deps);
+  await runner.hello();
+  for (const poke of pokes) {
+    const placed = placementOf(poke);
+    const slot = placed.taskKey ?? placed.placementId;
+    runner.running.set(slot, placed.placementId);
+    await runner.beat();
+    try {
+      await runner.work(placed);
+    } finally {
+      runner.running.delete(slot);
+    }
+  }
+  await runner.beat();
+  return runner;
 }
 
-test("a placement poke yields the task, the step and its idempotency key", () => {
-  assert.deepEqual(placementOf({ kind: "task.placed", task_key: "fix-login", note: "placement plc_01M630S0A35N82N1TFY7XGSQ88" }),
-    { taskKey: "fix-login", placementId: "plc_01M630S0A35N82N1TFY7XGSQ88", step: "work" });
-  assert.deepEqual(placementOf({ kind: "task.placed", task_key: "DG-x-api",
-    note: "placement plc_01M630S0A35N82N1TFY7XGSQ88 step review diagram x chunk api" }),
-  { taskKey: "DG-x-api", placementId: "plc_01M630S0A35N82N1TFY7XGSQ88", step: "review", diagramKey: "x", chunkKey: "api" });
-  assert.deepEqual(placementOf({ kind: "task.placed", note: "placement plc_01M630S0A35N82N1TFY7XGSQ88 step supervise" }),
-    { taskKey: null, placementId: "plc_01M630S0A35N82N1TFY7XGSQ88", step: "supervise" });
-  assert.deepEqual(placementOf({ kind: "task.placed", doc_key: "k", note: "placement plc_01M630S0A35N82N1TFY7XGSQ88" }).taskKey, "k");
-  assert.equal(placementOf({ kind: "task.assigned", task_key: "x", note: "plc_01M630S0A35N82N1TFY7XGSQ88" }), null);
-  assert.equal(placementOf({ kind: "task.placed", task_key: "x", note: "no id" }), null);
+const git = (args, cwd) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+
+
+test("a nerve poke yields the task, the step and its idempotency key", () => {
+  const id = "plc_01M630S0A35N82N1TFY7XGSQ88";
+  assert.deepEqual(placementOf({ task_key: "fix-login", placement_id: id }),
+    { taskKey: "fix-login", placementId: id, step: "work" });
+  assert.deepEqual(placementOf({ task_key: "DG-x-api", placement_id: id, step: "review", diagram_key: "x", chunk_key: "api" }),
+    { taskKey: "DG-x-api", placementId: id, step: "review", diagramKey: "x", chunkKey: "api" });
+  assert.deepEqual(placementOf({ placement_id: id, step: "supervise" }),
+    { taskKey: null, placementId: id, step: "supervise" });
+  assert.equal(placementOf({ task_key: "x", placement_id: "no id" }), null);
+  assert.equal(placementOf({ placement_id: id }), null, "work names its task");
 });
 
 test("inventory reads OAR, keeps quota and drops the account email", async () => {
@@ -76,12 +79,14 @@ test("each step gets its own prompt", () => {
   assert.match(review, /diagram\(action="review", diagram_key="x", chunk_key="api"/);
   assert.match(review, /use the REST API instead/);
   assert.match(review, /Do not change the code yourself/);
+  assert.doesNotMatch(review, /pull request/);
   const plain = promptFor({ taskKey: "t1", placementId: "plc_X", host: "h", step: "review" });
   assert.match(plain, /review_task\("t1"\)/);
   assert.doesNotMatch(plain, /diagrams/);
   const merge = promptFor({ taskKey: "DG-x-api", placementId: "plc_X", host: "h", step: "merge", diagramKey: "x", chunkKey: "api" });
   assert.match(merge, /diagram\(action="queue_check", diagram_key="x", chunk_key="api"/);
-  assert.match(merge, /diagram\(action="merge", diagram_key="x", chunk_key="api", args=\{artifact: <merge commit>\}\)/);
+  assert.match(merge, /diagram\(action="merge", diagram_key="x", chunk_key="api", args=\{artifact: <document or link>\}\)/);
+  assert.doesNotMatch(merge, /pull request|rebase|push/);
   const round = promptFor({ placementId: "plc_X", host: "h", step: "supervise", agenda: [{ kind: "no_host", task_key: "t9" }] });
   assert.match(round, /supervisor round/);
   assert.match(round, /"task_key":"t9"/);
@@ -90,50 +95,11 @@ test("each step gets its own prompt", () => {
   assert.match(round, /loop\(action="withdraw", placement_id\)/);
 });
 
-test("the prompt names the task, the branch and the hand-off", () => {
-  const text = promptFor({ taskKey: "fix-login", placementId: "plc_X", branch: "veynod/fix-login", host: "https://veynod.com" });
+test("the prompt names the task and the hand-off, never a branch or a pull request", () => {
+  const text = promptFor({ taskKey: "fix-login", placementId: "plc_X", host: "https://veynod.com" });
   assert.match(text, /agent_claim_and_read\("fix-login"\)/);
-  assert.match(text, /push only that branch/);
   assert.match(text, /release the task/);
-});
-
-test("worktrees: one per task, only its branch can be pushed, cleaned up after", () => {
-  const { base, repo } = origin();
-  const root = mkdtempSync(join(tmpdir(), "veynod-runner-"));
-  const trees = new Worktrees({ root, repos: ["acme/site"], gitBase: base });
-  assert.throws(() => trees.prepare("t1", "acme/other"), (error) => error.code === "repo_not_allowed");
-
-  const one = trees.prepare("t1", "acme/site");
-  const two = trees.prepare("t2", "acme/site");
-  assert.notEqual(one.dir, two.dir);
-  assert.equal(git(["rev-parse", "--abbrev-ref", "HEAD"], one.dir), "veynod/t1");
-  assert.equal(git(["rev-parse", "--abbrev-ref", "HEAD"], two.dir), "veynod/t2");
-  assert.equal(one.base, "main");
-  assert.equal(readFileSync(join(one.dir, "README.md"), "utf8"), "hello\n");
-
-  git(["config", "user.email", "t@example.test"], one.dir);
-  git(["config", "user.name", "t"], one.dir);
-  writeFileSync(join(one.dir, "change.txt"), "work\n");
-  git(["add", "."], one.dir);
-  git(["commit", "--quiet", "-m", "work"], one.dir);
-  git(["push", "--quiet", "origin", "veynod/t1"], one.dir);
-  assert.equal(git(["rev-parse", "--verify", "--quiet", "refs/heads/veynod/t1"], repo).length, 40);
-  assert.throws(() => git(["push", "--quiet", "origin", "veynod/t1:main"], one.dir), /may only push veynod\/t1/);
-
-  trees.remove("t1", "acme/site");
-  assert.equal(existsSync(one.dir), false);
-  assert.ok(!git(["worktree", "list"], trees.cache("acme/site")).includes(one.dir));
-});
-
-test("worktrees: over the disk cap the oldest finished one goes first", () => {
-  const { base } = origin();
-  const root = mkdtempSync(join(tmpdir(), "veynod-runner-"));
-  const trees = new Worktrees({ root, repos: ["acme/site"], gitBase: base, maxBytes: 1 });
-  const first = trees.prepare("old", "acme/site");
-  const second = trees.prepare("new", "acme/site");
-  assert.equal(existsSync(first.dir), false);
-  assert.equal(existsSync(second.dir), true);
-  assert.throws(() => trees.prepare("third", "acme/site", new Set(["new"])), (error) => error.code === "disk_full");
+  assert.doesNotMatch(text, /branch|pull request/);
 });
 
 test("custom runtime runs the command with the prompt in the environment", async () => {
@@ -213,7 +179,6 @@ test("pipeline log names submission_service, verification_gate and merge_coordin
 });
 
 test("end to end: hello, a placed task runs in its worktree, heartbeats report it", async () => {
-  const { base } = origin();
   const { lease } = leaseCheckout();
   const state = mkdtempSync(join(tmpdir(), "veynod-state-"));
   const calls = [];
@@ -262,18 +227,11 @@ test("end to end: hello, a placed task runs in its worktree, heartbeats report i
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const host = `http://127.0.0.1:${server.address().port}`;
 
-  // The stream: one placement, then the same poke again (must be ignored).
-  const follow = async (options) => {
-    const poke = { kind: "task.placed", task_key: "fix-login", note: "placement plc_01M630S0A35N82N1TFY7XGSQ88" };
-    await options.onPoke(poke);
-    await options.onPoke(poke);
-    return 0;
-  };
+  const poke = { task_key: "fix-login", placement_id: "plc_01M630S0A35N82N1TFY7XGSQ88" };
   const exec = 'node -e "require(\'fs\').writeFileSync(\'done.txt\', process.env.VEYNOD_TASK_KEY + \' \' + process.cwd())"';
-  const code = await runRunner({ host, key: "ag_test", runtime: "custom", exec, slots: 1, repos: ["acme/site"],
-    gitBase: base }, { follow, version: "0.4.0", every: 50, stateDir: state, say: (line) => said.push(line) });
+  await drive({ host, key: "ag_test", runtime: "custom", exec, slots: 1, repos: ["acme/site"] },
+    [poke], { version: "0.4.0", stateDir: state, say: (line) => said.push(line) });
   server.close();
-  assert.equal(code, 0);
 
   assert.equal(hello.host.max_concurrency, 1);
   assert.deepEqual(hello.host.repos, ["acme/site"]);
@@ -289,7 +247,7 @@ test("end to end: hello, a placed task runs in its worktree, heartbeats report i
   assert.match(reports[0].body.note, /merge_coordinator abc123def456/);
 
   const receipts = readFileSync(join(state, "runner-receipts.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
-  assert.deepEqual(receipts.map((item) => item.stage), ["delivered", "accepted", "cwd", "started", "pipeline", "pipeline", "pipeline", "finished"]);
+  assert.deepEqual(receipts.map((item) => item.stage), ["accepted", "cwd", "started", "pipeline", "pipeline", "pipeline", "finished"]);
   assert.ok(receipts.every((item) => item.placement_id === "plc_01M630S0A35N82N1TFY7XGSQ88"));
   const cwdLine = said.find((line) => line.includes("kernel worktree cwd="));
   assert.ok(cwdLine && cwdLine.includes(`${lease}`) && cwdLine.includes("pool=worktree_pool"), cwdLine);
@@ -321,17 +279,13 @@ test("a supervise round reads its agenda, runs, and reports a failure", async ()
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const host = `http://127.0.0.1:${server.address().port}`;
-  const follow = async (options) => {
-    await options.onPoke({ kind: "task.placed", note: "placement plc_01M630S0A35N82N1TFY7XGSQ99 step supervise" });
-    return 0;
-  };
+  const poke = { placement_id: "plc_01M630S0A35N82N1TFY7XGSQ99", step: "supervise" };
   // The runtime writes the prompt it got, then fails.
   const exec = 'node -e "require(\'fs\').writeFileSync(require(\'path\').join(process.env.VEYNOD_STATE, \'prompt.txt\'), process.env.VEYNOD_PROMPT); process.exit(3)"';
   process.env.VEYNOD_STATE = state;
-  const code = await runRunner({ host, key: "ag_boss", runtime: "custom", exec, slots: 1 },
-    { follow, version: "0.4.0", every: 50, stateDir: state, sleepMs: 0 });
+  await drive({ host, key: "ag_boss", runtime: "custom", exec, slots: 1 }, [poke],
+    { version: "0.4.0", stateDir: state, sleepMs: 0 });
   server.close();
-  assert.equal(code, 0);
   assert.match(readFileSync(join(state, "prompt.txt"), "utf8"), /"task_key":"t7"/);
   const report = calls.find((call) => call.path.endsWith("/report"));
   assert.equal(report.body.outcome, "failed");
@@ -342,7 +296,7 @@ test("a supervise round reads its agenda, runs, and reports a failure", async ()
 
 const noOar = async (spec) => { throw new Error(`no ${spec}`); };
 
-/** A fake Veynod for runRunner: answers hello, heartbeats, placements, tasks and renews. */
+/** A fake Veynod for the runner: answers hello, heartbeats, placements, tasks and renews. */
 async function fakeVeynod({ placements = {}, tasks = {} } = {}) {
   const calls = [];
   const server = createServer((req, res) => {
@@ -420,18 +374,14 @@ test("a placement the platform moved on is not worked and not reported", async (
   const fake = await fakeVeynod({ placements: { [PLC_A]: "moved" } });
   const marker = join(state, "ran.txt");
   const exec = `node -e "require('fs').writeFileSync('${marker}', 'x')"`;
-  const follow = async (options) => {
-    await options.onPoke({ kind: "task.placed", task_key: "old", note: `placement ${PLC_A}` });
-    return 0;
-  };
-  await runRunner({ host: fake.host, key: "ag_box", runtime: "custom", exec, slots: 1 },
-    { follow, version: "t", every: 1000, stateDir: state, sleepMs: 0 });
+  await drive({ host: fake.host, key: "ag_box", runtime: "custom", exec, slots: 1 },
+    [{ task_key: "old", placement_id: PLC_A }], { version: "t", stateDir: state, sleepMs: 0 });
   fake.close();
   assert.equal(existsSync(marker), false);
   assert.equal(fake.calls.filter((call) => call.path.endsWith("/report")).length, 0);
   const stages = readFileSync(join(state, "runner-receipts.jsonl"), "utf8").trim().split("\n")
     .map((line) => JSON.parse(line).stage);
-  assert.deepEqual(stages, ["delivered", "skipped"]);
+  assert.deepEqual(stages, ["skipped"]);
 });
 
 test("work without a repository runs in its own scratch directory, removed afterwards", async () => {
@@ -439,12 +389,8 @@ test("work without a repository runs in its own scratch directory, removed after
   const fake = await fakeVeynod();
   const out = join(state, "cwd.txt");
   const exec = `node -e "require('fs').writeFileSync('${out}', process.cwd())"`;
-  const follow = async (options) => {
-    await options.onPoke({ kind: "task.placed", task_key: "write-spec", note: `placement ${PLC_A}` });
-    return 0;
-  };
-  await runRunner({ host: fake.host, key: "ag_box", runtime: "custom", exec, slots: 1 },
-    { follow, version: "t", every: 1000, stateDir: state, sleepMs: 0 });
+  await drive({ host: fake.host, key: "ag_box", runtime: "custom", exec, slots: 1 },
+    [{ task_key: "write-spec", placement_id: PLC_A }], { version: "t", stateDir: state, sleepMs: 0 });
   fake.close();
   const cwd = readFileSync(out, "utf8");
   assert.ok(cwd.startsWith(join(state, "runner", "scratch")), cwd);
@@ -452,30 +398,24 @@ test("work without a repository runs in its own scratch directory, removed after
   assert.deepEqual(fake.calls.filter((call) => call.path.endsWith("/report")).map((call) => call.body), [{ outcome: "finished" }]);
 });
 
-test("a full slot is reported at once, and the lease is kept alive while the runtime works", async () => {
+test("the lease is kept alive while the runtime works", async () => {
   const state = mkdtempSync(join(tmpdir(), "veynod-state-"));
   const fake = await fakeVeynod();
   const exec = 'node -e "setTimeout(() => {}, 400)"';
-  const follow = async (options) => {
-    await options.onPoke({ kind: "task.placed", task_key: "long-job", note: `placement ${PLC_A}` });
-    await options.onPoke({ kind: "task.placed", task_key: "second", note: `placement ${PLC_B}` });
-    return 0;
-  };
-  await runRunner({ host: fake.host, key: "ag_box", runtime: "custom", exec, slots: 1 },
-    { follow, version: "t", every: 1000, leaseEvery: 50, stateDir: state, sleepMs: 0 });
+  await drive({ host: fake.host, key: "ag_box", runtime: "custom", exec, slots: 1 },
+    [{ task_key: "long-job", placement_id: PLC_A }],
+    { version: "t", leaseEvery: 50, stateDir: state, sleepMs: 0 });
   fake.close();
-  const busy = fake.calls.find((call) => call.path === `/v1/runner/placements/${PLC_B}/report`);
-  assert.deepEqual(busy.body, { outcome: "failed", note: "no_free_slot" });
   const renews = fake.calls.filter((call) => call.method === "POST" && call.path === "/v1/tasks/long-job/renew");
   assert.ok(renews.length >= 2, `renewed ${renews.length} times`);
-  assert.equal(fake.calls.filter((call) => call.path === "/v1/tasks/second/renew").length, 0);
+  assert.equal(fake.calls.filter((call) => call.path === `/v1/runner/placements/${PLC_B}/report`).length, 0);
 });
 
 test("hello says whether the runner pins its MCP identity", async () => {
   const state = mkdtempSync(join(tmpdir(), "veynod-state-"));
   const fake = await fakeVeynod();
-  await runRunner({ host: fake.host, key: "ag_box", runtime: "custom", exec: "true", slots: 1 },
-    { follow: async () => 0, version: "t", every: 1000, stateDir: state });
+  await drive({ host: fake.host, key: "ag_box", runtime: "custom", exec: "true", slots: 1 }, [],
+    { version: "t", stateDir: state });
   fake.close();
   const hello = fake.calls.find((call) => call.path === "/v1/runner/hello");
   assert.deepEqual(hello.body.host.capabilities_report, {
@@ -570,8 +510,8 @@ test("a hub uses the runtime that is installed, whatever was saved", async () =>
   for (const saved of ["", "claude"]) {
     const fake = await fakeVeynod();
     const said = [];
-    await runRunner({ host: fake.host, key: "ag_box", runtime: saved, slots: 1 },
-      { follow: async () => 0, version: "t", every: 1000, stateDir: state, importer: noOar,
+    await drive({ host: fake.host, key: "ag_box", runtime: saved, slots: 1 }, [],
+      { version: "t", stateDir: state, importer: noOar,
         say: (line) => said.push(line),
         takeInventory: async () => [{ id: "claude", available: false }, { id: "codex", available: true, via: "cli" }] });
     fake.close();
@@ -580,4 +520,16 @@ test("a hub uses the runtime that is installed, whatever was saved", async () =>
     assert.equal(said.some((line) => line.includes("Claude Code is not installed here; using Codex.")),
       saved === "claude");
   }
+});
+
+test("a gate still working on the agent's own submission is not a failed placement", async () => {
+  const { submitKernelDiff } = await import("../bin/runner.mjs");
+  const fetchImpl = async () => ({ ok: false, status: 409,
+    json: async () => ({ error: { code: "submission_in_progress", message: "wait" } }) });
+  const result = await submitKernelDiff(fetchImpl, { host: "https://h", key: "k" }, "T-1", "diff");
+  assert.equal(result.already_submitted, true);
+  const refused = async () => ({ ok: false, status: 409,
+    json: async () => ({ error: { code: "lease_not_active", message: "gone" } }) });
+  await assert.rejects(submitKernelDiff(refused, { host: "https://h", key: "k" }, "T-1", "diff"),
+    (error) => error.code === "lease_not_active");
 });

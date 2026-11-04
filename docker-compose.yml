@@ -176,8 +176,8 @@ services:
 
   api:
     build:
-      context: ./AgentGraph
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: deploy/Dockerfile.api
     image: ${VEYNOD_IMAGE_PREFIX:-veynod}-api:${VEYNOD_VERSION:-dev}
     env_file:
       - path: .env

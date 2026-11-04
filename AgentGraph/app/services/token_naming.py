@@ -242,6 +242,16 @@ async def migrate_rename(session: AsyncSession, workspace: Workspace,
     ]))
     old_refs = [f"agent:{label}" for label in labels]
     new_ref = f"agent:{updated['agent_id']}"
+    return await migrate_refs(session, workspace, old_refs, new_ref)
+
+
+async def migrate_refs(session: AsyncSession, workspace: Workspace,
+                       old_refs: list[str], new_ref: str) -> dict[str, Any]:
+    """Point every task reference at ``new_ref`` and report the documents that name an old one.
+
+    Rename and merge both end here, so an identity is never moved in one place
+    and left behind in another.
+    """
     assignee = await session.execute(text(
         "UPDATE collab_tasks SET assignee = :new, version = version + 1, "
         "updated_at = NOW() WHERE workspace_id = :ws "
@@ -265,6 +275,7 @@ async def migrate_rename(session: AsyncSession, workspace: Workspace,
                 "version = version + 1, updated_at = NOW() WHERE id = :id"),
                 {"m": json.dumps(replaced), "id": task["id"]})
             mention_count += 1
+    labels = [ref.removeprefix("agent:") for ref in old_refs]
     patterns = list(dict.fromkeys(
         pattern for label in labels
         for pattern in (f"%agent:{label.lower()}%", f"%@{label.lower()}%")

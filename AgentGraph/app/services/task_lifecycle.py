@@ -214,8 +214,9 @@ async def kernel_binding_for(
     for row in rows:
         if row["repo_path"] == (repo_path or ""):
             return _binding(row)
-    if rows:
-        return _binding(rows[0])
+    # A binding for another repository never applies: falling back to the
+    # first row bound this repository's tasks to that repository's Kernel
+    # workspace, so their patches were gated and merged into the wrong code.
     if settings.kernel_url and settings.kernel_workspace_id:
         return {
             "base_url": settings.kernel_url,

@@ -146,7 +146,6 @@ async def kernel():
         "VN_ADMIN_API_KEY": ADMIN_KEY,
         "VN_RUNTIME_SERVICE_KEY": SERVICE_KEY,
         "VN_REPO_ROOT": str(repo),
-        "VN_LEGACY_SUBMIT_MODE": "sync",
     }
     # The Kernel's output goes to a log so a failed start says why
     # (``KERNEL_PYTHON`` without the Kernel's requirements, for example).
@@ -274,19 +273,24 @@ async def _deliver_through_kernel(kernel: dict, bound: dict) -> str:
                              check=True, capture_output=True, text=True).stdout.strip()
         diff = subprocess.run(["git", "diff", bundle["base_commit_sha"], sha], cwd=worktree,
                               check=True, capture_output=True, text=True).stdout
-        # The synchronous endpoint runs the same gate inline: it keeps this
-        # test about the projection, not about the gate queue's timing.
+        # The one submit path: v2 answers 202 and the gate worker process
+        # runs the five gates and the merge; poll the submission to its end.
         sent = await client.post(
-            "/v1/syscalls/submit_patch",
+            "/v2/syscalls/submit_patch",
+            headers={"Idempotency-Key": f"chunk-{uuid.uuid4().hex}"},
             json={"task_id": bound["kernel_task_id"], "lease_token": bundle["lease_token"],
                   "git_diff": diff, "touched_symbols": ["main.py"],
                   "local_test_passed": True})
         assert sent.status_code in (200, 202), sent.text
         body = sent.json()
-        # The sync endpoint returns the verdict inline.
-        assert body.get("new_status") == "COMMITTED", body
-        assert body.get("committed_revision_hash"), body
-        return str(body["committed_revision_hash"])
+        for _ in range(240):
+            if body.get("final"):
+                break
+            await asyncio.sleep(0.5)
+            body = (await client.get(f"/v2/submissions/{body['submission_id']}")).json()
+        assert body.get("final") and body.get("status") == "COMMITTED", body
+        assert body.get("result_commit_sha"), body
+        return str(body["result_commit_sha"])
 
 
 async def test_a_chunk_is_delivered_by_the_kernel_and_only_then_does_the_graph_move(
@@ -391,7 +395,8 @@ async def test_the_reconciler_projects_a_lost_commit_event(kernel) -> None:
 
     # The reconciler's own read, so a failure below is not the SQL's fault.
     async with async_session_factory() as probe_session:
-        binding = await kernel_binding_for(probe_session, ws["id"], None, None)
+        # Ask for the repository that was bound: a binding never applies to another one.
+        binding = await kernel_binding_for(probe_session, ws["id"], None, REPO)
         assert binding, "no kernel binding"
         plane = kernel_delivery.plane_for(binding, admin_key=ADMIN_KEY)
         try:

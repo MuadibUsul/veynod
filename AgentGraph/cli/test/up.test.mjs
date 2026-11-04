@@ -5,10 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { acquireLock, agentName, doctor, doctorOk, hubWorkers, keyPath, loadConfig, saveConfig, storeKey, upPlan } from "../bin/up.mjs";
+import { acquireLock, agentName, doctor, doctorOk, hubWorkers, keyPath, loadConfig, reuseIdentities, saveConfig, storeKey, upPlan } from "../bin/up.mjs";
 import { connect, parseArgs, sealForTest, servicePlan, settledDoctor } from "../bin/veynod.mjs";
 
-test("up plans one worker when slots=1; a review twin only above that", () => {
+test("up plans one identity per computer, whatever the slots", () => {
   const home = mkdtempSync(join(tmpdir(), "veynod-up-"));
   const quiet = upPlan(parseArgs(["up", "--name", "Box 1"]), { home, clients: ["cursor"] });
   assert.deepEqual(quiet.identities.map((item) => [item.role, item.label, item.wants_role]),
@@ -19,26 +19,21 @@ test("up plans one worker when slots=1; a review twin only above that", () => {
   const busy = upPlan(parseArgs(["up", "--run-tasks", "--slots", "1", "--name", "box", "--repo", "acme/site"]), { home });
   assert.deepEqual(busy.identities.map((item) => [item.role, item.label, item.wants_role]),
     [["computer", "box", "EXECUTOR"]]);
-  assert.equal(busy.review_twin, false);
   assert.equal(busy.workers, 1);
-  assert.equal(busy.hub.delivery, "kernel");
   assert.equal(busy.hub.mode, "runner");
   assert.deepEqual(busy.hub.repos, ["acme/site"]);
   assert.deepEqual(busy.files, [join(home, ".veynod", "config.json"), keyPath("box", home)]);
 
-  const wider = upPlan(parseArgs(["up", "--run-tasks", "--slots", "2", "--name", "box"]), { home });
-  assert.equal(wider.review_twin, true);
-  assert.deepEqual(wider.identities.map((item) => item.role), ["computer", "review"]);
-
-  const legacy = upPlan(parseArgs(["up", "--run-tasks", "--legacy-review", "--name", "box"]), { home });
-  assert.equal(legacy.review_twin, true);
+  // More slots are more workers on the same identity, never a second "-review" one.
+  const wider = upPlan(parseArgs(["up", "--run-tasks", "--slots", "3", "--name", "box"]), { home });
+  assert.deepEqual(wider.identities.map((item) => item.role), ["computer"]);
+  assert.equal(wider.hub.slots, 3);
 });
 
-test("slots=1 does not start a stored -review identity", () => {
+test("a stored -review identity from an older setup is never started", () => {
   const workers = hubWorkers({
     run_tasks: true,
-    slots: 1,
-    delivery: "kernel",
+    slots: 4,
     identities: [
       { role: "computer", agent_id: "grok-bot-vm-169236189" },
       { role: "review", agent_id: "grok-bot-vm-169236189-review" },
@@ -116,8 +111,8 @@ test("doctor: not connected, then what the computer and the board are missing", 
   assert.equal(byId["key:box"].ok, true);
   assert.equal(byId.node.ok, false);
   assert.equal(byId.node.required, false, "old Node falls back to the runtime's CLI");
-  assert.equal(byId.reviewer.ok, true, "slots=1 uses the kernel gate, not a review twin");
-  assert.match(byId.reviewer.text, /review_twin=absent/);
+  assert.equal(byId.reviewer.ok, true, "the Kernel gate and a person review; no review twin");
+  assert.match(byId.reviewer.text, /Kernel gate/);
   assert.equal(byId["board:reviewer"].ok, false);
   assert.equal(byId["board:reviewer"].fix, "Approve -review.");
   assert.equal(doctorOk(checks), false);
@@ -226,4 +221,49 @@ test("the doctor counts whichever runtime is installed when none was chosen", as
     assert.equal(check.text, text);
     if (!ok) assert.match(check.fix, /command-line tool, not the desktop app/);
   }
+});
+
+test("an identity the plan no longer wants is parked, not forgotten", () => {
+  const plan = { identities: [{ role: "computer", label: "box" }] };
+  const previous = { host: "https://veynod.com", identities: [
+    { role: "computer", agent_id: "box", key_file: "/k/box.key" },
+    { role: "review", agent_id: "box-review", key_file: "/k/box-review.key" },
+  ] };
+  const exists = () => true;
+  const reused = reuseIdentities(plan, previous, { host: "https://veynod.com", exists });
+  assert.deepEqual(reused.identities.map((item) => item.agent_id), ["box"]);
+  assert.deepEqual(reused.missing, []);
+  assert.deepEqual(reused.parked.map((item) => item.agent_id), ["box-review"]);
+  // Asking for the twin again reuses the parked key: no box-review-2 on the board.
+  const twin = { identities: [...plan.identities, { role: "review", label: "box-review" }] };
+  const again = reuseIdentities(twin, previous, { host: "https://veynod.com", exists });
+  assert.deepEqual(again.identities.map((item) => item.agent_id), ["box", "box-review"]);
+  assert.deepEqual(again.missing, []);
+  // Another board, --fresh, or a lost key file asks again.
+  assert.equal(reuseIdentities(plan, previous, { host: "https://other.example", exists }).missing.length, 1);
+  assert.equal(reuseIdentities(plan, previous, { host: "https://veynod.com", fresh: true, exists }).missing.length, 1);
+  assert.equal(reuseIdentities(plan, previous, { host: "https://veynod.com", exists: () => false }).missing.length, 1);
+  // The hub never starts a parked review seat on slots=1, in either mode.
+  for (const run_tasks of [true, false]) {
+    const workers = hubWorkers({ run_tasks, slots: 1, identities: previous.identities });
+    assert.deepEqual(workers.map((item) => item.agent_id), ["box"]);
+  }
+});
+
+test("a parked identity the board refuses does not turn the doctor red", async () => {
+  const home = mkdtempSync(join(tmpdir(), "veynod-park-"));
+  const config = { host: "https://veynod.test", run_tasks: true, slots: 1, delivery: "kernel", runtime: "custom",
+    exec: "true", identities: [
+      { role: "computer", agent_id: "box", key_file: storeKey("box", "agt_box", home) },
+      { role: "review", agent_id: "box-review", key_file: storeKey("box-review", "agt_review", home) },
+    ] };
+  const fetchImpl = async (url, init) => {
+    const ok = init.headers.Authorization === "Bearer agt_box";
+    return { status: url.endsWith("/v1/whoami") ? (ok ? 200 : 401) : 404, json: async () => ({}) };
+  };
+  const checks = await doctor({ home, config, fetchImpl, run: () => "", nodeVersion: "24.0.0" });
+  const parked = checks.find((item) => item.id === "key:box-review");
+  assert.equal(parked.ok, false);
+  assert.equal(parked.required, false);
+  assert.ok(doctorOk(checks), JSON.stringify(checks.filter((item) => !item.ok)));
 });

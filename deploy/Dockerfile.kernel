@@ -52,7 +52,6 @@ RUN if ls /tmp/wheels/*.whl >/dev/null 2>&1; then \
 
 COPY veynod_kernel/app ./app
 COPY veynod_kernel/sql ./sql
-COPY veynod_kernel/cli ./cli
 COPY veynod_kernel/scripts ./scripts
 COPY contracts ./contracts
 

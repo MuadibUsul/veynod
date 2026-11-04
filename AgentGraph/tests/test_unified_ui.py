@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import httpx
 import pytest
+
+# app/main.py mounts the console only when the Next.js export exists.
+CONSOLE_BUILT = (Path(__file__).resolve().parents[1] / "dashboard" / "out").is_dir()
 
 
 @pytest.mark.integration
@@ -20,6 +25,7 @@ async def test_former_technical_consoles_redirect_to_the_product(
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(not CONSOLE_BUILT, reason="no console export (npm run build in dashboard/)")
 async def test_the_product_page_has_no_technical_console_navigation(
     client: httpx.AsyncClient,
 ) -> None:
