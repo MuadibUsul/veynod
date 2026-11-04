@@ -17,8 +17,15 @@
 > 4. **只留 Kernel 与 nerve**（2026-11-04）：旧交付路径、SSE 派发、独立 worker 模式全部删除；CLI 升到 0.6.0，
 >    服务端拒绝给旧 CLI 派活并在 doctor 与控制台点名。上线按 [RELEASE_0.6.0.md](../RELEASE_0.6.0.md) 逐项执行。
 >
+> 5. **部署门 v2**（2026-11-04）：任何项目都能打开自动部署（每次合并 / 时间窗口 / 手动），
+>    部署电脑 `veynod up --deploy` 经 nerve 接 `step = deploy` 的放置；CI 按输入哈希增量构建并推 GHCR；
+>    只重启 digest 变了的服务，失败自动回滚并进“需要你”。说明与 Veynod VPS 的启用步骤、v1 退役计划见
+>    [DEPLOYS.md](../DEPLOYS.md)（迁移 `v3_82`）。同批修了 main 上 #94 之后的 CI 竞态：
+>    另一进程的调度把 nerve 派发中的租约 epoch 误当认领。
+>
 > 仍需人来决定：`AgentGraph/docker-compose.prod.yml` 仍管理生产数据库容器 `veynod-db-1`，
-> 把它并入 unified 编排需要一次有备份的维护窗口；G10 生产对齐（迁移 `v4_017`、`v3_80`、`v3_81`）。
+> 把它并入 unified 编排需要一次有备份的维护窗口；G10 生产对齐（迁移 `v4_017`、`v3_80`、`v3_81`、`v3_82`）；
+> Veynod VPS 启用 v2 需要 owner 生成发布令牌并设为 GitHub Secret `VEYNOD_RELEASE_TOKEN`。
 
 ---
 
