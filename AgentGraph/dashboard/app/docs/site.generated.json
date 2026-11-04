@@ -4741,7 +4741,14 @@
        "summary": "One delegation, its history and cost receipts"
       },
       {
-       "body": [],
+       "body": [
+        {
+         "description": "",
+         "name": "reason",
+         "required": true,
+         "type": "string"
+        }
+       ],
        "description": "",
        "method": "POST",
        "parameters": [
@@ -4753,12 +4760,39 @@
          "type": "string"
         }
        ],
+       "path": "/v1/federation/delegations/{job_id}/cancel",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Requester: ask the provider to stop (a person; the work may still deliver)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "job_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "resign",
+         "required": false,
+         "type": "boolean"
+        }
+       ],
        "path": "/v1/federation/delegations/{job_id}/sync",
        "responses": [
         "200",
         "422"
        ],
-       "summary": "Re-send this side's undelivered objects"
+       "summary": "Re-send this side's undelivered objects (resign=true revives a dead letter)"
       },
       {
        "body": [],
@@ -4785,7 +4819,7 @@
         "200",
         "422"
        ],
-       "summary": "Provider: accept, reject (people) or submit; requester: accept_result, revise, dispute (people)"
+       "summary": "Provider: accept, reject, cancel_ack (people) or submit; requester: accept_result, revise, dispute (people)"
       },
       {
        "body": [],
