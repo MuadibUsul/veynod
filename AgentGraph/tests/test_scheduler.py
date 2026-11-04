@@ -287,3 +287,55 @@ async def test_a_cli_older_than_nerve_dispatch_is_named_and_never_offered_work(c
     new = await _host(client, ws, f"new-{uuid.uuid4().hex[:4]}", version="0.6.0")
     await _schedule(client, ws)
     assert (await _task_row(client, ws, key))["assignee"] == new["assignee"]
+
+
+async def test_concurrent_passes_on_one_workspace_do_not_collide(client, monkeypatch):
+    """A pass by hand (/v1/runner/schedule) and the background pass used to run
+    on the same workspace at once: the later one ended a placement from its
+    stale read and broke uq_runner_placements_open (503 database_unavailable).
+    Passes on one workspace now take turns."""
+    import asyncio
+
+    from app.database import async_session_factory
+    from app.services import scheduler
+
+    ws = await _workspace(client, "full")
+    first = await _host(client, ws, f"aa-{uuid.uuid4().hex[:4]}", slots=3)
+    await _host(client, ws, f"bb-{uuid.uuid4().hex[:4]}", slots=1)
+    key = await _task(client, ws)
+    await _schedule(client, ws)
+    claimed = await _claim(client, first, key)
+    released = await client.post(f"/v1/tasks/{key}/release", headers=first["headers"],
+                                 json={"lease_epoch": claimed["task"]["lease_epoch"],
+                                       "reason": "could not finish"})
+    assert released.status_code == 200, released.text
+
+    # The slow pass reads the open placements, then stalls before acting on them.
+    stalled = asyncio.Event()
+    resume = asyncio.Event()
+    real_chunk_states = scheduler._chunk_states
+
+    async def chunk_states(session, workspace_id):
+        if asyncio.current_task().get_name() == "slow-pass":
+            stalled.set()
+            await resume.wait()
+        return await real_chunk_states(session, workspace_id)
+
+    monkeypatch.setattr(scheduler, "_chunk_states", chunk_states)
+
+    async def one_pass():
+        async with async_session_factory() as session:
+            return await scheduler.run_pass(session, ws["id"])
+
+    slow = asyncio.create_task(one_pass(), name="slow-pass")
+    await asyncio.wait_for(stalled.wait(), timeout=10)
+    fast = asyncio.create_task(one_pass(), name="fast-pass")
+    # Without turns the fast pass finishes here; with them it waits for the slow one.
+    await asyncio.wait([fast], timeout=2)
+    resume.set()
+    results = await asyncio.gather(slow, fast, return_exceptions=True)
+    assert not [r for r in results if isinstance(r, BaseException)], results
+
+    open_rows = [item for item in await _placements(client, ws, key)
+                 if item["status"] in ("suggested", "offered", "claimed", "unplaced")]
+    assert len(open_rows) <= 1
