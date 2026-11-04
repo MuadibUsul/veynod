@@ -41,6 +41,7 @@ do not edit by hand. Every error body is
 | `database_unavailable` | 503 | `retry_backoff` | `backoff_then_retry_same_request` | Back off and retry. |
 | `google_unavailable` | 503 | `retry_backoff` | `backoff_then_retry_same_request` | Back off and retry sign-in. |
 | `tenant_context_unavailable` | 503 | `retry_backoff` | `backoff_then_retry_same_request` | Back off and retry. |
+| `federation_conflict` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Re-read the connection; its state changed or the object is stale. |
 | `proposal_conflict` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Re-read the document and rebase the proposal. |
 | `rebase_conflict` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Re-read from base_version and redo non-overlapping edits. |
 | `section_conflict` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Re-read the section, then rewrite. |
@@ -126,6 +127,7 @@ do not edit by hand. Every error body is
 | `empty_impact` | 422 | `fix_request` | `fix_request_then_resend` | File a change that touches at least one chunk. |
 | `expected_version_required` | 422 | `fix_request` | `fix_request_then_resend` | Read get_agent and pass expected_version before renaming. |
 | `export_format_unsupported` | 422 | `fix_request` | `fix_request_then_resend` | Use a supported export format. |
+| `federation_invalid` | 422 | `fix_request` | `fix_request_then_resend` | Fix the request per details.federation_code. |
 | `insecure_target_url` | 422 | `fix_request` | `fix_request_then_resend` | Use an https URL. |
 | `invalid_address` | 422 | `fix_request` | `fix_request_then_resend` | Fix the address per details. |
 | `invalid_dependency` | 422 | `fix_request` | `fix_request_then_resend` | Fix the dependency per details. |
@@ -202,6 +204,7 @@ do not edit by hand. Every error body is
 | `scope_escalation` | 403 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `self_vote_forbidden` | 403 | `abandon` | `abandon_and_release_local_state` | Agents cannot vote on their own proposals. |
 | `signup_disabled` | 403 | `abandon` | `abandon_and_release_local_state` | Ask an owner for an invitation. |
+| `federation_not_found` | 404 | `abandon` | `abandon_and_release_local_state` | The identity, handle or connection does not exist. |
 | `invalid_device_code` | 404 | `abandon` | `abandon_and_release_local_state` | Start a new setup with `npx veynod init`. |
 | `lease_not_found` | 404 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `not_found` | 404 | `abandon` | `abandon_and_release_local_state` | Give up; cross-tenant access also returns 404. |
@@ -262,11 +265,13 @@ do not edit by hand. Every error body is
 | `commander_grant_expired` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the owner to issue a fresh grant. |
 | `commander_grant_required` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the owner for a grant, then send X-Commander-Grant-Id. |
 | `feature_disabled` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Switched off here; ask an operator (details.setting). |
+| `federation_forbidden` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Read details.federation_code: an owner must act, or the connection does not allow it. |
 | `operator_content_denied` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the workspace owner to open support access in the console. |
 | `operator_write_denied` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the owner to reopen support access with changes allowed. |
 | `role_permission_denied` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Ask the human OWNER; this capability is not delegated. |
 | `tenant_deleting` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Stop; only an owner can cancel deletion or fetch the export. |
 | `tenant_suspended` | 403 | `escalate_human` | `stop_and_escalate_to_human` | Stop writing and notify a human; reads and export still work. |
+| `federation_disabled` | 404 | `escalate_human` | `stop_and_escalate_to_human` | A person turns federation on for the deployment first. |
 | `backup_chain_broken` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Restore from an older full backup or take a new one. |
 | `backups_not_configured` | 409 | `escalate_human` | `stop_and_escalate_to_human` | An operator must configure backup storage. |
 | `confirmation_required` | 409 | `escalate_human` | `stop_and_escalate_to_human` | Wait for details.pending_confirmations. |
@@ -285,6 +290,7 @@ do not edit by hand. Every error body is
 | `circuit_open` | 429 | `escalate_human` | `stop_and_escalate_to_human` | Stop the loop; call agent_escalate_to_human. |
 | `mcp_not_configured` | 500 | `escalate_human` | `stop_and_escalate_to_human` | An operator must set MCP_API_KEY. |
 | `admin_disabled` | 503 | `escalate_human` | `stop_and_escalate_to_human` | ADMIN_TOKEN is not configured. |
+| `federation_unavailable` | 503 | `escalate_human` | `stop_and_escalate_to_human` | The owner must configure FEDERATION_KEK on this deployment. |
 | `google_login_not_configured` | 503 | `escalate_human` | `stop_and_escalate_to_human` | An operator must configure Google sign-in. |
 
 ## Warnings
