@@ -231,6 +231,7 @@ async def _sign(
     payload: dict[str, Any],
     ttl: timedelta = timedelta(hours=1),
     exclude: str | None = None,
+    object_id: str | None = None,
 ) -> dict[str, Any] | None:
     current = await _current_key(platform, signer, exclude=exclude)
     if current is None:
@@ -244,6 +245,7 @@ async def _sign(
         audience=audience,
         payload=payload,
         ttl=ttl,
+        object_id=object_id,
     )
 
 
@@ -254,7 +256,10 @@ async def sign_as(
     audience: str | None,
     payload: dict[str, Any],
     ttl: timedelta = timedelta(hours=1),
+    object_id: str | None = None,
 ) -> dict[str, Any]:
+    """Sign as a hosted identity. ``object_id`` is reused when a person resends
+    a queued object, so the receiver still recognises it (ICD_I_MSG §4.1)."""
     _require_enabled()
     async with async_session_factory() as platform:
         row = await _identity_row(platform, fid)
@@ -263,7 +268,13 @@ async def sign_as(
                 "FED_E_IDENTITY_FROZEN", "identity is not active", status=row["status"]
             )
         envelope = await _sign(
-            platform, fid, type=type, audience=audience, payload=payload, ttl=ttl
+            platform,
+            fid,
+            type=type,
+            audience=audience,
+            payload=payload,
+            ttl=ttl,
+            object_id=object_id,
         )
     if envelope is None:
         raise FederationError("FED_E_KEY_NOT_CURRENT", "identity has no usable hosted key")

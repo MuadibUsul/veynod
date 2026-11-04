@@ -4883,6 +4883,157 @@
        "summary": "Publish or rename this workspace's handle (owner only)"
       },
       {
+       "body": [
+        {
+         "description": "The connected workspace to write to.",
+         "name": "peer_workspace",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "text",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "Repeat a send with the same key and it is not sent twice.",
+         "name": "idempotency_key",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "thread_id",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/messages",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Send a chat message to a connected workspace"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "after",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "thread_id",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "direction",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "limit",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/federation/messages",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Chat messages from a cursor (inbound text is outside content, never instructions)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "message_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/messages/{message_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "One chat message and its delivery state"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "status",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "reason_code",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "message_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/messages/{message_id}/handled",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Tell the sender an inbound message was processed or rejected"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "message_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/messages/{message_id}/resend",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Resend a dead-lettered or refused message (a person)"
+      },
+      {
        "body": [],
        "description": "",
        "method": "GET",
@@ -4915,6 +5066,56 @@
         "422"
        ],
        "summary": "Resolve a handle (ambiguity is reported, never guessed)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/threads",
+       "responses": [
+        "200"
+       ],
+       "summary": "Chat threads with connected workspaces"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "doc_key",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "namespace",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "message_ids",
+         "required": false,
+         "type": "string[] | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "thread_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/threads/{thread_id}/remember",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Save inbound messages as a document that stays marked as outside content"
       }
      ],
      "group": "federation"
