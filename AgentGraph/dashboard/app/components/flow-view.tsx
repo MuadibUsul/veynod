@@ -68,6 +68,9 @@ export type Overview = {
     // why: "review" when the person is the task's reviewer, "answer" when an agent asked.
     waiting: { key: string; title: string; since: string | null; asked_by: string | null;
       why?: "review" | "answer" }[];
+    // Deploy gate v2: failed or rolled-back deploys no one has seen (absent on older servers).
+    deploys?: { run_id: string; project: string; target: string; commit: string | null;
+      status: "failed" | "rolled_back"; note: string | null; ended_at: string | null }[];
   };
   today: { approved: number; returned: number; done: number; hours: { approved: number; done: number }[] };
   agents: FlowAgent[];

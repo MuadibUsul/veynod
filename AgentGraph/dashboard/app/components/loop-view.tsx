@@ -7,6 +7,7 @@ import type { ApiRequest } from "../types";
 import { relativeTime } from "../types";
 import { ArchivePanel } from "./archive-panel";
 import { AutomationModeCard } from "./automation";
+import { DeploysPanel } from "./deploys-panel";
 import { Pipeline, Roster, Timeline, waited, type Overview } from "./flow-view";
 import { HostsPanel } from "./hosts-panel";
 import { useWorkspaceStream, type StreamEvent } from "./use-workspace-stream";
@@ -194,6 +195,17 @@ export function LoopView({
       action: { label: t("How to ship"), href: "/dashboard/deploy/" },
     });
   }
+  for (const run of overview?.needs_you.deploys ?? []) {
+    needs.push({
+      key: `deploy-run-${run.run_id}`, tone: "red",
+      title: run.status === "rolled_back"
+        ? t("A deploy of {project} was rolled back", { project: run.project })
+        : t("A deploy of {project} failed", { project: run.project }),
+      detail: [run.commit?.slice(0, 7), run.note, waited(run.ended_at, t)].filter(Boolean).join(" · "),
+      action: { label: t("Deploys"), run: () => document.getElementById("loop-deploys")
+        ?.scrollIntoView({ behavior: "smooth", block: "center" }) },
+    });
+  }
   const waitingItems = overview?.needs_you.waiting ?? [];
   const listed = new Set(waitingItems.map((item) => item.key));
   for (const item of waitingItems.slice(0, 3)) {
@@ -335,6 +347,8 @@ export function LoopView({
       </div>
 
       {editingMode && sessionMode && <AutomationModeCard request={request} notify={notify} />}
+
+      <DeploysPanel request={request} notify={notify} canManage={sessionMode} refreshKey={hostsKey} />
 
       {overview ? (
         <Pipeline overview={overview} live={live} onOpenTask={onOpenTask} onOpenDiagram={onOpenDiagram}
