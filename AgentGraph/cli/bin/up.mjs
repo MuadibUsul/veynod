@@ -201,7 +201,8 @@ export async function runHub(options, { listen, runComputer, version, say = () =
         // Work arrives only over the nerve socket the messenger holds.
         const messenger = await runComputer({ host, key, agent: identity.agent_id,
           runtime: config.runtime || "", exec: config.exec || "", slots: config.slots || 1,
-          repos: config.repos || [] }, { version, say: tag });
+          repos: config.repos || [], ...(config.deploy ? { deploy: config.deploy } : {}) },
+        { version, say: tag });
         releases.push(() => messenger.stop());
         loops.push(forever());
       } else {
@@ -272,7 +273,17 @@ export async function doctor({ home = defaultHome(), config = loadConfig(home), 
     major >= NODE_FOR_OAR ? `Node ${nodeVersion}: OAR can drive the runtimes.`
       : `Node ${nodeVersion}: below ${NODE_FOR_OAR}, so OAR is unavailable and the runtime's CLI is used.`,
     major >= NODE_FOR_OAR ? null : `Install Node ${NODE_FOR_OAR} or newer for OAR (quota-aware, pinned sessions).`);
-  if (config.run_tasks) {
+  if (config.run_tasks && config.deploy) {
+    // A deploy computer: docker and its compose directory, no agent runtime.
+    const docker = onPath(run, "docker");
+    add("docker", docker, true, docker ? "docker is installed." : "docker is missing.",
+      docker ? null : "Install Docker with the compose plugin (`docker compose version`).");
+    const dir = config.deploy.dir;
+    const there = Boolean(dir) && existsSync(join(dir, config.deploy.file || "docker-compose.yml"));
+    add("compose", there, true, there ? `Deploys run in ${dir}.`
+      : `No compose file ${config.deploy.file || "docker-compose.yml"} in ${dir || "(no directory)"}.`,
+    there ? null : "Run `veynod up --deploy --compose-dir DIR --compose-file FILE` with the right path.");
+  } else if (config.run_tasks) {
     add("reviewer", true, false,
       "The Kernel gate reviews code built here; a person reviews what no other computer can.");
     // No saved runtime means the hub uses whichever is here.

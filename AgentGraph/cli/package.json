@@ -11,6 +11,7 @@
     "bin/runner.mjs",
     "bin/up.mjs",
     "bin/veynod-messenger.mjs",
+    "bin/deploy.mjs",
     "README.md",
     "USAGE.md",
     "LICENSE"

@@ -293,7 +293,8 @@ export class Messenger {
  */
 export async function runComputer(options, { say = () => {}, version, createRunner, spawner } = {}) {
   const make = createRunner ?? (await import("./runner.mjs")).createRunner;
-  const runnerOptions = { repos: options.repos || [], runtime: options.runtime || "", exec: options.exec || "" };
+  const runnerOptions = { repos: options.repos || [], runtime: options.runtime || "", exec: options.exec || "",
+    ...(options.deploy ? { deploy: options.deploy } : {}) };
   const messenger = new Messenger({
     host: options.host, key: options.key, agentId: options.agent, slots: options.slots,
     runnerOptions, say, ...(spawner ? { spawner } : {}),
