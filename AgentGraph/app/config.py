@@ -291,6 +291,20 @@ class Settings(BaseSettings):
     default_monthly_cost_budget_usd: float = Field(default=1000.0, ge=0)
     default_max_concurrent_leases: int = Field(default=100, ge=1)
 
+    # ------------------------------------------------------------ federation
+    # Off by default (ADR-008, I-ID ID-INV-5): no federation identity exists
+    # and no federation code path runs until an owner turns this on.
+    federation_enabled: bool = False
+    # Base64 of 32 random bytes; seals hosted federation private keys
+    # (ADR-013). Generated and delivered by the owner; required to create a
+    # hosted identity. Never logged.
+    federation_kek: str = ""
+    federation_kek_id: str = "kek-1"
+    # I-ID TBD-7 placeholders (P1): rotation overlap, record lifetime, skew.
+    federation_key_overlap_days: int = Field(default=7, ge=1, le=30)
+    federation_record_lifetime_days: int = Field(default=365, ge=1, le=3650)
+    federation_clock_skew_seconds: int = Field(default=120, ge=0, le=900)
+
     # ---------------------------------------------------- outbound actions
     outbound_dispatch_interval_seconds: int = Field(default=5, ge=1, le=300)
     outbound_max_attempts: int = Field(default=5, ge=1, le=20)
