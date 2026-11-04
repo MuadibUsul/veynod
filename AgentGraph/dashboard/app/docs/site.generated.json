@@ -1918,6 +1918,74 @@
        "body": [
         {
          "description": "",
+         "name": "commit",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "branch",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "manifest",
+         "required": true,
+         "type": "object"
+        },
+        {
+         "description": "",
+         "name": "built",
+         "required": false,
+         "type": "string[]"
+        },
+        {
+         "description": "",
+         "name": "source",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/deploys/releases",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "CI: a merged commit's images are pushed (X-Veynod-Release-Token)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "run_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/deploys/runs/{run_id}/acknowledge",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A person has seen a failed or rolled-back deploy"
+      }
+     ],
+     "group": "deploys"
+    },
+    {
+     "endpoints": [
+      {
+       "body": [
+        {
+         "description": "",
          "name": "uri",
          "required": true,
          "type": "string"
@@ -8092,6 +8160,170 @@
          "name": "project",
          "required": true,
          "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "limit",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/projects/{project}/deploys",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A project's deploy targets, recent releases and runs"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "enabled",
+         "required": false,
+         "type": "boolean | null"
+        },
+        {
+         "description": "",
+         "name": "branch",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "trigger",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "schedule",
+         "required": false,
+         "type": "object | null"
+        },
+        {
+         "description": "",
+         "name": "host_id",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "health_url",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "health_timeout_s",
+         "required": false,
+         "type": "integer | null"
+        },
+        {
+         "description": "",
+         "name": "auto_rollback",
+         "required": false,
+         "type": "boolean | null"
+        }
+       ],
+       "description": "",
+       "method": "PUT",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "project",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "target",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/projects/{project}/deploys/{target}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Create or change a deploy target (people only)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "project",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "target",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/projects/{project}/deploys/{target}/release-token",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A new release token for CI (shown once; people only)"
+      },
+      {
+       "body": [
+        {
+         "description": "Leave out for the newest release; an older commit rolls the target back to it.",
+         "name": "commit",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "project",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "target",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/projects/{project}/deploys/{target}/run",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Deploy the newest release now, or roll back to a named commit"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "project",
+         "required": true,
+         "type": "string"
         }
        ],
        "path": "/v1/projects/{project}/execution",
@@ -9274,6 +9506,57 @@
         "422"
        ],
        "summary": "One placement with its detail; a supervise round carries its agenda"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "status",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "note",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "log",
+         "required": false,
+         "type": "string[]"
+        },
+        {
+         "description": "",
+         "name": "services",
+         "required": false,
+         "type": "object"
+        },
+        {
+         "description": "",
+         "name": "health",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "placement_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/runner/placements/{placement_id}/deploy-report",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The deploy computer reports a run: running, deployed, rolled_back, failed"
       },
       {
        "body": [

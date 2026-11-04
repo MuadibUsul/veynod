@@ -18,7 +18,7 @@
 // and again here.
 
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 
 const NAME = /^[A-Za-z0-9_-]{1,64}$/;
@@ -169,8 +169,12 @@ export async function runDeploy(options, placementId, {
   const previous = detail.previous?.manifest || {};
   const changed = (detail.plan?.changed || []).filter((name) => NAME.test(name));
   const envFile = join(settings.dir, ".veynod", "deploy.env");
-  const compose = (args) => run("docker", ["compose", "-f", settings.file, "--env-file", envFile, ...args],
-    { cwd: settings.dir });
+  // --env-file replaces the default .env, so name it first: its secrets stay,
+  // and the pinned images in deploy.env override any tag set there.
+  const envArgs = [...(existsSync(join(settings.dir, ".env")) ? ["--env-file", join(settings.dir, ".env")] : []),
+    "--env-file", envFile];
+  const composeArgs = (args) => ["compose", "-f", settings.file, ...envArgs, ...args];
+  const compose = (args) => run("docker", composeArgs(args), { cwd: settings.dir });
   await report("running", { note: `deploying ${detail.release?.commit ?? "?"}: ${changed.join(", ") || "nothing"}` });
 
   let services;
@@ -196,15 +200,15 @@ export async function runDeploy(options, placementId, {
   let failure = null;
   if (settings.before) {
     const [command, ...args] = hookArgs(settings.before);
-    if (!await step("before deploy", command, args, { env: { VEYNOD_DEPLOY_ENV: envFile } })) {
+    if (!await step("before deploy", command, args,
+      { env: { VEYNOD_DEPLOY_ENV: envFile, COMPOSE_FILE: settings.file } })) {
       failure = "the before-deploy hook failed";
     }
   }
   if (!failure && services.length) {
-    if (!await step("pull", "docker", ["compose", "-f", settings.file, "--env-file", envFile, "pull", ...services])) {
+    if (!await step("pull", "docker", composeArgs(["pull", ...services]))) {
       failure = "docker compose pull failed";
-    } else if (!await step("restart", "docker", ["compose", "-f", settings.file, "--env-file", envFile,
-      "up", "-d", "--no-deps", ...services])) {
+    } else if (!await step("restart", "docker", composeArgs(["up", "-d", "--no-deps", ...services]))) {
       failure = "docker compose up failed";
     }
   }

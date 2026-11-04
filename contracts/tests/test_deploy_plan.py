@@ -6,6 +6,7 @@ import pytest
 
 from contracts.deploy_plan import (
     DeployConfigError,
+    input_digest,
     parse_config,
     plan,
     services_for_paths,
@@ -102,3 +103,22 @@ def test_a_manifest_needs_an_image_and_a_real_digest() -> None:
                 {"a b": {"image": "i", "digest": _digest("a")}}):
         with pytest.raises(DeployConfigError):
             validate_manifest(bad)
+
+
+def test_an_input_digest_changes_only_with_what_the_image_is_built_from() -> None:
+    config = parse_config({**CONFIG, "services": {
+        **CONFIG["services"], "api": {**CONFIG["services"]["api"], "dockerfile": "deploy/Dockerfile.api"}}})
+    files = {"AgentGraph/app/main.py": "b1", "veynod_kernel/app/x.py": "b2",
+             "contracts/kernel_http.py": "b3", "docs/README.md": "b4",
+             "deploy/Dockerfile.api": "b5"}
+    api, kernel = input_digest(config, "api", files), input_digest(config, "kernel", files)
+    assert input_digest(config, "api", {**files, "docs/README.md": "b9"}) == api
+    assert input_digest(config, "api", {**files, "veynod_kernel/app/x.py": "b9"}) == api
+    assert input_digest(config, "api", {**files, "deploy/Dockerfile.api": "b9"}) != api
+    changed = {**files, "contracts/kernel_http.py": "b9"}
+    assert input_digest(config, "api", changed) != api
+    assert input_digest(config, "kernel", changed) != kernel
+    with pytest.raises(DeployConfigError):
+        input_digest(config, "nope", files)
+    with pytest.raises(DeployConfigError):
+        input_digest(parse_config({"services": {"x": {"paths": ["nowhere/**"]}}}), "x", files)

@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 REQUIREMENTS = [
     ROOT / "AgentGraph" / "requirements.txt",
@@ -58,3 +60,19 @@ def test_one_ci_and_one_cli() -> None:
     manifests = [p for p in ROOT.glob("**/package.json")
                  if "node_modules" not in p.parts and '"name": "veynod"' in p.read_text()]
     assert [p.relative_to(ROOT).as_posix() for p in manifests] == ["AgentGraph/cli/package.json"]
+
+
+def test_the_deploy_config_matches_the_dockerfiles_and_the_compose_file() -> None:
+    """Every released service has its Dockerfile, and runs as named compose services."""
+    yaml = pytest.importorskip("yaml")
+    from contracts.deploy_plan import parse_config
+
+    config = parse_config((ROOT / ".veynod" / "deploy.yml").read_text())
+    compose = yaml.safe_load((ROOT / "deploy" / "vps" / "docker-compose.unified.yml").read_text())
+    for service in config.services:
+        assert (ROOT / service.dockerfile).is_file(), service
+        assert service.image.startswith("ghcr.io/"), service
+        for name in service.compose:
+            image = compose["services"][name]["image"]
+            variable = "VEYNOD_IMAGE_" + service.name.upper().replace("-", "_")
+            assert image.startswith("${" + variable + ":-"), (name, image)

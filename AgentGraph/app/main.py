@@ -39,6 +39,7 @@ from app.api.code_routes import router as code_router
 from app.api.deploy_gate_routes import admin_router as deploy_gate_admin_router
 from app.api.deploy_gate_routes import public_router as deploy_gate_public_router
 from app.api.deploy_gate_routes import runner_router as deploy_gate_runner_router
+from app.api.deploy_routes import router as deploy_router
 from app.api.event_admin_routes import router as event_admin_router
 from app.api.human_routes import router as human_router
 from app.api.inbox_stream import router as inbox_stream_router
@@ -46,7 +47,6 @@ from app.api.oauth_routes import router as oauth_router
 from app.api.org_routes import router as org_router
 from app.api.project_page import router as project_page_router
 from app.api.project_routes import router as project_router
-from app.api.deploy_routes import router as deploy_router
 from app.api.public_docs import router as public_docs_router
 from app.api.share_routes import public_router as share_public_router
 from app.api.share_routes import router as share_router

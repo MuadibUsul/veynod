@@ -332,8 +332,8 @@ async def put_target(session: AsyncSession, principal: Principal, project: str,
             {**params, **({"schedule": json.dumps(values["schedule"])}
                           if "schedule" in values else {})})
     elif values:
-        sets = ", ".join(f"{col} = CAST(:{col} AS jsonb)" if col == "schedule" else f"{col} = :{col}"
-                         for col in values)
+        sets = ", ".join(f"{col} = CAST(:{col} AS jsonb)" if col == "schedule"
+                         else f"{col} = :{col}" for col in values)
         await session.execute(text(
             f"UPDATE deploy_targets SET {sets}, updated_at = NOW() WHERE target_id = :id"),
             {**values, **({"schedule": json.dumps(values["schedule"])}
@@ -375,7 +375,8 @@ async def rotate_release_token(session: AsyncSession, principal: Principal, proj
 # ------------------------------------------------------------------ releases
 
 
-async def post_release(session: AsyncSession, token: str | None, body: dict[str, Any]) -> dict[str, Any]:
+async def post_release(session: AsyncSession, token: str | None,
+                       body: dict[str, Any]) -> dict[str, Any]:
     """CI says a merged commit's images are pushed. Queues auto targets."""
     if not token or not token.startswith(TOKEN_PREFIX):
         raise ApiError(401, "unauthorized", "a release needs the target's release token")
@@ -474,8 +475,9 @@ async def _queue(session: AsyncSession, target: dict[str, Any], release: dict[st
         if newer_in_flight:
             return {"queued": False, "reason": "not_newer"}
     waiting = (await session.execute(text(
-        "SELECT r.*, d.seq FROM deploy_runs r JOIN deploy_releases d ON d.release_id = r.release_id "
-        "WHERE r.target_id = :t AND r.status = 'queued' FOR UPDATE OF r"),
+        "SELECT r.*, d.seq FROM deploy_runs r JOIN deploy_releases d "
+        "ON d.release_id = r.release_id WHERE r.target_id = :t AND r.status = 'queued' "
+        "FOR UPDATE OF r"),
         {"t": target["target_id"]})).mappings().first()
     if waiting is not None:
         if trigger != "rollback" and waiting["trigger"] != "rollback" \
@@ -666,7 +668,8 @@ async def _start(session: AsyncSession, run: dict[str, Any], now: datetime) -> s
         {"ws": target["workspace_id"], "host": host["host_id"], "agent": host["agent_id"],
          "d": json.dumps(detail)})).scalar_one()
     await session.execute(text(
-        "UPDATE deploy_runs SET status = 'offered', placement_id = :pl, plan = CAST(:plan AS jsonb), "
+        "UPDATE deploy_runs SET status = 'offered', placement_id = :pl, "
+        "plan = CAST(:plan AS jsonb), "
         "from_commit = :from, reason = NULL, updated_at = NOW() WHERE run_id = :id"),
         {"pl": placement_id, "plan": json.dumps(steps.as_dict()),
          "from": target["deployed_commit"], "id": run["run_id"]})
@@ -683,13 +686,15 @@ async def _finish(session: AsyncSession, run: dict[str, Any], status: str, reaso
                   plan_: dict[str, Any] | None = None) -> None:
     await session.execute(text(
         "UPDATE deploy_runs SET status = :s, reason = COALESCE(:r, reason), "
-        "report = COALESCE(CAST(:rep AS jsonb), report), plan = COALESCE(CAST(:plan AS jsonb), plan), "
+        "report = COALESCE(CAST(:rep AS jsonb), report), "
+        "plan = COALESCE(CAST(:plan AS jsonb), plan), "
         "ended_at = NOW(), updated_at = NOW() WHERE run_id = :id"),
         {"s": status, "r": reason, "rep": json.dumps(report) if report is not None else None,
          "plan": json.dumps(plan_) if plan_ is not None else None, "id": run["run_id"]})
 
 
-async def _mark_deployed(session: AsyncSession, target: dict[str, Any], run: dict[str, Any]) -> None:
+async def _mark_deployed(session: AsyncSession, target: dict[str, Any],
+                         run: dict[str, Any]) -> None:
     release = (await session.execute(text(
         "SELECT release_id, commit_sha, manifest FROM deploy_releases WHERE release_id = :r"),
         {"r": run["release_id"]})).mappings().one()

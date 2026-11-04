@@ -7,6 +7,10 @@
 # the original compose) with three databases in one cluster:
 #   veynod (product) / veynod_kernel / veynod_runtime
 #
+# Images: a deploy computer (`veynod up --deploy`) pins each one by digest
+# through VEYNOD_IMAGE_KERNEL / VEYNOD_IMAGE_RUNTIME / VEYNOD_IMAGE_API in
+# .veynod/deploy.env; without them the locally built VEYNOD_TAG images are used.
+#
 # Networks are the existing ones:
 #   agentgraph_internal — api <-> db, and every internal service
 #   web                 — api <-> Caddy (Caddy proxies veynod-api:8000)
@@ -23,7 +27,7 @@ x-logging: &logging
 
 services:
   kernel-api:
-    image: veynod-kernel:${VEYNOD_TAG:?VEYNOD_TAG is required}
+    image: ${VEYNOD_IMAGE_KERNEL:-veynod-kernel:${VEYNOD_TAG}}
     container_name: veynod-kernel-api
     environment:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@veynod-db-1:5432/veynod_kernel
@@ -55,7 +59,7 @@ services:
     <<: *logging
 
   kernel-gate:
-    image: veynod-kernel:${VEYNOD_TAG}
+    image: ${VEYNOD_IMAGE_KERNEL:-veynod-kernel:${VEYNOD_TAG}}
     container_name: veynod-kernel-gate
     command:
       - python
@@ -98,7 +102,7 @@ services:
     <<: *logging
 
   runtime-api:
-    image: veynod-runtime:${VEYNOD_TAG}
+    image: ${VEYNOD_IMAGE_RUNTIME:-veynod-runtime:${VEYNOD_TAG}}
     container_name: veynod-runtime-api
     environment:
       RUNTIME_DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@veynod-db-1:5432/veynod_runtime
@@ -115,7 +119,7 @@ services:
     <<: *logging
 
   runtime-worker:
-    image: veynod-runtime:${VEYNOD_TAG}
+    image: ${VEYNOD_IMAGE_RUNTIME:-veynod-runtime:${VEYNOD_TAG}}
     container_name: veynod-runtime-worker
     command: ["python", "-m", "agent_runtime.worker_main"]
     env_file:
@@ -153,7 +157,7 @@ services:
     <<: *logging
 
   api:
-    image: veynod:monorepo-${VEYNOD_TAG}
+    image: ${VEYNOD_IMAGE_API:-veynod:monorepo-${VEYNOD_TAG}}
     container_name: veynod-api
     env_file:
       - path: .env

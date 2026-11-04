@@ -144,6 +144,27 @@ def services_for_paths(config: DeployConfig, changed_paths: list[str]) -> list[s
             if any(_matches(path, pattern) for path in changed_paths for pattern in service.paths)]
 
 
+def input_digest(config: DeployConfig, service: str, files: dict[str, str]) -> str:
+    """A content hash of everything a service's image is built from.
+
+    ``files`` maps each tracked path to its git blob id (``git ls-files -s``).
+    Two commits with the same digest build the same image, so CI builds a
+    service only when no image carries its digest yet, and otherwise retags
+    the one that does: a commit that touches docs builds nothing.
+    """
+    import hashlib
+
+    spec = next((item for item in config.services if item.name == service), None)
+    if spec is None:
+        raise DeployConfigError(f"no service {service!r} in the deploy config")
+    patterns = spec.paths + config.shared + ((spec.dockerfile,) if spec.dockerfile else ())
+    lines = sorted(f"{path} {blob}" for path, blob in files.items()
+                   if any(_matches(path, pattern) for pattern in patterns))
+    if not lines:
+        raise DeployConfigError(f"services.{service}.paths match no tracked file")
+    return hashlib.sha256("\n".join(lines).encode()).hexdigest()
+
+
 @dataclass(frozen=True)
 class Plan:
     """What one deploy does on the server."""
@@ -212,6 +233,7 @@ __all__ = [
     "Manifest",
     "Plan",
     "Service",
+    "input_digest",
     "parse_config",
     "plan",
     "services_for_paths",
