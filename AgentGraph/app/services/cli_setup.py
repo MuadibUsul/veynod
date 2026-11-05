@@ -240,7 +240,7 @@ async def approve(
         raise ApiError(409, "cli_session_decided", f"this code was already {row['status']}")
     if row["expires_at"] <= _now():
         raise ApiError(410, "cli_session_expired",
-                       "this code expired; run `npx veynod init` again")
+                       "this code expired; run `npx veynod` again")
     wanted = list(row["identities"] or [])
     for item in request.also:
         if item.index >= len(wanted):

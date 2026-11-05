@@ -1116,7 +1116,7 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
     check("hosts", bool(online), True,
           f"{len(online)} of {len(hosts)} computer(s) online." if hosts
           else "No computer is connected.",
-          "Run `npx veynod up --run-tasks` on a computer.")
+          "Run `npx veynod --run-tasks` on a computer.")
     outdated = sorted(host["agent_id"] or host["host_id"] for host in hosts
                       if runner_outdated(host.get("runner_version")))
     minimum = ".".join(str(part) for part in MIN_RUNNER_VERSION)
@@ -1124,11 +1124,11 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
           f"Every computer runs veynod {minimum} or newer." if not outdated
           else (f"{', '.join(outdated)} run(s) a veynod older than {minimum}: work reaches "
                 "a computer only over its nerve socket now, so it gets none."),
-          "On each of them: `npm install -g veynod@latest`, then `veynod up --run-tasks`.")
+          "On each of them run `npx veynod@latest`: it upgrades and keeps the computer's settings.")
     check("builder", bool(builders), True,
           f"{len(builders)} computer(s) can build (EXECUTOR) with quota left." if builders
           else "No online computer can build tasks.",
-          "Connect a computer with `npx veynod up --run-tasks`.")
+          "Connect a computer with `npx veynod --run-tasks`.")
     can_review = (f"{len(reviewers)} computer(s) can review work without a repository. "
                   if reviewers else "")
     check("reviewer", True, False,
@@ -1141,11 +1141,11 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
           else f"{', '.join(unpinned[:5])} start(s) sessions without their own key, so "
                "claims there are refused (not_assignee).",
           "Install Node 24 so OAR runs the runtime, or use the claude runtime "
-          "(`npx veynod up --run-tasks --runtime claude`).")
+          "(`npx veynod --runtime claude`).")
     check("supervisor", bool(supervisors), False,
           "A supervisor computer looks after the Loop." if supervisors
           else "No supervisor computer: stuck work is listed for you instead.",
-          "Optional: `npx veynod up --supervisor` on one computer.")
+          "Optional: `npx veynod --supervisor` on one computer.")
     waiting = (await session.execute(select(CollabTask).where(
         CollabTask.workspace_id == workspace_id, CollabTask.status == TaskStatus.READY,
         CollabTask.assignee.is_(None), CollabTask.claimed_by.is_(None),
@@ -1156,7 +1156,7 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
     check("repos", not uncovered, False,
           "Every waiting task's repository is on an online computer." if not uncovered
           else f"No online computer works on {', '.join(uncovered[:5])}.",
-          "Add the repository with `npx veynod up --run-tasks --repo owner/name`.")
+          "On a computer that runs tasks: `npx veynod --repo owner/name` (adds it).")
     needs_you = (await session.execute(text(
         "SELECT count(*) FROM runner_placements WHERE workspace_id = :ws AND status = 'unplaced' "
         "AND reason <> ALL(CAST(:quiet AS text[]))"),

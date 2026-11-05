@@ -38,7 +38,7 @@ async def test_the_board_doctor_names_what_is_missing_until_the_loop_can_run(cli
     assert body["ok"] is False and body["mode"] == "semi"
     checks = _checks(body)
     assert checks["automation"]["ok"] is False and checks["automation"]["fix"]
-    assert checks["hosts"]["ok"] is False and "veynod up" in checks["hosts"]["fix"]
+    assert checks["hosts"]["ok"] is False and "npx veynod --run-tasks" in checks["hosts"]["fix"]
     assert checks["supervisor"]["required"] is False
 
     changed = await client.put("/v1/human/automation", headers=ws["owner"], json={"mode": "full"})

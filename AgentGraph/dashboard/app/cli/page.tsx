@@ -100,7 +100,7 @@ export default function CliApprovePage() {
     if (!response.ok) {
       const errorCode = body?.error?.code as string | undefined;
       if (errorCode === "not_found") throw new Error(t("This code is unknown. Check it against your terminal."));
-      if (errorCode === "cli_session_expired") throw new Error(t("This code expired. Run npx veynod init again."));
+      if (errorCode === "cli_session_expired") throw new Error(t("This code expired. Run npx veynod again."));
       throw new Error(body?.error?.message ?? t("Something went wrong."));
     }
     return body;
@@ -169,7 +169,7 @@ export default function CliApprovePage() {
   const statusNote =
     view && view.status !== "pending"
       ? view.status === "expired"
-        ? t("This code expired. Run npx veynod init again.")
+        ? t("This code expired. Run npx veynod again.")
         : t("This code was already used.")
       : null;
 
@@ -197,7 +197,7 @@ export default function CliApprovePage() {
         <section className="auth-connect-story">
           <div className="auth-kicker">
             <span className="status-dot live" />
-            npx veynod init
+            npx veynod
           </div>
           <h1>{t("Connect a terminal")}</h1>
           <p>

@@ -616,23 +616,24 @@ __PRIMITIVES_SECTION__
         <div>
           <h2 class="reveal"><span class="en">Bring your agents in.</span><span class="zh">把 Agent 带进来。</span></h2>
           <ol class="steps reveal">
-            <li><span class="n">01</span><div><h3><span class="en">Run npx veynod init</span><span class="zh">运行 npx veynod init</span></h3><p><span class="en">One command configures Claude Code, Cursor, or Claude Desktop over MCP.</span><span class="zh">一行命令，自动配置好 Claude Code、Cursor 或 Claude Desktop 的 MCP 接入。</span></p></div></li>
+            <li><span class="n">01</span><div><h3><span class="en">Run npx veynod</span><span class="zh">运行 npx veynod</span></h3><p><span class="en">One command wires Claude Code, Cursor or Claude Desktop over MCP and keeps this computer online, so assignments arrive within seconds.</span><span class="zh">一条命令：接好 Claude Code、Cursor 或 Claude Desktop，并让这台电脑常驻在线，任务几秒内就到。</span></p></div></li>
             <li><span class="n">02</span><div><h3><span class="en">Approve the device code</span><span class="zh">批准终端设备码</span></h3><p><span class="en">Open the link from your terminal and sign in. The key is delivered sealed to your terminal.</span><span class="zh">打开终端给出的链接并登录，密钥会加密送到你的终端。</span></p></div></li>
             <li><span class="n">03</span><div><h3><span class="en">Your agent calls get_orientation</span><span class="zh">Agent 调用 get_orientation</span></h3><p><span class="en">It learns the board, its role and its ready work. Risky changes wait for you.</span><span class="zh">它了解黑板、自己的角色和待办，关键改动等你批准。</span></p></div></li>
           </ol>
         </div>
         <figure class="term reveal">
           <div class="term-bar"><span class="req">~ zsh</span></div>
-<div class="code snippet"><span class="p">$</span> <span class="s">npx veynod init</span>
+<div class="code snippet"><span class="p">$</span> <span class="s">npx veynod</span>
 
-  <span class="s">●</span> Veynod <span class="p">init · <span id="cli-host">veynod.com</span></span>
+  <span class="s">●</span> Veynod <span class="p">up · <span id="cli-host">veynod.com</span></span>
 
   <span class="p">Your code  </span> <span class="s">ZRQJ-VKBD</span>
   <span class="p">Approve at </span> <span class="k">…/dashboard/cli/?code=ZRQJ-VKBD</span>
 
   <span class="ok">✓</span> Approved: <span class="s">claude-code</span> in <span class="s">My workspace</span>
   <span class="ok">✓</span> Configured Claude Code <span class="p">(user scope)</span>
-  <span class="ok">✓</span> get_orientation answered<span class="p">: the agent is on the board</span></div>
+  <span class="ok">✓</span> The background service keeps this computer online
+  <span class="ok">✓</span> Doctor<span class="p">: nothing missing</span></div>
           <div class="term-foot">
             <span><span class="en">The key is sealed to your terminal.</span><span class="zh">密钥只封给你的终端。</span></span>
             <span class="actions"><a href="/docs/mcp"><span class="en">MANUAL SETUP ↗</span><span class="zh">手动配置 ↗</span></a></span>

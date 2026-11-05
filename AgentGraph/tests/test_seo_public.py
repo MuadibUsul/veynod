@@ -98,7 +98,7 @@ async def test_public_crawler_endpoints_and_canonical_redirects():
         assert "Allow: /v1/agent-docs" in robots.text
         full = await client.get("/llms-full.txt")
         assert "get_orientation" in full.text
-        assert "npx veynod init" in full.text
+        assert "npx veynod" in full.text
         assert len(full.text) > 30_000
         for host in ("www.veynod.com",):
             redirect = await client.get(

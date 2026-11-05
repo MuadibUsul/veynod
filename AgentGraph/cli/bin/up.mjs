@@ -10,9 +10,9 @@
 // missing, in plain words, with the fix.
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { RUNTIME_NAMES, commandWorks } from "./runner.mjs";
 
@@ -77,6 +77,49 @@ export function readKey(identity) {
   return readFileSync(identity.key_file, "utf8").trim();
 }
 
+// ------------------------------------------------------------------ stable copy
+
+/**
+ * Where `up` keeps its own copy of the CLI, so the background service never
+ * points into npm's npx cache (npm cleans it at will, and a service whose file
+ * is gone just restarts a missing script). One directory per version: a hub
+ * still running the old version keeps its files until the service restarts.
+ */
+export function stableDir(version, home = defaultHome()) {
+  return join(veynodDir(home), "cli", String(version));
+}
+
+/**
+ * Copies this package (and OAR next to it, when npx installed it) to
+ * ~/.veynod/cli/<version>/node_modules/ and returns the copy's veynod.mjs.
+ * Nothing to install first: `npx veynod` alone sets up a service that lasts.
+ */
+export function installStableCopy(script, { version, home = defaultHome(), fs = { cpSync, existsSync, mkdirSync } } = {}) {
+  const packageDir = dirname(dirname(script)); // …/node_modules/veynod
+  const modules = dirname(packageDir); // …/node_modules
+  const target = join(stableDir(version, home), "node_modules");
+  fs.mkdirSync(target, { recursive: true, mode: 0o700 });
+  fs.cpSync(packageDir, join(target, basename(packageDir)), { recursive: true, force: true });
+  const oar = join(modules, "@botiverse", "oar");
+  if (fs.existsSync(oar)) {
+    fs.cpSync(oar, join(target, "@botiverse", "oar"), { recursive: true, force: true });
+  }
+  return join(target, basename(packageDir), "bin", basename(script));
+}
+
+/** Removes the copies of other versions once the service runs the new one. */
+export function pruneStableCopies(version, home = defaultHome(), fs = { existsSync, readdirSync, rmSync }) {
+  const root = join(veynodDir(home), "cli");
+  if (!fs.existsSync(root)) return [];
+  const removed = [];
+  for (const name of fs.readdirSync(root)) {
+    if (name === String(version)) continue;
+    fs.rmSync(join(root, name), { recursive: true, force: true });
+    removed.push(name);
+  }
+  return removed;
+}
+
 // ------------------------------------------------------------------ plan
 
 /**
@@ -114,6 +157,33 @@ export function reuseIdentities(plan, previous, { host, fresh = false, exists = 
   }
   const parked = usable.filter((item) => !plan.identities.some((wanted) => wanted.role === item.role));
   return { identities, missing, parked };
+}
+
+/**
+ * Running `npx veynod` again (say, to upgrade) keeps what this computer chose
+ * last time: whether it runs board tasks, with which runtime, slots and repos.
+ * A flag on the command line still wins. `decided` says whether there is
+ * anything left to ask.
+ */
+export function withEarlierChoices(options, previous) {
+  const explicit = options.explicit || new Set();
+  if (!previous || previous.host !== options.host || options.deploy) {
+    return { ...options, decided: explicit.has("runTasks") || Boolean(options.deploy) };
+  }
+  const keep = (name, current, earlier) => (explicit.has(name) || earlier === undefined || earlier === null
+    ? current : earlier);
+  const runtime = keep("runtime", options.runtime, previous.runtime || undefined);
+  return {
+    ...options,
+    runTasks: keep("runTasks", options.runTasks, previous.run_tasks === undefined ? undefined : Boolean(previous.run_tasks)),
+    runtime,
+    exec: options.exec || (runtime === "custom" ? previous.exec || "" : options.exec),
+    slots: keep("slots", options.slots, previous.slots || undefined),
+    supervisor: keep("supervisor", options.supervisor, previous.supervisor === undefined ? undefined : Boolean(previous.supervisor)),
+    // --repo on a re-run adds a repository; it never drops the ones kept before.
+    repos: [...new Set([...(previous.repos || []), ...(options.repos || [])])],
+    decided: true,
+  };
 }
 
 export function upPlan(options, { home = defaultHome(), clients = [], name = hostname() } = {}) {
@@ -179,7 +249,7 @@ function isAlive(pid) {
 export async function runHub(options, { listen, runComputer, version, say = () => {}, home = defaultHome(),
   config = loadConfig(home), forever = () => new Promise(() => {}) } = {}) {
   if (!config?.identities?.length) {
-    throw new Error("no identities on this computer yet: run `npx veynod up` first");
+    throw new Error("no identities on this computer yet: run `npx veynod` first");
   }
   const host = options.host && options.host !== "https://veynod.com" ? options.host : config.host;
   const releases = [];
@@ -239,7 +309,7 @@ export async function doctor({ home = defaultHome(), config = loadConfig(home), 
   const checks = [];
   const add = (id, ok, required, text, fix = null) => checks.push({ id, ok: Boolean(ok), required, text, fix });
   if (!config) {
-    add("config", false, true, "This computer is not connected.", "Run `npx veynod up`.");
+    add("config", false, true, "This computer is not connected.", "Run `npx veynod`.");
     return checks;
   }
   add("config", true, true, `Connected to ${config.host}.`);
@@ -253,7 +323,7 @@ export async function doctor({ home = defaultHome(), config = loadConfig(home), 
       key = readKey(identity);
     } catch {
       add(`key:${identity.agent_id}`, false, required, `The key for ${identity.agent_id} is missing.`,
-        "Run `npx veynod up` again to reconnect.");
+        "Run `npx veynod` again to reconnect.");
       continue;
     }
     if (identity.role === "computer") computerKey = key;
@@ -262,7 +332,7 @@ export async function doctor({ home = defaultHome(), config = loadConfig(home), 
       add(`key:${identity.agent_id}`, who.status === 200, required,
         who.status === 200 ? `${identity.agent_id} is accepted by the board.`
           : `The board refused ${identity.agent_id} (HTTP ${who.status}).`,
-        who.status === 200 ? null : "The key was revoked or expired: run `npx veynod up` again.");
+        who.status === 200 ? null : "The key was revoked or expired: run `npx veynod` again.");
     } catch (error) {
       add(`key:${identity.agent_id}`, false, required, `Veynod at ${config.host} did not answer (${error.message}).`,
         "Check the network or --host.");
@@ -294,7 +364,7 @@ export async function doctor({ home = defaultHome(), config = loadConfig(home), 
     add("runtime", ready, true,
       ready ? `${RUNTIME_NAMES[runtime] ?? runtime} is installed.` : `${named} is not installed or not on PATH.`,
       ready ? null : `Install ${named} (the command-line tool, not the desktop app) and sign in; `
-        + "run `veynod up` again to see the commands.");
+        + "run `npx veynod` again to see the commands.");
     if ((config.repos || []).length) {
       const git = onPath(run, "git");
       add("git", git, true, git ? "git is installed." : "git is missing.", git ? null : "Install git.");
@@ -302,11 +372,14 @@ export async function doctor({ home = defaultHome(), config = loadConfig(home), 
       add("gh", gh, false, gh ? "gh is installed (pull requests)." : "gh is missing: agents cannot open pull requests.",
         gh ? null : "Install the GitHub CLI and run `gh auth login`.");
     }
-    if (typeof serviceInstalled === "function") {
-      const installed = serviceInstalled();
-      add("service", installed, true, installed ? "The hub runs as a background service."
-        : "The hub is not installed as a service.", installed ? null : "Run `npx veynod up` again (it installs it).");
-    }
+  }
+  if (typeof serviceInstalled === "function") {
+    // Without it nothing reaches this computer: assignments wait unseen.
+    const installed = serviceInstalled();
+    add("service", installed, true, installed
+      ? (config.run_tasks ? "The hub runs as a background service." : "The background service keeps this computer online.")
+      : "No background service: nothing reaches this computer while it is not running.",
+    installed ? null : "Run `npx veynod` again (it installs it).");
   }
   if (computerKey) {
     try {

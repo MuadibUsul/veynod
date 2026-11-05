@@ -279,7 +279,7 @@ async def test_a_cli_older_than_nerve_dispatch_is_named_and_never_offered_work(c
     doctor = (await client.get("/v1/runner/doctor", headers=ws["owner"])).json()
     check = {item["id"]: item for item in doctor["checks"]}["cli_version"]
     assert check["ok"] is False and old["agent_id"] in check["text"]
-    assert "npm install -g veynod@latest" in check["fix"]
+    assert "npx veynod@latest" in check["fix"]
     card = (await client.get("/v1/runner/hosts", headers=ws["owner"])).json()["computers"]
     assert card[0]["outdated"] is True
 
