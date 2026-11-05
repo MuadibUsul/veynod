@@ -1722,6 +1722,7 @@ const ZH: Record<string, string> = {
   "The server that runs your app connects out to Veynod; it needs no open port and Veynod holds no SSH key.": "运行你应用的服务器主动连到 Veynod：不用开端口，Veynod 也不持有 SSH 密钥。",
   "{n} deploy computer(s) connected": "已连接 {n} 台部署电脑",
   "No deploy computer is connected yet.": "还没有连接部署电脑。",
+  "Needs veynod {version} or newer. {dir} is an example: use the folder that holds your compose file, and name the file if it is not docker-compose.yml.": "需要 veynod {version} 或更新版本。{dir} 只是示例：换成放 compose 文件的目录；文件名不是 docker-compose.yml 时也一并改掉。",
   "Deploy to this target": "部署到这个目标",
   "When off, nothing reaches this target.": "关闭时，什么都不会部署到这个目标。",
   "The computer on the server that pulls the images and restarts the services.": "服务器上负责拉取镜像、重启服务的那台电脑。",
