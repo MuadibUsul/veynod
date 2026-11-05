@@ -533,8 +533,8 @@ async def _pin(
         # A download is one workspace pulling one version, counted once.
         await platform.execute(
             text(
-                "INSERT INTO registry_downloads (name, version, workspace_id) VALUES "
-                "(:n, :v, CAST(:w AS uuid)) ON CONFLICT DO NOTHING"
+                "INSERT INTO registry_downloads (name, version, workspace_id, tenant_id) "
+                "VALUES (:n, :v, CAST(:w AS uuid), '') ON CONFLICT DO NOTHING"
             ),
             {"n": row["name"], "v": row["version"], "w": str(workspace_id)},
         )

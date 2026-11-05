@@ -71,3 +71,12 @@ CREATE POLICY tenant_isolation ON registry_install_history
            NULLIF(current_setting('app.workspace_id', true), '')::uuid);
 GRANT SELECT, INSERT ON registry_install_history TO agentgraph_app;
 GRANT USAGE ON SEQUENCE registry_install_history_id_seq TO agentgraph_app;
+
+-- registry_downloads (v3.91) names a workspace, so it carries the derived
+-- tenant like every other workspace-owned row.
+ALTER TABLE registry_downloads ADD COLUMN IF NOT EXISTS tenant_id VARCHAR(40);
+DROP TRIGGER IF EXISTS trg_derive_tenant ON registry_downloads;
+CREATE TRIGGER trg_derive_tenant BEFORE INSERT OR UPDATE OF workspace_id, tenant_id
+    ON registry_downloads FOR EACH ROW EXECUTE FUNCTION agentgraph_derive_tenant();
+UPDATE registry_downloads SET tenant_id = '' WHERE tenant_id IS NULL;
+ALTER TABLE registry_downloads ALTER COLUMN tenant_id SET NOT NULL;
