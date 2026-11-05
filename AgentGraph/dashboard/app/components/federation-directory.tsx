@@ -138,7 +138,7 @@ export function DirectoryCard({ request, notify, onConnect }: {
               onClick={() => setOpen(open === card.fid ? null : card.fid)}>
               {t("Why this place")}
             </button>
-            <button type="button" className="button small" onClick={() => onConnect(card.fid)}>
+            <button type="button" className="button primary small" onClick={() => onConnect(card.fid)}>
               {t("Ask to connect")}
             </button>
           </div>
@@ -167,7 +167,7 @@ export function DirectoryCard({ request, notify, onConnect }: {
           <option value="busy">{t("Busy")}</option>
           <option value="closed">{t("Not taking work")}</option>
         </select>
-        <button type="button" className="button small" onClick={() => void save(true)}>
+        <button type="button" className="button primary small" onClick={() => void save(true)}>
           {mine?.listed ? t("Update listing") : t("List this workspace")}
         </button>
         {mine?.listed && (

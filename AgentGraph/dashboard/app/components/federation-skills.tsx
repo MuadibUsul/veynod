@@ -464,7 +464,7 @@ function SkillEntry({ entry, busy, installed, onClose, onOpen, act }: {
               ))}
             </span>
           )}
-          <button type="button" className="button small" disabled={busy || !allAccepted}
+          <button type="button" className="button primary small" disabled={busy || !allAccepted}
             onClick={() => void act("/v1/federation/registry/installs",
               { name: entry.name, version: current.version, accept_permissions: accepted },
               "Installed and pinned")}>
@@ -577,7 +577,7 @@ function InstalledList({ installed, updates, busy, act, request, notify }: {
                       onChange={(event) => toggle(pin.name, p, event.target.checked)} /> {p}
                   </label>
                 ))}
-                <button type="button" className="button small"
+                <button type="button" className="button primary small"
                   disabled={busy || !ready || update.available.sandbox !== "passed"}
                   onClick={() => void act(`/v1/federation/registry/installs/${pin.name}/update`,
                     { version: update.available.version, accept_permissions: ticked },

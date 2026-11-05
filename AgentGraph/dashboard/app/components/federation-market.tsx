@@ -86,7 +86,7 @@ export function MarketCard({ request, notify, myFid }: {
               onClick={() => void act(`/v1/federation/market/offers/${offer.offer_id}/withdraw`,
                 undefined, "Offer withdrawn")}>{t("Withdraw")}</button>
           ) : (
-            <button type="button" className="button small" disabled={busy}
+            <button type="button" className="button primary small" disabled={busy}
               onClick={() => void act(`/v1/federation/market/offers/${offer.offer_id}/accept`,
                 undefined, "Accepted: the price is held in escrow")}>
               {t("Accept and hold in escrow")}
@@ -135,7 +135,7 @@ export function MarketCard({ request, notify, myFid }: {
         <input value={draft.buyer} aria-label={t("Buyer (for a task)")}
           placeholder={t("Buyer (for a task)")}
           onChange={(event) => setDraft({ ...draft, buyer: event.target.value })} />
-        <button type="submit" className="button small"
+        <button type="submit" className="button primary small"
           disabled={busy || !draft.subject.trim() || !Number(draft.price)}>{t("Make an offer")}</button>
       </form>
     </section>

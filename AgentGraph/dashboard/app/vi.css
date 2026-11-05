@@ -2357,6 +2357,42 @@ button.timeline-row:disabled {
   min-width: 180px;
 }
 
+/* Text fields, selects and dates in the federation areas and the deploy
+   forms: the console's inset control. They sit outside .field, so without
+   this they fell back to the browser's grey box with a white bevel. */
+.federation-view :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea),
+.deploy-form :is(input:not([type="checkbox"]):not([type="radio"]), select, textarea) {
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--ds-border-control);
+  border-radius: 8px;
+  background: var(--ds-surface-inset);
+  color: var(--ds-text-primary);
+  font: 400 13px var(--ds-font-body);
+  color-scheme: dark;
+}
+
+.federation-view textarea,
+.deploy-form textarea {
+  padding: 8px 10px;
+}
+
+.federation-view :is(input, select, textarea)::placeholder,
+.deploy-form :is(input, select, textarea)::placeholder {
+  color: var(--ds-text-muted);
+}
+
+.federation-view :is(input, select, textarea):focus,
+.deploy-form :is(input, select, textarea):focus {
+  outline: none;
+  border-color: var(--ds-focus-ring);
+}
+
+.federation-view :is(input, select, textarea):disabled,
+.deploy-form :is(input, select, textarea):disabled {
+  opacity: 0.5;
+}
+
 .federation-scopes {
   display: flex;
   flex-wrap: wrap;

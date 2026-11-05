@@ -206,7 +206,7 @@ export function DeploysSettings({ request, notify, canManage }: {
                       : t("Deploys are off")}
                   >
                     {canManage && target.enabled && (
-                      <button type="button" className="button small" disabled={busy}
+                      <button type="button" className="button primary small" disabled={busy}
                         onClick={() => void call(`${targetPath(item.project, target.name)}/run`, {},
                           "Deploy queued.")}>{t("Deploy newest")}</button>
                     )}
