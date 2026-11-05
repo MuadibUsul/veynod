@@ -120,6 +120,7 @@ TOOL_ACTION_HANDLERS = {
         "federation_me", "list_federation_connections", "list_federation_delegations",
         "list_federation_threads", "list_federation_messages", "get_federation_message",
         "send_federation_message", "federation_message_handled",
+        "federation_delegation_usage",
     ),
     "loop": (
         "loop_agenda", "list_placements", "get_placement", "report_placement",
