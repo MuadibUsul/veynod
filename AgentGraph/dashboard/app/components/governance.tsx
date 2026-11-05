@@ -18,6 +18,7 @@ import { relativeTime } from "../types";
 import { BudgetCircuits } from "./circuits";
 import { ProposalDiff } from "./proposal-diff";
 import { Empty, IconCheck, IconClose, IconPulse, Modal, Spinner } from "./ui";
+import { SettingRow, SettingsFooter, SettingsGroup } from "./settings";
 
 export type GovernanceSection = "proposals" | "policies" | "operations" | "access";
 
@@ -357,31 +358,6 @@ export function GovernanceView({
 
   return (
     <section className="governance">
-      {section === "operations" && (
-      <div className="section-head index-head">
-        <div className="index-actions">
-          <button
-            type="button"
-            className="button ghost"
-            onClick={() => void reindex("repair")}
-            disabled={busy !== null || broken === 0}
-            title={broken === 0 ? t("Every index is current; nothing to repair.") : undefined}
-          >
-            {busy === "reindex:repair" ? <Spinner /> : <IconPulse />} {t("Repair broken indexes")}
-            <span className={`tab-count ${broken ? "alert" : ""}`}>{broken}</span>
-          </button>
-          <button type="button" className="button ghost small" onClick={() => void reindex("full")} disabled={busy !== null}>
-            {t("Full rebuild…")}
-          </button>
-          {indexHealth && indexHealth.pending_jobs + indexHealth.deferred_jobs > 0 && (
-            <span className="muted small-note">
-              {t("{count} waiting to be indexed", { count: indexHealth.pending_jobs + indexHealth.deferred_jobs })}
-            </span>
-          )}
-        </div>
-      </div>
-      )}
-
       {error && (
         <div className="inline-error" role="alert">
           {error}
@@ -504,122 +480,158 @@ export function GovernanceView({
       )}
 
       {section === "operations" && (
-        <div className="governance-panel operations-grid">
-          <section>
-            <div className="panel-toolbar">
-              <div>
-                <h3 className="section-title">{t("Namespaces")}</h3>
-                <p className="section-sub">{t("An empty namespace (no live documents, no open tasks) can be removed.")}</p>
-              </div>
-            </div>
-            {namespaces.length === 0 ? (
-              <Empty title={t("No namespaces")} detail={t("Namespaces appear when agents or people first write to them.")} />
-            ) : (
-              <div className="stack-list">
-                {namespaces.map((item) => {
-                  const locked = item.namespace === "default" || reserved.includes(item.namespace);
-                  const empty = (item.documents ?? 0) === 0;
-                  return (
-                    <article key={item.namespace} className="compact-row">
-                      <div>
-                        <strong className="mono">{item.namespace}</strong>
-                        <div className="proposal-meta">
-                          <span>{t("{count} document(s)", { count: item.documents ?? 0 })}</span>
-                          {item.owner && <span>{item.owner}</span>}
-                          {item.auto_registered && <span>{t("auto-registered")}</span>}
-                        </div>
-                      </div>
-                      {!locked && (
-                        <div className="row-actions">
-                          <button type="button" className="button danger small"
-                            disabled={!empty || busy === `namespace:${item.namespace}`}
-                            title={empty ? "" : t("Archive its documents first")}
-                            onClick={() => void deleteNamespace(item.namespace)}>
-                            {t("Remove")}
-                          </button>
-                        </div>
-                      )}
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-          </section>
+        <>
+          <SettingsGroup
+            title={t("Search index")}
+            description={t("Documents are embedded for semantic search. Repair rebuilds only what is broken.")}
+          >
+            <SettingRow
+              lamp={broken ? "red" : "green"}
+              label={broken
+                ? t("{count} broken index(es)", { count: broken })
+                : t("Every index is current; nothing to repair.")}
+              description={indexHealth && indexHealth.pending_jobs + indexHealth.deferred_jobs > 0
+                ? t("{count} waiting to be indexed", { count: indexHealth.pending_jobs + indexHealth.deferred_jobs })
+                : undefined}
+            >
+              <button
+                type="button"
+                className="button ghost small"
+                onClick={() => void reindex("repair")}
+                disabled={busy !== null || broken === 0}
+              >
+                {busy === "reindex:repair" ? <Spinner /> : <IconPulse />} {t("Repair broken indexes")}
+              </button>
+              <button type="button" className="button ghost small" onClick={() => void reindex("full")}
+                disabled={busy !== null}>
+                {t("Full rebuild…")}
+              </button>
+            </SettingRow>
+          </SettingsGroup>
 
-          <section>
-            <div className="panel-toolbar">
-              <div>
-                <h3 className="section-title">{t("Webhooks")}</h3>
-                <p className="section-sub">{t("Signed, persistent, retried deliveries from the outbox.")}</p>
-              </div>
+          <SettingsGroup
+            title={t("Namespaces")}
+            description={t("An empty namespace (no live documents, no open tasks) can be removed.")}
+          >
+            {namespaces.length === 0 ? (
+              <SettingRow
+                label={t("No namespaces")}
+                description={t("Namespaces appear when agents or people first write to them.")}
+              />
+            ) : (
+              namespaces.map((item) => {
+                const locked = item.namespace === "default" || reserved.includes(item.namespace);
+                const empty = (item.documents ?? 0) === 0;
+                return (
+                  <SettingRow
+                    key={item.namespace}
+                    label={<span className="mono">{item.namespace}</span>}
+                    description={[
+                      t("{count} document(s)", { count: item.documents ?? 0 }),
+                      item.owner,
+                      item.auto_registered ? t("auto-registered") : null,
+                    ].filter(Boolean).join(" · ")}
+                  >
+                    {!locked && (
+                      <button type="button" className="button danger small"
+                        disabled={!empty || busy === `namespace:${item.namespace}`}
+                        title={empty ? "" : t("Archive its documents first")}
+                        onClick={() => void deleteNamespace(item.namespace)}>
+                        {t("Remove")}
+                      </button>
+                    )}
+                  </SettingRow>
+                );
+              })
+            )}
+          </SettingsGroup>
+
+          <SettingsGroup
+            title={t("Webhooks")}
+            description={t("Signed, persistent, retried deliveries from the outbox.")}
+            action={
               <button type="button" className="button ghost small" onClick={() => setShowWebhook(true)}>
                 {t("New rule")}
               </button>
-            </div>
+            }
+          >
             {webhooks.length === 0 ? (
-              <Empty title={t("No webhook rules")} detail={t("Add an endpoint to receive signed workspace events.")} />
+              <SettingRow
+                label={t("No webhook rules")}
+                description={t("Add an endpoint to receive signed workspace events.")}
+              />
             ) : (
-              <div className="stack-list">
-                {webhooks.map((rule) => {
-                  const dead = (rule.dead_deliveries ?? 0) > 0 || Boolean(rule.disabled_at);
-                  return (
-                  <article key={rule.id} className={`compact-row${dead ? " row-dead" : ""}`}>
-                    <div>
-                      <strong>{rule.name}</strong>
-                      {(rule.wake_for?.length ?? 0) > 0 && (
-                        <span className="pill violet" title={t("Wakes this agent while it is offline")}>
-                          {" "}{t("wake")} · {rule.wake_for?.[0]}
-                        </span>
-                      )}
-                      <div className="mono muted">{rule.url}</div>
-                      <div className="proposal-meta">
-                        <span>{rule.event_types.join(", ")}</span>
-                        <span>{rule.active ? t("active") : t("paused")}</span>
-                        <span>{t("{count} recent failure(s)", { count: rule.consecutive_failures })}</span>
-                        {dead && (
-                          <span className="pill rose" title={rule.last_error ?? ""}>
-                            {rule.disabled_at
-                              ? t("Disabled after 24 h of failures")
-                              : t("{count} DEAD in 7 days", { count: rule.dead_deliveries ?? 0 })}
+              webhooks.map((rule) => {
+                const dead = (rule.dead_deliveries ?? 0) > 0 || Boolean(rule.disabled_at);
+                return (
+                  <SettingRow
+                    key={rule.id}
+                    lamp={dead ? "red" : rule.active ? "green" : ""}
+                    tone={dead ? "need" : undefined}
+                    label={
+                      <>
+                        {rule.name}
+                        {(rule.wake_for?.length ?? 0) > 0 && (
+                          <span className="pill violet" title={t("Wakes this agent while it is offline")}>
+                            {t("wake")} · {rule.wake_for?.[0]}
                           </span>
                         )}
-                      </div>
-                      {dead && rule.last_error && <div className="field-hint rose-text">{rule.last_error}</div>}
-                    </div>
-                    <div className="row-actions">
-                      <button type="button" className="button ghost small" onClick={() => void testWebhook(rule)}>
-                        {t("Test")}
-                      </button>
-                      <button type="button" className="button danger small" onClick={() => void deleteWebhook(rule)}>
-                        {t("Delete")}
-                      </button>
-                    </div>
-                  </article>
-                  );
-                })}
-              </div>
+                      </>
+                    }
+                    description={
+                      <>
+                        <span className="mono">{rule.url}</span>
+                        <span className="setting-desc-line">
+                          {[
+                            rule.event_types.join(", "),
+                            rule.active ? t("active") : t("paused"),
+                            t("{count} recent failure(s)", { count: rule.consecutive_failures }),
+                            dead
+                              ? rule.disabled_at
+                                ? t("Disabled after 24 h of failures")
+                                : t("{count} DEAD in 7 days", { count: rule.dead_deliveries ?? 0 })
+                              : null,
+                          ].filter(Boolean).join(" · ")}
+                        </span>
+                        {dead && rule.last_error && <span className="setting-desc-line rose-text">{rule.last_error}</span>}
+                      </>
+                    }
+                  >
+                    <button type="button" className="button ghost small" onClick={() => void testWebhook(rule)}>
+                      {t("Test")}
+                    </button>
+                    <button type="button" className="button danger small" onClick={() => void deleteWebhook(rule)}>
+                      {t("Delete")}
+                    </button>
+                  </SettingRow>
+                );
+              })
             )}
-          </section>
+          </SettingsGroup>
 
-          <section>
-            <div className="panel-toolbar">
-              <div>
-                <h3 className="section-title">{t("External actions")}</h3>
-                <p className="section-sub">{t("Agent-proposed side effects wait for human approval; compensations are explicit.")}</p>
-              </div>
-            </div>
+          <SettingsGroup
+            title={t("External actions")}
+            description={t("Agent-proposed side effects wait for human approval; compensations are explicit.")}
+          >
             {actions.length === 0 ? (
-              <Empty title={t("No external actions")} detail={t("Agents propose them with POST /v1/external-actions.")} />
+              <SettingRow
+                label={t("No external actions")}
+                description={t("Agents propose them with POST /v1/external-actions.")}
+              />
             ) : (
-              <div className="stack-list">
-                {actions.map((action) => (
-                  <article key={action.id} className="compact-row">
-                    <div>
-                      <div className="action-title">
-                        <strong>{action.action_type}</strong>
-                        <span className={`pill ${statusTone(action.status)}`}>{t(action.status)}</span>
-                      </div>
-                      <div className="mono muted">{action.method} {action.target_url}</div>
+              actions.map((action) => (
+                <SettingRow
+                  key={action.id}
+                  tone={action.status === "PENDING_APPROVAL" ? "need" : undefined}
+                  label={
+                    <>
+                      {action.action_type}
+                      <span className={`pill ${statusTone(action.status)}`}>{t(action.status)}</span>
+                    </>
+                  }
+                  description={
+                    <>
+                      <span className="mono">{action.method} {action.target_url}</span>
                       {action.payload && (
                         <pre className="json-preview" aria-label="Action payload">
                           {JSON.stringify(action.payload, null, 2)}
@@ -630,112 +642,104 @@ export function GovernanceView({
                           {JSON.stringify(action.headers, null, 2)}
                         </pre>
                       )}
-                      <div className="proposal-meta">
-                        <span>{t("{attempts}/{max} attempts", { attempts: action.attempts, max: action.max_attempts })}</span>
-                        <span>{t("by")} {action.created_by}</span>
-                        {action.last_error && <span className="danger-text">{action.last_error}</span>}
-                      </div>
-                    </div>
-                    <div className="row-actions">
-                      {action.status === "PENDING_APPROVAL" && (
-                        <>
-                          <button type="button" className="button primary small" onClick={() => void approveAction(action)}>
-                            {t("Approve")}
-                          </button>
-                          <button type="button" className="button danger small" onClick={() => void rejectAction(action)}>
-                            {t("Reject")}
-                          </button>
-                        </>
-                      )}
-                      {["SUCCEEDED", "FAILED"].includes(action.status) && (
-                        <button type="button" className="button ghost small" onClick={() => void compensateAction(action)}>
-                          {t("Compensate")}
-                        </button>
-                      )}
-                    </div>
-                  </article>
-                ))}
-              </div>
+                      <span className="setting-desc-line">
+                        {t("{attempts}/{max} attempts", { attempts: action.attempts, max: action.max_attempts })}
+                        {" · "}{t("by")} {action.created_by}
+                      </span>
+                      {action.last_error && <span className="setting-desc-line danger-text">{action.last_error}</span>}
+                    </>
+                  }
+                >
+                  {action.status === "PENDING_APPROVAL" && (
+                    <>
+                      <button type="button" className="button primary small" onClick={() => void approveAction(action)}>
+                        {t("Approve")}
+                      </button>
+                      <button type="button" className="button danger small" onClick={() => void rejectAction(action)}>
+                        {t("Reject")}
+                      </button>
+                    </>
+                  )}
+                  {["SUCCEEDED", "FAILED"].includes(action.status) && (
+                    <button type="button" className="button ghost small" onClick={() => void compensateAction(action)}>
+                      {t("Compensate")}
+                    </button>
+                  )}
+                </SettingRow>
+              ))
             )}
-          </section>
-        </div>
+          </SettingsGroup>
+        </>
       )}
 
       {section === "access" && (
-        <div className="governance-panel access-grid">
-          <section>
-            <div className="panel-toolbar">
-              <div>
-                <h3 className="section-title">{t("Budget")}</h3>
-                <p className="section-sub">{t("Monthly token/cost envelopes and per-minute request ceilings.")}</p>
-              </div>
-            </div>
-            <div className="budget-stats">
-              <div>
-                <span className="muted">{t("Tokens used (30d)")}</span>
-                <strong className="tabular">{usage?.tokens_used.toLocaleString() ?? "—"}</strong>
-                <span className="muted">{t("limit {value}", { value: budget?.monthly_token_budget.toLocaleString() ?? "—" })}</span>
-              </div>
-              <div>
-                <span className="muted">{t("Cost used (30d)")}</span>
-                <strong className="tabular">${usage?.cost_usd_used.toFixed(2) ?? "—"}</strong>
-                <span className="muted">{t("limit {value}", { value: `$${budget?.monthly_cost_budget_usd.toFixed(2) ?? "—"}` })}</span>
-              </div>
-              <div>
-                <span className="muted">{t("Request limit")}</span>
-                <strong className="tabular">{budget?.max_requests_per_minute ?? "—"}/min</strong>
-                <span className="muted">{t("fixed window")}</span>
-              </div>
-            </div>
-            <div className="form-grid">
-              <label className="field">
-                <span>{t("Monthly token budget")}</span>
-                <input value={budgetTokens} onChange={(event) => setBudgetTokens(event.target.value)} inputMode="numeric" />
-              </label>
-              <label className="field">
-                <span>{t("Monthly cost budget (USD)")}</span>
-                <input value={budgetCost} onChange={(event) => setBudgetCost(event.target.value)} inputMode="decimal" />
-              </label>
-              <label className="field">
-                <span>{t("Requests per minute")}</span>
-                <input value={budgetRate} onChange={(event) => setBudgetRate(event.target.value)} inputMode="numeric" />
-              </label>
-            </div>
-            <button type="button" className="button primary" onClick={() => void saveBudget()}>
-              {t("Save budget")}
-            </button>
-            <BudgetCircuits request={request} />
+        <>
+          <SettingsGroup
+            title={t("Budget")}
+            description={t("Monthly token/cost envelopes and per-minute request ceilings.")}
+          >
+            <SettingRow
+              label={t("Tokens used (30d)")}
+              description={t("limit {value}", { value: budget?.monthly_token_budget.toLocaleString() ?? "—" })}
+            >
+              <span className="setting-value tabular">{usage?.tokens_used.toLocaleString() ?? "—"}</span>
+            </SettingRow>
+            <SettingRow
+              label={t("Cost used (30d)")}
+              description={t("limit {value}", { value: `$${budget?.monthly_cost_budget_usd.toFixed(2) ?? "—"}` })}
+            >
+              <span className="setting-value tabular">${usage?.cost_usd_used.toFixed(2) ?? "—"}</span>
+            </SettingRow>
+            <SettingRow htmlFor="budget-tokens" label={t("Monthly token budget")}>
+              <input id="budget-tokens" value={budgetTokens} onChange={(event) => setBudgetTokens(event.target.value)}
+                inputMode="numeric" />
+            </SettingRow>
+            <SettingRow htmlFor="budget-cost" label={t("Monthly cost budget (USD)")}>
+              <input id="budget-cost" value={budgetCost} onChange={(event) => setBudgetCost(event.target.value)}
+                inputMode="decimal" />
+            </SettingRow>
+            <SettingRow htmlFor="budget-rate" label={t("Requests per minute")} description={t("fixed window")}>
+              <input id="budget-rate" value={budgetRate} onChange={(event) => setBudgetRate(event.target.value)}
+                inputMode="numeric" />
+            </SettingRow>
+            <SettingsFooter>
+              <button type="button" className="button primary small" onClick={() => void saveBudget()}>
+                {t("Save budget")}
+              </button>
+            </SettingsFooter>
+          </SettingsGroup>
 
-            <div className="panel-toolbar spaced">
-              <div>
-                <h3 className="section-title">{t("Human accounts")}</h3>
-                <p className="section-sub">{t("OWNER can administer; REVIEWER can approve; VIEWER is read-only.")}</p>
-              </div>
+          <BudgetCircuits request={request} />
+
+          <SettingsGroup
+            title={t("Human accounts")}
+            description={t("OWNER can administer; REVIEWER can approve; VIEWER is read-only.")}
+            action={
               <button type="button" className="button ghost small" onClick={() => setShowAccount(true)}>
                 {t("New account")}
               </button>
-            </div>
+            }
+          >
             {users.length === 0 ? (
-              <Empty title={t("No human accounts")} detail={t("Create an OWNER account before using the human console API.")} />
+              <SettingRow
+                label={t("No human accounts")}
+                description={t("Create an OWNER account before using the human console API.")}
+              />
             ) : (
-              <div className="stack-list">
-                {users.map((user) => (
-                  <article key={user.id} className="compact-row">
-                    <div>
-                      <strong>{user.display_name}</strong>
-                      <div className="muted">{user.email}</div>
-                    </div>
-                    <div className="row-actions">
-                      <span className="pill slate">{t(user.role)}</span>
-                      <span className={`pill ${user.is_active ? "mint" : "rose"}`}>{user.is_active ? t("active") : t("disabled")}</span>
-                      <span className="muted">{t("last login")} {relativeTime(user.last_login_at)}</span>
-                    </div>
-                  </article>
-                ))}
-              </div>
+              users.map((user) => (
+                <SettingRow
+                  key={user.id}
+                  lamp={user.is_active ? "green" : ""}
+                  label={user.display_name}
+                  description={`${user.email} · ${t("last login")} ${relativeTime(user.last_login_at)}`}
+                >
+                  <span className="pill slate">{t(user.role)}</span>
+                  {!user.is_active && <span className="pill rose">{t("disabled")}</span>}
+                </SettingRow>
+              ))
             )}
-          </section>
-        </div>
+          </SettingsGroup>
+        </>
       )}
 
       {selectedProposal && (

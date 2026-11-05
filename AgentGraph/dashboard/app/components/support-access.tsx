@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useI18n } from "../i18n";
 import { normalizeBase, relativeTime } from "../types";
+import { SettingRow, SettingsFooter, SettingsGroup, Switch } from "./settings";
 
 type Grant = {
   id: string;
@@ -77,46 +78,42 @@ export function SupportAccessCard({ apiBase, sessionToken }: { apiBase: string; 
   const active = state.active;
 
   return (
-    <section className="card support-card">
-      <div className="card-head">
-        <div>
-          <h2>{t("Privacy and support access")}</h2>
-          <p>
-            {state.private
-              ? t("This workspace is private. The Veynod operator sees its counts and changes, never its documents, tasks or audit.")
-              : t("The Veynod operator created this workspace and can read it. Make it private to keep the operator to counts and changes.")}
-          </p>
-        </div>
-        <span className={`privacy-pill ${state.private ? "private" : "managed"}`}>
-          {state.private ? t("Private") : t("Operator-managed")}
-        </span>
-      </div>
-      {error && <div className="inline-error">{error}</div>}
+    <SettingsGroup
+      title={t("Privacy and support access")}
+      description={t("Only when you ask Veynod for help: open a window, and close it when you are done. Every request the operator makes is listed below.")}
+    >
+      {error && <SettingRow label={t("Could not change support access")} lamp="red" description={error} />}
+      <SettingRow
+        lamp={state.private ? "green" : "amber"}
+        label={state.private ? t("Private") : t("Operator-managed")}
+        description={state.private
+          ? t("This workspace is private. The Veynod operator sees its counts and changes, never its documents, tasks or audit.")
+          : t("The Veynod operator created this workspace and can read it. Make it private to keep the operator to counts and changes.")}
+      >
+        {!state.private && (
+          <button
+            type="button"
+            className="button primary small"
+            disabled={busy}
+            onClick={() => void act("/make-private", { method: "POST", body: "{}" })}
+          >
+            {t("Make this workspace private")}
+          </button>
+        )}
+      </SettingRow>
 
-      {!state.private ? (
-        <button
-          type="button"
-          className="button primary"
-          disabled={busy}
-          onClick={() => void act("/make-private", { method: "POST", body: "{}" })}
+      {state.private && active && (
+        <SettingRow
+          lamp="cyan"
+          label={active.allow_write
+            ? t("Support can read and change this workspace until {time}.", {
+                time: new Date(active.expires_at).toLocaleString(),
+              })
+            : t("Support can read this workspace until {time}.", {
+                time: new Date(active.expires_at).toLocaleString(),
+              })}
+          description={`${t("{count} operator requests so far.", { count: active.requests })}${active.note ? ` · ${active.note}` : ""}`}
         >
-          {t("Make this workspace private")}
-        </button>
-      ) : active ? (
-        <div className="support-active">
-          <strong>
-            {active.allow_write
-              ? t("Support can read and change this workspace until {time}.", {
-                  time: new Date(active.expires_at).toLocaleString(),
-                })
-              : t("Support can read this workspace until {time}.", {
-                  time: new Date(active.expires_at).toLocaleString(),
-                })}
-          </strong>
-          <span className="field-hint">
-            {t("{count} operator requests so far.", { count: active.requests })}
-            {active.note ? ` · ${active.note}` : ""}
-          </span>
           <button
             type="button"
             className="button ghost small"
@@ -125,10 +122,12 @@ export function SupportAccessCard({ apiBase, sessionToken }: { apiBase: string; 
           >
             {t("Close support access now")}
           </button>
-        </div>
-      ) : (
+        </SettingRow>
+      )}
+
+      {state.private && !active && (
         <form
-          className="support-form"
+          className="setting-form flush"
           onSubmit={(event) => {
             event.preventDefault();
             void act("", {
@@ -137,45 +136,46 @@ export function SupportAccessCard({ apiBase, sessionToken }: { apiBase: string; 
             });
           }}
         >
-          <p className="field-hint">
-            {t("Only when you ask Veynod for help: open a window, and close it when you are done. Every request the operator makes is listed below.")}
-          </p>
-          <label className="field">
-            <span>{t("For how long")}</span>
-            <select value={hours} onChange={(event) => setHours(Number(event.target.value))}>
+          <SettingRow htmlFor="support-hours" label={t("For how long")}>
+            <select id="support-hours" value={hours} onChange={(event) => setHours(Number(event.target.value))}>
               <option value={1}>{t("1 hour")}</option>
               <option value={24}>{t("24 hours")}</option>
               <option value={72}>{t("3 days")}</option>
               <option value={168}>{t("7 days")}</option>
             </select>
-          </label>
-          <label className="field">
-            <span>{t("Why (optional)")}</span>
-            <input value={note} onChange={(event) => setNote(event.target.value)} maxLength={500} />
-          </label>
-          <label className="checkbox-row">
-            <input type="checkbox" checked={allowWrite} onChange={(event) => setAllowWrite(event.target.checked)} />
-            <span>{t("Also allow changes (default: read-only)")}</span>
-          </label>
-          <button type="submit" className="button ghost" disabled={busy}>
-            {t("Open support access")}
-          </button>
+          </SettingRow>
+          <SettingRow htmlFor="support-note" label={t("Why (optional)")}>
+            <input id="support-note" value={note} onChange={(event) => setNote(event.target.value)} maxLength={500} />
+          </SettingRow>
+          <SettingRow label={t("Also allow changes (default: read-only)")}>
+            <Switch checked={allowWrite} onChange={setAllowWrite} label={t("Also allow changes (default: read-only)")} />
+          </SettingRow>
+          <SettingsFooter>
+            <button type="submit" className="button ghost small" disabled={busy}>
+              {t("Open support access")}
+            </button>
+          </SettingsFooter>
         </form>
       )}
 
       {state.operator_requests.length > 0 && (
-        <details className="support-log">
-          <summary>{t("Operator requests ({count})", { count: state.operator_requests.length })}</summary>
-          <ul>
-            {state.operator_requests.map((item, index) => (
-              <li key={`${item.at}-${index}`}>
-                <span className="field-hint">{relativeTime(item.at)}</span>
-                <code>{item.method} {item.path}</code>
-              </li>
-            ))}
-          </ul>
-        </details>
+        <SettingRow
+          stack
+          label={t("Operator requests ({count})", { count: state.operator_requests.length })}
+        >
+          <details className="setting-log">
+            <summary>{t("Show")}</summary>
+            <ul>
+              {state.operator_requests.map((item, index) => (
+                <li key={`${item.at}-${index}`}>
+                  <span className="muted">{relativeTime(item.at)}</span>
+                  <code>{item.method} {item.path}</code>
+                </li>
+              ))}
+            </ul>
+          </details>
+        </SettingRow>
       )}
-    </section>
+    </SettingsGroup>
   );
 }

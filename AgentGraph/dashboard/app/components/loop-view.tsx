@@ -7,7 +7,6 @@ import type { ApiRequest } from "../types";
 import { relativeTime } from "../types";
 import { ArchivePanel } from "./archive-panel";
 import { AutomationModeCard } from "./automation";
-import { DeploysPanel } from "./deploys-panel";
 import { Pipeline, Roster, Timeline, waited, type Overview } from "./flow-view";
 import { HostsPanel } from "./hosts-panel";
 import { useWorkspaceStream, type StreamEvent } from "./use-workspace-stream";
@@ -100,6 +99,7 @@ export function LoopView({
   onOpenTask,
   onOpenSituation,
   onOpenDiagram,
+  onOpenDeploys,
 }: {
   workspaceId: string;
   apiBase: string;
@@ -112,6 +112,8 @@ export function LoopView({
   onOpenTask: (key: string) => void;
   onOpenSituation: () => void;
   onOpenDiagram: (key: string, chunk?: string) => void;
+  /** Deploys live under Settings > Deploys. */
+  onOpenDeploys: () => void;
 }) {
   const { t } = useI18n();
   const [mode, setMode] = useState<string | null>(null);
@@ -202,8 +204,7 @@ export function LoopView({
         ? t("A deploy of {project} was rolled back", { project: run.project })
         : t("A deploy of {project} failed", { project: run.project }),
       detail: [run.commit?.slice(0, 7), run.note, waited(run.ended_at, t)].filter(Boolean).join(" · "),
-      action: { label: t("Deploys"), run: () => document.getElementById("loop-deploys")
-        ?.scrollIntoView({ behavior: "smooth", block: "center" }) },
+      action: { label: t("Deploys"), run: onOpenDeploys },
     });
   }
   const waitingItems = overview?.needs_you.waiting ?? [];
@@ -347,8 +348,6 @@ export function LoopView({
       </div>
 
       {editingMode && sessionMode && <AutomationModeCard request={request} notify={notify} />}
-
-      <DeploysPanel request={request} notify={notify} canManage={sessionMode} refreshKey={hostsKey} />
 
       {overview ? (
         <Pipeline overview={overview} live={live} onOpenTask={onOpenTask} onOpenDiagram={onOpenDiagram}

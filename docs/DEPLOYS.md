@@ -28,7 +28,7 @@ v1（`AgentGraph/docs/DEPLOY_GATE.md`）只服务 Veynod 自己、只有运营�
   部署就是一个 `step = deploy` 的放置，走同一套两次回执。
 - **只有人能**打开部署、立即部署、回滚、生成发布令牌（宪法：上线和不可逆操作只属于人）。
   Agent 能看设置和记录，看不到令牌。
-- 失败或已回滚的部署出现在 Loop 的"需要你"里，点"已看过"后消失。自动和定时触发**不会**重试
+- 失败或已回滚的部署出现在 Loop 的"需要你"里（按钮打开 设置 → 部署），点"已看过"后消失。自动和定时触发**不会**重试
   同一个失败过的 release，只有人能重新部署它。
 
 ## 增量：不浪费资源
@@ -68,7 +68,7 @@ compose 文件里每个服务的镜像写成 `${VEYNOD_IMAGE_<服务名大写>:-
    ```
 
    控制台批准后，它出现在 Loop → 执行端电脑，不接任何别的活。`veynod doctor` 检查 docker 和 compose 文件。
-2. **控制台** Loop → 部署 → 项目 → 设置：勾选"部署这个项目"，选部署电脑、触发方式
+2. **控制台** 设置 → 部署 → 项目下的目标 → 配置：勾选"部署这个项目"，选部署电脑、触发方式
    （每次合并 / 时间窗口 / 只手动）、分支、健康检查 URL、失败是否回滚，保存。
    等价 API：`PUT /v1/projects/{p}/deploys/production`。
 3. 点"生成发布令牌"，把它存为仓库 CI 的密钥 `VEYNOD_RELEASE_TOKEN`（只显示一次，服务端只存哈希）。
@@ -130,6 +130,6 @@ v1（`AgentGraph/app/services/deploy_gate.py`、`/v1/deploy-gate/*`、`/dashboar
 2. **Veynod 的 VPS 在 v2 上连续成功部署两周**之后：从 `AgentGraph/app/main.py` 摘掉三个
    `deploy_gate_*` 路由，删 `app/services/deploy_gate.py`、`app/schemas_deploy_gate.py`、
    `app/api/deploy_gate_routes.py`、`AgentGraph/scripts/{deploy_gate.py,deploy_tlines.sh,install_deploy_gate.sh}`、
-   `AgentGraph/deploy/deploy-gate/`，`/dashboard/deploy/` 改为跳转到 Loop → 部署。
+   `AgentGraph/deploy/deploy-gate/`，`/dashboard/deploy/` 改为跳转到 设置 → 部署。
    VPS 上停掉 v1 的 systemd 定时器（`systemctl disable --now veynod-deploy-gate.timer`）。
 3. **再一个版本之后**：新迁移删除 v1 的表（`deploy_gate_*`），并删掉相关测试。

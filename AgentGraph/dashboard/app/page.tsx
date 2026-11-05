@@ -7,11 +7,13 @@ import { AuditView } from "./components/audit";
 import { SituationView } from "./components/situation";
 import { Blackboard } from "./components/blackboard";
 import { DiagramView } from "./components/diagram-view";
+import { DeploysSettings } from "./components/deploys-panel";
 import { FederationView } from "./components/federation";
 import { LoopView } from "./components/loop-view";
 import { DocumentsView } from "./components/documents";
 import { GovernanceView, type GovernanceSection } from "./components/governance";
 import { AgentConnect, GettingStarted, type OnboardingStepId } from "./components/onboarding";
+import { SettingsFrame, type SettingsNavGroup } from "./components/settings";
 import { SupportAccessCard } from "./components/support-access";
 import { UpgradeCard } from "./components/upgrade";
 import { LanguageToggle, useI18n } from "./i18n";
@@ -147,12 +149,17 @@ type Tab =
   | "policies"
   | "operations"
   | "access"
+  | "deploys"
   | "audit";
 // Four places: the diagram, the Loop (with its tasks, agents and situation),
 // the documents, and settings and records. Nothing else sits at the top.
-// Settings is one flat row: governance's four parts sit beside slots and history.
+// Settings lists its sections on the left (Linear / Claude Code style): what the
+// workspace is and may do, how its work ships, then what waits for review and
+// what it has recorded.
 const LOOP_SECTIONS: Tab[] = ["loop", "tasks", "agents", "situation"];
-const SETTINGS_SECTIONS: Tab[] = ["governance", "policies", "operations", "access", "blackboard", "audit"];
+const SETTINGS_SECTIONS: Tab[] = [
+  "access", "policies", "deploys", "operations", "governance", "blackboard", "audit",
+];
 const GOVERNANCE_PART: Partial<Record<Tab, GovernanceSection>> = {
   governance: "proposals",
   policies: "policies",
@@ -203,7 +210,7 @@ export default function ConsolePage() {
   const [audit, setAudit] = useState<AuditPayload>({ batches: [], diffs: [] });
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
   const [tab, setTab] = useState<Tab>("diagram");
-  const [lastSettings, setLastSettings] = useState<Tab>("governance");
+  const [lastSettings, setLastSettings] = useState<Tab>("access");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   useEffect(() => {
     try {
@@ -1293,9 +1300,25 @@ export default function ConsolePage() {
       alert: actions.filter((item) => item.status === "PENDING_APPROVAL").length,
     },
     { id: "access", label: t("Access & budget"), count: humanUsers.length },
+    { id: "deploys", label: t("Deploys") },
     { id: "blackboard", label: t("State slots"), count: slots.length },
     { id: "audit", label: t("History"), count: audit.total_batches ?? audit.batches.length },
   ];
+  const pickSections = (ids: Tab[]) => ids.flatMap((id) => settingsSections.filter((item) => item.id === id));
+  const settingsGroups: SettingsNavGroup[] = [
+    { label: t("Workspace"), items: pickSections(["access", "policies"]) },
+    { label: t("Shipping"), items: pickSections(["deploys", "operations"]) },
+    { label: t("Review and records"), items: pickSections(["governance", "blackboard", "audit"]) },
+  ];
+  const SETTINGS_ABOUT: Partial<Record<Tab, string>> = {
+    access: t("Who can sign in, what the workspace may spend, and whether the operator can read it."),
+    policies: t("Path rules that decide who may write where. The most specific matching rule wins."),
+    deploys: t("Where each project's merged images go, and when."),
+    operations: t("Namespaces, webhooks that tell other systems what changed, and actions agents want to take outside."),
+    governance: t("Changes agents propose to documents. A person applies or rejects each one."),
+    blackboard: t("The live state agents share, what waits for a person, and recent overrides."),
+    audit: t("Every write batch: who made it, what changed, and how to undo it."),
+  };
   const inLoop = LOOP_SECTIONS.includes(tab);
   const inSettings = SETTINGS_SECTIONS.includes(tab);
   const sections = inLoop ? loopSections : inSettings ? settingsSections : null;
@@ -1314,6 +1337,18 @@ export default function ConsolePage() {
       icon: <IconLayers />, go: () => openMore() },
   ];
   const place = navItems.find((item) => item.active)?.label;
+  const settingsPanel = (panel: JSX.Element) => (inSettings ? (
+    <SettingsFrame
+      groups={settingsGroups}
+      active={tab}
+      onSelect={(id) => setTab(id as Tab)}
+      title={settingsSections.find((item) => item.id === tab)?.label ?? t("Settings")}
+      description={SETTINGS_ABOUT[tab]}
+      navLabel={t("Settings sections")}
+    >
+      {panel}
+    </SettingsFrame>
+  ) : panel);
   const section = sections && tab !== "loop" ? sections.find((item) => item.id === tab)?.label : undefined;
 
   if (!mounted) {
@@ -1657,7 +1692,7 @@ export default function ConsolePage() {
                 </div>
               ) : (
               <>
-              {sections && (
+              {sections && !inSettings && (
                 <nav className="more-nav" aria-label={inLoop ? t("Loop sections") : t("Settings sections")}>
                   {sections.map((item) => (
                     <button
@@ -1676,7 +1711,7 @@ export default function ConsolePage() {
                 </nav>
               )}
 
-              <div
+              {settingsPanel(<div
                 className="tab-panel"
                 role="tabpanel"
                 id="view-panel"
@@ -1715,6 +1750,7 @@ export default function ConsolePage() {
                       onOpenTasks={() => setTab("tasks")}
                       onOpenTask={(key) => void openTaskByKey(key)}
                       onOpenSituation={() => setTab("situation")}
+                      onOpenDeploys={() => setTab("deploys")}
                       onOpenDiagram={(diagram, chunk) => {
                         setDiagramFocus({ diagram, chunk, at: Date.now() });
                         setTab("diagram");
@@ -1796,6 +1832,9 @@ export default function ConsolePage() {
                       openCreateSignal={mintSignal}
                     />
                   )}
+                  {tab === "deploys" && (
+                    <DeploysSettings request={api} notify={setNotice} canManage={sessionMode} />
+                  )}
                   {tab === "access" && sessionMode && sessionToken && (
                     <SupportAccessCard apiBase={apiBase} sessionToken={sessionToken} />
                   )}
@@ -1837,7 +1876,7 @@ export default function ConsolePage() {
                   )}
                 </>
               )}
-              </div>
+              </div>)}
               </>
               )}
             </section>

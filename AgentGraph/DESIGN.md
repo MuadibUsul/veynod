@@ -94,6 +94,11 @@ wordmark. Chinese falls back to PingFang SC, then Noto Sans SC.
 - Console: four places only (Diagram, Loop, Documents, Settings), in the
   sidebar like Linear's. Loop, tasks and computers read as grouped lists, not
   cards. Every state is a lamp beside its word.
+- Settings: its sections listed on the left in a few named groups; the open
+  section has a title (20 px, weight 500) and one line saying what it is for,
+  then groups of rows. A row says what it is on the left (label, then a muted
+  line) and holds its control on the right; booleans are switches, a group's
+  save sits at its foot. Deploys live here, not in the Loop.
 - The space (`dashboard/app/components/colony.tsx`): the one place allowed to
   be playful. Each agent is a small character drawn from its id; where it
   stands and how it moves always says its real state (asleep, idle, working,
