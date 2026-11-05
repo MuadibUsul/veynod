@@ -8,6 +8,7 @@ v1（`AgentGraph/docs/DEPLOY_GATE.md`）只服务 Veynod 自己、只有运营�
 
 ```
  合并到 main ──► CI 绿 ──► Release 工作流（.github/workflows/release.yml）
+                            │  只发布 main 的最新提交；main 已经往前走了就跳过
                             │  scripts/release.py：每个服务算"输入哈希"
                             │  有同哈希的镜像 → 只打新标签；没有 → BuildKit 构建一次并推送 GHCR
                             ▼
@@ -113,7 +114,7 @@ Veynod 部署在 `/home/deploy/veynod-monorepo`，用 `deploy/vps/docker-compose
 | 规则 | 行为 |
 |---|---|
 | 分支 | 只有目标分支上的 release 会排队（`wrong_branch`） |
-| 单调 | 比当前线上或在跑的更旧的 release 不排队（`not_newer`）；人点名旧提交就是回滚（`trigger = rollback`） |
+| 单调 | 比当前线上或在跑的更旧的 release 不排队（`not_newer`）；人点名旧提交就是回滚（`trigger = rollback`）。"旧"按 release 到达的序号（`seq`）算，不看 git 历史，所以 Release 工作流只发布 main 的最新提交：重跑旧提交的 CI、或几次 CI 乱序跑完，都不会把旧代码当成最新的发出去 |
 | 一个在跑 | 每个目标同时最多一个 `offered`/`running`（唯一索引保证） |
 | 合并 | 最多一个 `queued`；新 release 到来时替换它（`coalesced`），不排在后面 |
 | 失败不自动重试 | 失败或回滚过的 release，自动/定时都不再排队（`failed_before`），人可以手动重新部署 |
