@@ -280,7 +280,7 @@ export function FederationView({ request, notify, sessionMode }: {
   if (state === "error") {
     return (
       <Empty title={t("Federation could not be loaded")} text={t("Try again in a moment.")}>
-        <button type="button" className="button small" onClick={() => void load()}>{t("Retry")}</button>
+        <button type="button" className="button primary small" onClick={() => void load()}>{t("Retry")}</button>
       </Empty>
     );
   }
@@ -367,7 +367,7 @@ function IdentityCard({ me, busy, call }: { me: Identity | null; busy: boolean; 
             {t("This workspace has no federation identity yet. Only an owner can turn it on.")}
           </span>
           <span className="lin-actions">
-            <button type="button" className="button small" disabled={busy}
+            <button type="button" className="button primary small" disabled={busy}
               onClick={() => void call("/v1/federation/enable", undefined,
                 "Federation is on for this workspace.")}>{t("Turn on federation")}</button>
           </span>
@@ -498,7 +498,7 @@ function ConnectionsCard({ connections, busy, call, request, notify, prefill, on
           <ScopePicker label={t("We may")} value={ours} onChange={setOurs} />
           <ScopePicker label={t("They may")} value={theirs} onChange={setTheirs} />
           <span className="lin-actions">
-            <button type="submit" className="button small" disabled={busy}>{t("Ask to connect")}</button>
+            <button type="submit" className="button primary small" disabled={busy}>{t("Ask to connect")}</button>
             <span className="flow-aside">{t("Only an owner can ask. Their owner decides; they may grant less.")}</span>
           </span>
         </form>
@@ -519,7 +519,7 @@ function ConnectionsCard({ connections, busy, call, request, notify, prefill, on
           <span className="lin-actions">
             {item.state === "REQUESTED" && item.initiator === "peer" && (
               <>
-                <button type="button" className="button small" disabled={busy}
+                <button type="button" className="button primary small" disabled={busy}
                   onClick={() => act(item, "approve", "Connected.")}>{t("Approve")}</button>
                 <button type="button" className="button ghost small" disabled={busy}
                   onClick={() => act(item, "reject", "Request declined.")}>{t("Decline")}</button>
@@ -664,7 +664,7 @@ function OfferForm({ connections, busy, call, onDone }: {
         </select>
       </label>
       <span className="lin-actions">
-        <button type="submit" className="button small" disabled={busy}>{t("Send work")}</button>
+        <button type="submit" className="button primary small" disabled={busy}>{t("Send work")}</button>
         <span className="flow-aside">
           {t("The terms are frozen once sent. No payment is involved yet.")}
         </span>
@@ -707,7 +707,7 @@ function DelegationRow({ item, busy, call }: { item: Delegation; busy: boolean; 
         <span className="lin-actions">
           {provider && item.state === "OFFERED" && !cancelAsked && (
             <>
-              <button type="button" className="button small" disabled={busy}
+              <button type="button" className="button primary small" disabled={busy}
                 onClick={() => void call(`${base}/accept`, undefined,
                   "Taken on. A task was added to this board.")}>{t("Take on")}</button>
               <button type="button" className="button ghost small" disabled={busy}
@@ -716,7 +716,7 @@ function DelegationRow({ item, busy, call }: { item: Delegation; busy: boolean; 
             </>
           )}
           {provider && ["ACCEPTED", "RUNNING"].includes(item.state) && (
-            <button type="button" className="button small" disabled={busy}
+            <button type="button" className="button primary small" disabled={busy}
               onClick={() => setShowSubmit(!showSubmit)}>{showSubmit ? t("Close") : t("Deliver")}</button>
           )}
           {provider && cancelAsked && ["OFFERED", "ACCEPTED", "RUNNING"].includes(item.state) && (
@@ -735,7 +735,7 @@ function DelegationRow({ item, busy, call }: { item: Delegation; busy: boolean; 
           )}
           {!provider && item.state === "SUBMITTED" && (
             <>
-              <button type="button" className="button small" disabled={busy}
+              <button type="button" className="button primary small" disabled={busy}
                 onClick={() => void call(`${base}/accept_result`, undefined, "Result accepted.")}>
                 {t("Accept result")}
               </button>
@@ -807,7 +807,7 @@ function DelegationRow({ item, busy, call }: { item: Delegation; busy: boolean; 
             <textarea value={content} onChange={(event) => setContent(event.target.value)} rows={6} />
           </label>
           <span className="lin-actions">
-            <button type="submit" className="button small" disabled={busy}>{t("Deliver")}</button>
+            <button type="submit" className="button primary small" disabled={busy}>{t("Deliver")}</button>
           </span>
         </form>
       )}
@@ -903,7 +903,7 @@ function DiscoverCard({ request, notify, connections, onConnect }: {
             {existing ? (
               <span className="flow-aside">{t(STATE_LABEL[existing.state] ?? existing.state)}</span>
             ) : (
-              <button type="button" className="button small"
+              <button type="button" className="button primary small"
                 onClick={() => onConnect(found.federation_id)}>{t("Ask to connect")}</button>
             )}
           </span>
@@ -1115,7 +1115,7 @@ function ChatCard({ threads, connections, request, notify, reload }: {
                   onKeyDown={(event) => {
                     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void send();
                   }} />
-                <button type="submit" className="button small" disabled={sending || !text.trim()}>
+                <button type="submit" className="button primary small" disabled={sending || !text.trim()}>
                   {t("Send")}
                 </button>
               </form>
@@ -1319,7 +1319,7 @@ function GovernanceCard({ connections, request, call, busy }: {
             {t("Also block them for this workspace")}
           </label>
           <span className="lin-actions">
-            <button type="submit" className="button small" disabled={busy}>{t("File report")}</button>
+            <button type="submit" className="button primary small" disabled={busy}>{t("File report")}</button>
             <span className="flow-aside">
               {t("A report opens a case for this server's operators. It never punishes anyone by itself.")}
             </span>
