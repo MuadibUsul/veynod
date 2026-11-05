@@ -95,9 +95,10 @@
 
 ## 7. 观察到的问题与说明
 
-- **本机 product 套件的 12 项失败都来自本机环境，不是联邦代码**。复跑方法：删掉本机前端构建产物，建一个全新测试库，只跑这 12 项，结果 24 项全部通过；CI 上同一代码全绿。原因分三类：
+- **本机 product 套件的 12 项失败都来自本机环境，不是联邦代码**。复跑方法：删掉本机前端构建产物，建一个全新测试库，只跑这 12 项，结果 24 项全部通过；CI 上同一代码全绿。原因分四类：
   - 8 项：库连接返回 503 `database_unavailable`。当时本机同时在跑 kernel 套件和前端构建，负载很高；`KeyError: 'needs_you'` 也是 503 之后的连带错误。
   - 2 项（根页面相关）：我为了验证前端构建，在本机生成了 `dashboard/out`，服务端看到它就把根页面链到控制台，测试期望没有构建产物。
+  - 1 项（`test_budget.py::test_shadow_mode_records_but_never_blocks_bursts`）：断言一段时间窗内的请求计数（实测 8，期望 ≤ 7），高负载下请求被拖进同一窗口。
   - 1 项（`test_releases`）：复用了之前跑过的测试库，库里记录的“上次见过的工具列表”比新增的 `federation` 工具旧。全新库上通过。
   - 另外，`test_loop_steps.py::test_the_supervisor_walks_the_floor_only_when_something_waits` 在单独重跑时失败过一次，再跑通过；完整套件和 CI 上都通过。属于 Loop 监督者，与联邦无关，建议另开任务查时间依赖。
 - **kernel 套件 `test_submission_guard.py::test_a_second_open_submission_is_refused`**：在本机同时跑 product 套件、负载很高时失败一次（409 的返回体是字符串而不是对象），单独重跑通过（3 秒），GitHub CI 上同一代码也通过。这条测试依赖“门控进程还在跑”的时间窗口，与联邦代码无关（本 PR 未改 kernel）。根因未查，建议另开任务把这条测试改成不依赖时间。
