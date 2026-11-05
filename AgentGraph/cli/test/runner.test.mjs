@@ -364,6 +364,37 @@ test("OAR sessions get only Veynod's MCP, with the runner key", async () => {
   assert.deepEqual(options.env, { A: "1" });
 });
 
+test("a Codex session through OAR leaves out the userConfiguration Codex refuses, and still pins", async () => {
+  // OAR's codex runtime declares refusedSessionOptions.userConfiguration (0.75
+  // and 0.87) and session() rejects it: every Codex run through OAR failed.
+  let options = null;
+  const importer = async (spec) => {
+    if (spec === "@botiverse/oar/runtimes/codex") {
+      return { codexRuntime: {
+        refusedSessionOptions: { userConfiguration: "not supported" },
+        installation: async () => ({ kind: "available" }),
+        session: async (_installation, opts) => {
+          if (opts.userConfiguration !== undefined) throw new Error("UnsupportedOptionError: userConfiguration");
+          options = opts;
+          return { dispose: async () => {} };
+        },
+      } };
+    }
+    if (spec === "@botiverse/oar/observe") return { promptAndWait: async () => ({ kind: "ended" }) };
+    throw new Error(spec);
+  };
+  const pin = { host: "https://h", key: "ag_k" };
+  const result = await adapterFor("codex", { importer }).run({ cwd: "/tmp", prompt: "p", env: { A: "1" }, pin });
+  assert.equal(result.ok, true, result.reason);
+  assert.equal("userConfiguration" in options, false);
+  assert.deepEqual(options.mcpServers, [veynodMcpServer(pin)], "the run's own key, under the user's server name");
+  assert.equal(options.mcpServers[0].name, "veynod");
+  assert.equal(await pinsIdentity("codex", { importer }), true);
+  const noMcp = async (spec) => (spec.endsWith("/codex")
+    ? { codexRuntime: { refusedSessionOptions: { mcpServers: "no" } } } : noOar(spec));
+  assert.equal(await pinsIdentity("codex", { importer: noMcp }), false);
+});
+
 test("codex without OAR is reported as not pinned", async () => {
   assert.equal(await pinsIdentity("claude", { importer: noOar }), true);
   assert.equal(await pinsIdentity("custom", { importer: noOar }), true);
