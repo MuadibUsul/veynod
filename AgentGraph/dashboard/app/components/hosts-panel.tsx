@@ -199,8 +199,13 @@ export function HostsPanel({
         // What keeps an online computer from working: no runtime it can start, or a seat taken off.
         const noRuntime = computer.state !== "revoked" && computer.runtimes.length > 0 && runtimes.length === 0;
         // Only the work seat matters: review is the Kernel gate's or a person's.
-        const removedSeats = computer.state === "revoked" ? []
-          : computer.seats.filter((seat) => seat.status === "revoked" && seat.seat === "work");
+        // Every reconnect of an older setup left a retired seat behind; they
+        // matter only when no work seat is left, and then the note is said once.
+        const workSeats = computer.seats.filter((seat) => seat.seat === "work");
+        const seatRemoved = computer.state !== "revoked" && workSeats.length > 0
+          && workSeats.every((seat) => seat.status === "revoked");
+        const liveSeats = computer.seats.filter((seat) => seat.status !== "revoked");
+        const shownSeats = liveSeats.length ? liveSeats : computer.seats;
         const stateText = computer.last_seen_at && computer.state !== "online"
           ? `${t(STATE_LABEL[computer.state])} · ${relativeTime(computer.last_seen_at)}`
           : t(STATE_LABEL[computer.state]);
@@ -215,7 +220,7 @@ export function HostsPanel({
               </span>
             </div>
             <div className="station-seats">
-              {computer.seats.map((seat) => {
+              {shownSeats.map((seat) => {
                 const busy = seat.running.length > 0;
                 const identity = seat.agent_id || seat.host_id;
                 const runtime = runtimes[0];
@@ -265,12 +270,12 @@ export function HostsPanel({
                 <code>{RUNTIME_INSTALL.claude}</code> {t("or")} <code>{RUNTIME_INSTALL.codex}</code>
               </p>
             )}
-            {removedSeats.map((seat) => (
-              <p key={seat.host_id} className="station-note">
+            {seatRemoved && (
+              <p className="station-note">
                 {t("Its work seat was taken off the Loop, so it cannot build tasks. To connect it again, run on it:")}{" "}
                 <code>{RECONNECT}</code>
               </p>
-            ))}
+            )}
             {left === 0 && waitingForQuota > 0 && (
               <p className="station-note">
                 {t("Out of quota: {n} tasks wait and start on their own when it resets.", { n: waitingForQuota })}

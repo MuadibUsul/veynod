@@ -1113,22 +1113,37 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
           f"Automation is {mode}." + (" The Loop assigns work." if mode == "full"
                                      else " The Loop only suggests computers."),
           "Set automation to full in Governance so the Loop assigns work.")
-    check("hosts", bool(online), True,
-          f"{len(online)} of {len(hosts)} computer(s) online." if hosts
-          else "No computer is connected.",
-          "Run `npx veynod --run-tasks` on a computer.")
-    outdated = sorted(host["agent_id"] or host["host_id"] for host in hosts
-                      if runner_outdated(host.get("runner_version")))
     minimum = ".".join(str(part) for part in MIN_RUNNER_VERSION)
+    outdated_hosts = sorted((host for host in hosts if runner_outdated(host.get("runner_version"))),
+                            key=lambda host: host["agent_id"] or host["host_id"])
+    outdated = [f"{host['agent_id'] or host['host_id']} ({host['runner_version']})"
+                for host in outdated_hosts]
+    upgrade = (f"On each of them run `npx veynod@latest` (it keeps the computer's settings), "
+               f"then check that `npx veynod --version` prints {minimum} or newer.")
+    # Connected but too old: it heartbeats, so "run veynod on a computer" would
+    # send the owner in a circle. Say what is wrong and how to upgrade instead.
+    stale = [host for host in outdated_hosts if host["status"] == "active"
+             and now - host["last_seen_at"] <= ONLINE_WINDOW and not is_deploy_host(host)]
+    if online or not hosts:
+        hosts_text = (f"{len(online)} of {len(hosts)} computer(s) online." if hosts
+                      else "No computer is connected.")
+    else:
+        hosts_text = (f"0 of {len(hosts)} computer(s) can take work."
+                      + (f" {len(stale)} connected, but on a veynod older than {minimum}."
+                         if stale else ""))
+    check("hosts", bool(online), True, hosts_text,
+          upgrade if stale else "Run `npx veynod --run-tasks` on a computer.")
     check("cli_version", not outdated, False,
           f"Every computer runs veynod {minimum} or newer." if not outdated
           else (f"{', '.join(outdated)} run(s) a veynod older than {minimum}: work reaches "
                 "a computer only over its nerve socket now, so it gets none."),
-          "On each of them run `npx veynod@latest`: it upgrades and keeps the computer's settings.")
+          upgrade)
+    stale_builders = [host for host in stale if host["role_scope"] == "EXECUTOR"]
     check("builder", bool(builders), True,
           f"{len(builders)} computer(s) can build (EXECUTOR) with quota left." if builders
           else "No online computer can build tasks.",
-          "Connect a computer with `npx veynod --run-tasks`.")
+          upgrade if stale_builders and not builders
+          else "Connect a computer with `npx veynod --run-tasks`.")
     can_review = (f"{len(reviewers)} computer(s) can review work without a repository. "
                   if reviewers else "")
     check("reviewer", True, False,
