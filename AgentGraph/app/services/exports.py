@@ -219,6 +219,9 @@ EPHEMERAL = frozenset({
     "federation_directory_listings",
     # Reputation integrity (v3.96): operator links and pair reviews.
     "federation_controller_links", "federation_pair_reviews",
+    # Simulated market (v3.98): deployment-wide, keyed by federation ids.
+    "federation_offers", "federation_contracts", "federation_contract_history",
+    "federation_ledger_txns", "federation_ledger_entries", "federation_settlements",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")

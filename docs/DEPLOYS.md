@@ -2,7 +2,7 @@
 
 部署门 v2 对**所有用户**开放：一个项目配好服务器，就能把合并到主分支的提交自动部署上去。
 用户自己打开或关闭，可以每次合并都部署、在时间窗口内部署，或只在手动点击时部署。
-v1（`AgentGraph/docs/DEPLOY_GATE.md`）只服务 Veynod 自己、只有运营者能用，按文末计划退役。
+v1（只服务 Veynod 自己、只有运营者能用）已于 2026-11-05 退役，见文末。
 
 ## 一张图
 
@@ -121,15 +121,19 @@ Veynod 部署在 `/home/deploy/veynod-monorepo`，用 `deploy/vps/docker-compose
 | 送不到 | 部署电脑离线：保持排队，原因写在记录上；送出后 `runner_claim_timeout_seconds` 内没开始：放回队列 |
 | 超时 | 跑了超过 `DEPLOY_RUN_TIMEOUT_SECONDS`（默认 1800）记为失败 |
 
-## v1 部署门退役计划
+## v1 部署门退役（2026-11-05）
 
-v1（`AgentGraph/app/services/deploy_gate.py`、`/v1/deploy-gate/*`、`/dashboard/deploy/`、
-`AgentGraph/scripts/deploy_gate.py`、`AgentGraph/scripts/deploy_tlines.sh`、迁移 v3_54 的表）自 2026-10-29 起已暂停、不在任务流程里。
+v1 自 2026-10-29 起暂停、不在任务流程里。原计划等 v2 在 VPS 上连续成功部署两周再拆；owner 在
+2026-11-05 决定提前拆（生产 `.env` 里没有 v1 的 runner 令牌，它本来就没在运行）。
 
-1. **现在**：v2 上线；v1 代码不动、不再接新功能。v1 的表保留（迁移只扩不删）。
-2. **Veynod 的 VPS 在 v2 上连续成功部署两周**之后：从 `AgentGraph/app/main.py` 摘掉三个
-   `deploy_gate_*` 路由，删 `app/services/deploy_gate.py`、`app/schemas_deploy_gate.py`、
-   `app/api/deploy_gate_routes.py`、`AgentGraph/scripts/{deploy_gate.py,deploy_tlines.sh,install_deploy_gate.sh}`、
-   `AgentGraph/deploy/deploy-gate/`，`/dashboard/deploy/` 改为跳转到 设置 → 部署。
-   VPS 上停掉 v1 的 systemd 定时器（`systemctl disable --now veynod-deploy-gate.timer`）。
-3. **再一个版本之后**：新迁移删除 v1 的表（`deploy_gate_*`），并删掉相关测试。
+1. **已删（2026-11-05）**：`/v1/deploy-gate/*` 和 `/v1/admin/deploy-gate/*` 路由、`app/services/deploy_gate.py`、
+   `app/schemas_deploy_gate.py`、`app/api/deploy_gate_routes.py`、`AgentGraph/scripts/{deploy_gate.py,install_deploy_gate.sh}`、
+   `AgentGraph/deploy/deploy-gate/`、`deploy/gate-quarantine.txt`、`DEPLOY_GATE_*` 和 `DEPLOY_EVIDENCE_REQUIRED` 配置、
+   "任务要等上线证据才 DONE"（Loop A-03，默认一直关着）、控制台"允许自动上线"开关（只对 v1 起作用；
+   `auto_deploy_allowed` 字段为兼容仍可读写，但不再有作用）、相关测试和 `docs/DEPLOY_GATE.md`。
+   `/dashboard/deploy/` 跳转到 设置 → 部署。
+2. **保留**：`AgentGraph/scripts/deploy_tlines.sh`，它仍是手动部署生产的脚本（见 `AgentGraph/docs/PROJECT_MAP.md`）。
+3. **VPS 上要做一次**（若装过 v1 的定时器）：`sudo systemctl disable --now veynod-deploy-gate.timer`；
+   `.env` 里残留的 `DEPLOY_GATE_*` 行会被忽略，可以删掉。
+4. **下一个版本**：新迁移删除 v1 的表（`deploy_gate_state`、`deploy_gate_runs`、`deploy_gate_audit`）。
+   表这次先留着，万一要回退代码，数据还在。

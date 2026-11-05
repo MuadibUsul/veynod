@@ -243,7 +243,6 @@ do not edit by hand. Every error body is
 | `queue_ticket_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Call acquire_resource again to re-queue. |
 | `request_closed` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `retention_not_met` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
-| `run_not_claimed` | 409 | `abandon` | `abandon_and_release_local_state` | Only the runner holding a running deploy-gate run reports it; claim again. |
 | `sample_unavailable` | 409 | `abandon` | `abandon_and_release_local_state` | Someone else took the sample or it was already judged. |
 | `stale_change` | 409 | `abandon` | `abandon_and_release_local_state` | The diagram moved on; file the change again on details.current_version. |
 | `stale_ci` | 409 | `abandon` | `abandon_and_release_local_state` | Drop this result; report a run of details.submission instead. |

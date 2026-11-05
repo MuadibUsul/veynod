@@ -499,7 +499,6 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `queue_ticket_expired` | 409 | `abandon` |
 | `request_closed` | 409 | `abandon` |
 | `retention_not_met` | 409 | `abandon` |
-| `run_not_claimed` | 409 | `abandon` |
 | `sample_unavailable` | 409 | `abandon` |
 | `stale_change` | 409 | `abandon` |
 | `stale_ci` | 409 | `abandon` |

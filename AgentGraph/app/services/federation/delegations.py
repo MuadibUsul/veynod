@@ -714,6 +714,9 @@ async def delivery_loop() -> None:
                 from app.services.federation import reputation
 
                 await reputation.issue_due()
+                from app.services.federation import market
+
+                await market.advance()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - the loop must survive one bad pass

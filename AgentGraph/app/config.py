@@ -318,6 +318,8 @@ class Settings(BaseSettings):
     # federation. Empty (the default) means no outbound federation traffic at
     # all, which is what a closed enterprise network wants (F-022).
     federation_peer_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # P5 simulated market: demonstration credits (SIM) each workspace gets once.
+    federation_sim_allowance: int = Field(default=1000, ge=0, le=1_000_000)
     federation_remote_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
 
     # ---------------------------------------------------- outbound actions
@@ -332,23 +334,6 @@ class Settings(BaseSettings):
     # the delivery is DEAD (shown in red, a webhook.dead event for people).
     webhook_retry_delays_seconds: list[int] = Field(default_factory=lambda: [30, 120, 600])
     webhook_batch_size: int = Field(default=100, ge=1, le=1000)
-
-    # ------------------------------------------- VPS deploy gate (v3.50)
-    # Without both secrets the gate's webhook and runner endpoints answer 404.
-    deploy_gate_webhook_secret: str | None = None
-    deploy_gate_runner_token: str | None = None
-    deploy_gate_repo: str = "MuadibUsul/veynod"
-    deploy_gate_branch: str = "main"
-    # A runner silent for longer than this is shown offline (its timer runs every 2 min).
-    deploy_gate_runner_offline_seconds: int = Field(default=600, ge=60, le=86_400)
-    # The workspace whose board holds the tasks a merged PR names (G-03); its
-    # owner's automatic-deploy switch also gates automatic deploys (Loop R-02).
-    deploy_gate_board_workspace_id: str | None = None
-    # Loop A-03 (3.18) held an agent's DONE until a deploy carrying the task
-    # passed G-05. Deferred on 2026-10-29: the deploy gate is off the task path,
-    # a task is done when its pull request merges, and shipping is a roadmap
-    # item. Turn this on only when the gate ships for real again.
-    deploy_evidence_required: bool = False
 
     # ---------------------------------------------------------------- quota
     free_max_documents: int = 5_000

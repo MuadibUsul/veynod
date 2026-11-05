@@ -42,7 +42,7 @@
 | Code API | `app/api/code_routes.py` | `/v1/code/runs`、sync、audit | code_engine | **无** | 同上 |
 | Code 页面 | `app/api/code_page.py`、`app/templates/code.html` | 人类极简 Code 页面 | 浏览器 | 无自动化 | REFACTOR（无 diff review） |
 | 旧 Diagram/Chunk | `app/services/diagrams.py`、`app/api/v1_routes.py` | 图表、chunk 任务、提交/CI/queue/merge 元数据 | dashboard/MCP | `tests/test_diagrams.py`（20+） | **RETIRE from code path**（只保留协作编排能力） |
-| 旧 Deploy Gate | `app/services/deploy_gate.py`、`app/api/deploy_gate_routes.py`、`scripts/deploy_gate.py` | VPS 部署门禁/证据 | 特定部署板 | `tests/test_deploy_gate*.py` | KEEP（运维域），不得作为代码交付主路径 |
+| 旧 Deploy Gate（v1） | 已删除（2026-11-05） | — | — | — | REMOVED；部署见 `docs/DEPLOYS.md`（v2）。表 `deploy_gate_*` 下个版本删 |
 | Flow | `app/services/flow.py` | 只读 loop 概览 | `/v1/loop/overview` | 间接 | KEEP |
 | AgentGraph CLI | `AgentGraph/cli/bin/runner.mjs`、`veynod.mjs` | 设备登录、hub、listener、runner placement | 人类/Agent | `cli/test/*.mjs` 62 项 | KEEP + REFACTOR（无 code run 管理） |
 

@@ -22,7 +22,12 @@ type Profile = {
   acceptance: Rate & { first_pass: Rate };
   response: { median_seconds: number | null; samples: number; enough_evidence: boolean };
   skills: { published: number; average: number | null; count: number; enough_evidence: boolean };
-  governance: { sanctions_in_force: number; sanctions_ever: number };
+  governance: {
+    sanctions_in_force: number;
+    sanctions_ever: number;
+    complaints: { resolved: number; upheld: number; dismissed: number;
+      upheld_by_category: Record<string, number> };
+  };
   cooperation: {
     counterparts: number;
     repeat_counterparts: number;
@@ -51,26 +56,39 @@ export function ReputationPanel({ fid, request }: { fid: string; request: ApiReq
   }, [fid, request]);
 
   if (!page) return null;
-  const pct = (rate: Rate) => rate.enough_evidence && rate.rate !== null
-    ? `${Math.round(rate.rate * 100)}%` : t("not enough evidence");
+  const hidden = (value: unknown) => Boolean((value as { hidden_by_owner?: boolean })
+    ?.hidden_by_owner);
+  const pct = (rate: Rate) => hidden(rate) ? t("not shown by the owner")
+    : rate.enough_evidence && rate.rate !== null
+      ? `${Math.round(rate.rate * 100)}%` : t("not enough evidence");
+  const off = t("not shown by the owner");
   const rows: [string, string, string][] = [
-    [t("Delivers work it takes on"), pct(page.completion),
-      t("{n} signed records", { n: page.completion.samples })],
-    [t("Work accepted by the requester"), pct(page.acceptance),
-      t("first time: {rate}", { rate: pct(page.acceptance.first_pass) })],
-    [t("Answers delegation offers"),
-      page.response.enough_evidence && page.response.median_seconds !== null
-        ? `${Math.max(1, Math.round(page.response.median_seconds / 60))} min`
-        : t("not enough evidence"),
-      t("{n} offers", { n: page.response.samples })],
-    [t("Skills"), page.skills.enough_evidence && page.skills.average !== null
-      ? `${page.skills.average} / 5` : t("not enough ratings"),
-      t("{n} published", { n: page.skills.published })],
+    hidden(page.completion) ? [t("Delivers work it takes on"), off, ""]
+      : [t("Delivers work it takes on"), pct(page.completion),
+        t("{n} signed records", { n: page.completion.samples })],
+    hidden(page.acceptance) ? [t("Work accepted by the requester"), off, ""]
+      : [t("Work accepted by the requester"), pct(page.acceptance),
+        t("first time: {rate}", { rate: pct(page.acceptance.first_pass) })],
+    hidden(page.response) ? [t("Answers delegation offers"), off, ""]
+      : [t("Answers delegation offers"),
+        page.response.enough_evidence && page.response.median_seconds !== null
+          ? `${Math.max(1, Math.round(page.response.median_seconds / 60))} min`
+          : t("not enough evidence"),
+        t("{n} offers", { n: page.response.samples })],
+    hidden(page.skills) ? [t("Skills"), off, ""]
+      : [t("Skills"), page.skills.enough_evidence && page.skills.average !== null
+        ? `${page.skills.average} / 5` : t("not enough ratings"),
+        t("{n} published", { n: page.skills.published })],
     [t("Sanctions"), String(page.governance.sanctions_in_force),
       t("{n} ever", { n: page.governance.sanctions_ever })],
-    [t("Has worked with"), t("{n} partner workspaces", { n: page.cooperation.counterparts }),
-      t("{n} came back · longest {d} days", { n: page.cooperation.repeat_counterparts,
-        d: page.cooperation.longest_partnership_days })],
+    [t("Resolved complaints"), t("{upheld} upheld", { upheld: page.governance.complaints.upheld }),
+      t("{dismissed} dismissed · {resolved} resolved in all", {
+        dismissed: page.governance.complaints.dismissed,
+        resolved: page.governance.complaints.resolved })],
+    hidden(page.cooperation) ? [t("Has worked with"), off, ""]
+      : [t("Has worked with"), t("{n} partner workspaces", { n: page.cooperation.counterparts }),
+        t("{n} came back · longest {d} days", { n: page.cooperation.repeat_counterparts,
+          d: page.cooperation.longest_partnership_days })],
   ];
   return (
     <div className="skills-entry" aria-label={t("Reputation")}>

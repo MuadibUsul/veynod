@@ -5289,25 +5289,6 @@ body::before {
   background: rgba(124, 108, 246, 0.14);
   box-shadow: 0 0 0 1px var(--accent, #7c6cf6) inset;
 }
-.automation-auto-deploy {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 12px 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-.automation-auto-deploy input {
-  margin-top: 3px;
-}
-.automation-auto-deploy span {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.automation-auto-deploy small {
-  color: var(--muted, #9aa0b4);
-  line-height: 1.45;
-}
 .automation-actions {
   display: flex;
   align-items: center;

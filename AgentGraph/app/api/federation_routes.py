@@ -29,6 +29,8 @@ from app.services.federation import (
     grants,
     identity,
     integrity,
+    ledger,
+    market,
     messaging,
     metering,
     registry,
@@ -1391,14 +1393,30 @@ async def get_reputation(
     fid: str = Path(pattern=_FID_WS), principal: Principal = Depends(get_principal)
 ) -> dict[str, Any]:
     _enabled()
-    if not await directory.can_view(fid, await _viewer_fid(principal)):
-        raise ApiError(
-            404,
-            "federation_not_found",
-            "this workspace is not listed and you are not connected with it",
-            details={"federation_code": "FED_E_NOT_LISTED"},
+    viewer = await _viewer_fid(principal)
+    return await _call(public_reputation(fid, viewer))
+
+
+async def public_reputation(fid: str, viewer: str) -> dict[str, Any]:
+    """A workspace's reputation as this viewer may see it (P4-2 gate, P4-4
+    disclosure): its own in full, anyone else's as its owner chose."""
+    from app.services.federation import privacy
+
+    if not await directory.can_view(fid, viewer):
+        raise FederationError(
+            "FED_E_NOT_LISTED", "this workspace is not listed and you are not connected with it"
         )
-    return await _call(reputation.profile(fid))
+    page = await reputation.profile(fid)
+    if viewer == fid:
+        return page
+    return privacy.apply_disclosure(page, await directory.disclosure_of(fid))
+
+
+@router.get("/privacy", summary="What the federation directory shows, to whom, and never")
+async def get_privacy_policy() -> dict[str, Any]:
+    from app.services.federation import privacy
+
+    return privacy.POLICY
 
 
 @router.get(
@@ -1431,6 +1449,11 @@ class DirectoryListing(BaseModel):
     headline: str = Field(default="", max_length=200)
     capabilities: list[str] = Field(default_factory=list, max_length=10)
     availability: Literal["open", "busy", "closed"] = "open"
+    disclosure: dict[str, bool] | None = Field(
+        default=None,
+        description="Which measures others may see: completion, acceptance, response, "
+        "skills, cooperation (all shown by default; sanctions and complaints always are).",
+    )
 
 
 @router.get("/directory/listing", summary="This workspace's own directory listing")
@@ -1455,6 +1478,7 @@ async def put_directory_listing(
             capabilities=list(body.capabilities),
             availability=body.availability,
             actor=_actor(principal),
+            disclosure=body.disclosure,
         )
     )
 
@@ -1555,3 +1579,161 @@ async def review_integrity_pair(body: PairReview) -> dict[str, Any]:
 async def link_controllers(body: ControllerLink) -> dict[str, Any]:
     _enabled()
     return await _call(integrity.link(body.a, body.b, reason=body.reason, operator=body.operator))
+
+
+# ── simulated market: offers, contracts, escrow (P5-1, ICD_P5_MARKET.md) ────
+
+
+class OfferCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["task", "skill", "tool"]
+    subject: str = Field(min_length=1, max_length=200, description="job id, or name@version")
+    price: int = Field(gt=0, le=1_000_000, description="SIM demonstration credits, not money")
+    buyer: str | None = Field(default=None, pattern=_FID_WS)
+    expires_hours: int = Field(default=72, ge=1, le=720)
+
+
+class SimMint(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    fid: str = Field(pattern=_FID_WS)
+    amount: int = Field(gt=0, le=1_000_000)
+    reason: str = Field(min_length=5, max_length=500)
+    operator: str = Field(min_length=2, max_length=120)
+
+
+class ContractResolve(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: Literal["release", "refund"]
+    note: str = Field(min_length=5, max_length=2000)
+    operator: str = Field(min_length=2, max_length=120)
+
+
+@router.get("/market/wallet", summary="This workspace's simulated credits (SIM, not money)")
+async def get_sim_wallet(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    _enabled()
+    return await _call(ledger.wallet(await _viewer_fid(principal)))
+
+
+@router.get("/market/machines", summary="The contract states of each value stream")
+async def get_market_machines() -> dict[str, Any]:
+    _enabled()
+    return market.machines()
+
+
+@router.post(
+    "/market/offers", status_code=201, summary="Put a price on a task or a skill (a person)"
+)
+async def create_market_offer(
+    body: OfferCreate, principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        market.create_offer(
+            _workspace_id(principal),
+            kind=body.kind,
+            subject=body.subject,
+            price=body.price,
+            buyer=body.buyer,
+            expires_hours=body.expires_hours,
+            actor=_actor(principal),
+        )
+    )
+
+
+@router.get("/market/offers", summary="Offers this workspace made or received")
+async def list_market_offers(principal: Principal = Depends(get_principal)) -> dict:
+    _enabled()
+    return {"items": await _call(market.list_offers(_workspace_id(principal)))}
+
+
+@router.post(
+    "/market/offers/{offer_id}/accept",
+    summary="Accept an offer: the contract is created and the price held in escrow (a person)",
+)
+async def accept_market_offer(
+    offer_id: str = Path(pattern=r"^fof_[a-z2-7]{26}$"),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        market.accept_offer(_workspace_id(principal), offer_id, actor=_actor(principal))
+    )
+
+
+@router.post("/market/offers/{offer_id}/withdraw", summary="Withdraw an open offer (the seller)")
+async def withdraw_market_offer(
+    offer_id: str = Path(pattern=r"^fof_[a-z2-7]{26}$"),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        market.withdraw_offer(_workspace_id(principal), offer_id, actor=_actor(principal))
+    )
+
+
+@router.get("/market/contracts", summary="Contracts this workspace is a party to")
+async def list_market_contracts(principal: Principal = Depends(get_principal)) -> dict:
+    _enabled()
+    return {"items": await _call(market.list_contracts(_workspace_id(principal)))}
+
+
+@router.get("/market/contracts/{contract_id}", summary="One contract, its escrow and receipt")
+async def get_market_contract(
+    contract_id: str = Path(pattern=r"^fct_[a-z2-7]{26}$"),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    me = await _viewer_fid(principal)
+    found = await _call(market.sync(contract_id))
+    if me not in (found["buyer"], found["seller"]):
+        raise ApiError(
+            404,
+            "federation_not_found",
+            "no such contract",
+            details={"federation_code": "FED_E_CONTRACT_UNKNOWN"},
+        )
+    return found
+
+
+@router.post(
+    "/market/contracts/{contract_id}/cancel",
+    summary="Cancel before delivery: the escrow goes back to the buyer (the buyer's person)",
+)
+async def cancel_market_contract(
+    contract_id: str = Path(pattern=r"^fct_[a-z2-7]{26}$"),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        market.cancel(_workspace_id(principal), contract_id, actor=_actor(principal))
+    )
+
+
+@admin_router.post("/market/mint", summary="Operator: add SIM demonstration credits")
+async def mint_sim_credits(body: SimMint) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        ledger.mint(body.fid, body.amount, reason=body.reason, operator=body.operator)
+    )
+
+
+@admin_router.post(
+    "/market/contracts/{contract_id}/resolve",
+    summary="Operator: decide a disputed contract (release to the seller or refund)",
+)
+async def resolve_market_contract(
+    body: ContractResolve, contract_id: str = Path(pattern=r"^fct_[a-z2-7]{26}$")
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        market.resolve(contract_id, outcome=body.outcome, note=body.note, operator=body.operator)
+    )
+
+
+@admin_router.get("/market/ledger/check", summary="Operator: the ledger balances")
+async def check_sim_ledger() -> dict[str, Any]:
+    _enabled()
+    return await ledger.is_balanced()
