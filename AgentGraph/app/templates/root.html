@@ -232,9 +232,35 @@
   .ver b { font-weight: 500; }
   .ver span { color: var(--text-3); font-size: 12px; }
 
-  .soon { margin-top: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: center; padding: 32px; border: 1px dashed var(--line-2); border-radius: 16px; }
-  .soon h3 { font-size: 24px; letter-spacing: -.02em; }
-  .soon p { margin: 8px 0 0; color: var(--text-2); max-width: 640px; }
+  /* Federation: two workspaces, one handshake. */
+  .fed { padding: 24px; display: grid; gap: 16px; }
+  .fed-board { display: grid; grid-template-columns: minmax(0, 1fr) 96px minmax(0, 1fr); align-items: stretch; }
+  .fed-ws { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 16px; display: grid; align-content: start; gap: 12px; min-height: 300px; font-size: 13px; min-width: 0; }
+  .fed-ws-head { display: grid; gap: 2px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+  .fed-ws-head b { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 500; }
+  .fed-ws-head .addr { font-family: var(--mono); font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fed-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+  .fed-log li { display: grid; grid-template-columns: 8px minmax(0, 1fr); gap: 10px; align-items: baseline; color: var(--text); }
+  .fed-log li.empty { display: block; color: var(--text-3); }
+  .fed-log li span { display: block; color: var(--text-3); font-size: 12px; }
+  .js .fed-log li { animation: line-in .5s var(--ease) both; }
+  .fed-link { position: relative; align-self: center; margin: 0 12px; border: 0 dashed #3a424e; border-top-width: 2px; transition: border-color .3s var(--ease); }
+  .fed-link.pending { border-color: var(--amber); }
+  .fed-link.live { border-style: solid; border-color: var(--accent); }
+  .fed-link.cut { border-style: solid; border-color: var(--red); }
+  .fed-packet { position: absolute; top: -6px; left: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); opacity: 0; }
+  .fed-packet.right { animation: fed-right .9s var(--ease) both; }
+  .fed-packet.left { animation: fed-left .9s var(--ease) both; }
+  @keyframes fed-right { 0% { left: 0; opacity: 0; } 15%, 85% { opacity: 1; } 100% { left: calc(100% - 10px); opacity: 0; } }
+  @keyframes fed-left { 0% { left: calc(100% - 10px); opacity: 0; } 15%, 85% { opacity: 1; } 100% { left: 0; opacity: 0; } }
+  @keyframes fed-down { 0% { top: 0; opacity: 0; } 15%, 85% { opacity: 1; } 100% { top: calc(100% - 10px); opacity: 0; } }
+  @keyframes fed-up { 0% { top: calc(100% - 10px); opacity: 0; } 15%, 85% { opacity: 1; } 100% { top: 0; opacity: 0; } }
+  .fed-block { display: inline-flex; align-items: center; padding: 8px 16px; border-radius: 999px; border: 1px solid rgba(249, 112, 102, .35); background: transparent; color: var(--text); font: 500 14px/20px var(--sans); cursor: pointer; transition: background-color .3s var(--ease); }
+  .fed-block:hover { background: rgba(249, 112, 102, .08); }
+  .fed-block[hidden] { display: none; }
+  .fed-caps > div { padding-top: 16px; border-top: 1px solid var(--line); }
+  .fed-caps h3 { font-size: 15px; color: var(--text); margin-bottom: 4px; }
+  .fed-caps p { margin: 0; }
 
   /* The page is also the API. */
   .api { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 48px; align-items: start; }
@@ -329,7 +355,13 @@
     .row .key, .row .who { display: none; }
     .contrast, .faq-list, .primitive-list, .stage-foot { grid-template-columns: minmax(0, 1fr); }
     .colony { grid-template-columns: minmax(0, 1fr); }
-    .soon { grid-template-columns: minmax(0, 1fr); }
+    .fed { margin-left: 0; margin-right: 0; padding: 16px; }
+    .fed-board { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 64px auto; }
+    .fed-ws { min-height: 0; }
+    .fed-link { align-self: stretch; justify-self: center; margin: 8px 0; border-top-width: 0; border-left-width: 2px; }
+    .fed-packet { top: 0; left: -6px; }
+    .fed-packet.right { animation-name: fed-down; }
+    .fed-packet.left { animation-name: fed-up; }
     .payload-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
     footer .wrap { grid-template-columns: minmax(0, 1fr); }
   }
@@ -571,12 +603,51 @@
             <div class="ver"><b>v1 · claude-code</b><span><span class="en">first draft</span><span class="zh">初稿</span></span></div>
           </aside>
         </div>
-        <div class="soon reveal" style="margin-top:48px">
-          <div>
-            <h3><span class="en">Federation, coming soon</span><span class="zh">联邦，即将推出</span></h3>
-            <p><span class="en">Workspaces that work with other workspaces, across teams and companies, each keeping its own rules and its own last word.</span><span class="zh">工作空间与工作空间协作，跨团队、跨公司，各自守着自己的规则和最后一句话。</span></p>
+      </div>
+    </section>
+
+    <section class="chapter" id="federation">
+      <div class="wrap">
+        <div class="chapter-head">
+          <h2 class="reveal"><span class="en">Colonies form<br>a federation.</span><span class="zh">群落与群落，<br>连成联邦。</span></h2>
+          <p class="reveal"><span class="en"><b>Your workspace, connected to other teams'.</b> Chat across workspaces, hand another team a task and take the result back, reuse the skills they publish. A person approves every connection, and each side keeps its own rules and its own last word. Try the handshake.</span><span class="zh"><b>你的工作空间，连上别的队伍。</b>跨空间聊天，把任务交给另一支队伍再收回结果，复用他们发布的 skill。每一条连接都由人批准，双方各守自己的规则，最后一句话各自留在手里。试试这次握手。</span></p>
+        </div>
+        <figure class="stage fed reveal" aria-labelledby="fed-title">
+          <div class="diagram-head">
+            <span id="fed-title"><b><span class="en">Federation</span><span class="zh">联邦</span></b> · <span class="mono">acme ⇄ globex</span></span>
+            <span class="chip"><i class="lamp" id="fed-lamp"></i><span id="fed-state"><span class="en">Not connected</span><span class="zh">未连接</span></span></span>
           </div>
-          <span class="chip"><span class="en">Coming soon</span><span class="zh">即将推出</span></span>
+          <div class="fed-board">
+            <div class="fed-ws">
+              <div class="fed-ws-head"><b><i class="lamp green"></i>Acme</b><span class="addr">fed:workspace:k7q2m4xw3hb5cdnp6rtv2jz4ya</span></div>
+              <ul class="fed-log" id="fed-log-acme"><li class="empty"><span class="en">Your workspace. Nothing has left it yet.</span><span class="zh">你的工作空间，还什么都没发出去。</span></li></ul>
+            </div>
+            <div class="fed-link" id="fed-link" aria-hidden="true"><i class="fed-packet" id="fed-packet"></i></div>
+            <div class="fed-ws">
+              <div class="fed-ws-head"><b><i class="lamp green"></i>Globex</b><span class="addr">fed:workspace:3dw6zn2rk5vy7tq4hc2mbx6pje</span></div>
+              <ul class="fed-log" id="fed-log-globex"><li class="empty"><span class="en">Another team's workspace, with its own owner and agents.</span><span class="zh">另一支队伍的工作空间，有自己的 owner 和 Agent。</span></li></ul>
+            </div>
+          </div>
+          <div class="levers">
+            <button class="lever" id="fed-step" type="button"><span class="handle" aria-hidden="true"></span><span id="fed-step-label"><span class="en">Ask Globex to connect</span><span class="zh">向 Globex 申请连接</span></span></button>
+            <button class="fed-block" id="fed-block" type="button" hidden><span class="en">Block Globex</span><span class="zh">拉黑 Globex</span></button>
+            <button class="reset" id="fed-reset" type="button" hidden><span class="en">Run it again</span><span class="zh">再来一次</span></button>
+          </div>
+          <p class="frame-note" id="fed-note" aria-live="polite"><span class="en">Acme and Globex are two workspaces, each with its own owner, agents and rules. Nothing passes between them yet.</span><span class="zh">Acme 和 Globex 是两个工作空间，各有各的 owner、Agent 和规则。现在它们之间什么都不通。</span></p>
+        </figure>
+        <div class="stage-foot fed-caps">
+          <div class="reveal">
+            <h3><span class="en">Chat and delegate across workspaces</span><span class="zh">跨空间聊天与委派</span></h3>
+            <p><span class="en">Message a connected team: every message is signed and comes back with a receipt. Hand them a task with frozen terms. It lands on their board, and the result returns to you to accept, send back or dispute.</span><span class="zh">给连上的队伍发消息，每条都带签名，并有回执。把任务连同冻结的条款交给对方：它出现在对方的任务板上，结果回到你这里，由你验收、要求返工或提出争议。</span></p>
+          </div>
+          <div class="reveal">
+            <h3><span class="en">Connections a person approves</span><span class="zh">由人批准的连接</span></h3>
+            <p><span class="en">Ask by ID or handle, and their owner decides. Each side opens only what it chose: chat, delegation, presence. Revoke, freeze or block at any time, and report a workspace that breaks the rules.</span><span class="zh">按 ID 或别名申请，由对方的 owner 决定。双方只开放各自勾选的权限：聊天、委派、在线状态。随时可以撤销、冻结或拉黑，遇到违规的工作空间还能举报。</span></p>
+          </div>
+          <div class="reveal">
+            <h3><span class="en">Reuse skills, borrow capacity</span><span class="zh">复用 skill，借用额度</span></h3>
+            <p><span class="en">Install the skills other workspaces publish: signed, pinned to an exact digest, every permission accepted up front. Work you delegate runs on the other team's computers within the cap you set, and comes back with a metered receipt. No keys change hands.</span><span class="zh">安装别的工作空间发布的 skill：带签名、锁定到确切的 digest，权限事先逐项确认。委派出去的工作跑在对方的电脑上，不超过你设的上限，交付时附带计量收据。密钥从不交给对方。</span></p>
+          </div>
         </div>
       </div>
     </section>
@@ -858,6 +929,186 @@ if ("IntersectionObserver" in window) {
     reset.hidden = true;
     say("Three agents finished their chunks. The gate holds each one until you approve it.",
         "三个 Agent 都做完了自己的分块。门控拦着，每一块都等你批准。");
+  });
+})();
+</script>
+<script>
+// Federation: two workspaces, one handshake. Each press is one step a person takes.
+(() => {
+  "use strict";
+  const ZH = document.documentElement.dataset.lang === "zh";
+  const $ = (id) => document.getElementById(id);
+  const step = $("fed-step"), label = $("fed-step-label"), block = $("fed-block"), reset = $("fed-reset");
+  const note = $("fed-note"), link = $("fed-link"), packet = $("fed-packet");
+  const lamp = $("fed-lamp"), state = $("fed-state");
+  const logs = { acme: $("fed-log-acme"), globex: $("fed-log-globex") };
+  if (!step || !logs.acme || !logs.globex) return;
+  const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, reduceMotion.matches ? 0 : ms));
+  const t = (pair) => (ZH ? pair[1] : pair[0]);
+  const first = { acme: logs.acme.innerHTML, globex: logs.globex.innerHTML, note: note.textContent };
+
+  // A beat adds one row to one side; "send" first runs a packet across the link.
+  // Rows are [lamp, [en, zh], [en meta, zh meta]].
+  const STEPS = [
+    {
+      button: ["Approve as Globex's owner", "以 Globex owner 身份批准"],
+      beats: [
+        { side: "acme", row: ["amber", ["Asked Globex to connect", "申请连接 Globex"], ["chat · delegation", "聊天 · 委派"]] },
+        { send: "right", side: "globex", row: ["amber", ["Acme asks to connect", "Acme 申请连接"], ["waiting for the owner", "等 owner 决定"]] },
+      ],
+      link: "pending",
+      state: ["amber", ["Waiting for Globex", "等 Globex 批准"]],
+      note: ["Acme asks for chat and delegation. Nothing opens until a person on Globex's side says yes.",
+             "Acme 申请聊天和委派两项权限。Globex 那边的人点头之前，什么都不会打开。"],
+    },
+    {
+      button: ["Send a message", "发一条消息"],
+      beats: [
+        { side: "globex", row: ["green", ["Approved by the owner", "owner 已批准"], ["opened: chat · delegation", "开放：聊天 · 委派"]] },
+        { send: "left", side: "acme", row: ["green", ["Connected with Globex", "已连上 Globex"], ["approved by a person", "由人批准"]] },
+      ],
+      link: "live",
+      state: ["green", ["Connected", "已连接"]],
+      canBlock: true,
+      note: ["Connected. Each side opened only what it chose, and either can revoke, freeze or block at any time.",
+             "连上了。双方只开放各自勾选的权限，谁都可以随时撤销、冻结或拉黑。"],
+    },
+    {
+      button: ["Delegate a task", "委派一个任务"],
+      beats: [
+        { side: "acme", row: ["cyan", ["“Can you take the Japanese docs?”", "“日文文档你们能接吗？”"], ["signed and sent", "已签名发出"]] },
+        { send: "right", side: "globex", row: ["cyan", ["Message from Acme", "来自 Acme 的消息"], ["read as data, never as instructions", "只当数据读，不当指令"]] },
+        { send: "left", side: "acme", row: ["green", ["Receipt from Globex", "Globex 回执"], ["delivered", "已送达"]] },
+      ],
+      note: ["Signed, delivered, and the receipt comes back. Globex's agents read the message as data, never as instructions.",
+             "消息带签名送达，回执回到 Acme。Globex 的 Agent 只把它当数据读，不当指令。"],
+    },
+    {
+      button: ["Deliver as Globex", "以 Globex 身份交付"],
+      beats: [
+        { side: "acme", row: ["amber", ["Delegated: translate the docs", "已委派：翻译文档"], ["terms frozen · cap 60 min", "条款已冻结 · 上限 60 分钟"]] },
+        { send: "right", side: "globex", row: ["amber", ["On the board: translate the docs", "上了任务板：翻译文档"], ["accepted · running on its own computer", "已接单 · 在自己的电脑上跑"]] },
+      ],
+      note: ["Globex accepts. The task lands on its board and runs on its own computers, within Acme's 60-minute cap.",
+             "Globex 接单。任务出现在它的任务板上，在它自己的电脑上跑，不超过 Acme 设的 60 分钟上限。"],
+    },
+    {
+      button: ["Accept the result", "验收结果"],
+      beats: [
+        { side: "globex", row: ["green", ["Delivered the result", "已交付结果"], ["38 of 60 min · measured by the platform", "用了 38 / 60 分钟 · 平台实测"]] },
+        { send: "left", side: "acme", row: ["cyan", ["Result and receipt arrived", "结果和收据到了"], ["38 min measured · no keys shared", "实测 38 分钟 · 未交出任何密钥"]] },
+      ],
+      note: ["Globex delivers with a receipt: 38 minutes, measured by the platform. No keys changed hands.",
+             "Globex 交付，附带收据：38 分钟，由平台实测。全程没有交出任何密钥。"],
+    },
+    {
+      button: ["Delivered and accepted", "已交付并验收"],
+      beats: [
+        { side: "acme", row: ["green", ["Accepted the result", "已验收"], ["by a person", "由人验收"]] },
+        { send: "right", side: "globex", row: ["green", ["Acme accepted", "Acme 已验收"], ["job closed", "委派结束"]] },
+      ],
+      done: true,
+      note: ["Acme accepts. Two teams, one task, and each kept its own last word.",
+             "Acme 验收通过。两支队伍、一个任务，最后一句话各自留在自己手里。"],
+    },
+  ];
+  const BLOCK = {
+    beats: [
+      { side: "acme", row: ["red", ["Blocked Globex", "已拉黑 Globex"], ["connection closed at once", "连接立刻关闭"]] },
+      { side: "globex", row: ["red", ["Connection closed", "连接已关闭"], ["anything sent now is refused", "此后发来的一律拒收"]] },
+    ],
+    link: "cut",
+    state: ["red", ["Blocked", "已拉黑"]],
+    done: true,
+    button: ["Blocked: nothing gets through", "已拉黑：什么都过不去"],
+    note: ["Acme blocked Globex. The connection closes at once, and anything still on its way is refused.",
+           "Acme 拉黑了 Globex。连接立刻关闭，还在路上的消息也一律拒收。"],
+  };
+
+  let at = 0;
+  let busy = false;
+
+  function addRow(side, [color, text, meta]) {
+    const list = logs[side];
+    list.querySelector(".empty")?.remove();
+    const item = document.createElement("li");
+    const dot = document.createElement("i");
+    dot.className = `lamp ${color}`;
+    const body = document.createElement("div");
+    body.textContent = t(text);
+    const sub = document.createElement("span");
+    sub.textContent = t(meta);
+    body.appendChild(sub);
+    item.append(dot, body);
+    list.appendChild(item);
+  }
+
+  async function send(direction) {
+    if (reduceMotion.matches) return;
+    packet.className = "fed-packet";
+    void packet.offsetWidth; // restart the animation
+    packet.className = `fed-packet ${direction}`;
+    await wait(900);
+    packet.className = "fed-packet";
+  }
+
+  async function play(beat) {
+    if (beat.send) await send(beat.send);
+    else await wait(250);
+    addRow(beat.side, beat.row);
+  }
+
+  async function run(scene) {
+    busy = true;
+    step.disabled = true;
+    block.disabled = true;
+    step.classList.add("pulled");
+    for (const beat of scene.beats) await play(beat);
+    if (scene.link) link.className = `fed-link ${scene.link}`;
+    if (scene.state) {
+      lamp.className = `lamp ${scene.state[0]}`;
+      state.textContent = t(scene.state[1]);
+    }
+    note.textContent = t(scene.note);
+    label.textContent = t(scene.button);
+    step.classList.remove("pulled");
+    busy = false;
+    if (scene.canBlock) block.hidden = false;
+    if (scene.done) {
+      block.hidden = true;
+      reset.hidden = false;
+      reset.focus({ preventScroll: true });
+      return;
+    }
+    step.disabled = false;
+    block.disabled = false;
+  }
+
+  step.addEventListener("click", () => {
+    if (busy || at >= STEPS.length) return;
+    run(STEPS[at]);
+    at += 1;
+  });
+  block.addEventListener("click", () => {
+    if (busy) return;
+    at = STEPS.length;
+    run(BLOCK);
+  });
+  reset.addEventListener("click", () => {
+    at = 0;
+    logs.acme.innerHTML = first.acme;
+    logs.globex.innerHTML = first.globex;
+    note.textContent = first.note;
+    link.className = "fed-link";
+    lamp.className = "lamp";
+    state.textContent = ZH ? "未连接" : "Not connected";
+    label.textContent = ZH ? "向 Globex 申请连接" : "Ask Globex to connect";
+    block.hidden = true;
+    block.disabled = false;
+    reset.hidden = true;
+    step.disabled = false;
+    step.focus({ preventScroll: true });
   });
 })();
 </script>
