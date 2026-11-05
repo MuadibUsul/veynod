@@ -7,6 +7,7 @@ import "./cult.css";
 import "./brand.css";
 import "./focus.css";
 import "./vi.css";
+import "./settings.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://veynod.com"),

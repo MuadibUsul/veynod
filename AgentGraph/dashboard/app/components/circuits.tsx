@@ -6,6 +6,7 @@ import { useI18n } from "../i18n";
 import type { ApiRequest } from "../types";
 import { relativeTime } from "../types";
 import { Spinner } from "./ui";
+import { SettingRow, SettingsGroup } from "./settings";
 
 type Circuit = {
   principal_key: string;
@@ -68,58 +69,43 @@ export function BudgetCircuits({ request }: { request: ApiRequest }) {
   }
 
   return (
-    <div className="circuits-panel">
-      <div className="panel-toolbar spaced">
-        <div>
-          <h3 className="section-title">{t("Circuit breakers")}</h3>
-          <p className="section-sub">
-            {t("Tokens paused for a runaway write loop. Release one when you have checked the agent.")}
-          </p>
-        </div>
-      </div>
+    <SettingsGroup
+      title={t("Circuit breakers")}
+      description={t("Tokens paused for a runaway write loop. Release one when you have checked the agent.")}
+    >
+      {error && <SettingRow label={t("Could not load circuit breakers")} lamp="red" description={error} />}
+      {!usage && !error && <SettingRow label={<Spinner />} />}
       {usage && (
-        <div className="budget-stats">
-          <div>
-            <span className="muted">{t("Embedding tokens today")}</span>
-            <strong className="tabular">{usage.embedding_tokens_used.toLocaleString()}</strong>
-            <span className="muted">
-              {t("limit {value}", { value: usage.embedding_tokens_quota.toLocaleString() })}
-            </span>
-          </div>
-          <div>
-            <span className="muted">{t("Writes today")}</span>
-            <strong className="tabular">{usage.writes.toLocaleString()}</strong>
-            <span className="muted">{t("mode {value}", { value: usage.mode })}</span>
-          </div>
-          <div>
-            <span className="muted">{t("Would have tripped")}</span>
-            <strong className="tabular">{usage.would_circuit_open}</strong>
-            <span className="muted">{t("in shadow mode")}</span>
-          </div>
-        </div>
-      )}
-      {error && <p className="danger-text">{error}</p>}
-      {!usage && !error && <Spinner />}
-      {usage && usage.circuit_open.length === 0 && (
-        <p className="muted">{t("No open circuit breakers.")}</p>
-      )}
-      {usage && usage.circuit_open.length > 0 && (
-        <ul className="circuit-list">
+        <>
+          <SettingRow
+            label={t("Embedding tokens today")}
+            description={t("limit {value}", { value: usage.embedding_tokens_quota.toLocaleString() })}
+          >
+            <span className="setting-value tabular">{usage.embedding_tokens_used.toLocaleString()}</span>
+          </SettingRow>
+          <SettingRow label={t("Writes today")} description={t("mode {value}", { value: usage.mode })}>
+            <span className="setting-value tabular">{usage.writes.toLocaleString()}</span>
+          </SettingRow>
+          <SettingRow label={t("Would have tripped")} description={t("in shadow mode")}>
+            <span className="setting-value tabular">{usage.would_circuit_open}</span>
+          </SettingRow>
+          {usage.circuit_open.length === 0 && (
+            <SettingRow lamp="green" label={t("No open circuit breakers.")} />
+          )}
           {usage.circuit_open.map((circuit) => (
-            <li key={circuit.principal_key}>
-              <div>
-                <strong>{circuit.principal_key}</strong>
-                <span className="muted">
-                  {t(REASONS[circuit.reason] ?? circuit.reason)}
-                  {circuit.doc_key ? ` · ${circuit.doc_key}` : ""}
-                </span>
-                <span className="muted">
-                  {t("Opened {when}; reopens {until}", {
-                    when: relativeTime(circuit.opened_at),
-                    until: relativeTime(circuit.reopen_at),
-                  })}
-                </span>
-              </div>
+            <SettingRow
+              key={circuit.principal_key}
+              lamp="red"
+              tone="need"
+              label={<span className="mono">{circuit.principal_key}</span>}
+              description={[
+                t(REASONS[circuit.reason] ?? circuit.reason) + (circuit.doc_key ? ` · ${circuit.doc_key}` : ""),
+                t("Opened {when}; reopens {until}", {
+                  when: relativeTime(circuit.opened_at),
+                  until: relativeTime(circuit.reopen_at),
+                }),
+              ].join(" · ")}
+            >
               <button
                 type="button"
                 className="button ghost small"
@@ -128,10 +114,10 @@ export function BudgetCircuits({ request }: { request: ApiRequest }) {
               >
                 {busy === circuit.principal_key ? <Spinner /> : null} {t("Release")}
               </button>
-            </li>
+            </SettingRow>
           ))}
-        </ul>
+        </>
       )}
-    </div>
+    </SettingsGroup>
   );
 }
