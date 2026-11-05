@@ -22,13 +22,34 @@ from tests.test_federation_delegations import (
     Tasks,
     _connect,
     _terms,
-    _ws,
 )
+from tests.test_federation_delegations import _ws as _new_ws
 from tests.test_federation_p1_gate import db_dsn
 
 pytestmark = pytest.mark.integration
 
 federation_on = _bridge.federation_on
+
+
+async def season(fid: str, days: int = 60) -> None:
+    """Age an identity so the P4-3 cold-start and new-requester rules do not
+    apply: these tests are about the measures themselves."""
+    conn = await asyncpg.connect(db_dsn())
+    try:
+        await conn.execute(
+            "UPDATE federation_identities SET created_at = created_at - make_interval(days => $2) "
+            "WHERE federation_id = $1",
+            fid,
+            days,
+        )
+    finally:
+        await conn.close()
+
+
+async def _ws(client, admin_headers, name: str) -> dict:
+    ws = await _new_ws(client, admin_headers, name)
+    await season(ws["fid"])
+    return ws
 
 
 async def _code(awaitable) -> str:
@@ -180,6 +201,13 @@ async def test_weights_follow_the_depth_of_cooperation(client, admin_headers, fe
         await _job(deep, prov, "accepted")
     await _job(once, prov, "disputed")
     await reputation.issue_due()
+    # Six jobs closed within seconds look like farming (P4-3); an operator
+    # confirms this pair as genuine so the depth rules can be seen alone.
+    from app.services.federation import integrity
+
+    await integrity.review_pair(
+        deep["fid"], prov["fid"], verdict="genuine", note="Long-standing client.", operator="ops"
+    )
     # The deep pair has worked together for more than 30 days.
     await _age_proofs(prov["fid"], deep["fid"], 40)
 

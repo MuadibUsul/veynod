@@ -28,6 +28,7 @@ from app.services.federation import (
     governance,
     grants,
     identity,
+    integrity,
     messaging,
     metering,
     registry,
@@ -1497,3 +1498,60 @@ async def get_directory_entry(
 ) -> dict[str, Any]:
     _enabled()
     return await _call(directory.entry(fid, viewer_fid=await _viewer_fid(principal)))
+
+
+# ── reputation integrity, operator side (P4-3, ICD_P4_REPUTATION.md §10) ────
+
+
+class PairReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requester: str = Field(pattern=_FID_WS)
+    provider: str = Field(pattern=_FID_WS)
+    verdict: Literal["genuine", "collusive"]
+    note: str = Field(min_length=5, max_length=1000)
+    operator: str = Field(min_length=2, max_length=120)
+
+
+class ControllerLink(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    a: str = Field(pattern=_FID_WS)
+    b: str = Field(pattern=_FID_WS)
+    reason: str = Field(min_length=5, max_length=1000)
+    operator: str = Field(min_length=2, max_length=120)
+
+
+@admin_router.get(
+    "/integrity/anomalies",
+    summary="Operator: provider/requester pairs whose proofs wait for a review",
+)
+async def list_integrity_anomalies(limit: int = Query(default=100, ge=1, le=500)) -> dict:
+    _enabled()
+    return {"items": await _call(integrity.anomalies(limit=limit))}
+
+
+@admin_router.post(
+    "/integrity/reviews",
+    summary="Operator: judge a flagged pair genuine (counts again) or collusive (linked)",
+)
+async def review_integrity_pair(body: PairReview) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        integrity.review_pair(
+            body.requester,
+            body.provider,
+            verdict=body.verdict,
+            note=body.note,
+            operator=body.operator,
+        )
+    )
+
+
+@admin_router.post(
+    "/integrity/links",
+    summary="Operator: record that two workspaces share a controller",
+)
+async def link_controllers(body: ControllerLink) -> dict[str, Any]:
+    _enabled()
+    return await _call(integrity.link(body.a, body.b, reason=body.reason, operator=body.operator))

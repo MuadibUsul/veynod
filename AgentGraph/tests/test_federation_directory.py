@@ -15,7 +15,8 @@ import pytest
 from app.services.federation import delegations, directory, messaging, reputation
 from app.services.federation.errors import FederationError
 from tests import test_federation_delegations as _bridge
-from tests.test_federation_delegations import RESULT, Tasks, _connect, _terms, _ws
+from tests.test_federation_delegations import RESULT, Tasks, _connect, _terms
+from tests.test_federation_reputation import _ws
 
 pytestmark = pytest.mark.integration
 
@@ -77,6 +78,14 @@ async def test_reputation_moves_a_workspace_and_the_rank_explains_why(
         await _job(req, poor, "disputed")
         await _job(req, hidden, "accepted")
     await reputation.issue_due()
+    # Three jobs each closed within seconds look like farming (P4-3); an
+    # operator confirms these pairs so this test sees the ranking alone.
+    from app.services.federation import integrity
+
+    for prov in (good, poor):
+        await integrity.review_pair(
+            req["fid"], prov["fid"], verdict="genuine", note="Known client.", operator="ops"
+        )
     await _list(good, tag, "Grid demand research and summaries")
     await _list(poor, tag, "Research summaries")
     await _list(new, tag, "Fresh research team")

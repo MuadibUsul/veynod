@@ -252,18 +252,22 @@ def _rate(hits: float, total: float, samples: int) -> dict[str, Any]:
 
 async def profile(fid: str) -> dict[str, Any]:
     """A provider's reputation, one measure per dimension, with its evidence."""
-    from app.services.federation import discovery
+    from app.services.federation import discovery, integrity
 
     require_type(fid, "workspace")
     rows = await _rows(fid)
-    weights = weigh(rows)
+    check = await integrity.assess(fid, rows)
+    # Depth weight times the integrity factor (P4-3): self-dealing and pairs
+    # pending verification count for nothing, new requesters for a quarter.
+    weights = [round(w * f, 4) for w, f in zip(weigh(rows), check["factors"], strict=True)]
+    counted = [f > 0 for f in check["factors"]]
     outcome = [r["outcome"] for r in rows]
     delivered = {"accepted", "disputed"}
 
     completed_w = sum(w for w, o in zip(weights, outcome, strict=True) if o in delivered)
     all_w = sum(weights)
     accepted_w = sum(w for w, o in zip(weights, outcome, strict=True) if o == "accepted")
-    judged = [i for i, o in enumerate(outcome) if o in delivered]
+    judged = [i for i, o in enumerate(outcome) if o in delivered and counted[i]]
     first_pass_w = sum(
         weights[i]
         for i in judged
@@ -324,7 +328,7 @@ async def profile(fid: str) -> dict[str, Any]:
         "fid": fid,
         "single_score": None,  # by design: read the dimensions
         "completion": {
-            **_rate(completed_w, all_w, len(rows)),
+            **_rate(completed_w, all_w, sum(counted)),
             "meaning": "work taken on that was delivered (accepted or disputed after delivery)",
             "counts": {o: outcome.count(o) for o in OUTCOMES.values()},
         },
@@ -362,6 +366,7 @@ async def profile(fid: str) -> dict[str, Any]:
             "minimum_samples": MIN_PROOFS,
         },
         "proofs": len(rows),
+        "integrity": {k: v for k, v in check.items() if k not in ("factors", "reasons", "_pairs")},
         "evidence": {
             "signed_by_counterparts": ["completion", "acceptance", "cooperation"],
             "measured_by_platform": ["response"],
@@ -380,12 +385,17 @@ async def proofs(
     all of its proofs, a requester only the proofs it signed itself. Weights
     are computed over all proofs either way. ``viewer_fid=None`` is the
     platform itself."""
+    from app.services.federation import integrity
+
     require_type(fid, "workspace")
     rows = await _rows(fid)
+    check = await integrity.assess(fid, rows)
     weights = weigh(rows)
     out = [
-        {"proof": row["proof"], "weight": weight}
-        for row, weight in zip(rows, weights, strict=True)
+        {"proof": row["proof"], "weight": round(weight * factor, 4), "counted_as": why}
+        for row, weight, factor, why in zip(
+            rows, weights, check["factors"], check["reasons"], strict=True
+        )
         if viewer_fid is None or viewer_fid == fid or row["requester_fid"] == viewer_fid
     ]
     return list(reversed(out))[: max(1, min(int(limit), 500))]

@@ -194,6 +194,10 @@ def _relevance(
 
 
 def _evidence(page: dict[str, Any]) -> tuple[float, str]:
+    integrity = page.get("integrity") or {}
+    if integrity.get("cold_start"):
+        # P4-3: early volume cannot buy a place.
+        return PRIOR, f"new address, cold start until {integrity['cold_start_ends'][:10]}: neutral"
     acc, comp = page["acceptance"], page["completion"]
     weight = comp["weighted_total"]
     confidence = min(1.0, weight / CONFIDENT_AT)
@@ -201,10 +205,12 @@ def _evidence(page: dict[str, Any]) -> tuple[float, str]:
     comp_rate = comp["weighted_hits"] / comp["weighted_total"] if comp["weighted_total"] else PRIOR
     observed = 0.6 * acc_rate + 0.4 * comp_rate
     value = round(PRIOR * (1 - confidence) + observed * confidence, 3)
-    if not page["proofs"]:
-        return value, "no fulfilment proofs yet: neutral, not penalised"
+    if not weight:
+        return value, "no counted fulfilment proofs yet: neutral, not penalised"
+    held = sum((integrity.get("excluded") or {}).values())
+    note = f"; {held} proof(s) not counted (self-dealing or awaiting review)" if held else ""
     return value, (
-        f"{page['proofs']} signed proofs (weight {round(weight, 2)}, confidence "
+        f"{page['proofs']} signed proofs{note} (weight {round(weight, 2)}, confidence "
         f"{round(confidence, 2)}): accepted {round(acc_rate * 100)}%, delivered "
         f"{round(comp_rate * 100)}%"
     )
@@ -305,6 +311,9 @@ async def _card(row: dict[str, Any], *, q: str | None, capability: str | None) -
                 "longest_partnership_days": page["cooperation"]["longest_partnership_days"],
             },
             "proofs": page["proofs"],
+            "integrity": {
+                k: page["integrity"][k] for k in ("flags", "cold_start", "excluded", "discounted")
+            },
         },
         "rank": {
             "score": score,

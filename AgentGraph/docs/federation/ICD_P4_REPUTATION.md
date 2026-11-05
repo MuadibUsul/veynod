@@ -1,4 +1,4 @@
-# 联邦 P4：声誉 ICD（P4-1 履约证明与多维指标，P4-2 目录与可解释排序）
+# 联邦 P4：声誉 ICD（P4-1 履约证明与多维指标，P4-2 目录与可解释排序，P4-3 反刷与女巫防护）
 
 > 任务：`fedv2-p4-1-proof-metrics`（17/24）。对应愿景 §12.1–12.4。
 > 维护：`agent:claude-2`。所有参数见 `OWNER_DECISIONS.md` J 节，均可替换。
@@ -100,3 +100,31 @@ MCP：`federation` 工具的 `directory` 动作。
 - `GET /reputation/{fid}`：未上架的工作区，只有它自己和与它有连接的工作区能看；陌生人得到 404（`FED_E_NOT_LISTED`）。
 
 新增错误码 `FED_E_NOT_LISTED`（404）。表 `federation_directory_listings`（按工作区行级安全）。
+
+## 10. 反刷与女巫防护（P4-3，迁移 3.96）
+
+每份履约证明在深度权重之外再乘一个**可信系数**：
+
+| 情况 | 系数 | `counted_as` |
+|---|---|---|
+| 请求方和执行方是同一控制人：同一主体（同一组织下的工作区），或被运营人员关联，或被判定串谋 | 0 | `same_controller` |
+| 这一对看起来在刷：双方互相委派各 ≥2 单（`two_way_flow`），或 ≥3 单从报价到结束不到 10 分钟（`implausibly_fast`），且运营人员还没确认为真实 | 0 | `pending_verification` |
+| 请求方签证明时身份不满 7 天 | 0.25 | `fresh_requester` |
+| 其他 | 1 | `counted` |
+
+- **冷启动**：执行方身份满 14 天前，各项指标照常显示，但目录排序里的“过往表现”固定为中性 0.5，早期刷量换不来名次。
+- **批量造号**：同一主体在 24 小时内建了 ≥5 个工作区，标记 `created_in_a_batch`。
+- **集中度**：单一请求方占 ≥60%（≥5 份）时标记 `concentrated_on_one_requester`（仅提示；P4-1 的单伙伴上限已在起作用）。
+- **只降权、不处罚**：被标记的证明暂不计入，等运营人员看过；标记本身不会触发任何处罚（愿景 §12.3）。
+- 声誉返回新增 `integrity`：`flags`、`cold_start`、`cold_start_ends`、`excluded`（同一控制人 / 待核验的份数）、`discounted`（新地址的份数）。目录条目同样附带，“过往表现”的解释里写明有多少份没被计入。
+- `GET /reputation/{fid}/proofs` 每份证明附 `counted_as` 和最终权重。
+
+运营人员入口：
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/v1/admin/federation/integrity/anomalies` | 待核验的执行方/请求方对及原因 |
+| `POST` | `/v1/admin/federation/integrity/reviews` | `{requester, provider, verdict: genuine|collusive, note, operator}`：真实则恢复计入；串谋则保持 0 并关联为同一控制人 |
+| `POST` | `/v1/admin/federation/integrity/links` | `{a, b, reason, operator}`：记录两个工作区同属一个控制人 |
+
+表：`federation_controller_links`、`federation_pair_reviews`（部署级）。

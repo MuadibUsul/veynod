@@ -1921,6 +1921,11 @@ const ZH: Record<string, string> = {
   "Listed in the directory": "已上架",
   "Removed from the directory": "已下架",
   "Listing shows your headline, tags and summary figures. It never shows your tasks, chats or who you worked with.": "上架后只显示介绍、标签和汇总数字；不会显示你的任务、聊天，也不会显示你和谁合作过。",
+  // Federation P4-3: integrity
+  "New address: ranked as neutral until {date}": "新地址：{date} 前排序按中性计",
+  "{n} records from the same owner are not counted": "{n} 份来自同一控制人的记录不计入",
+  "{n} records await a review before they count": "{n} 份记录待核验后才计入",
+  "{n} records from new addresses count for less": "{n} 份来自新地址的记录按较低权重计",
 };
 
 const EN: Record<string, string> = {};

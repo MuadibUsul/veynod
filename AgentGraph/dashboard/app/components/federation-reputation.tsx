@@ -29,6 +29,13 @@ type Profile = {
     longest_partnership_days: number;
   };
   proofs: number;
+  integrity: {
+    flags: string[];
+    cold_start: boolean;
+    cold_start_ends: string | null;
+    excluded: { same_controller: number; pending_verification: number };
+    discounted: { fresh_requester: number };
+  };
 };
 
 export function ReputationPanel({ fid, request }: { fid: string; request: ApiRequest }) {
@@ -71,6 +78,26 @@ export function ReputationPanel({ fid, request }: { fid: string; request: ApiReq
         {t("Reputation")}
         <span className="flow-aside">{t("No single score: each line has its own evidence")}</span>
       </div>
+      {(page.integrity.cold_start || page.integrity.excluded.same_controller > 0
+        || page.integrity.excluded.pending_verification > 0
+        || page.integrity.discounted.fresh_requester > 0) && (
+        <div className="lin-row quiet">
+          <span className="lin-title">
+            {page.integrity.cold_start && page.integrity.cold_start_ends
+              && `${t("New address: ranked as neutral until {date}", {
+                date: page.integrity.cold_start_ends.slice(0, 10) })}. `}
+            {page.integrity.excluded.same_controller > 0
+              && `${t("{n} records from the same owner are not counted", {
+                n: page.integrity.excluded.same_controller })}. `}
+            {page.integrity.excluded.pending_verification > 0
+              && `${t("{n} records await a review before they count", {
+                n: page.integrity.excluded.pending_verification })}. `}
+            {page.integrity.discounted.fresh_requester > 0
+              && `${t("{n} records from new addresses count for less", {
+                n: page.integrity.discounted.fresh_requester })}.`}
+          </span>
+        </div>
+      )}
       {rows.map(([label, value, note]) => (
         <div key={label} className="lin-row">
           <span className="lin-title">{label}</span>

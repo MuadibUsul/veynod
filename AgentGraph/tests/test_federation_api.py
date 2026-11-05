@@ -965,3 +965,39 @@ async def test_directory_over_http_and_mcp(fed):
         fed, b["key"], "federation", {"action": "directory", "args": {"capability": tag}}
     )
     assert [i["fid"] for i in via_mcp["items"]] == [a_fid], via_mcp
+
+
+async def test_integrity_operator_routes_over_http(fed):
+    """P4-3 over HTTP: operators link two workspaces and review a pair."""
+    a, b = await _workspace(fed, "int-a"), await _workspace(fed, "int-b")
+    a_fid = (await fed.post("/v1/federation/enable", headers=a["owner"])).json()["identity"][
+        "federation_id"
+    ]
+    b_fid = (await fed.post("/v1/federation/enable", headers=b["owner"])).json()["identity"][
+        "federation_id"
+    ]
+    assert (
+        await fed.get("/v1/admin/federation/integrity/anomalies", headers=a["owner"])
+    ).status_code in (401, 403)
+    queue = await fed.get("/v1/admin/federation/integrity/anomalies", headers=ADMIN)
+    assert queue.status_code == 200 and isinstance(queue.json()["items"], list)
+    linked = await fed.post(
+        "/v1/admin/federation/integrity/links",
+        headers=ADMIN,
+        json={"a": a_fid, "b": b_fid, "reason": "Same company.", "operator": "ops-anna"},
+    )
+    assert linked.status_code == 200 and sorted(linked.json()["linked"]) == sorted([a_fid, b_fid])
+    reviewed = await fed.post(
+        "/v1/admin/federation/integrity/reviews",
+        headers=ADMIN,
+        json={
+            "requester": a_fid,
+            "provider": b_fid,
+            "verdict": "genuine",
+            "note": "Checked by hand.",
+            "operator": "ops-anna",
+        },
+    )
+    assert reviewed.status_code == 200 and reviewed.json()["verdict"] == "genuine"
+    page = await fed.get(f"/v1/federation/reputation/{b_fid}", headers=b["key"])
+    assert "integrity" in page.json() and page.json()["integrity"]["cold_start"] is True
