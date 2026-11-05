@@ -1,0 +1,16 @@
+{
+  "name": "@serendipity/domain",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Deterministic domain kernel: state machines and invariants (no I/O).",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

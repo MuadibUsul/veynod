@@ -37,6 +37,7 @@
 | CLI / 公开桥 `AgentGraph/cli/` | [README](../AgentGraph/cli/README.md)、[USAGE](../AgentGraph/cli/USAGE.md) |
 | Kernel `veynod_kernel/` | [veynod_kernel/docs/ARCHITECTURE.md](../veynod_kernel/docs/ARCHITECTURE.md) |
 | Runtime `agent_runtime/` | [agent_runtime/README.md](../agent_runtime/README.md) |
+| 不期 Serendipity `serendipity/`（独立产品，借住本仓库） | [serendipity/README.md](../serendipity/README.md)、[ADR-0001](../serendipity/docs/adr/0001-monorepo-location-and-toolchain.md) |
 
 ## 5. 架构细节与审计（参考）
 

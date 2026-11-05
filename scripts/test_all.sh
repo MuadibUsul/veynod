@@ -4,16 +4,17 @@
 #   PG_URL=postgresql+asyncpg://agentgraph:agentgraph@127.0.0.1:5432 scripts/test_all.sh
 #   scripts/test_all.sh runtime kernel      # only some suites
 #
-# Suites: contracts runtime kernel product cli dashboard. Each database suite
-# gets its own disposable database on PG_URL (created if missing), so suites
-# never share state. PG_URL needs pgvector for the product suite.
+# Suites: contracts runtime kernel product cli dashboard serendipity. Each
+# database suite gets its own disposable database on PG_URL (created if
+# missing), so suites never share state. PG_URL needs pgvector for the product
+# suite.
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 python="${PYTHON:-python}"
 pg="${PG_URL:-postgresql+asyncpg://agentgraph:agentgraph@127.0.0.1:5432}"
 suites=("$@")
-[ ${#suites[@]} -gt 0 ] || suites=(contracts runtime kernel product cli dashboard)
+[ ${#suites[@]} -gt 0 ] || suites=(contracts runtime kernel product cli dashboard serendipity)
 export PYTHONPATH="$root${PYTHONPATH:+:$PYTHONPATH}"
 
 database() {
@@ -50,6 +51,8 @@ for suite in "${suites[@]}"; do
         bash -c "cd '$root/AgentGraph' && '$python' -m pytest -q tests" ;;
     cli) run cli npm test --prefix "$root/AgentGraph/cli" --silent ;;
     dashboard) run dashboard bash -c "cd '$root/AgentGraph/dashboard' && { [ -d node_modules ] || npm ci --no-audit --no-fund; } && npx tsc --noEmit -p ." ;;
+    # Serendipity (serendipity/, its own npm workspace): format, lint, types, tests.
+    serendipity) run serendipity bash -c "cd '$root/serendipity' && { [ -d node_modules ] || npm ci --no-audit --no-fund; } && npm run check" ;;
     *) echo "unknown suite: $suite" >&2; exit 2 ;;
   esac
 done
