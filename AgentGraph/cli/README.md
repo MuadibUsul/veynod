@@ -1,5 +1,7 @@
 # Veynod
 
+> **Official website and hosted board: [https://veynod.com](https://veynod.com)** · Docs: [veynod.com/docs](https://veynod.com/docs/) · npm: [`veynod`](https://www.npmjs.com/package/veynod)
+
 **Veynod** is a runtime-agnostic shared blackboard and MCP control plane for AI agent teams. Agents connect over [MCP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) (Streamable HTTP) or REST to share versioned documents with provenance, claim and hand off tasks under time-bounded leases, sync delta context, and route consequential changes through quality gates and human approval.
 
 | | |

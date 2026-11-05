@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import logging
+import re
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -437,7 +438,7 @@ def _sitemap_lastmod() -> str:
     return datetime.now(tz=timezone.utc).date().isoformat()
 
 
-@app.get("/robots.txt", include_in_schema=False)
+@app.api_route("/robots.txt", methods=["GET", "HEAD"], include_in_schema=False)
 async def robots_txt() -> PlainTextResponse:
     rules = (
         "Allow: /\n"
@@ -468,13 +469,15 @@ async def robots_txt() -> PlainTextResponse:
     return PlainTextResponse(body, headers={"Cache-Control": "public, max-age=3600"})
 
 
-@app.get("/sitemap.xml", include_in_schema=False)
+@app.api_route("/sitemap.xml", methods=["GET", "HEAD"], include_in_schema=False)
 async def sitemap_xml() -> Response:
     from app.docs_site import NAV
 
     lastmod = _sitemap_lastmod()
     urls = [
-        f"{SEO_SITE_URL}/", f"{SEO_SITE_URL}/zh/", f"{SEO_SITE_URL}/demo/",
+        # /demo/ is a snapshot of a sample workspace: noindex, so it never
+        # outranks the home page for the brand name.
+        f"{SEO_SITE_URL}/", f"{SEO_SITE_URL}/zh/",
         f"{SEO_SITE_URL}/docs/",
         f"{SEO_SITE_URL}/v1/agent-docs", f"{SEO_SITE_URL}/llms.txt",
         f"{SEO_SITE_URL}/llms-full.txt",
@@ -508,12 +511,12 @@ async def sitemap_xml() -> Response:
     )
 
 
-@app.get("/llms.txt", include_in_schema=False)
+@app.api_route("/llms.txt", methods=["GET", "HEAD"], include_in_schema=False)
 async def llms_txt() -> PlainTextResponse:
     return PlainTextResponse(llms_index(settings.app_version), media_type="text/plain")
 
 
-@app.get("/llms-full.txt", include_in_schema=False)
+@app.api_route("/llms-full.txt", methods=["GET", "HEAD"], include_in_schema=False)
 async def llms_full_txt() -> PlainTextResponse:
     tools = await mcp.list_tools()
     return PlainTextResponse(
@@ -700,7 +703,24 @@ async def _current_release() -> dict[str, Any] | None:
     return _release_cache["value"]
 
 
-@app.get("/", include_in_schema=False)
+# Search engines, link previews and AI crawlers always get the HTML page, whatever
+# they send as Accept: the JSON descriptor is for agents that ask for it.
+_CRAWLER_UA = re.compile(
+    r"googlebot|google-inspectiontool|adsbot-google|mediapartners-google|bingbot|msnbot|"
+    r"adidxbot|slurp|duckduckbot|baiduspider|yandex|sogou|exabot|applebot|"
+    r"facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|discordbot|telegrambot|"
+    r"whatsapp|ahrefsbot|semrushbot|mj12bot|dotbot|gptbot|oai-searchbot|chatgpt-user|"
+    r"claudebot|claude-searchbot|anthropic-ai|perplexitybot",
+    re.IGNORECASE,
+)
+_ROOT_VARY = "Accept, Accept-Encoding, User-Agent"
+
+
+def _is_crawler(request: Request) -> bool:
+    return bool(_CRAWLER_UA.search(request.headers.get("user-agent", "")))
+
+
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
 async def root(request: Request) -> Any:
     descriptor = {
         "name": settings.app_name,
@@ -719,14 +739,14 @@ async def root(request: Request) -> Any:
         "changelog": {"namespace": "system", "doc_key": "system/changelog"},
         "capabilities": capabilities.describe(app),
     }
-    headers = {"Vary": "Accept, Accept-Encoding", "Cache-Control": "no-store"}
-    if (
+    headers = {"Vary": _ROOT_VARY, "Cache-Control": "no-store",
+               "Link": f'<{SEO_SITE_URL}/>; rel="canonical"'}
+    if not _is_crawler(request) and (
         request.query_params.get("format", "").lower() == "json"
         or _wants_json(request.headers.get("accept", ""))
     ):
-        headers["X-Robots-Tag"] = "noindex"
+        headers["X-Robots-Tag"] = "noindex, noarchive"
         return JSONResponse(descriptor, headers=headers)
-    headers["Link"] = f'<{SEO_SITE_URL}/>; rel="canonical"'
     return HTMLResponse(render_root_page(descriptor, lang="en"), headers=headers)
 
 
@@ -760,8 +780,13 @@ def _wants_json(accept: str) -> bool:
     return json_quality > 0 and json_quality > html_quality
 
 
-@app.get("/zh/", include_in_schema=False)
-@app.get("/zh", include_in_schema=False)
+@app.api_route("/zh", methods=["GET", "HEAD"], include_in_schema=False)
+async def zh_redirect() -> RedirectResponse:
+    # One address per page: /zh served the same page as /zh/.
+    return RedirectResponse(url="/zh/", status_code=308)
+
+
+@app.api_route("/zh/", methods=["GET", "HEAD"], include_in_schema=False)
 async def root_zh(request: Request) -> HTMLResponse:
     # The showcase only needs the public descriptor fields; no private state.
     descriptor = {
@@ -778,12 +803,12 @@ async def root_zh(request: Request) -> HTMLResponse:
     )
 
 
-@app.get("/demo", include_in_schema=False)
+@app.api_route("/demo", methods=["GET", "HEAD"], include_in_schema=False)
 async def demo_redirect() -> RedirectResponse:
     return RedirectResponse(url="/demo/", status_code=308)
 
 
-@app.get("/demo/", include_in_schema=False)
+@app.api_route("/demo/", methods=["GET", "HEAD"], include_in_schema=False)
 async def demo_page() -> HTMLResponse:
     """Public read-only snapshot of the seeded demo workspace."""
     from sqlalchemy import select
@@ -826,7 +851,9 @@ async def demo_page() -> HTMLResponse:
     return HTMLResponse(
         render_demo_page(documents, tasks, workspace_name=settings.demo_workspace_name),
         headers={"Vary": "Accept, Accept-Encoding", "Cache-Control": "public, max-age=60",
-                 "Link": f'<{SEO_SITE_URL}/demo/>; rel="canonical"'},
+                 "Link": f'<{SEO_SITE_URL}/demo/>; rel="canonical"',
+                 # Followed for its links, never indexed: the home page is the brand's page.
+                 "X-Robots-Tag": "noindex, follow"},
     )
 
 
