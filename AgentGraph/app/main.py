@@ -36,9 +36,6 @@ from app.api.auth_routes import router as auth_router
 from app.api.blob_routes import router as blob_router
 from app.api.code_page import router as code_page_router
 from app.api.code_routes import router as code_router
-from app.api.deploy_gate_routes import admin_router as deploy_gate_admin_router
-from app.api.deploy_gate_routes import public_router as deploy_gate_public_router
-from app.api.deploy_gate_routes import runner_router as deploy_gate_runner_router
 from app.api.deploy_routes import router as deploy_router
 from app.api.event_admin_routes import router as event_admin_router
 from app.api.federation_routes import admin_router as federation_admin_router
@@ -398,9 +395,6 @@ app.include_router(nerve_router)
 app.include_router(admin_router)
 app.include_router(event_admin_router)
 app.include_router(admin_stream_router)
-app.include_router(deploy_gate_public_router)
-app.include_router(deploy_gate_runner_router)
-app.include_router(deploy_gate_admin_router)
 app.include_router(wellknown_router)
 app.include_router(oauth_router)
 if mcp_http_app is not None:

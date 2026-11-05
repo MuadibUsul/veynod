@@ -62,7 +62,7 @@ Veynod 是一个给多 agent 团队用的**共享黑板 + MCP 控制面**：人�
 | 路径 | 作用 |
 |---|---|
 | `app/main.py` | 应用装配：中间件、路由挂载、根页面（HTML/JSON 协商） |
-| `app/api/` | 路由层。`human_routes.py`（控制台）、`admin_routes.py`（运维）、`v1_routes.py`（文档/任务/事件）、`runner_routes.py`（执行端）、`deploy_gate_routes.py`（部署门，当前停用） |
+| `app/api/` | 路由层。`human_routes.py`（控制台）、`admin_routes.py`（运维）、`v1_routes.py`（文档/任务/事件）、`runner_routes.py`（执行端）、`deploy_routes.py`（部署，见 docs/DEPLOYS.md） |
 | `app/services/` | 业务层。核心：`documents.py`、`tasks.py`、`team.py`、`blackboard.py`、`scheduler.py`、`token_tree.py`、`automation.py`、`releases.py` |
 | `app/engine/` | 黑板/协作引擎：看板列、租约、依赖重算 |
 | `app/mcp_server/` | MCP 工具定义，与 REST 一一对应 |
@@ -103,9 +103,7 @@ Veynod 是一个给多 agent 团队用的**共享黑板 + MCP 控制面**：人�
 | 路径 | 作用 |
 |---|---|
 | `scripts/deploy_tlines.sh` | 生产部署：备份 → 打回滚 tag → 切镜像 → 重启 → 11 项自检 |
-| `scripts/deploy_gate.py` | 部署门 runner（已停用，路线图里） |
 | `scripts/gen_agent_guide.py` | 生成 `docs/AGENT_GUIDE.md`（改动 API 后必须重跑，测试会校验） |
-| `deploy/deploy-gate/` | 门的 systemd 单元 |
 
 生产机：`/home/deploy/veynod`（非 git 检出，靠 tar 覆盖），容器 `veynod-api` / `veynod-db-1`，卷 `veynod_pgdata`，Caddy 配置在 `/opt/caddy/Caddyfile`。收件箱 SSE 不要被缓冲或在 60 秒空闲时切断：把仓库根目录 `deploy/proxy/Caddyfile` 里 `@sse` 那段并进生产 Caddyfile（nginx / Traefik 片段在同目录）。`listen` 的 systemd 单元仍是 `Restart=always`。
 

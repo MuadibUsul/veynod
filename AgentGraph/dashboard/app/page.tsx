@@ -310,6 +310,8 @@ export default function ConsolePage() {
     setAdminToken(token);
     setSessionToken(session);
     setMounted(true);
+    // /dashboard/deploy/ (the retired v1 gate page) sends people to Settings > Deploys.
+    if (window.location.hash === "#deploys") setTab("deploys");
     void probe(base);
     if (session) {
       void connectWithSession(base, session, { silent: true });
@@ -1502,9 +1504,6 @@ export default function ConsolePage() {
             </div>
             <a className="button subtle full" href="/dashboard/growth/">
               {t("Growth metrics")}
-            </a>
-            <a className="button subtle full" href="/dashboard/deploy/">
-              {t("Deploy gate")}
             </a>
             <a className="button subtle full" href="/dashboard/connect/">
               {t("Connection settings")}

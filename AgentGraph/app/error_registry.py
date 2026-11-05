@@ -403,9 +403,6 @@ REGISTRY: dict[str, ErrorSpec] = {
     # Deploy gate v2.
     "deploys_off": _spec(409, ESCALATE_HUMAN, "A person turns deploys on for the target first."),
     "not_a_deploy": _spec(409, FIX_REQUEST, "Report a deploy only on a deploy placement."),
-    "run_not_claimed": _spec(
-        409, ABANDON, "Only the runner holding a running deploy-gate run reports it; claim again."
-    ),
     "lease_expired": _spec(
         409, ABANDON, "Your lease ended before NOW(); claim the task again."),
     "lease_renew_too_early": _spec(

@@ -140,7 +140,7 @@ AgentGraph/
 ├── sql/                         init.sql + migrations（v2_to_v3、v3_2…v3_78、v3_hardening）
 ├── tests/                       100 个 test_*.py（含 conftest 共 102 个文件）
 ├── docs/                        产品/设计/安全/PRD/部署闸门文档
-├── scripts/                     deploy_gate、benchmark、文档生成
+├── scripts/                     deploy_tlines、benchmark、文档生成
 └── eval/retrieval/              检索评测语料与基线
 ```
 
@@ -409,7 +409,7 @@ Diagram 的 gate/merge 也是 MCP `diagram` 工具的动作（`AgentGraph/app/mc
 | `/v1/human` | `AgentGraph/app/api/human_routes.py` | 控制台人类动作：审核、策略、配额、质量、隐私 |
 | `/v1/auth`、`/oauth` | `AgentGraph/app/api/auth_routes.py`、`AgentGraph/app/api/oauth_routes.py` | 人类登录、CLI 设备授权、MCP OAuth |
 | `/v1/blobs`、`/v1/documents/*/blobs` | `AgentGraph/app/api/blob_routes.py` | 内容寻址 blob |
-| `/v1/deploy-gate`、`/v1/admin/deploy-gate` | `AgentGraph/app/api/deploy_gate_routes.py` | VPS 部署闸门 |
+| `/v1/deploys`、`/v1/projects/{p}/deploys` | `AgentGraph/app/api/deploy_routes.py` | 部署门 v2（v1 已于 2026-11-05 删除） |
 | `/v1/tenants/*`、`/v1/shares` | `AgentGraph/app/api/org_routes.py` | 租户树、共享、访问会话、权利请求 |
 | `/v1/stream`、`/v1/inbox/stream` | `AgentGraph/app/api/stream_routes.py`、`AgentGraph/app/api/inbox_stream.py` | SSE |
 | `/v1/admin/event-inbox` | `AgentGraph/app/api/event_admin_routes.py` | inbox 统计、重放、手动 dispatch |
