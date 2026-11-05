@@ -8,14 +8,14 @@
 - **§21 的 P1 用例 F-001 至 F-011、F-029 全部有自动化测试，全部通过。**
 - **两个根租户端到端通过**：门禁测试和 API smoke 都在不同根租户的工作区之间跑；`test_f001` 显式断言两个工作区的根租户不同。
 - 模拟攻击 27 项 API 检查（smoke）、15 项门禁测试、迁移演练和前端生产构建全部通过。
-- 基线回归：见第 4 节。product 套件结果：**运行中，结果出来后补到本节**。
+- 基线回归：GitHub CI 在门禁提交 `7ce158e` 上 8 个检查全部通过（含完整 product 套件和本门禁测试）。本机完整 product 套件 687 通过、12 失败，失败全部来自本机环境（见第 7 节），在全新库上单独重跑全部通过。
 
 ## 2. 被测版本
 
 | 项 | 值 |
 |---|---|
 | 仓库 / 分支 | `MuadibUsul/veynod` / `claude/charming-shannon-7gbreg` |
-| 被测代码 | `dc82dcd`（PR #101 头）+ 本报告所在提交（只增加门禁测试与本报告，不改产品代码） |
+| 被测代码 | `7ce158e`：PR #101 的产品代码 `dc82dcd` 加门禁测试；本报告的更新不改代码 |
 | main 基线 | `7fe22ff` |
 | 数据库 schema | `3.85.0`（`schema_migrations` 共 83 条数值版本） |
 | 联邦开关 | 测试中开启；默认关闭（`test_disabled_federation_answers_nothing`） |
@@ -47,11 +47,11 @@
 | contracts | `scripts/test_all.sh contracts` | 34 passed |
 | runtime | `scripts/test_all.sh runtime` | 51 passed |
 | kernel | `scripts/test_all.sh kernel` | 见第 7 节：1 项在本机高负载下失败，单独重跑通过 |
-| product（全部产品测试） | `scripts/test_all.sh product` | 运行中（结果出来后更新） |
+| product（全部产品测试，本机） | `scripts/test_all.sh product` | 687 passed、12 failed、2 skipped（22 分 29 秒）；12 项在全新库单独重跑全部通过，见第 7 节 |
 | cli | `scripts/test_all.sh cli` | 72 passed |
 | dashboard（类型检查） | `scripts/test_all.sh dashboard` | 通过 |
 | 前端生产构建 | `cd dashboard && npx next build` | 构建成功 |
-| GitHub CI（PR #101 头 `dc82dcd`） | 8 个检查 | 全部通过 |
+| GitHub CI（`dc82dcd` 和门禁提交 `7ce158e`） | 8 个检查：lint、protocol、contracts、runtime、kernel、product、cli、dashboard | 两次都全部通过 |
 
 ## 5. 模拟攻击复现
 
@@ -95,6 +95,11 @@
 
 ## 7. 观察到的问题与说明
 
+- **本机 product 套件的 12 项失败都来自本机环境，不是联邦代码**。复跑方法：删掉本机前端构建产物，建一个全新测试库，只跑这 12 项，结果 24 项全部通过；CI 上同一代码全绿。原因分三类：
+  - 8 项：库连接返回 503 `database_unavailable`。当时本机同时在跑 kernel 套件和前端构建，负载很高；`KeyError: 'needs_you'` 也是 503 之后的连带错误。
+  - 2 项（根页面相关）：我为了验证前端构建，在本机生成了 `dashboard/out`，服务端看到它就把根页面链到控制台，测试期望没有构建产物。
+  - 1 项（`test_releases`）：复用了之前跑过的测试库，库里记录的“上次见过的工具列表”比新增的 `federation` 工具旧。全新库上通过。
+  - 另外，`test_loop_steps.py::test_the_supervisor_walks_the_floor_only_when_something_waits` 在单独重跑时失败过一次，再跑通过；完整套件和 CI 上都通过。属于 Loop 监督者，与联邦无关，建议另开任务查时间依赖。
 - **kernel 套件 `test_submission_guard.py::test_a_second_open_submission_is_refused`**：在本机同时跑 product 套件、负载很高时失败一次（409 的返回体是字符串而不是对象），单独重跑通过（3 秒），GitHub CI 上同一代码也通过。这条测试依赖“门控进程还在跑”的时间窗口，与联邦代码无关（本 PR 未改 kernel）。根因未查，建议另开任务把这条测试改成不依赖时间。
 - 限流计数在单个应用进程内；多进程部署时每个进程各有一份额度。网络网关上线后边缘也要限流。
 - 只在同一部署内（进程内传输）测试；两个独立部署之间的互联属于 P2.5（F-021）。
