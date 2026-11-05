@@ -52,7 +52,7 @@
 | `DRAFT → OFFERED` | A | `delegate.offer` | 连接 ACTIVE，双边 `delegate` scope |
 | `OFFERED → ACCEPTED` | B | `delegate.accept`（带 `acceptance_hash`、B 的委派版本） | B 本地已建任务；`external_side_effects` 时需 B 的人批准 |
 | `OFFERED → REJECTED` | B | `delegate.reject` | — |
-| `OFFERED → EXPIRED` | 系统 | — | 超过接单期限【P1 占位：24 小时】 |
+| `OFFERED → EXPIRED` | 系统 | — | 超过接单期限【P1 占位：24 小时】；各方按自己的时钟算出，不发信封、不占版本号、不写历史 |
 | `ACCEPTED → RUNNING` | B | `delegate.progress { state: running }` | B 本地任务被认领 |
 | `RUNNING → SUBMITTED` | B | `delegate.result`（结果摘要 + 每个产物的 SHA-256） | — |
 | `SUBMITTED → ACCEPTED_RESULT` | A | `delegate.accept_result`（验收者、依据、结果版本） | A 的人或 A 的审核流程 |
@@ -63,7 +63,8 @@
 | `CANCEL_REQUESTED → STOP_NOT_CONFIRMED` | 系统 | — | 超时未确认；界面必须显示“可能仍在执行”（F-016） |
 | `* → FAILED` | B | `delegate.fail` | — |
 
-- 每次迁移把委派记录的 `version` 加 1。信封携带发送方看到的 `version`；接收方只接受 `version` 恰好比本地大 1 的对象，更小的存档不生效（F-008），更大的先对账（§5）。
+- 每次由信封驱动的迁移把委派记录的 `version` 加 1。信封携带发送方看到的 `version`；接收方只接受 `version` 恰好比本地大 1 的对象，更小的存档不生效（F-008），更大的先对账（§5）。
+- 过期不是版本步：双方各自在本地算出 `EXPIRED`，没有信封告知对方。若它占一个版本号，期限前签发、期限后才送达的 `delegate.accept` 会和请求方的过期步撞号，被当成重复丢弃，两侧从此分裂。`delegate.accept` 按签发时间（`issued_at`）判断是否在期限内，允许 `federation_clock_skew_seconds` 的时钟偏差；超出则拒收，不静默丢弃。
 - 所有 `delegate.*` 信封必须带 `audience`（ID-INV-12），并在 I-GRANT §6 的撤销 fence 之后才生效。
 
 ## 4. 两侧本地任务
@@ -74,11 +75,12 @@
 | B（执行方） | 接单（`ACCEPTED`）时 | 现有任务服务，`kind` 标为 `federation_provide`，正文只放冻结的委派对象，并带 `content_origin = federation` 不可信标记 | B 的 agent 照常认领、执行、审核；B 本地任务进 `REVIEWING`/`DONE` 时，B 向 A 发 `delegate.result` |
 
 - **BRIDGE-INV-2 不改本地状态机**：委派状态的变化**不直接**改另一侧的本地任务；只通过各自的任务服务、由各自的流程推进。
-- **BRIDGE-INV-3 一单一任务**：B 侧以 `(peer_workspace, federation_job_id)` 唯一；重复的 `delegate.offer` 返回同一个回执，不建第二个任务（F-012）。
+- **BRIDGE-INV-3 一单一任务**：B 侧以 `(peer_workspace, federation_job_id)` 唯一；重复的 `delegate.offer` 返回同一个回执，不建第二个任务（F-012）。`federation_job_id` 在一个工作区内也唯一（schema 3.86）：另一个对方用同一个 id 发来的 offer 被拒收，本地接口按 id 寻址时不会选错。接单重试时，若上一次已建好任务而委派未提交，沿用那个任务。
 
 ## 5. 一致性、超时与对账
 
-- 本地事务 + outbox（I-MSG §4）；不做跨租户两阶段提交。
+- 本地事务 + outbox（I-MSG §4）；不做跨租户两阶段提交。入队与安排首次重试（`next_retry_at`）在同一事务里，提交后的发送没跑成也会被投递循环捡起。
+- 发送时不持有本侧记录的行锁：先读队首并提交，发送后再按队首摘要比对出队。持锁发送会与反向发送的对方互相等待（接收方要锁它那一侧），数据库看不到这条等待链。同一对象可能被并发的两次同步各发一次，接收方按版本去重。
 - 超时分五种，各自处理：接单超时（→ `EXPIRED`）、执行心跳超时（提示，不自动失败）、截止时间（`deadline`，提示双方的人）、验收超时（提示 A）、网络超时（重试投递）。
 - 网络断开恢复后，先发 `delegate.status_query` 查对方的真实状态和 `version`，再决定是否重发；**禁止**因为超时就新建第二个委派（F-013）。
 - 死信（I-MSG §4.1）进入人工处理入口，双方的人都能看到：谁委派、谁接、现在谁在等谁、最近证据、下一步。

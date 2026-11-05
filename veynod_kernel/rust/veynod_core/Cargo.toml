@@ -3,7 +3,7 @@ name = "veynod_core"
 version = "0.1.0"
 edition = "2021"
 description = "Veynod Kernel core: lock algebra, AST slicer, deterministic command supervisor"
-license = "MIT"
+license = "Apache-2.0"
 
 [lib]
 name = "veynod_core"

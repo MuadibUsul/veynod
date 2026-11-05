@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth import Principal, capability_role, get_principal
 from app.database import get_db
-from app.errors import ApiError
+from app.errors import ApiError, NotFound
 from app.schemas import AcceptanceItem, TaskCreateRequest
 from app.services import federation, tasks
 from app.services.federation import delegations, grants, identity, messaging
@@ -311,11 +311,23 @@ def _provider_task(session: AsyncSession, principal: Principal):
                 f"**Data classification**: {terms['data_classification']}",
             ]
         )
+        task_key = f"fed-{row['federation_job_id'][5:]}"
+        try:
+            existing = await tasks._get_task(session, principal.workspace.id, task_key)
+        except NotFound:
+            existing = None
+        if existing is not None:
+            # An earlier accept created the task and then failed before the
+            # delegation committed: take that task instead of refusing for good.
+            origin = (existing.input_context or {}).get("federation") or {}
+            if origin.get("federation_job_id") != row["federation_job_id"]:
+                raise ApiError(409, "task_exists", f"task '{task_key}' already exists")
+            return existing.task_key
         created = await tasks.create_task(
             session,
             principal,
             TaskCreateRequest(
-                task_key=f"fed-{row['federation_job_id'][5:]}",
+                task_key=task_key,
                 title=f"[federation] {terms['objective'][:200]}",
                 description=body,
                 status="READY",

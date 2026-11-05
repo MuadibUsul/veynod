@@ -10,14 +10,17 @@ to done), F-015 (the accepted terms must be the offered terms), F-006/F-018
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import text
 
 from app.config import get_settings
+from app.database import async_session_factory
 from app.services.federation import delegations, grants, identity
 from app.services.federation.errors import FederationError
 from app.services.federation.grants import Actor
@@ -737,3 +740,202 @@ async def test_no_new_execution_past_the_resource_cap(client, admin_headers, fed
     # Judging what was delivered is still possible.
     await delegations.act(a["id"], job, "accept_result", actor=a["owner"])
     assert (await _one(b, job))["state"] == "ACCEPTED_RESULT"
+
+
+# ── found reviewing #98 ───────────────────────────────────────────────────
+
+
+async def _exec(query: str, **params) -> None:
+    async with async_session_factory() as session:
+        await session.execute(text(query), params)
+        await session.commit()
+
+
+async def test_an_accept_sent_in_time_counts_when_it_arrives_late(
+    client, admin_headers, federation_on, transport
+):
+    """Expiry takes no version: an accept the provider signed before the deadline
+    but delivered after it used to be dropped as a duplicate of the requester's
+    own expiry step, leaving the provider working on a job the requester had
+    closed, and every later object undeliverable."""
+    a, b = await _ws(client, admin_headers, "late-a"), await _ws(client, admin_headers, "late-b")
+    await _connect(a, b)
+    job = (
+        await delegations.offer(a["id"], peer_workspace=b["fid"], terms=_terms(), actor=a["person"])
+    )["delegation"]["federation_job_id"]
+    transport.up = False
+    tasks = Tasks()
+    await delegations.act(b["id"], job, "accept", actor=b["person"], create_local_task=tasks.create)
+    # The deadline passes on the requester's side while the accept is queued.
+    await _exec(
+        "UPDATE federation_delegations SET offer_expires_at = NOW() - interval '1 second' "
+        "WHERE workspace_id = CAST(:w AS uuid)",
+        w=a["id"],
+    )
+    before = await _one(a, job)
+    assert (before["state"], before["version"]) == ("EXPIRED", 1)
+
+    transport.up = True
+    await delegations.sync(b["id"], job)
+    req, prov = await _one(a, job), await _one(b, job)
+    assert (req["state"], req["version"]) == ("ACCEPTED", 2)
+    assert (prov["state"], prov["version"], prov["pending_deliveries"]) == ("ACCEPTED", 2, 0)
+    await delegations.act(b["id"], job, "submit", actor=b["agent"], result=RESULT)
+    assert (await _one(a, job))["state"] == "SUBMITTED"
+    assert (await _one(b, job))["pending_deliveries"] == 0
+
+
+async def test_an_accept_signed_after_the_deadline_is_refused(
+    client, admin_headers, federation_on, transport
+):
+    a, b = await _ws(client, admin_headers, "past-a"), await _ws(client, admin_headers, "past-b")
+    await _connect(a, b)
+    job = (
+        await delegations.offer(a["id"], peer_workspace=b["fid"], terms=_terms(), actor=a["person"])
+    )["delegation"]["federation_job_id"]
+    transport.up = False
+    await delegations.act(
+        b["id"], job, "accept", actor=b["person"], create_local_task=Tasks().create
+    )
+    # Well past the deadline plus the allowed clock skew.
+    await _exec(
+        "UPDATE federation_delegations SET offer_expires_at = NOW() - interval '1 hour' "
+        "WHERE workspace_id = CAST(:w AS uuid)",
+        w=a["id"],
+    )
+    transport.up = True
+    out = await delegations.sync(b["id"], job)
+    assert out["last_error"] == "FED_E_JOB_TRANSITION"
+    assert (await _one(a, job))["state"] == "EXPIRED"
+    assert (await _one(b, job))["pending_deliveries"] == 1
+
+
+async def test_a_queued_object_is_retried_even_if_the_send_after_the_commit_never_ran(
+    client, admin_headers, federation_on, transport, monkeypatch
+):
+    a, b = await _ws(client, admin_headers, "lost-a"), await _ws(client, admin_headers, "lost-b")
+    await _connect(a, b)
+    real_sync = delegations.sync
+
+    async def crash(*args, **kwargs):
+        raise RuntimeError("the process stopped right after the commit (test)")
+
+    monkeypatch.setattr(delegations, "sync", crash)
+    with pytest.raises(RuntimeError):
+        await delegations.offer(a["id"], peer_workspace=b["fid"], terms=_terms(), actor=a["person"])
+    monkeypatch.setattr(delegations, "sync", real_sync)
+    # The delivery loop finds it once it is due.
+    await _exec(
+        "UPDATE federation_delegations SET next_retry_at = NOW() - interval '1 second' "
+        "WHERE workspace_id = CAST(:w AS uuid) AND next_retry_at IS NOT NULL",
+        w=a["id"],
+    )
+    assert await delegations.deliver_due() >= 1
+    [mine] = await delegations.list_delegations(a["id"])
+    assert mine["pending_deliveries"] == 0
+    assert [d["state"] for d in await delegations.list_delegations(b["id"])] == ["OFFERED"]
+
+
+async def test_an_unexpected_send_error_is_retried_not_raised(
+    client, admin_headers, federation_on, transport
+):
+    a, b = await _ws(client, admin_headers, "oops-a"), await _ws(client, admin_headers, "oops-b")
+    await _connect(a, b)
+
+    class Broken(grants.LocalTransport):
+        async def deliver(self, envelope):
+            raise ConnectionResetError("reset by peer (test)")
+
+    grants.set_transport(Broken())
+    try:
+        out = await delegations.offer(
+            a["id"], peer_workspace=b["fid"], terms=_terms(), actor=a["person"]
+        )
+    finally:
+        grants.set_transport(transport)
+    assert out["last_error"] == "FED_E_UNREACHABLE"
+    view = out["delegation"]
+    assert view["pending_deliveries"] == 1 and view["delivery"]["next_retry_at"] is not None
+
+
+async def test_a_job_id_names_one_delegation_per_workspace(
+    client, admin_headers, federation_on, transport
+):
+    a, b = await _ws(client, admin_headers, "dup-a"), await _ws(client, admin_headers, "dup-b")
+    c = await _ws(client, admin_headers, "dup-c")
+    await _connect(a, b)
+    await _connect(c, b)
+    job = (
+        await delegations.offer(a["id"], peer_workspace=b["fid"], terms=_terms(), actor=a["person"])
+    )["delegation"]["federation_job_id"]
+    reused = await identity.sign_as(
+        c["fid"],
+        type="delegate.offer",
+        audience=b["fid"],
+        payload={
+            "federation_job_id": job,
+            "version": 1,
+            "terms": delegations.validate_terms(_terms(objective="Other work entirely.")),
+            "offer_expires_at": (datetime.now(timezone.utc) + timedelta(hours=1))
+            .replace(microsecond=0)
+            .isoformat(),
+        },
+        ttl=timedelta(hours=1),
+    )
+    assert await _code(grants._transport.deliver(reused)) == "FED_E_ENVELOPE_INVALID"
+    [only] = await delegations.list_delegations(b["id"])
+    assert only["peer_workspace"] == a["fid"]
+
+
+async def test_an_offer_deadline_without_a_time_zone_is_refused(
+    client, admin_headers, federation_on, transport
+):
+    a, b = await _ws(client, admin_headers, "tz-a"), await _ws(client, admin_headers, "tz-b")
+    await _connect(a, b)
+    naive = await identity.sign_as(
+        a["fid"],
+        type="delegate.offer",
+        audience=b["fid"],
+        payload={
+            "federation_job_id": delegations.new_job_id(),
+            "version": 1,
+            "terms": delegations.validate_terms(_terms()),
+            "offer_expires_at": "2030-01-01T00:00:00",
+        },
+        ttl=timedelta(hours=1),
+    )
+    assert await _code(grants._transport.deliver(naive)) == "FED_E_ENVELOPE_INVALID"
+
+
+async def test_both_sides_sending_at_once_do_not_wait_on_each_other(
+    client, admin_headers, federation_on, transport
+):
+    """A sender used to hold its own row across the send while the receiver
+    locked the other copy: two sends in opposite directions waited on each
+    other with no timeout."""
+    a, b = await _ws(client, admin_headers, "both-a"), await _ws(client, admin_headers, "both-b")
+    await _connect(a, b)
+    job = (
+        await delegations.offer(a["id"], peer_workspace=b["fid"], terms=_terms(), actor=a["person"])
+    )["delegation"]["federation_job_id"]
+    transport.up = False
+    await delegations.request_cancel(a["id"], job, actor=a["person"], reason="no longer needed")
+    await delegations.act(b["id"], job, "reject", actor=b["person"])
+    barrier = asyncio.Barrier(2)  # both sends in flight at the same moment
+
+    class Together(grants.LocalTransport):
+        async def deliver(self, envelope):
+            await barrier.wait()
+            return await super().deliver(envelope)
+
+    grants.set_transport(Together())
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(delegations.sync(a["id"], job), delegations.sync(b["id"], job)),
+            timeout=20,
+        )
+    finally:
+        grants.set_transport(transport)
+    req, prov = await _one(a, job), await _one(b, job)
+    assert req["state"] == prov["state"] == "REJECTED"
+    assert req["pending_deliveries"] == prov["pending_deliveries"] == 0
