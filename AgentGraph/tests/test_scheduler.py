@@ -277,9 +277,19 @@ async def test_a_cli_older_than_nerve_dispatch_is_named_and_never_offered_work(c
     assert result["placed"] == 0, result
     assert (await _task_row(client, ws, key))["assignee"] is None
     doctor = (await client.get("/v1/runner/doctor", headers=ws["owner"])).json()
-    check = {item["id"]: item for item in doctor["checks"]}["cli_version"]
-    assert check["ok"] is False and old["agent_id"] in check["text"]
-    assert "npx veynod@latest" in check["fix"]
+    checks = {item["id"]: item for item in doctor["checks"]}
+    check = checks["cli_version"]
+    assert check["ok"] is False and f"{old['agent_id']} (0.5.2)" in check["text"]
+    assert "npx veynod@latest" in check["fix"] and "npx veynod --version" in check["fix"]
+    # It is connected, so "run veynod on a computer" would send the owner in a
+    # circle (bug-up-run-tasks-computer-offline): the doctor says it is too old.
+    hosts = checks["hosts"]
+    assert hosts["ok"] is False
+    assert hosts["text"] == (
+        "0 of 1 computer(s) can take work. 1 connected, but on a veynod older than 0.6.0."
+    )
+    assert "npx veynod@latest" in hosts["fix"] and "--run-tasks" not in hosts["fix"]
+    assert "npx veynod@latest" in checks["builder"]["fix"]
     card = (await client.get("/v1/runner/hosts", headers=ws["owner"])).json()["computers"]
     assert card[0]["outdated"] is True
 

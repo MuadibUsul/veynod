@@ -83,6 +83,12 @@ const TRIGGER_LABEL: Record<Trigger, string> = {
 };
 
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+// `up --deploy` first shipped in veynod 0.6.0. `@latest` keeps an older
+// global install from answering instead (it does not know the flag).
+const DEPLOY_CLI = "0.6.0";
+const DEPLOY_DIR = "/path/to/app";
+export const DEPLOY_COMMAND =
+  `npx veynod@latest up --deploy --compose-dir ${DEPLOY_DIR} --compose-file docker-compose.yml`;
 const short = (sha: string | null | undefined) => (sha ? sha.slice(0, 7) : "—");
 
 export function DeploysSettings({ request, notify, canManage }: {
@@ -278,11 +284,19 @@ export function DeploysSettings({ request, notify, canManage }: {
         <SettingRow
           stack
           label={t("On the server, connect a deploy computer:")}
-          description={computers.length
-            ? t("{n} deploy computer(s) connected", { n: computers.length })
-            : t("No deploy computer is connected yet.")}
+          description={
+            <>
+              {computers.length
+                ? t("{n} deploy computer(s) connected", { n: computers.length })
+                : t("No deploy computer is connected yet.")}
+              <span className="setting-desc-line">
+                {t("Needs veynod {version} or newer. {dir} is an example: use the folder that holds your compose file, and name the file if it is not docker-compose.yml.",
+                  { version: DEPLOY_CLI, dir: DEPLOY_DIR })}
+              </span>
+            </>
+          }
         >
-          <code className="setting-code">npx veynod up --deploy --compose-dir /srv/app --compose-file docker-compose.yml</code>
+          <code className="setting-code">{DEPLOY_COMMAND}</code>
         </SettingRow>
       </SettingsGroup>
     </>

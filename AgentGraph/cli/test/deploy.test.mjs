@@ -1,12 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
 import { composeServices, deployEnv, deploySettings, hookArgs, imageVar, runDeploy } from "../bin/deploy.mjs";
 import { placementOf, workerRunnerOptions } from "../bin/runner.mjs";
-import { parseArgs } from "../bin/veynod.mjs";
+import { parseArgs, VERSION } from "../bin/veynod.mjs";
 
 const D = (char) => `sha256:${char.repeat(64)}`;
 const ID = "plc_01M6K1BE6QH6VKWN9XAWMD";
@@ -164,4 +164,25 @@ test("a failed restart without rollback reports failed; no deploy directory repo
     { fetchImpl: two.fetchImpl, run: fakeDocker().run, sleep: async () => {} });
   assert.equal(none.status, "failed");
   assert.deepEqual(two.reports.map((item) => item.status), ["failed"]);
+});
+
+// TASK-BB795CF9: the console's Settings → Deploys shows this command; it must
+// parse with this CLI. The dashboard is not in the public CLI repository.
+const PANEL = new URL("../../dashboard/app/components/deploys-panel.tsx", import.meta.url);
+test("the deploy computer command the console shows parses", { skip: !existsSync(PANEL) }, () => {
+  const source = readFileSync(PANEL, "utf8");
+  const dir = source.match(/const DEPLOY_DIR = "([^"]+)"/)[1];
+  const command = source.match(/DEPLOY_COMMAND =\s*`([^`]+)`/)[1].replace("${DEPLOY_DIR}", dir);
+  const [npx, pkg, ...argv] = command.split(" ");
+  assert.equal(npx, "npx");
+  assert.equal(pkg, "veynod@latest");
+  const options = parseArgs(argv);
+  assert.equal(options.command, "up");
+  assert.equal(options.deploy, true);
+  assert.equal(options.composeDir, dir);
+  assert.equal(options.composeFile, "docker-compose.yml");
+  const minimum = source.match(/const DEPLOY_CLI = "([^"]+)"/)[1].split(".").map(Number);
+  const [major, minor, patch] = VERSION.split(".").map(Number);
+  assert.ok(major > minimum[0] || (major === minimum[0] && (minor > minimum[1]
+    || (minor === minimum[1] && patch >= minimum[2]))), `this CLI (${VERSION}) is older than the panel says`);
 });
