@@ -252,7 +252,7 @@ def _rate(hits: float, total: float, samples: int) -> dict[str, Any]:
 
 async def profile(fid: str) -> dict[str, Any]:
     """A provider's reputation, one measure per dimension, with its evidence."""
-    from app.services.federation import discovery, integrity
+    from app.services.federation import discovery, integrity, privacy
 
     require_type(fid, "workspace")
     rows = await _rows(fid)
@@ -347,8 +347,10 @@ async def profile(fid: str) -> dict[str, Any]:
         "governance": {
             "sanctions_in_force": int(sanctions["in_force"] or 0),
             "sanctions_ever": int(sanctions["ever"] or 0),
-            # Reports are not shown: a report is not a finding (vision §13.1).
+            # Open reports are not shown: a report is not a finding (vision
+            # §13.1). Resolved ones are, without anything private (P4-4).
             "open_reports": "not shown",
+            "complaints": await privacy.complaint_record(fid),
         },
         "cooperation": {
             "counterparts": len(pairs),

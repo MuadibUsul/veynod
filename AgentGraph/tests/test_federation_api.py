@@ -1001,3 +1001,30 @@ async def test_integrity_operator_routes_over_http(fed):
     assert reviewed.status_code == 200 and reviewed.json()["verdict"] == "genuine"
     page = await fed.get(f"/v1/federation/reputation/{b_fid}", headers=b["key"])
     assert "integrity" in page.json() and page.json()["integrity"]["cold_start"] is True
+
+
+async def test_privacy_policy_and_disclosure_over_http(fed):
+    """P4-4 over HTTP: the policy, a disclosure choice, what a stranger sees."""
+    a, b = await _workspace(fed, "prv-a"), await _workspace(fed, "prv-b")
+    a_fid = (await fed.post("/v1/federation/enable", headers=a["owner"])).json()["identity"][
+        "federation_id"
+    ]
+    await fed.post("/v1/federation/enable", headers=b["owner"])
+    policy = await fed.get("/v1/federation/privacy", headers=b["key"])
+    assert policy.status_code == 200 and "never_published" in policy.json()
+    listed = await fed.put(
+        "/v1/federation/directory/listing",
+        headers=a["owner"],
+        json={
+            "listed": True,
+            "headline": "Audits",
+            "capabilities": ["audit"],
+            "disclosure": {"cooperation": False},
+        },
+    )
+    assert listed.status_code == 200 and listed.json()["disclosure"]["cooperation"] is False
+    seen = await fed.get(f"/v1/federation/reputation/{a_fid}", headers=b["key"])
+    assert seen.json()["cooperation"] == {"hidden_by_owner": True}
+    assert "complaints" in seen.json()["governance"]
+    own = await fed.get(f"/v1/federation/reputation/{a_fid}", headers=a["key"])
+    assert "counterparts" in own.json()["cooperation"]

@@ -1926,6 +1926,16 @@ const ZH: Record<string, string> = {
   "{n} records from the same owner are not counted": "{n} 份来自同一控制人的记录不计入",
   "{n} records await a review before they count": "{n} 份记录待核验后才计入",
   "{n} records from new addresses count for less": "{n} 份来自新地址的记录按较低权重计",
+  // Federation P4-4: privacy
+  "Delivery rate": "交付率",
+  "Acceptance rate": "验收率",
+  "How many we worked with": "合作过多少家",
+  "Show to others": "对外显示",
+  "Hidden figures do not count for ranking. Sanctions and resolved complaints are always shown.": "隐藏的项不参与排序；处罚和已结案的投诉总会显示。",
+  "not shown by the owner": "所有者选择不公开",
+  "Resolved complaints": "已结案投诉",
+  "{upheld} upheld": "成立 {upheld} 条",
+  "{dismissed} dismissed · {resolved} resolved in all": "驳回 {dismissed} 条 · 共结案 {resolved} 条",
 };
 
 const EN: Record<string, string> = {};

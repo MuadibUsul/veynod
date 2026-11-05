@@ -59,8 +59,10 @@ async def set_listing(
     capabilities: list[str],
     availability: str,
     actor: Actor,
+    disclosure: dict[str, bool] | None = None,
 ) -> dict[str, Any]:
-    """A person lists (or unlists) the workspace and says what it offers."""
+    """A person lists (or unlists) the workspace, says what it offers and
+    chooses which reputation measures others may see (P4-4)."""
     from app.services.federation import grants
     from app.services.federation.delegations import scrub
 
@@ -75,16 +77,29 @@ async def set_listing(
     if availability not in AVAILABILITY:
         raise _invalid("availability is open, busy or closed")
     scrub({"headline": headline})
+    import json
+
+    from app.services.federation import privacy
+
+    if disclosure is not None and (
+        not isinstance(disclosure, dict) or set(disclosure) - set(privacy.DISCLOSABLE)
+    ):
+        raise _invalid("disclosure covers " + ", ".join(privacy.DISCLOSABLE))
+    if disclosure is None:
+        shown = await disclosure_of(await _fid_of(workspace_id))
+    else:
+        shown = privacy.normalise(disclosure)
     async with async_session_factory() as platform:
         fid = await grants._local_fid(platform, workspace_id)
         await platform.execute(
             text(
                 "INSERT INTO federation_directory_listings (workspace_id, tenant_id, "
-                "federation_id, listed, headline, capabilities, availability, updated_by) "
-                "VALUES (CAST(:w AS uuid), '', :f, :l, :h, :c, :a, :by) ON CONFLICT "
-                "(workspace_id) DO UPDATE SET listed = EXCLUDED.listed, headline = "
-                "EXCLUDED.headline, capabilities = EXCLUDED.capabilities, availability = "
-                "EXCLUDED.availability, updated_by = EXCLUDED.updated_by, updated_at = NOW()"
+                "federation_id, listed, headline, capabilities, availability, disclosure, "
+                "updated_by) VALUES (CAST(:w AS uuid), '', :f, :l, :h, :c, :a, "
+                "CAST(:d AS jsonb), :by) ON CONFLICT (workspace_id) DO UPDATE SET listed = "
+                "EXCLUDED.listed, headline = EXCLUDED.headline, capabilities = "
+                "EXCLUDED.capabilities, availability = EXCLUDED.availability, disclosure = "
+                "EXCLUDED.disclosure, updated_by = EXCLUDED.updated_by, updated_at = NOW()"
             ),
             {
                 "w": str(workspace_id),
@@ -93,11 +108,19 @@ async def set_listing(
                 "h": headline,
                 "c": caps,
                 "a": availability,
+                "d": json.dumps(shown),
                 "by": actor.ref,
             },
         )
         await platform.commit()
     return await my_listing(workspace_id)
+
+
+async def _fid_of(workspace_id: str) -> str:
+    from app.services.federation import grants
+
+    async with async_session_factory() as platform:
+        return await grants._local_fid(platform, workspace_id)
 
 
 async def my_listing(workspace_id: str) -> dict[str, Any]:
@@ -116,7 +139,13 @@ async def my_listing(workspace_id: str) -> dict[str, Any]:
             .first()
         )
     if row is None:
-        return {"listed": False, "headline": "", "capabilities": [], "availability": "open"}
+        return {
+            "listed": False,
+            "headline": "",
+            "capabilities": [],
+            "availability": "open",
+            "disclosure": _disclosure(None),
+        }
     return _listing_out(dict(row))
 
 
@@ -127,8 +156,27 @@ def _listing_out(row: dict[str, Any]) -> dict[str, Any]:
         "headline": row["headline"],
         "capabilities": list(row["capabilities"] or []),
         "availability": row["availability"],
+        "disclosure": _disclosure(row.get("disclosure")),
         "updated_at": row["updated_at"].isoformat(),
     }
+
+
+def _disclosure(value: Any) -> dict[str, bool]:
+    import json
+
+    from app.services.federation import privacy
+
+    return privacy.normalise(json.loads(value) if isinstance(value, str) else value)
+
+
+async def disclosure_of(fid: str) -> dict[str, bool]:
+    """What the owner chose to show (defaults when it never listed)."""
+    async with async_session_factory() as platform:
+        value = await platform.scalar(
+            text("SELECT disclosure FROM federation_directory_listings WHERE federation_id = :f"),
+            {"f": fid},
+        )
+    return _disclosure(value)
 
 
 async def is_listed(fid: str) -> bool:
@@ -199,6 +247,9 @@ def _evidence(page: dict[str, Any]) -> tuple[float, str]:
         # P4-3: early volume cannot buy a place.
         return PRIOR, f"new address, cold start until {integrity['cold_start_ends'][:10]}: neutral"
     acc, comp = page["acceptance"], page["completion"]
+    if acc.get("hidden_by_owner") or comp.get("hidden_by_owner"):
+        # P4-4: what the owner does not show cannot help its place.
+        return PRIOR, "track record hidden by the owner: neutral"
     weight = comp["weighted_total"]
     confidence = min(1.0, weight / CONFIDENT_AT)
     acc_rate = acc["weighted_hits"] / acc["weighted_total"] if acc["weighted_total"] else PRIOR
@@ -220,8 +271,10 @@ def _availability(listing: dict, page: dict[str, Any], recent: bool) -> tuple[fl
     status = {"open": 1.0, "busy": 0.3, "closed": 0.0}[listing["availability"]]
     if listing["availability"] == "open" and not recent:
         status = 0.7
-    median = page["response"]["median_seconds"]
-    if median is None:
+    median = page["response"].get("median_seconds")
+    if page["response"].get("hidden_by_owner"):
+        speed, speed_note = 0.5, "response time hidden by the owner"
+    elif median is None:
         speed, speed_note = 0.5, "response time unknown"
     elif median <= 3600:
         speed, speed_note = 1.0, "answers within an hour"
@@ -277,17 +330,43 @@ async def _skills(fid: str) -> tuple[set[str], list[dict[str, Any]]]:
     ]
 
 
-async def _card(row: dict[str, Any], *, q: str | None, capability: str | None) -> dict[str, Any]:
+async def _card(
+    row: dict[str, Any], *, q: str | None, capability: str | None, owner_view: bool = False
+) -> dict[str, Any]:
+    from app.services.federation import privacy
+
     listing = _listing_out(row)
     fid = listing["fid"]
-    page = await reputation.profile(fid)
+    full = await reputation.profile(fid)
+    # The owner sees its own measures; everyone else what it chose to show.
+    # Ranking always uses the disclosed view, so hiding cannot help.
+    shown = privacy.apply_disclosure(full, listing["disclosure"])
+    page = full if owner_view else shown
     skill_caps, skills = await _skills(fid)
+    if not listing["disclosure"]["skills"]:
+        skills = []
     recent = await _recent(fid)
     relevance, why_rel = _relevance(q, capability, listing, skill_caps, [s["name"] for s in skills])
-    evidence, why_ev = _evidence(page)
-    available, why_av = _availability(listing, page, recent)
+    evidence, why_ev = _evidence(shown)
+    available, why_av = _availability(listing, shown, recent)
     past = page["governance"]["sanctions_ever"]
-    safety = PAST_SANCTION_FACTOR if past else 1.0
+    complaints = page["governance"]["complaints"]
+    complaint_factor = privacy.complaint_factor(complaints)
+    safety = round((PAST_SANCTION_FACTOR if past else 1.0) * complaint_factor, 4)
+    safety_why = (
+        "; ".join(
+            part
+            for part in (
+                f"{past} past sanction(s): x{PAST_SANCTION_FACTOR}" if past else "",
+                f"{complaints['upheld_last_year']} upheld complaint(s) in the last year: "
+                f"x{complaint_factor}"
+                if complaints["upheld_last_year"]
+                else "",
+            )
+            if part
+        )
+        or "no sanctions and no upheld complaints"
+    )
     factors = {"relevance": relevance, "evidence": evidence, "availability": available}
     base = sum(WEIGHTS[k] * v for k, v in factors.items())
     score = round(safety * base, 4)
@@ -305,11 +384,14 @@ async def _card(row: dict[str, Any], *, q: str | None, capability: str | None) -
             "response": page["response"],
             "skills": page["skills"],
             "governance": page["governance"],
-            "cooperation": {
+            "cooperation": page["cooperation"]
+            if page["cooperation"].get("hidden_by_owner")
+            else {
                 "counterparts": page["cooperation"]["counterparts"],
                 "repeat_counterparts": page["cooperation"]["repeat_counterparts"],
                 "longest_partnership_days": page["cooperation"]["longest_partnership_days"],
             },
+            "disclosure": listing["disclosure"],
             "proofs": page["proofs"],
             "integrity": {
                 k: page["integrity"][k] for k in ("flags", "cold_start", "excluded", "discounted")
@@ -337,11 +419,7 @@ async def _card(row: dict[str, Any], *, q: str | None, capability: str | None) -
                     "value": safety,
                     "weight": "multiplier",
                     "contribution": None,
-                    "why": (
-                        f"{past} past sanction(s): x{PAST_SANCTION_FACTOR}"
-                        if past
-                        else "no sanctions"
-                    ),
+                    "why": safety_why,
                 },
                 {
                     "factor": "promotion",
@@ -487,6 +565,6 @@ async def entry(fid: str, *, viewer_fid: str | None = None) -> dict[str, Any]:
         )
     if row is None or (not row["listed"] and viewer_fid != fid):
         raise FederationError("FED_E_NOT_LISTED", "this workspace is not in the directory")
-    card = await _card(dict(row), q=None, capability=None)
+    card = await _card(dict(row), q=None, capability=None, owner_view=viewer_fid == fid)
     card["listed"] = row["listed"]
     return card
