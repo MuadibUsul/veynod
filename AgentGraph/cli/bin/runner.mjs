@@ -548,8 +548,19 @@ export function adapterFor(runtime, { exec = "", importer = (spec) => import(spe
           const { promptAndWait } = await importer("@botiverse/oar/observe");
           const installation = await oar.installation();
           if (installation?.kind === "available") {
+            // A runtime declares the options it refuses, and session() rejects
+            // them (Codex refuses userConfiguration, in OAR 0.75 as in 0.87).
+            const refused = oar.refusedSessionOptions || {};
             const options = { cwd, env };
-            if (pin) Object.assign(options, { mcpServers: [veynodMcpServer(pin)], userConfiguration: "exclude" });
+            if (pin && !refused.mcpServers) {
+              options.mcpServers = [veynodMcpServer(pin)];
+              // Leave the user's own servers out where the runtime can. Where it
+              // cannot (Codex), the session's server has the name `init` gave the
+              // user's ("veynod"), and Codex merges it over that one field by
+              // field: the run's URL and key win for this session.
+              if (!refused.userConfiguration) options.userConfiguration = "exclude";
+            }
+            if (refused.env) delete options.env;
             const session = await oar.session(installation, options);
             try {
               const result = await promptAndWait(session, prompt);
@@ -585,7 +596,9 @@ export function adapterFor(runtime, { exec = "", importer = (spec) => import(spe
 /** Whether a run on this adapter claims as the runner's own agent. */
 export async function pinsIdentity(runtime, { importer = (spec) => import(spec) } = {}) {
   if (runtime === "custom" || runtime === "claude") return true;
-  return Boolean(await oarRuntime(runtime, importer));
+  const oar = await oarRuntime(runtime, importer);
+  // Pinning needs the session to take Veynod's server with the run's key.
+  return Boolean(oar) && !(oar.refusedSessionOptions || {}).mcpServers;
 }
 
 const repoSlug = (repo) => repo.replace(/[^A-Za-z0-9_.-]+/g, "__");

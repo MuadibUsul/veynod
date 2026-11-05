@@ -282,11 +282,18 @@ test("run from the npx cache, up keeps its own copy for the service, OAR include
   writeFileSync(join(modules, "veynod", "bin", "veynod.mjs"), "// cli");
   mkdirSync(join(modules, "@botiverse", "oar"), { recursive: true });
   writeFileSync(join(modules, "@botiverse", "oar", "index.js"), "// oar");
+  // npm hoists OAR's own dependencies beside it; OAR does not load without them.
+  mkdirSync(join(modules, "@agentclientprotocol", "sdk"), { recursive: true });
+  writeFileSync(join(modules, "@agentclientprotocol", "sdk", "index.js"), "// acp");
+  mkdirSync(join(modules, "which"), { recursive: true });
+  writeFileSync(join(modules, "which", "index.js"), "// which");
 
   const script = installStableCopy(join(modules, "veynod", "bin", "veynod.mjs"), { version: "9.9.9", home });
   assert.equal(script, join(stableDir("9.9.9", home), "node_modules", "veynod", "bin", "veynod.mjs"));
   assert.equal(readFileSync(script, "utf8"), "// cli");
   assert.ok(existsSync(join(stableDir("9.9.9", home), "node_modules", "@botiverse", "oar", "index.js")));
+  assert.ok(existsSync(join(stableDir("9.9.9", home), "node_modules", "@agentclientprotocol", "sdk", "index.js")));
+  assert.ok(existsSync(join(stableDir("9.9.9", home), "node_modules", "which", "index.js")));
   assert.ok(!script.includes("_npx"));
 
   // An upgrade installs the new version beside it; the old one goes once the service runs the new.
