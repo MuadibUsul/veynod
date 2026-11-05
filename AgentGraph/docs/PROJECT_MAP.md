@@ -62,8 +62,9 @@ Veynod 是一个给多 agent 团队用的**共享黑板 + MCP 控制面**：人�
 | 路径 | 作用 |
 |---|---|
 | `app/main.py` | 应用装配：中间件、路由挂载、根页面（HTML/JSON 协商） |
-| `app/api/` | 路由层。`human_routes.py`（控制台）、`admin_routes.py`（运维）、`v1_routes.py`（文档/任务/事件）、`runner_routes.py`（执行端）、`deploy_routes.py`（部署，见 docs/DEPLOYS.md） |
-| `app/services/` | 业务层。核心：`documents.py`、`tasks.py`、`team.py`、`blackboard.py`、`scheduler.py`、`token_tree.py`、`automation.py`、`releases.py` |
+| `app/api/` | 路由层。`human_routes.py`（控制台）、`admin_routes.py`（运维）、`v1_routes.py`（文档/任务/事件）、`runner_routes.py`（执行端）、`deploy_routes.py`（部署，见 docs/DEPLOYS.md）；`federation_routes.py`（联邦，`/v1/federation`）、`inbox_stream.py`（收件箱推送 SSE）、`ws_nerve_routes.py`（电脑派活的双工通道） |
+| `app/services/` | 业务层。核心：`documents.py`、`tasks.py`、`team.py`、`blackboard.py`、`scheduler.py`、`token_tree.py`、`automation.py`、`releases.py`；图与 Loop：`diagrams.py`、`code_engine.py`（内核事件投影）、`nerve_hub.py`（电脑派活与两道回执）、`runners.py`；实时：`messaging.py`、`pokes.py`、`presence.py`；部署：`deploys.py`（v2，见 `docs/DEPLOYS.md`） |
+| `app/services/federation/` | 联邦：身份与签名（`identity.py`）、连接与授权、跨空间聊天（`messaging.py`）、任务委派（`delegations.py`）、治理、技能库（`registry.py`、`sandbox.py`、`skill_updates.py`、`withdrawals.py`）、信誉与目录（`reputation.py`、`directory.py`、`integrity.py`、`privacy.py`）、模拟账本与市场（`ledger.py`、`market.py`，仅演示）。接口规格见 `docs/federation/ICD_*.md` |
 | `app/engine/` | 黑板/协作引擎：看板列、租约、依赖重算 |
 | `app/mcp_server/` | MCP 工具定义，与 REST 一一对应 |
 | `app/models.py` | SQLAlchemy 模型（workspaces、agent_tokens、shared_documents、collab_tasks、events…） |
@@ -75,14 +76,14 @@ Veynod 是一个给多 agent 团队用的**共享黑板 + MCP 控制面**：人�
 
 | 路径 | 作用 |
 |---|---|
-| `sql/migrations/v3_*.sql` | 69 个有序迁移；只增不改，版本号与 `app/database.py` 一致 |
+| `sql/migrations/v3_*.sql` | 96 个有序迁移；只增不改，版本号与 `app/database.py` 一致 |
 
 ### 前端 `dashboard/`
 
 | 路径 | 作用 |
 |---|---|
 | `dashboard/app/` | Next.js App Router 页面：`page.tsx`（Loop 主面板）、`docs/`、`cli/`、`deploy/`、`login/`、`oauth/`、`growth/` |
-| `dashboard/app/components/` | 35 个组件；重点：`loop-view.tsx`、`colony.tsx`（agent 头像）、`hosts-panel.tsx`（执行端电脑）、`agents.tsx`、`documents.tsx`、`diagram-view.tsx` |
+| `dashboard/app/components/` | 30 个组件；重点：`loop-view.tsx`、`colony.tsx`（agent 头像）、`hosts-panel.tsx`（执行端电脑）、`agents.tsx`、`documents.tsx`、`diagram-view.tsx`、`federation*.tsx`（联邦五个区域）、`deploys-panel.tsx`（设置 → 部署） |
 | `dashboard/app/i18n.tsx` | 中英文案（新增文案两处都要加） |
 
 构建时 `next build` 产出 `out/`，由 Dockerfile 复制进镜像的 `/app/dashboard/out`。
@@ -91,7 +92,7 @@ Veynod 是一个给多 agent 团队用的**共享黑板 + MCP 控制面**：人�
 
 | 路径 | 作用 |
 |---|---|
-| `cli/bin/veynod.mjs` | 主命令：`init` / `up` / `hub` / `listen` / `runner` / `service` / `doctor` |
+| `cli/bin/veynod.mjs` | 主命令：不带子命令即 `up`（`init` 也是 `up`）；进阶：`hub` / `listen` / `runner` / `service` / `doctor` / `up --deploy` |
 | `cli/bin/up.mjs` | `veynod up` 的实现：连接、接线 MCP、装服务 |
 | `cli/bin/runner.mjs` | 执行端运行时（认领任务、起 claude/codex） |
 | `cli/test/*.test.mjs` | node --test；其中三个在 Windows 上必然失败（权限位、worktree 脚本） |

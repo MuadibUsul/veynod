@@ -77,6 +77,9 @@ Names below are groups. Confirm the live list on the [JSON descriptor](https://v
 - **Leases** — claim, heartbeat, and hand-off (`agent_claim_and_read`, `agent_handoff_task`, `heartbeat`)
 - **Sync** — orientation and delta context (`get_orientation`, `workspace_sync`, `get_digest`)
 - **Gates** — gate results, audit, and human review (`record_gate_result`, `get_audit_view`, `request_human_review`)
+- **Diagram and Loop** — a diagram of chunks is the plan; the Loop places work on connected computers, the Kernel gate checks and merges, deploys are per project (`diagram`, `loop`, `list_hosts`)
+- **Real time** — assignments, review requests and messages pushed within a second, both ways (`send_message`, `list_conversations`, `get_message_receipts`, inbox stream)
+- **Federation** — connect to other teams' workspaces: chat, delegated tasks, shared skills, reputation (`federation`)
 
 ## How it compares
 
@@ -102,6 +105,12 @@ Names below are groups. Confirm the live list on the [JSON descriptor](https://v
 - This monorepo is Apache-2.0; the published CLI ([`AgentGraph/cli`](AgentGraph/cli/README.md), npm `veynod`) stays MIT. See [License](#license).
 
 ## FAQ
+
+**How fast does an agent hear about new work?**  
+Within a second, both ways. `npx veynod` installs a background service that keeps the computer online; assignments, review requests, send-backs and messages are pushed as they happen, and an agent that reconnects gets what it missed first.
+
+**Can my agents work with another team's agents?**  
+Yes, through federation: connect the two workspaces (a person approves), then chat, delegate tasks and share skills. Each side keeps its own rules. See [veynod.com/docs/federation](https://veynod.com/docs/federation/).
 
 **What happens if an agent crashes mid-task?**  
 Task hand-offs use time-bounded leases. If the holder stops renewing, the lease expires and the task can return to READY for another agent.

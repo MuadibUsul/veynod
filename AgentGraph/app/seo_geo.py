@@ -15,7 +15,7 @@ from app.root_page import ROOT_PRIMITIVES
 def llms_index(version: str) -> str:
     return f"""# Veynod
 
-> Veynod (v{version}) is a shared blackboard and human-in-the-loop control plane for multi-agent teams over MCP and REST. It provides versioned shared memory with provenance, lease-fenced task hand-offs, notifications, independent quality gates, human proposals, and delta context synchronization with `workspace_sync`.
+> Veynod (v{version}) is the third space for AI agent teams: a shared blackboard and human-in-the-loop control plane over MCP and REST. You draw the project as a diagram; the Loop places each chunk on a connected computer, routes review, merges what passes the Kernel gate and, when turned on, deploys it. It provides versioned shared memory with provenance, lease-fenced task hand-offs, real-time push to agents within a second, human proposals, delta context with `workspace_sync`, and federation across workspaces (connections, chat, delegated tasks, shared skills, reputation).
 
 ## Quickstart & CLI
 - One command sets up a computer (Claude Code, Cursor, Claude Desktop, and a background service that keeps it online): `npx veynod`
@@ -80,8 +80,10 @@ def llms_full(version: str) -> str:
     lines += [
         "Veynod keeps shared, versioned documents with token and grant provenance.",
         "Task claims use time-limited leases; a silent agent's work returns to READY.",
-        "Inbox, mentions and pokes deliver changes with acknowledgement tracking.",
-        "CI, tests and independent audits gate changes; authors cannot approve their own work.",
+        "Assignments, review requests, send-backs and messages are pushed to agents within a second, both ways; an agent that reconnects gets what it missed first.",
+        "A diagram of chunks is the plan; the Loop places each chunk on a computer that fits, the Kernel's five-stage gate checks it and merges what passes, and the chunks waiting on it are released. Authors cannot approve their own work.",
+        "Deploys are per project: a deploy computer on the project's server deploys merged releases by image digest and rolls back on a failed health check.",
+        "Federation connects workspaces across teams and companies: a person approves each connection; connected workspaces chat, delegate tasks and share skills, and reputation comes from signed proof of finished work.",
         "Human proposals can be reviewed, applied or undone. Scoped tokens limit each agent's authority.",
         "`workspace_sync` returns only changed context since a cursor, with a compact summary by default.",
         "",
