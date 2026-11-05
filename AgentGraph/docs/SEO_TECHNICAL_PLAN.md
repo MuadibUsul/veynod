@@ -250,6 +250,31 @@ Acceptance: a before/after Lighthouse record is committed under
 Acceptance: sitemap status "Success"; no manual actions; baseline organic
 impressions/clicks recorded.
 
+## 4b. Brand-signal fixes (2026-11-05)
+
+An outside audit found third-party pages (MCP directories, Reddit, GitHub)
+outranking veynod.com for "veynod". Checked against production first; what was
+true is fixed, with no visible change (screenshots before/after are
+pixel-identical at 1440 and 390 px, en and zh):
+
+| Finding | Production on 2026-11-05 | Change |
+| --- | --- | --- |
+| Logo text reads `eynod` (the V is a picture) | true | a visually hidden `V` before `eynod` |
+| H1 has no brand word | true | a visually hidden `Veynod:` / `Veynod：` at the start of each H1 |
+| `HEAD /` | 405 JSON | `/`, `/zh/`, `/demo/`, robots, sitemap, llms answer HEAD |
+| `/zh` and `/zh/` both 200 | true | `/zh` 308 → `/zh/` |
+| Crawler with an explicit JSON Accept | got JSON | crawler user agents always get HTML; `Vary: Accept, Accept-Encoding, User-Agent`; JSON is `noindex, noarchive` |
+| `Accept: */*` gets JSON | false (fixed in Phase 0) | — |
+| uvicorn ignores forwarded proto | false (`--forwarded-allow-ips *`; `/dashboard` redirects to https) | — |
+| hreflang / Organization JSON-LD missing | false (present) | `@id` links Organization, WebSite and SoftwareApplication; `sameAs` adds the public monorepo and the mcpservers.org entry; docs pages name the same publisher `@id` |
+| `/demo/` competes with the home page | it ranked for "veynod" | `noindex, follow` (header and meta), out of the sitemap |
+| npm / MCP Registry homepage | already `https://veynod.com` | — |
+| README first line | — | both READMEs open with the official site |
+
+Owner actions that code cannot do: GitHub "About → Website" on both
+repositories, Search Console URL inspection and indexing requests, and one
+repository named as the official source in public posts.
+
 ## 5. Phase 1 — docs architecture and internal links
 
 After P0:

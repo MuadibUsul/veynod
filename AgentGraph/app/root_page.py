@@ -452,24 +452,44 @@ def _footer(lang: str, has_console: bool) -> str:
     return f'<footer><div class="wrap">{body}</div></footer>'
 
 
+SITE = "https://veynod.com"
+
+
 def _json_ld(lang: str, version: str) -> str:
     graph = [
         {
             "@type": "Organization",
+            "@id": f"{SITE}/#organization",
             "name": "Veynod",
-            "url": "https://veynod.com/",
-            "logo": "https://veynod.com/dashboard/icon.png",
+            "alternateName": ["veynod", "veynod.com", "io.github.veynod/veynod"],
+            "url": f"{SITE}/",
+            "logo": f"{SITE}/dashboard/icon.png",
+            # Where Veynod is published: one entity, and veynod.com is its home.
             "sameAs": [
                 "https://github.com/veynod/veynod",
+                "https://github.com/MuadibUsul/veynod",
                 "https://www.npmjs.com/package/veynod",
                 "https://glama.ai/mcp/servers/veynod/veynod",
+                "https://mcpservers.org/servers/veynod/veynod",
             ],
         },
-        {"@type": "WebSite", "name": "Veynod", "url": "https://veynod.com/"},
+        {
+            "@type": "WebSite",
+            "@id": f"{SITE}/#website",
+            "name": "Veynod",
+            "url": f"{SITE}/",
+            "inLanguage": ["en", "zh-Hans"],
+            "publisher": {"@id": f"{SITE}/#organization"},
+        },
         {
             "@type": "SoftwareApplication",
+            "@id": f"{SITE}/#software",
             "name": "Veynod",
-            "url": "https://veynod.com/",
+            "url": f"{SITE}/",
+            "downloadUrl": "https://www.npmjs.com/package/veynod",
+            "installUrl": f"{SITE}/docs/quickstart/",
+            "author": {"@id": f"{SITE}/#organization"},
+            "publisher": {"@id": f"{SITE}/#organization"},
             "applicationCategory": "DeveloperApplication",
             "operatingSystem": "Cross-platform (CLI, MCP, REST API)",
             "softwareVersion": version,

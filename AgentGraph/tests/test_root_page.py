@@ -90,11 +90,18 @@ def test_root_structured_data_links_only_existing_brand_profiles():
     assert match is not None
     graph = json.loads(match.group(1))["@graph"]
     organization = next(item for item in graph if item["@type"] == "Organization")
+    # Live profiles only (docs/SEO_ECOSYSTEM_SUBMISSION.md). Added 2026-11-05: the
+    # monorepo (public) and the mcpservers.org entry, which ranks for "veynod".
     assert organization["sameAs"] == [
         "https://github.com/veynod/veynod",
+        "https://github.com/MuadibUsul/veynod",
         "https://www.npmjs.com/package/veynod",
         "https://glama.ai/mcp/servers/veynod/veynod",
+        "https://mcpservers.org/servers/veynod/veynod",
     ]
+    assert organization["@id"] == "https://veynod.com/#organization"
+    software = next(item for item in graph if item["@type"] == "SoftwareApplication")
+    assert software["publisher"] == {"@id": "https://veynod.com/#organization"}
 
 
 def test_every_mcp_tool_has_directory_annotations():

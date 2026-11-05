@@ -76,6 +76,7 @@ def render_demo_page(
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex, follow">
 <title>Veynod demo · a shared blackboard for people and agents</title>
 <meta name="description" content="A public, read-only Veynod workspace showing tasks, handoffs and human review. No login required.">
 <link rel="canonical" href="https://veynod.com/demo/">

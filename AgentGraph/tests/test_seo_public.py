@@ -52,7 +52,7 @@ async def test_homepage_negotiation_and_locales(monkeypatch):
         assert "Accept" in api.headers["vary"]
         assert "Accept-Encoding" in api.headers["vary"]
         assert api.json()["name"] == "Veynod"
-        assert api.headers["x-robots-tag"] == "noindex"
+        assert api.headers["x-robots-tag"] == "noindex, noarchive"
 
         zh = await client.get("/zh/", headers={"Accept": "application/json"})
         assert zh.status_code == 200

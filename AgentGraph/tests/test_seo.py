@@ -68,7 +68,7 @@ async def test_root_html_carries_search_metadata_and_json_is_noindex(client):
 
     api = await client.get("/", headers={"Accept": "application/json"})
     assert api.status_code == 200
-    assert api.headers["x-robots-tag"] == "noindex"
+    assert api.headers["x-robots-tag"] == "noindex, noarchive"
     assert api.headers["content-type"].startswith("application/json")
 
     # Generic clients and crawlers receive HTML unless JSON is explicit.
@@ -94,7 +94,52 @@ async def test_root_html_carries_search_metadata_and_json_is_noindex(client):
     forced = await client.get("/", params={"format": "json"},
                               headers={"Accept": "text/html"})
     assert forced.headers["content-type"].startswith("application/json")
-    assert forced.headers["x-robots-tag"] == "noindex"
+    assert forced.headers["x-robots-tag"] == "noindex, noarchive"
+
+
+async def test_crawlers_get_the_page_and_the_brand_is_in_its_text(client):
+    """2026-11-05 audit: the logo read "eynod", the H1 had no brand, HEAD was 405."""
+    for agent in ("Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+                  "Mozilla/5.0 (compatible; bingbot/2.0)", "GPTBot/1.1", "ClaudeBot/1.0"):
+        # Even a crawler that asks for JSON gets the page it can index.
+        page = await client.get("/", headers={"User-Agent": agent, "Accept": "application/json"})
+        assert page.headers["content-type"].startswith("text/html"), agent
+        assert page.headers.get("x-robots-tag") is None, agent
+        assert "User-Agent" in page.headers["vary"] and "Accept" in page.headers["vary"]
+    agent = await client.get("/", headers={"User-Agent": "veynod-cli/0.6.0",
+                                           "Accept": "application/json"})
+    assert agent.headers["content-type"].startswith("application/json")
+    assert agent.headers["link"] == f'<{SITE}/>; rel="canonical"'
+
+    for path in ("/", "/zh/", "/robots.txt", "/sitemap.xml", "/llms.txt"):
+        head = await client.head(path)
+        assert head.status_code == 200, path
+
+    # One address per page: /zh redirects permanently to /zh/.
+    zh = await client.get("/zh", follow_redirects=False)
+    assert zh.status_code == 308 and zh.headers["location"] == "/zh/"
+
+    # The text a crawler reads names the brand: the logo's link text and the H1.
+    import re
+
+    for path in ("/", "/zh/"):
+        html_text = (await client.get(path, headers={"Accept": "text/html"})).text
+        brand = re.search(r'<a class="brand"[^>]*>(.*?)</a>', html_text, re.S).group(1)
+        assert re.sub(r"<[^>]+>", "", brand) == "Veynod", path
+        h1 = re.sub(r"<[^>]+>", "", re.search(r"<h1.*?</h1>", html_text, re.S).group(0))
+        assert "Veynod" in h1, path
+        assert ".sr-only {" in html_text
+        assert f'"@id": "{SITE}/#organization"' in html_text
+        assert "https://github.com/MuadibUsul/veynod" in html_text
+
+
+async def test_the_demo_is_followed_but_never_indexed(client):
+    demo = await client.get("/demo/")
+    assert demo.status_code == 200
+    assert demo.headers["x-robots-tag"] == "noindex, follow"
+    assert '<meta name="robots" content="noindex, follow">' in demo.text
+    sitemap = await client.get("/sitemap.xml")
+    assert f"{SITE}/demo/" not in sitemap.text
 
 
 async def test_docs_pages_have_canonical_header_and_og_image(client):

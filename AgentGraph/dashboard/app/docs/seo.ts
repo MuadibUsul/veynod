@@ -80,10 +80,12 @@ export function docsPageJsonLd({
         name: "Veynod Docs",
         url: DOCS_HOME_URL,
       },
+      // The same entity the home page declares (https://veynod.com/#organization).
       publisher: {
         "@type": "Organization",
+        "@id": `${SITE_URL}/#organization`,
         name: "Veynod",
-        url: SITE_URL,
+        url: `${SITE_URL}/`,
       },
     },
   ];
