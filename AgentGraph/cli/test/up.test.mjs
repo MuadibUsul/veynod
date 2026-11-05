@@ -55,9 +55,14 @@ test("identity names are valid agent ids with room for -review", () => {
 test("keys and the config are private files", () => {
   const home = mkdtempSync(join(tmpdir(), "veynod-up-"));
   const file = storeKey("box", "agt_secret", home);
-  assert.equal(statSync(file).mode & 0o777, 0o600);
   saveConfig({ host: "https://h", identities: [{ role: "computer", agent_id: "box", key_file: file }] }, home);
-  assert.equal(statSync(join(home, ".veynod", "config.json")).mode & 0o777, 0o600);
+  // POSIX mode bits are meaningless on Windows (Node reports 0666; the ACL is
+  // what protects files there). The chmod calls run everywhere; the bits are
+  // only asserted where the platform honors them.
+  if (process.platform !== "win32") {
+    assert.equal(statSync(file).mode & 0o777, 0o600);
+    assert.equal(statSync(join(home, ".veynod", "config.json")).mode & 0o777, 0o600);
+  }
   assert.equal(loadConfig(home).identities[0].agent_id, "box");
   assert.equal(loadConfig(home).version, 1);
 });

@@ -63,7 +63,10 @@ test("inventory reads OAR, keeps quota and drops the account email", async () =>
     if (command === "codex") return "codex-cli 0.80.0\n";
     throw new Error("missing");
   };
-  const found = await inventory({ importer, run });
+  // commandWorks resolves the binary first and only then asks `run` for its
+  // version, so the probe must see the bare name, not a host path.
+  const resolve = (name) => ({ command: name, prefix: [] });
+  const found = await inventory({ importer, run, resolve });
   assert.deepEqual(found, [
     { id: "claude", available: true, via: "oar", version: "2.1.3", models: ["sonnet", "opus"],
       usage: { plan: "max", windows: [{ name: "5h", used_percent: 41.5, resets_at: "2026-10-29T10:00:00Z" }] } },
@@ -388,7 +391,9 @@ test("work without a repository runs in its own scratch directory, removed after
   const state = mkdtempSync(join(tmpdir(), "veynod-state-"));
   const fake = await fakeVeynod();
   const out = join(state, "cwd.txt");
-  const exec = `node -e "require('fs').writeFileSync('${out}', process.cwd())"`;
+  // Windows paths use backslashes, which the child's single-quoted JS string
+  // would eat as escapes — double them so the written path stays intact.
+  const exec = `node -e "require('fs').writeFileSync('${out.replaceAll("\\", "\\\\")}', process.cwd())"`;
   await drive({ host: fake.host, key: "ag_box", runtime: "custom", exec, slots: 1 },
     [{ task_key: "write-spec", placement_id: PLC_A }], { version: "t", stateDir: state, sleepMs: 0 });
   fake.close();
