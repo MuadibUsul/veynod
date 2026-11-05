@@ -145,11 +145,9 @@ def test_scheduling_is_not_part_of_the_reaper():
     assert "scheduler_loop()" in inspect.getsource(__import__("app.main", fromlist=["main"]))
 
 
-def test_no_deploy_rule_without_deploy_evidence(monkeypatch):
+def test_no_mode_holds_done_for_a_deploy():
+    """The v1 deploy gate is gone: a task is done when its work is approved."""
     from app.services import automation
 
-    monkeypatch.setattr(automation.settings, "deploy_evidence_required", False)
-    assert "done_needs_deploy" not in automation.agent_rules("full")
-    monkeypatch.setattr(automation.settings, "deploy_evidence_required", True)
-    assert "done_needs_deploy" in automation.agent_rules("full")
-    assert "done_needs_deploy" not in automation.agent_rules("semi")
+    for mode in ("manual", "semi", "full"):
+        assert "done_needs_deploy" not in automation.agent_rules(mode)

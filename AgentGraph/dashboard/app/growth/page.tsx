@@ -254,7 +254,7 @@ export default function GrowthPage() {
                   })}
                 </ol>
                 <p className="growth-muted">
-                  {t("npx veynod init: {started} started, {completed} finished", data.cli)}
+                  {t("npx veynod: {started} started, {completed} finished", data.cli)}
                 </p>
               </article>
 

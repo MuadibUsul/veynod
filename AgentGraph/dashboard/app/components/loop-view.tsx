@@ -289,7 +289,7 @@ export function LoopView({
           {howSupervise && (
             <div className="lin-row quiet hosts-empty-row">
               <span className="lin-title">{t("On one computer that should look after the Loop, run:")}</span>
-              <code>npx veynod up --supervisor</code>
+              <code>npx veynod --supervisor</code>
             </div>
           )}
         </section>

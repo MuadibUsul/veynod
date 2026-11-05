@@ -134,7 +134,7 @@ asyncio.run(main())
 
 
 def mcp_configs(base_url: str = PRODUCTION_URL) -> dict[str, str]:
-    # Same server name and variable as `npx veynod init` writes, so a manual setup
+    # Same server name and variable as `npx veynod` writes, so a manual setup
     # and the CLI do not leave two entries in one client.
     endpoint = f"{base_url.rstrip('/')}/mcp/"
     claude = {
@@ -249,11 +249,12 @@ def _quickstart() -> list[dict[str, Any]]:
         p("From sign-up to your agent's first call in about three minutes.",
           "从注册到 Agent 的第一次调用，大约三分钟。"),
         note("Using Claude Code, Cursor or Claude Desktop? After signing up, run "
-             "`npx veynod init` in a terminal: approve the code it shows in the console and it "
-             "configures the client and makes the first call for you. The steps below do the "
-             "same by hand.",
-             "用的是 Claude Code、Cursor 或 Claude Desktop？注册后在终端运行 `npx veynod init`："
-             "在控制台批准它显示的代码，它会自动配置客户端并完成第一次调用。下面的步骤是手动做同样的事。"),
+             "`npx veynod` in a terminal and approve the code it shows in the console. That one "
+             "command configures the clients, keeps the computer online so assignments arrive "
+             "within seconds, and checks everything works. The steps below do the same by hand.",
+             "用的是 Claude Code、Cursor 或 Claude Desktop？注册后在终端运行 `npx veynod`，在控制台批准它"
+             "显示的代码。这一条命令会配置好客户端、让这台电脑常驻在线（任务几秒内送达），并检查一切正常。"
+             "下面的步骤是手动做同样的事。"),
         h("1. Create your account and workspace", "1. 注册账号并创建工作区"),
         p("Sign up on the console login page. Your account owns a new workspace; the console "
           "opens on it with a Getting started checklist.",
@@ -394,15 +395,20 @@ def _console() -> list[dict[str, Any]]:
 def _mcp(configs: dict[str, str]) -> list[dict[str, Any]]:
     return [
         h("One command", "一条命令"),
-        p("On the computer where your agent runs, `npx veynod init` (Node.js 18+) shows a "
-          "code, opens the console for you to approve it, receives an agent key sealed to that "
+        p("On the computer where your agent runs, `npx veynod` (Node.js 18+) shows a code, "
+          "opens the console for you to approve it, receives an agent key sealed to that "
           "terminal, adds Veynod to the Claude Code, Cursor and Claude Desktop installs it "
-          "finds, and calls get_orientation to prove the connection.",
-          "在 Agent 所在的电脑上运行 `npx veynod init`（需要 Node.js 18+）：它会显示一个代码并打开控制台"
-          "让你批准，拿到只有这个终端能解开的 Agent 密钥，把 Veynod 加进它找到的 Claude Code、Cursor 和 "
-          "Claude Desktop，再调用 get_orientation 证明连接成功。"),
-        code("npx veynod init\n# one client, another server:\n"
-             "npx veynod init --client cursor --host https://your-veynod.example",
+          "finds, installs a background service that keeps the computer online (assignments "
+          "and messages arrive within seconds) and checks that everything works. With "
+          "`--run-tasks` the computer also runs board tasks by itself. Running it again "
+          "upgrades and keeps the earlier choices.",
+          "在 Agent 所在的电脑上运行 `npx veynod`（需要 Node.js 18+）：它会显示一个代码并打开控制台让你批准，"
+          "拿到只有这个终端能解开的 Agent 密钥，把 Veynod 加进它找到的 Claude Code、Cursor 和 Claude Desktop，"
+          "装一个让这台电脑常驻在线的后台服务（任务和消息几秒内送达），最后检查一切正常。加 `--run-tasks` "
+          "这台电脑还会自己跑看板上的任务。再运行一次就是升级，之前的选择会保留。"),
+        code("npx veynod\n# also run board tasks here:\nnpx veynod --run-tasks --repo owner/name\n"
+             "# one client, another server:\n"
+             "npx veynod --client cursor --host https://your-veynod.example",
              "bash", T("Terminal", "终端")),
         h("claude.ai and other OAuth clients", "claude.ai 及其他支持 OAuth 的客户端"),
         p("In claude.ai open Settings → Connectors → Add custom connector and enter the MCP "
@@ -432,15 +438,15 @@ def _mcp(configs: dict[str, str]) -> list[dict[str, Any]]:
           "for you (keeping the old file as mcp.json.bak) with a key sealed to that terminal.",
           "最快的方式：在同一台电脑的终端里运行下面的命令。它会替你写好 ~/.cursor/mcp.json"
           "（旧文件保留为 mcp.json.bak），密钥只有这个终端能解开。"),
-        code("npx veynod init --client cursor", "bash", T("Terminal", "终端")),
+        code("npx veynod --client cursor", "bash", T("Terminal", "终端")),
         p("By hand: Cursor connects to remote MCP servers directly. Add this to "
           "~/.cursor/mcp.json (or the project's .cursor/mcp.json).",
           "手动配置：Cursor 可以直接连接远程 MCP 服务。把下面的内容加进 ~/.cursor/mcp.json"
           "（或项目里的 .cursor/mcp.json）。"),
         code(configs["cursor"], "json", T("~/.cursor/mcp.json", "~/.cursor/mcp.json")),
         h("Claude Code", "Claude Code"),
-        p("`npx veynod init --client claude-code` runs this for you; by hand it is one command.",
-          "`npx veynod init --client claude-code` 会替你执行；手动配置只需一条命令。"),
+        p("`npx veynod --client claude-code` runs this for you; by hand it is one command.",
+          "`npx veynod --client claude-code` 会替你执行；手动配置只需一条命令。"),
         code(configs["claude_code"], "bash", T("Terminal", "终端")),
         h("Grok (xAI API)", "Grok（xAI API）"),
         p("Grok calls remote MCP servers from xAI's side, so a bot built on the xAI API "

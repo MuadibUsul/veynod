@@ -60,7 +60,7 @@ veynod/
 | 三个独立技术页面 | `app/api/code_page.py`、`app/api/agent_run_page.py`、`app/api/project_page.py` + `app/templates/*.html` |
 | 主控制台 | `dashboard/app/page.tsx` |
 
-关键路由前缀：`/v1`（v1_routes）、`/v1/code`、`/v1/tasks/{key}/run`、`/v1/projects`、`/v1/admin`、`/v1/human`、`/v1/stream`、`/v1/deploy-gate`。
+关键路由前缀：`/v1`（v1_routes）、`/v1/code`、`/v1/tasks/{key}/run`、`/v1/projects`、`/v1/admin`、`/v1/human`、`/v1/stream`、`/v1/deploys`（v1 `/v1/deploy-gate` 已于 2026-11-05 删除）。
 
 ### 2.2 Agent Runtime — 模型驱动执行循环
 

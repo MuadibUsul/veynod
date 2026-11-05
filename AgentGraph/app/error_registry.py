@@ -265,11 +265,11 @@ REGISTRY: dict[str, ErrorSpec] = {
         403, ESCALATE_HUMAN, "Ask the workspace owner to open support access in the console."),
     "operator_write_denied": _spec(
         403, ESCALATE_HUMAN, "Ask the owner to reopen support access with changes allowed."),
-    "cli_session_decided": _spec(409, ABANDON, "Run `npx veynod init` again for a new code."),
-    "cli_session_expired": _spec(410, ABANDON, "Run `npx veynod init` again for a new code."),
+    "cli_session_decided": _spec(409, ABANDON, "Run `npx veynod` again for a new code."),
+    "cli_session_expired": _spec(410, ABANDON, "Run `npx veynod` again for a new code."),
     "cli_session_consumed": _spec(410, ABANDON, "The key was collected once; start a new setup."),
     "cli_code_unavailable": _spec(503, RETRY_BACKOFF, "Back off and retry."),
-    "invalid_device_code": _spec(404, ABANDON, "Start a new setup with `npx veynod init`."),
+    "invalid_device_code": _spec(404, ABANDON, "Start a new setup with `npx veynod`."),
     "merge_without_deliverable": _spec(
         409, FIX_REQUEST, "Pass artifact (a commit or doc:// link), or merge an accepted "
         "submission."),
@@ -403,9 +403,6 @@ REGISTRY: dict[str, ErrorSpec] = {
     # Deploy gate v2.
     "deploys_off": _spec(409, ESCALATE_HUMAN, "A person turns deploys on for the target first."),
     "not_a_deploy": _spec(409, FIX_REQUEST, "Report a deploy only on a deploy placement."),
-    "run_not_claimed": _spec(
-        409, ABANDON, "Only the runner holding a running deploy-gate run reports it; claim again."
-    ),
     "lease_expired": _spec(
         409, ABANDON, "Your lease ended before NOW(); claim the task again."),
     "lease_renew_too_early": _spec(

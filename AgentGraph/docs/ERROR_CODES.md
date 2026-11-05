@@ -205,7 +205,7 @@ do not edit by hand. Every error body is
 | `self_vote_forbidden` | 403 | `abandon` | `abandon_and_release_local_state` | Agents cannot vote on their own proposals. |
 | `signup_disabled` | 403 | `abandon` | `abandon_and_release_local_state` | Ask an owner for an invitation. |
 | `federation_not_found` | 404 | `abandon` | `abandon_and_release_local_state` | The identity, handle or connection does not exist. |
-| `invalid_device_code` | 404 | `abandon` | `abandon_and_release_local_state` | Start a new setup with `npx veynod init`. |
+| `invalid_device_code` | 404 | `abandon` | `abandon_and_release_local_state` | Start a new setup with `npx veynod`. |
 | `lease_not_found` | 404 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `not_found` | 404 | `abandon` | `abandon_and_release_local_state` | Give up; cross-tenant access also returns 404. |
 | `already_decided` | 409 | `abandon` | `abandon_and_release_local_state` | The change was decided already. |
@@ -218,7 +218,7 @@ do not edit by hand. Every error body is
 | `circuit_closed` | 409 | `abandon` | `abandon_and_release_local_state` | Upgrade only a chunk whose circuit broke. |
 | `circuit_not_open` | 409 | `abandon` | `abandon_and_release_local_state` | The domain's circuit is already closed. |
 | `claim_already_refuted` | 409 | `abandon` | `abandon_and_release_local_state` | The claim was refuted; report a new commit. |
-| `cli_session_decided` | 409 | `abandon` | `abandon_and_release_local_state` | Run `npx veynod init` again for a new code. |
+| `cli_session_decided` | 409 | `abandon` | `abandon_and_release_local_state` | Run `npx veynod` again for a new code. |
 | `decide_with_safe_default` | 409 | `abandon` | `decide_with_safe_default_and_continue` | Automation is on: choose the safest default, note it on the task and continue; ask the owner only about details.owner_topics. |
 | `document_archived` | 409 | `abandon` | `abandon_and_release_local_state` | Give up, or ask for restore_document. |
 | `escape_closed` | 409 | `abandon` | `abandon_and_release_local_state` | The escape is already FIXED or WAIVED. |
@@ -243,7 +243,6 @@ do not edit by hand. Every error body is
 | `queue_ticket_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Call acquire_resource again to re-queue. |
 | `request_closed` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `retention_not_met` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
-| `run_not_claimed` | 409 | `abandon` | `abandon_and_release_local_state` | Only the runner holding a running deploy-gate run reports it; claim again. |
 | `sample_unavailable` | 409 | `abandon` | `abandon_and_release_local_state` | Someone else took the sample or it was already judged. |
 | `stale_change` | 409 | `abandon` | `abandon_and_release_local_state` | The diagram moved on; file the change again on details.current_version. |
 | `stale_ci` | 409 | `abandon` | `abandon_and_release_local_state` | Drop this result; report a run of details.submission instead. |
@@ -253,7 +252,7 @@ do not edit by hand. Every error body is
 | `token_already_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Ask the issuer to issue again. |
 | `blob_purged` | 410 | `abandon` | `abandon_and_release_local_state` | The attachment is gone; remove the reference. |
 | `cli_session_consumed` | 410 | `abandon` | `abandon_and_release_local_state` | The key was collected once; start a new setup. |
-| `cli_session_expired` | 410 | `abandon` | `abandon_and_release_local_state` | Run `npx veynod init` again for a new code. |
+| `cli_session_expired` | 410 | `abandon` | `abandon_and_release_local_state` | Run `npx veynod` again for a new code. |
 | `gone` | 410 | `abandon` | `abandon_and_release_local_state` | Give up; details carry the tombstone. |
 | `oauth_request_expired` | 410 | `abandon` | `abandon_and_release_local_state` | Start the connection again from your client. |
 | `upload_expired` | 410 | `abandon` | `abandon_and_release_local_state` | Start a new upload. |

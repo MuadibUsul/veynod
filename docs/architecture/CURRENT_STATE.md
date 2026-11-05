@@ -192,7 +192,7 @@ Kernel Gate Worker（独立进程，:8030 指标）
 | 路径 | 结论 |
 |---|---|
 | AgentGraph `diagrams` / chunk 队列 / merge 记录 | 只编排任务和存文件/CI 元数据，不执行代码；与 Kernel code run 并存 |
-| AgentGraph `deploy_gate` | 应用侧只记录证据；真正部署由 VPS 脚本执行；默认关闭 |
+| AgentGraph `deploy_gate`（v1） | 2026-11-05 删除；部署走 v2（`deploys.py`，docs/DEPLOYS.md） |
 | AgentGraph `flow` | 只读投影，不编排 |
 | AgentGraph `code_engine` → Kernel | 真实代码执行路径，但**未跟踪、零测试**、gate 证据是合成的 |
 | Kernel v1 sync submit | 过渡路径，API 进程内跑 gate/merge，默认 410 |

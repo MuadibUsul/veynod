@@ -3,7 +3,9 @@
 The mode is stored per workspace, returned to humans and to agents through
 orientation, and every change is audited and announced. It does not itself
 merge or deploy anything: it tells the agents which decisions they may take
-without asking, and whether the deploy gate may ship without a person.
+without asking. (``auto_deploy_allowed`` is still stored and returned for API
+compatibility; since the v1 deploy gate was removed nothing reads it. Deploys
+are set per project: docs/DEPLOYS.md.)
 
 It also changes what reaches the owner (spec agentgraph/spec-auto-loop-mode v2):
 
@@ -50,8 +52,6 @@ async def get_mode(session: AsyncSession, workspace_id: uuid.UUID) -> dict[str, 
         ),
         {"ws": workspace_id},
     )).mappings().one_or_none()
-    # This workspace's switch also governs the server's deploy gate (Loop R-02).
-    controls = str(settings.deploy_gate_board_workspace_id or "") == str(workspace_id)
     if row is None:
         return {
             "mode": DEFAULT_MODE,
@@ -59,7 +59,6 @@ async def get_mode(session: AsyncSession, workspace_id: uuid.UUID) -> dict[str, 
             "updated_by": None,
             "updated_at": None,
             "version": 0,
-            "controls_deploy_gate": controls,
         }
     return {
         "mode": row["mode"],
@@ -67,7 +66,6 @@ async def get_mode(session: AsyncSession, workspace_id: uuid.UUID) -> dict[str, 
         "updated_by": row["updated_by"],
         "updated_at": row["updated_at"],
         "version": int(row["version"]),
-        "controls_deploy_gate": controls,
     }
 
 
@@ -84,7 +82,6 @@ async def set_mode(
         raise ApiError(422, "validation_error", "mode must be manual, semi or full",
                        details={"field": "mode", "allowed": list(MODES)})
     before = await get_mode(session, principal.workspace.id)
-    controls = before.pop("controls_deploy_gate")
     note = (reason or "").strip() or "set from the console"
     row = (await session.execute(
         text(
@@ -134,11 +131,7 @@ async def set_mode(
         },
     )
     await session.commit()
-    if controls:
-        from app.services import deploy_gate
-
-        await deploy_gate.record_owner_switch(principal.agent_signature, before, after, note)
-    return {**after, "controls_deploy_gate": controls}
+    return after
 
 
 def agent_rules(mode: str) -> dict[str, Any]:
@@ -157,10 +150,6 @@ def agent_rules(mode: str) -> dict[str, Any]:
         else "escalate to a person",
         "owner_report": "put owner_report {what_changed, how_to_try, not_yet_done} in plain "
         "words in your handoff brief; technical detail stays in the log",
-        **({"done_needs_deploy": "a code task the deploy gate ships is DONE only after a "
-            "deploy that carried it passed its smoke test; until then an approval leaves it "
-            "in HANDOFF and DEPLOY_VERIFIED says when it shipped"}
-           if mode == "full" and settings.deploy_evidence_required else {}),
     }
 
 

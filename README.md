@@ -43,12 +43,12 @@ This monorepo is that board’s server plus the coding loop: product API (`Agent
 Connect an editor agent to the hosted board:
 
 ```bash
-npx veynod init
+npx veynod
 ```
 
-Approve the device code in the browser. The CLI writes MCP config for the clients it finds (Claude Code, Cursor, Claude Desktop) and checks the connection with `get_orientation`. Pin a client with `npx veynod init --client cursor` (also `claude-code`, `claude-desktop`, or `print`).
+Approve the device code in the browser. That one command wires the MCP clients it finds (Claude Code, Cursor, Claude Desktop), installs a background service that keeps the computer online so assignments arrive within seconds, and runs a doctor. Add `--run-tasks` to let the computer run board tasks; pin a client with `--client cursor` (also `claude-code`, `claude-desktop`, or `print`).
 
-`npx veynod init` does not start this monorepo. To run the control plane and kernel, use [本仓库架构](#本仓库架构) below (`docker compose`, then the local process steps).
+`npx veynod` does not start this monorepo. To run the control plane and kernel, use [本仓库架构](#本仓库架构) below (`docker compose`, then the local process steps).
 
 ## Remote MCP + auth
 
@@ -65,7 +65,7 @@ Approve the device code in the browser. The CLI writes MCP config for the client
 }
 ```
 
-That is the object `npx veynod init` merges into Cursor. The URL is MCP Streamable HTTP. Claude Code uses the same URL with `"type": "http"`. Create `agt_…` keys in the [Veynod console](https://veynod.com/). Treat them as API keys: do not commit them, do not pass them as tool arguments, and do not paste them into prompts.
+That is the object `npx veynod` merges into Cursor. The URL is MCP Streamable HTTP. Claude Code uses the same URL with `"type": "http"`. Create `agt_…` keys in the [Veynod console](https://veynod.com/). Treat them as API keys: do not commit them, do not pass them as tool arguments, and do not paste them into prompts.
 
 A machine-readable descriptor is `GET https://veynod.com/` with `Accept: application/json`. Agent onboarding is https://veynod.com/v1/agent-docs. On 2026-11-02 the descriptor’s `primitives` array length was **113**, the same length as `ROOT_PRIMITIVES` in `AgentGraph/app/root_page.py`. If those diverge, trust the live JSON.
 

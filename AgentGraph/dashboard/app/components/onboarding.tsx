@@ -41,12 +41,12 @@ const COPY: Record<OnboardingStepId, { title: string; detail: string; action: st
   },
   create_token: {
     title: "Mint your first agent token",
-    detail: "Fastest: run npx veynod init in a terminal and approve its code. Or Agents → Mint token.",
+    detail: "Fastest: run npx veynod in a terminal and approve its code. Or Agents → Mint token.",
     action: "Open Agents",
   },
   connect_mcp: {
     title: "Connect MCP and call get_orientation",
-    detail: "npx veynod init does this for you. Or paste the MCP config into Claude Desktop or Cursor.",
+    detail: "npx veynod does this for you and keeps the computer online. Or paste the MCP config into Claude Desktop or Cursor.",
     action: "MCP setup",
   },
   first_content: {
@@ -249,7 +249,7 @@ export function AgentConnect({
   const base = normalizeBase(apiBase) || (typeof window !== "undefined" ? window.location.origin : "");
   const endpoint = `${base}/mcp/`;
   const cursor = JSON.stringify(
-    // Same server name and variable as `npx veynod init`, so the two never duplicate.
+    // Same server name and variable as `npx veynod`, so the two never duplicate.
     { mcpServers: { veynod: { url: endpoint, headers: { Authorization: `Bearer ${agentKey}` } } } },
     null,
     2,

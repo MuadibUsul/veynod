@@ -309,7 +309,7 @@ E:\Codes\veynod\
 - 读取/校验：`_get_task`、`_check_version`、`_check_lease`、`_require_active_lease`、`_check_epoch`、`_check_assignee`、`_require_claim_owner`、`validate_review_next_status`
 - 创建：`_create_task_core`、`create_task`、`list_tasks`、`claimable_conditions`
 - 租约：`claim_task`、`renew_task`、`renew_lease_explicit`、`release_task`、`_release_dependents`
-- 交付/评审：`handoff_task`、`review_task`、`_answer_by_review`、`_require_approve_done`、`_deploy_evidence_for_done`
+- 交付/评审：`handoff_task`、`review_task`、`_answer_by_review`、`_require_approve_done`
 - 取消/失败：`cancel_task`、`cancel_own_task`、`fail_task`
 - 运维：`reap_expired_task_leases`、`reap_task_timeouts`、`reassign_task`、`list_orphan_tasks`、`claim_orphan_tasks`
 - 委派/树：`create_subtasks`、`get_task_tree`、`write_continuation`、`_append_erratum`
@@ -422,7 +422,6 @@ E:\Codes\veynod\
 | `/v1/projects`、`/v1/execution-graph`、`/v1/deliveries` 等 | `project_routes.py` | Phase 7 |
 | `/v1/stream` | `stream_routes.py` | SSE（Product events） |
 | `/v1/inbox/stream` | `inbox_stream.py` | Agent inbox SSE |
-| `/v1/deploy-gate` | `deploy_gate_routes.py` | Deploy gate |
 
 ### 5.10 UI 与 CLI
 
@@ -1655,7 +1654,6 @@ VN_DEFAULT_WORKSPACE_ID=...
   def _release_dependents(session: AsyncSession, completed: CollabTask, principal: Principal)
   def handoff_task(session: AsyncSession, principal: Principal, task_key: str, request: TaskHandoffRequest)
   def _require_approve_done(principal: Principal)
-  def _deploy_evidence_for_done(session: AsyncSession, principal: Principal, task: CollabTask)
   def review_task(session: AsyncSession, principal: Principal, task_key: str, request: TaskReviewRequest, *, grant_id: str | None=None)
   def _answer_by_review(session: AsyncSession, principal: Principal, task: CollabTask, request: TaskReviewRequest)
   def escalate_task(session: AsyncSession, principal: Principal, task_key: str, request: TaskEscalateRequest)
@@ -2565,7 +2563,6 @@ v4_014_delivery_records.sql
 | `AgentGraph/app/api/blob_routes.py` | Blob storage, attachments and cleanup-grant routes (v3.40). |
 | `AgentGraph/app/api/code_page.py` | The human console's Code page. |
 | `AgentGraph/app/api/code_routes.py` | Code delivery routes. |
-| `AgentGraph/app/api/deploy_gate_routes.py` | VPS deploy gate routes (v3.50, agentgraph/spec-vps-auto-deploy-gate v1). |
 | `AgentGraph/app/api/event_admin_routes.py` | Operator view of the durable cross-domain event inbox (Phase 3). |
 | `AgentGraph/app/api/human_routes.py` | Workspace-scoped human console API using account sessions. |
 | `AgentGraph/app/api/inbox_stream.py` | GET /v1/inbox/stream: pokes pushed to an online agent (TASK-72A59BD9). |
@@ -2608,7 +2605,6 @@ v4_014_delivery_records.sql
 | `AgentGraph/app/root_page.py` | Human-facing service descriptor rendered at ``/``. |
 | `AgentGraph/app/schemas.py` | Pydantic contracts for the Veynod shared blackboard API. |
 | `AgentGraph/app/schemas_blobs.py` | Pydantic contracts for blob storage and public share links (v3.40). |
-| `AgentGraph/app/schemas_deploy_gate.py` | Request bodies for the VPS deploy gate (v3.50). |
 | `AgentGraph/app/seo_geo.py` | Public, machine-readable site context generated from published docs. |
 | `AgentGraph/app/services/__init__.py` | v3 shared blackboard service layer. |
 | `AgentGraph/app/services/access_log.py` | Per-token access log: who touched which workspace, when, and what they read. |
@@ -2630,7 +2626,6 @@ v4_014_delivery_records.sql
 | `AgentGraph/app/services/collab.py` | Collaboration primitives for tasks (PRD Phase 2 R2.1). |
 | `AgentGraph/app/services/common.py` | Serialization, audit, events, and snapshots shared by the service layer. |
 | `AgentGraph/app/services/contention.py` | Hot-document protection and section hashes (PRD AG-ST-14 point 3). |
-| `AgentGraph/app/services/deploy_gate.py` | VPS deploy gate (agentgraph/spec-vps-auto-deploy-gate v1, schema 3.54). |
 | `AgentGraph/app/services/detail.py` | Detail levels: summary / standard / full (2026-10-23 call-cost proposal). |
 | `AgentGraph/app/services/diagrams.py` | Diagrams and chunked dispatch (agentgraph/spec-diagram-dispatch v3), lightweight stage. |
 | `AgentGraph/app/services/digest.py` | Watermarks and the "while you were away" digest (PRD AG-EV-04). |
