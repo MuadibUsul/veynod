@@ -720,9 +720,12 @@ async def test_no_new_execution_past_the_resource_cap(client, admin_headers, fed
     assert mine["delegation"]["budget"] == {
         "unit": "model_tokens",
         "cap": 10000,
+        "mode": "enforce",
         "spent": 13000,
         "remaining": 0,
         "over": True,
+        "blocking": True,
+        "warning": None,
     }
     assert [r["metering_source"] for r in mine["cost_receipts"]] == ["self_reported"] * 2
     assert await _code(delegations.act(a["id"], job, "revise", actor=a["owner"], note="More")) == (

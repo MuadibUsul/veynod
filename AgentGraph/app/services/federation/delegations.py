@@ -208,13 +208,20 @@ def _validate_budget(budget: Any) -> dict[str, Any] | None:
         return budget
     if (
         isinstance(budget, dict)
-        and set(budget) == {"amount", "unit"}
+        and set(budget) in ({"amount", "unit"}, {"amount", "unit", "mode"})
+        and budget.get("mode", "enforce") in ("enforce", "shadow")
         and budget["unit"] in USAGE_UNITS
         and isinstance(budget["amount"], int)
         and not isinstance(budget["amount"], bool)
         and 1 <= budget["amount"] <= 10**12
     ):
-        return {"amount": budget["amount"], "unit": budget["unit"]}
+        # enforce (default): no new run past the cap. shadow: recorded and
+        # flagged, never blocking (F-09).
+        return {
+            "amount": budget["amount"],
+            "unit": budget["unit"],
+            "mode": budget.get("mode", "enforce"),
+        }
     raise FederationError(
         "FED_E_SETTLEMENT_DISABLED",
         "settlement is not enabled: budget_cap is null, {amount: 0, unit: none}, or a "
@@ -257,24 +264,14 @@ async def _spent(platform: AsyncSession, row: dict[str, Any], unit: str) -> int:
 
 
 async def _budget_view(platform: AsyncSession, row: dict[str, Any]) -> dict[str, Any] | None:
-    cap = _cap(row)
-    if cap is None:
-        return None
-    spent = await _spent(platform, row, cap["unit"])
-    return {
-        "unit": cap["unit"],
-        "cap": cap["amount"],
-        "spent": spent,
-        "remaining": max(cap["amount"] - spent, 0),
-        # F-017: what was used stays recorded and explained by its receipts;
-        # over the cap, no new execution may start.
-        "over": spent >= cap["amount"],
-    }
+    from app.services.federation import metering
+
+    return (await metering.summary(platform, row))["budget"]
 
 
 async def _require_budget_left(platform: AsyncSession, row: dict[str, Any]) -> None:
     view = await _budget_view(platform, row)
-    if view is not None and view["over"]:
+    if view is not None and view["blocking"]:
         raise FederationError(
             "FED_E_BUDGET_EXCEEDED",
             "the resource cap is used up: no new execution; accept, dispute or cancel",
@@ -858,6 +855,14 @@ async def act(
         await grants.authorize(
             workspace_id, row["peer_workspace_fid"], "delegate", direction=_direction(role)
         )
+        if action == "submit":
+            from app.services.federation import metering
+
+            receipt = await metering.receipt_for_delivery(
+                platform, row, result.pop("cost_receipt", None)
+            )
+            if receipt is not None:
+                result["cost_receipt"] = receipt
         payload: dict[str, Any] = {"federation_job_id": job_id, "version": row["version"] + 1}
         if action == "accept":
             payload["acceptance_hash"] = row["acceptance_hash"]
@@ -894,8 +899,10 @@ async def act(
             envelope=envelope,
             note=note,
         )
-        if action == "submit" and result.get("cost_receipt"):
-            await _store_receipt(platform, new, result["cost_receipt"])
+        if action == "submit":
+            if result.get("cost_receipt"):
+                await _store_receipt(platform, new, result["cost_receipt"])
+            await metering.close_run(platform, new, new["version"])
         await platform.commit()
     return await sync(workspace_id, job_id)
 
@@ -1033,7 +1040,10 @@ async def list_delegations(workspace_id: str) -> list[dict[str, Any]]:
         out = []
         for raw in rows:
             row = _loads(raw)
-            out.append({**_out(row), "budget": await _budget_view(platform, row)})
+            from app.services.federation import metering
+
+            used = await metering.summary(platform, row)
+            out.append({**_out(row), "budget": used["budget"], "usage": used["usage"]})
     return out
 
 
@@ -1069,9 +1079,13 @@ async def get(workspace_id: str, job_id: str) -> dict[str, Any]:
             .mappings()
             .all()
         )
-        budget = await _budget_view(platform, row)
+        from app.services.federation import metering
+
+        usage = await metering.summary(platform, row)
     return {
-        "delegation": {**_out(row), "budget": budget},
+        "delegation": {**_out(row), "budget": usage["budget"]},
+        # F-09: what was used, who measured it, the cap mode and the evidence.
+        "metering": usage,
         "history": [{**dict(h), "created_at": h["created_at"].isoformat()} for h in history],
         # Each receipt says who measured the usage and how sure that is;
         # self-reported usage is the provider's own claim (vision §8.3).

@@ -128,7 +128,9 @@ type Delegation = {
   local_task_key: string | null;
   result: { summary: string; artifacts: { name: string; sha256: string; content?: string }[] } | null;
   revisions: number;
-  budget?: { unit: string; cap: number; spent: number; remaining: number; over: boolean } | null;
+  budget?: { unit: string; cap: number; spent: number; remaining: number; over: boolean;
+    mode?: "enforce" | "shadow"; blocking?: boolean } | null;
+  usage?: Record<string, { total: number; measured: number; self_reported: number }>;
   pending_deliveries: number;
   delivery: { attempts: number; next_retry_at: string | null; last_error: string | null;
     dead_letter: boolean };
@@ -563,6 +565,7 @@ function OfferForm({ connections, busy, call, onDone }: {
   const [effects, setEffects] = useState(false);
   const [policy, setPolicy] = useState("drain");
   const [tokenCap, setTokenCap] = useState("");
+  const [capMode, setCapMode] = useState<"enforce" | "shadow">("enforce");
   if (peers.length === 0) {
     return (
       <div className="lin-row quiet">
@@ -585,7 +588,7 @@ function OfferForm({ connections, busy, call, onDone }: {
           allowed_use: allowed.trim(),
           deadline: new Date(`${deadline}T23:59:00Z`).toISOString(),
           budget_cap: tokenCap.trim()
-            ? { amount: Number.parseInt(tokenCap, 10), unit: "model_tokens" }
+            ? { amount: Number.parseInt(tokenCap, 10), unit: "model_tokens", mode: capMode }
             : null,
           result_contract: contract.trim(),
           cancellation_policy: policy,
@@ -643,6 +646,13 @@ function OfferForm({ connections, busy, call, onDone }: {
         <input type="number" min={1} step={1} value={tokenCap}
           onChange={(event) => setTokenCap(event.target.value)} />
       </label>
+      <label>{t("When the cap is reached")}
+        <select value={capMode} disabled={!tokenCap.trim()}
+          onChange={(event) => setCapMode(event.target.value as "enforce" | "shadow")}>
+          <option value="enforce">{t("Stop: no new run may start")}</option>
+          <option value="shadow">{t("Only warn: record it, never block")}</option>
+        </select>
+      </label>
       <span className="lin-actions">
         <button type="submit" className="button small" disabled={busy}>{t("Send work")}</button>
         <span className="flow-aside">
@@ -676,8 +686,13 @@ function DelegationRow({ item, busy, call }: { item: Delegation; busy: boolean; 
           {item.budget
             ? ` · ${t("used {spent} of {cap} {unit}", { spent: item.budget.spent,
               cap: item.budget.cap, unit: item.budget.unit })}${item.budget.over
-              ? ` (${t("cap reached: no new execution")})` : ""}`
+              ? ` (${item.budget.mode === "shadow" ? t("over the cap: warning only")
+                : t("cap reached: no new execution")})` : ""}`
             : ""}
+          {Object.entries(item.usage ?? {}).map(([unit, used]) => (
+            ` · ${t("{unit}: {measured} measured, {self} self-reported", {
+              unit, measured: used.measured, self: used.self_reported })}`
+          ))}
         </span>
         <span className="lin-actions">
           {provider && item.state === "OFFERED" && !cancelAsked && (

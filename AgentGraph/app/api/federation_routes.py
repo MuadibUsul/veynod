@@ -21,7 +21,7 @@ from app.database import get_db
 from app.errors import ApiError, NotFound
 from app.schemas import AcceptanceItem, TaskCreateRequest
 from app.services import federation, tasks
-from app.services.federation import delegations, grants, identity, messaging
+from app.services.federation import delegations, grants, identity, messaging, metering
 from app.services.federation.errors import FederationError
 from app.services.federation.grants import Actor
 
@@ -371,6 +371,23 @@ def _cancel_provider_task(session: AsyncSession, principal: Principal):
     return cancel
 
 
+class UsageEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["reserve", "record"] = Field(
+        description="reserve before a run starts (refused past an enforced cap); "
+        "record what a run used."
+    )
+    unit: Literal["model_tokens", "tool_calls", "minutes"]
+    amount: int = Field(ge=1, le=10**12)
+    source: Literal["adapter", "self_reported"] = Field(
+        default="self_reported",
+        description="Who measured it. Only the server itself measures as the platform.",
+    )
+    proof_ref: str | None = Field(default=None, max_length=500)
+    price_snapshot_id: str | None = Field(default=None, max_length=200)
+
+
 class CancelRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -650,3 +667,28 @@ async def remember_federation_thread(
     )
     result = await documents.upsert_document(session, principal, body.doc_key, request)
     return {"document": result.model_dump(mode="json"), "source": draft["frontmatter"]}
+
+
+@router.post(
+    "/delegations/{job_id}/usage",
+    summary="Provider: reserve before a run, or record what a run used (usage, never money)",
+)
+async def federation_delegation_usage(
+    body: UsageEvent,
+    job_id: str = Path(pattern=_JOB),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        metering.use(
+            _workspace_id(principal),
+            job_id,
+            kind=body.kind,
+            unit=body.unit,
+            amount=body.amount,
+            actor_ref=_actor(principal).ref,
+            source=body.source,
+            proof_ref=body.proof_ref,
+            price_snapshot_id=body.price_snapshot_id,
+        )
+    )
