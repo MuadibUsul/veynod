@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { acquireLock, agentName, doctor, doctorOk, hubWorkers, keyPath, loadConfig, reuseIdentities, saveConfig, storeKey, upPlan } from "../bin/up.mjs";
+import { acquireLock, agentName, doctor, doctorOk, hubWorkers, installStableCopy, keyPath, loadConfig, pruneStableCopies, reuseIdentities, saveConfig, stableDir, storeKey, upPlan, withEarlierChoices } from "../bin/up.mjs";
 import { connect, parseArgs, sealForTest, servicePlan, settledDoctor } from "../bin/veynod.mjs";
 
 test("up plans one identity per computer, whatever the slots", () => {
@@ -83,7 +83,7 @@ test("doctor: not connected, then what the computer and the board are missing", 
   const home = mkdtempSync(join(tmpdir(), "veynod-up-"));
   const none = await doctor({ home });
   assert.equal(doctorOk(none), false);
-  assert.match(none[0].fix, /npx veynod up/);
+  assert.match(none[0].fix, /npx veynod`/);
 
   const server = createServer((req, res) => {
     res.setHeader("Content-Type", "application/json");
@@ -266,4 +266,63 @@ test("a parked identity the board refuses does not turn the doctor red", async (
   assert.equal(parked.ok, false);
   assert.equal(parked.required, false);
   assert.ok(doctorOk(checks), JSON.stringify(checks.filter((item) => !item.ok)));
+});
+
+test("run from the npx cache, up keeps its own copy for the service, OAR included", () => {
+  const home = mkdtempSync(join(tmpdir(), "veynod-home-"));
+  const cache = mkdtempSync(join(tmpdir(), "veynod-npx-"));
+  const modules = join(cache, "_npx", "abc123", "node_modules");
+  mkdirSync(join(modules, "veynod", "bin"), { recursive: true });
+  writeFileSync(join(modules, "veynod", "package.json"), "{}");
+  writeFileSync(join(modules, "veynod", "bin", "veynod.mjs"), "// cli");
+  mkdirSync(join(modules, "@botiverse", "oar"), { recursive: true });
+  writeFileSync(join(modules, "@botiverse", "oar", "index.js"), "// oar");
+
+  const script = installStableCopy(join(modules, "veynod", "bin", "veynod.mjs"), { version: "9.9.9", home });
+  assert.equal(script, join(stableDir("9.9.9", home), "node_modules", "veynod", "bin", "veynod.mjs"));
+  assert.equal(readFileSync(script, "utf8"), "// cli");
+  assert.ok(existsSync(join(stableDir("9.9.9", home), "node_modules", "@botiverse", "oar", "index.js")));
+  assert.ok(!script.includes("_npx"));
+
+  // An upgrade installs the new version beside it; the old one goes once the service runs the new.
+  installStableCopy(join(modules, "veynod", "bin", "veynod.mjs"), { version: "10.0.0", home });
+  assert.deepEqual(pruneStableCopies("10.0.0", home), ["9.9.9"]);
+  assert.deepEqual(readdirSync(join(home, ".veynod", "cli")), ["10.0.0"]);
+});
+
+test("running it again keeps the earlier choices; a flag still wins", () => {
+  const host = "https://veynod.com";
+  const previous = { host, run_tasks: true, runtime: "codex", slots: 3, repos: ["acme/site"] };
+  const again = withEarlierChoices(parseArgs([]), previous);
+  assert.equal(again.decided, true);
+  assert.equal(again.runTasks, true);
+  assert.equal(again.runtime, "codex");
+  assert.equal(again.slots, 3);
+  assert.deepEqual(again.repos, ["acme/site"]);
+
+  const changed = withEarlierChoices(parseArgs(["--no-run-tasks", "--slots", "2"]), previous);
+  assert.equal(changed.runTasks, false);
+  assert.equal(changed.slots, 2);
+  // --repo adds a repository to the ones kept before.
+  assert.deepEqual(withEarlierChoices(parseArgs(["--repo", "acme/api"]), previous).repos, ["acme/site", "acme/api"]);
+
+  // A first run, or another server: nothing decided yet, nothing carried over.
+  assert.equal(withEarlierChoices(parseArgs([]), null).decided, false);
+  const elsewhere = withEarlierChoices(parseArgs(["--host", "https://board.example"]), previous);
+  assert.equal(elsewhere.decided, false);
+  assert.equal(elsewhere.runTasks, false);
+  assert.equal(withEarlierChoices(parseArgs(["--run-tasks"]), null).decided, true);
+});
+
+test("the doctor fails a computer that only stays online but has no background service", async () => {
+  const home = mkdtempSync(join(tmpdir(), "veynod-doc-"));
+  const config = { host: "http://127.0.0.1:9", run_tasks: false, identities: [] };
+  const checks = await doctor({ home, config, serviceInstalled: () => false, nodeVersion: "24.0.0" });
+  const service = checks.find((item) => item.id === "service");
+  assert.equal(service.required, true);
+  assert.equal(service.ok, false);
+  assert.match(service.fix, /npx veynod/);
+  assert.equal(doctorOk(checks), false);
+  const fine = await doctor({ home, config, serviceInstalled: () => true, nodeVersion: "24.0.0" });
+  assert.equal(doctorOk(fine), true);
 });

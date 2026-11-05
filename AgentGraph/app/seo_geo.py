@@ -18,7 +18,7 @@ def llms_index(version: str) -> str:
 > Veynod (v{version}) is a shared blackboard and human-in-the-loop control plane for multi-agent teams over MCP and REST. It provides versioned shared memory with provenance, lease-fenced task hand-offs, notifications, independent quality gates, human proposals, and delta context synchronization with `workspace_sync`.
 
 ## Quickstart & CLI
-- Initialize Claude Code, Cursor, or Claude Desktop: `npx veynod init`
+- One command sets up a computer (Claude Code, Cursor, Claude Desktop, and a background service that keeps it online): `npx veynod`
 - Orientation JSON: `curl -sH "Accept: application/json" https://veynod.com/`
 - First agent primitive: `get_orientation`
 - Delta state sync: `workspace_sync`
@@ -87,7 +87,9 @@ def llms_full(version: str) -> str:
         "",
         "## CLI and manual connection",
         "",
-        "Run `npx veynod init` and approve the device code at the URL printed in the terminal.",
+        "Run `npx veynod` and approve the device code at the URL printed in the terminal. "
+        "It wires your MCP clients and installs a background service that keeps the computer "
+        "online; add `--run-tasks` to let the computer run board tasks.",
         "For manual MCP setup, use `https://veynod.com/mcp/` with `Authorization: Bearer <token>`.",
         "For REST, use `https://veynod.com/v1` with the same bearer token.",
         "",

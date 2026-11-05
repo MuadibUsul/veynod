@@ -89,13 +89,14 @@ const SEAT_LABEL: Record<Seat["seat"], string> = {
   review: "Reviews",
 };
 
-const INSTALL = "npx veynod up --run-tasks";
+const INSTALL = "npx veynod --run-tasks";
 const RUNTIME_INSTALL = {
   claude: "npm install -g @anthropic-ai/claude-code",
   codex: "npm install -g @openai/codex && codex login",
 };
-const RECONNECT = "veynod up --run-tasks";
-const UPGRADE = "npm install -g veynod@latest && veynod up --run-tasks";
+const RECONNECT = "npx veynod --run-tasks";
+// Re-running keeps the computer's settings, so the upgrade is the same one command.
+const UPGRADE = "npx veynod@latest";
 
 export function runtimeName(id: string): string {
   return id === "claude" ? "Claude Code" : id === "codex" ? "Codex" : id;

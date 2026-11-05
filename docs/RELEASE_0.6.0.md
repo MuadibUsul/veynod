@@ -144,16 +144,17 @@ npm view veynod version                              # 应为 0.6.0
 在每一台跑任务的电脑上执行：
 
 ```bash
-npm install -g veynod@0.6.0
-veynod up --run-tasks          # 同一台服务器、钥匙文件还在：复用已保存的身份，不再要求批准；重装 veynod-hub 服务
-veynod doctor                  # 全绿
+npx veynod@0.6.0               # 一条命令：复用已保存的身份和设置（跑任务、仓库、运行时），不再要求批准；
+                               # 把 CLI 复制到 ~/.veynod/cli/0.6.0/ 并重装 veynod-hub 服务；最后自动体检
 ```
+
+（不需要再 `npm install -g`：0.6.0 起 `npx` 运行时会给后台服务留一份自己的副本。）
 
 - [ ] 控制台里这台电脑的"收不到工作"提示消失，`runner_version` 为 `0.6.0`。
 - [ ] 旧的 `-review` 座位不用处理：它留在配置里，但 hub 不会再启动它，面板也不再显示。
 - [ ] `veynod up` 装的服务叫 `veynod-hub`；以前单独装过 `veynod service install --runner` 的叫
-      `veynod-runner`。两种都只需 `npm install -g veynod@0.6.0` 后重启该服务
-      （Linux：`systemctl --user restart veynod-hub` 或 `veynod-runner`；macOS/Windows 再跑一次 `veynod up --run-tasks`）。
+      `veynod-runner`。旧的 `veynod-runner` 用 `veynod service uninstall --runner` 卸掉，
+      然后跑一次 `npx veynod@0.6.0`，以后只有 `veynod-hub` 一个服务。
 
 ## 11. 恢复派活与冒烟
 

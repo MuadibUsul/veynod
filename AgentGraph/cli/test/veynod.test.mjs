@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   auditWindowsTasks,
+  computerCapabilities,
   claudeCodeConfigPath,
   claudeDesktopConfigPath,
   claudeDesktopEntry,
@@ -52,6 +53,17 @@ test("arguments", () => {
   assert.equal(options.open, false);
   assert.throws(() => parseArgs(["init", "--client", "vim"]), /unknown client/);
   assert.throws(() => parseArgs(["init", "--host"]), /needs a value/);
+  // No command is the one command; flags given are remembered as given.
+  const bare = parseArgs(["--run-tasks", "--repo", "acme/site"]);
+  assert.equal(bare.command, null);
+  assert.deepEqual([...bare.explicit].sort(), ["repos", "runTasks"]);
+  assert.equal(parseArgs(["--no-run-tasks"]).runTasks, false);
+  // --supervisor (what the board's doctor suggests) runs tasks and says so to the board.
+  const supervisor = parseArgs(["up", "--supervisor"]);
+  assert.equal(supervisor.runTasks, true);
+  assert.deepEqual(computerCapabilities({ ...supervisor, runtime: "claude" }), ["claude", "supervisor"]);
+  assert.deepEqual(computerCapabilities({ runtime: "", deploy: false }), ["agent"]);
+  assert.deepEqual(computerCapabilities({ deploy: true }), ["deploy"]);
 });
 
 test("a missing client never reveals the key implicitly", () => {

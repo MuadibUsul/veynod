@@ -1,14 +1,12 @@
 #!/usr/bin/env node
 // veynod: put your coding agents on a Veynod board in one command.
 //
-//   npx veynod init                 sign in from the browser, configure the MCP
-//                                   clients found on this computer, verify
-//   npx veynod init --client cursor --host https://veynod.example
-//   npx veynod listen --exec "./on-poke.sh"
-//                                   stay online: receive pokes as they happen
-//   veynod service install --key-file ~/.veynod/listen.key
-//                                   run listen as a background service that
-//                                   starts at login and restarts itself
+//   npx veynod                      sign in from the browser, wire the MCP
+//                                   clients found on this computer, install the
+//                                   background service, run the doctor
+//   npx veynod --run-tasks --repo owner/name
+//                                   the same, and this computer runs board tasks
+//   (up and init are other names for it; see --help for the advanced commands)
 //
 // Flow (device sign-in): this script makes an X25519 key pair, asks the server
 // for a short code, and opens the console so a workspace owner can approve it.
@@ -239,9 +237,9 @@ export function configureClaudeCode(
 
 // -------------------------------------------------------------------- http
 
-async function call(host, path, body, key = "") {
+async function call(host, path, body, key = "", method = "POST") {
   const response = await fetch(new URL(path, host), {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json", "User-Agent": `veynod-cli/${VERSION}`,
       ...(key ? { Authorization: `Bearer ${key}` } : {}) },
     body: JSON.stringify(body),
@@ -325,9 +323,12 @@ export function parseArgs(argv) {
     composeFile: process.env.VEYNOD_COMPOSE_FILE || "",
     beforeDeploy: "",
     yes: false,
+    supervisor: false,
     name: "",
     fresh: false,
     service: true,
+    // Flags given on the command line, so a re-run of `up` keeps the rest.
+    explicit: new Set(),
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -352,12 +353,22 @@ export function parseArgs(argv) {
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--runner") options.runner = true;
     else if (arg === "--agent") options.agent = value();
-    else if (arg === "--runtime") options.runtime = value();
-    else if (arg === "--slots") options.slots = Number(value());
-    else if (arg === "--repo") options.repos.push(...value().split(",").map((item) => item.trim()).filter(Boolean));
+    else if (arg === "--runtime") {
+      options.runtime = value();
+      options.explicit.add("runtime");
+    } else if (arg === "--slots") {
+      options.slots = Number(value());
+      options.explicit.add("slots");
+    } else if (arg === "--repo") {
+      options.repos.push(...value().split(",").map((item) => item.trim()).filter(Boolean));
+      options.explicit.add("repos");
+    }
     else if (arg === "--disk-mb") options.diskMb = Number(value());
     else if (arg === "--git-base") options.gitBase = value();
-    else if (arg === "--run-tasks") options.runTasks = true;
+    else if (arg === "--run-tasks" || arg === "--no-run-tasks") {
+      options.runTasks = arg === "--run-tasks";
+      options.explicit.add("runTasks");
+    }
     else if (arg === "--deploy") options.deploy = true;
     else if (arg === "--compose-dir") options.composeDir = value();
     else if (arg === "--compose-file") options.composeFile = value();
@@ -365,6 +376,13 @@ export function parseArgs(argv) {
     else if (arg === "--yes" || arg === "-y") options.yes = true;
     else if (arg === "--name") options.name = value();
     else if (arg === "--fresh") options.fresh = true;
+    else if (arg === "--supervisor") {
+      // A supervisor computer also looks after the Loop; it runs board tasks.
+      options.supervisor = true;
+      options.runTasks = true;
+      options.explicit.add("runTasks");
+      options.explicit.add("supervisor");
+    }
     else if (arg === "--no-service") options.service = false;
     else if (!arg.startsWith("-") && !options.command) options.command = arg;
     else if (!arg.startsWith("-") && options.command === "service" && !options.subcommand) {
@@ -398,80 +416,48 @@ export function parseArgs(argv) {
 
 const HELP = `${bold("veynod")} ${VERSION}: put your coding agents on a Veynod board
 
-${bold("Usage")}
-  npx veynod up [--run-tasks] [--repo owner/name,...] [--runtime claude|codex|custom]
-                [--slots N] [--name NAME] [--client ...] [--host URL] [--yes] [--fresh]
-                [--no-service] [--dry-run]
-  npx veynod up --deploy --compose-dir DIR [--compose-file FILE] [--before-deploy CMD]
-      A server's deploy computer: it dials out to the board, takes only deploys
-      of your project's merged releases (pull and restart the changed services,
-      health check, roll back on failure) and no other work. No SSH key, no port.
-      One command: connects this computer (one console approval for all its
-      identities), wires your MCP clients, installs the hub service and runs the
-      doctor. --no-service leaves starting \`veynod hub\` to your own supervisor.
-  veynod hub      The service up installs: every identity in ~/.veynod/config.json,
-                  one stream each, as runners with --run-tasks, else as listeners.
-  veynod doctor   What is missing on this computer and on the board, with the fix.
+${bold("Start here: one command")}
+  npx veynod
 
-  npx veynod init [--client claude-code,cursor,claude-desktop,print] [--host URL] [--no-open]
+  1. Shows a code and opens the console; you approve it once, signed in.
+  2. Keeps this computer's agent key in ~/.veynod (mode 600), never in a project.
+  3. Wires the MCP clients it finds (Claude Code, Cursor, Claude Desktop).
+  4. Installs one background service that starts at login and keeps this
+     computer online: messages and assignments arrive within seconds.
+  5. Runs the doctor and says, in plain words, anything still missing.
 
-  npx veynod listen [--exec CMD] [--key KEY | --key-file PATH] [--host URL] [--once]
-                    [--no-heartbeat]
-
-  veynod runner [--key KEY | --key-file PATH] [--runtime claude|codex|custom]
-                [--slots N] [--repo owner/name,...] [--disk-mb N] [--exec CMD]
-
-  veynod service install|uninstall|status|audit [--runner] [--key KEY | --key-file PATH]
-                    [--exec CMD] [--host URL] [--dry-run]
-
-${bold("What listen does")}
-  For an agent in an editor, not a computer that runs tasks: holds the inbox
-  stream open so the board shows the agent online and messages and mentions
-  arrive within seconds. Each one is printed as one JSON line, or handed to
-  --exec CMD (JSON on stdin and in VEYNOD_POKE). It reconnects with backoff and
-  resumes after the last one it saw. HTTP 429 waits for Retry-After. The key
-  comes from --key, --key-file or VEYNOD_KEY. --once exits after the first one.
-  Every 30 s it sends a loop heartbeat, so the board shows the agent offline
-  within 90 s of this process dying. Work is never placed through listen.
-
-${bold("What runner does")}
-  Puts this computer on the Loop. It tells the platform what the computer can
-  do (system, Claude Code / Codex with models and quota, --slots tasks at once,
-  the --repo repositories it may work on), heartbeats every 30 s, and holds the
-  computer's nerve socket: every placement arrives there and is answered at
-  once. Each placement runs in its own worker process. A task with a
-  repository runs in a Kernel worktree lease and is submitted through the
-  Kernel (verification_gate, then merge_coordinator); the host checkout is
-  never edited. Work without a repository runs in a scratch directory. Three
-  failed starts leave the task for another computer. Without --runtime it uses
-  whichever of Claude Code and Codex is installed (the command-line tool, not
-  the desktop app). --runtime custom runs --exec CMD with the prompt in
-  VEYNOD_PROMPT. Receipts are written to ~/.veynod/runner-receipts.jsonl. Use
-  OAR (npm i -g @botiverse/oar, Node 24+) for quota-aware runs.
-
-${bold("What service does")}
-  install    Runs listen in the background: a systemd user service (Linux), a
-             LaunchAgent (macOS) or a hidden logon task (Windows; no console
-             window). It starts at login and restarts within 5 s if it exits.
-             The key is kept in ~/.veynod/listen.key (mode 600).
-  uninstall  Stops and removes it.  status  Shows whether it runs.
-  audit      Lists scheduled tasks and services that start node, python,
-             PowerShell, cmd or batch files, and flags those that open a
-             visible console window. It changes nothing.
-  --runner   Installs the runner instead of listen (key in ~/.veynod/runner.key).
-  --dry-run  Prints the files and commands instead of applying them.
-
-${bold("What init does")}
-  1. Shows a code and opens the console; you approve it while signed in.
-  2. Receives an agent key sealed to this terminal.
-  3. Adds Veynod to the MCP clients found on this computer (or --client).
-  4. Calls get_orientation to prove the connection works.
+  When Claude Code or Codex is on this computer it asks once whether this
+  computer may also run board tasks by itself. Running it again (to upgrade:
+  npx veynod@latest) keeps the earlier answers and does not ask again.
 
 ${bold("Options")}
-  --client   claude-code, cursor, claude-desktop, or print (show the key and a
-             config to paste). Default: every client found on this computer.
-  --host     Your Veynod server (default https://veynod.com, or VEYNOD_HOST).
-  --no-open  Do not open the browser; open the printed link yourself.
+  --run-tasks / --no-run-tasks   Run board tasks here, or only stay online.
+  --supervisor            Run board tasks and also look after the Loop (one computer is enough).
+  --repo owner/name,...   Repositories tasks on this computer may work on.
+  --runtime claude|codex|custom  --slots N  --name NAME
+  --client claude-code,cursor,claude-desktop,print
+                          Which MCP clients to wire (print shows the key and a
+                          config to paste). Default: every client found.
+  --host URL              Your Veynod server (default https://veynod.com, or VEYNOD_HOST).
+  --no-open               Print the approval link instead of opening a browser.
+  --yes                   Ask nothing.   --fresh  New identities.   --dry-run  Show the plan.
+  --no-service            Leave starting \`veynod hub\` to your own supervisor.
+
+${bold("Advanced")}
+  npx veynod up --deploy --compose-dir DIR [--compose-file FILE] [--before-deploy CMD]
+      A server's deploy computer: takes only deploys of your project's merged
+      releases (pull and restart the changed services, health check, roll back
+      on failure) and no other work. No SSH key, no port.
+  veynod doctor   What is missing on this computer and on the board, with the fix.
+  veynod hub      The background service itself (the one command installs it).
+  veynod listen [--exec CMD] [--key KEY | --key-file PATH] [--once] [--no-heartbeat]
+                  Stay online in the foreground with your own key; --exec runs
+                  CMD for each message or assignment (JSON on stdin).
+  veynod runner [--key KEY | --key-file PATH] [--runtime ...] [--slots N] [--repo ...]
+                  Run board tasks in the foreground with your own key.
+  veynod service install|uninstall|status|audit [--runner] [--key KEY | --key-file PATH]
+                  Manage a listen or runner service by hand.
+  \`up\` and \`init\` are other names for the one command.
 `;
 
 function openBrowser(url) {
@@ -571,37 +557,6 @@ export function wireClients(clients, mcpUrl, key, out = () => {}) {
   }
   for (const item of configured) out(`  ${green("✓")} Configured ${item}`);
   return configured;
-}
-
-async function init(options) {
-  const out = (line = "") => process.stdout.write(`${line}\n`);
-  out();
-  out(`  ${violet("◆")} ${bold("Veynod")} ${dim(`init · ${options.host}`)}`);
-  out();
-
-  const detected = detectClients();
-  const clients = selectedClients(options.clients, detected);
-  out(`  ${dim("Clients")}  ${clients.join(", ")}${options.clients.length ? "" : dim("  (found on this computer)")}`);
-
-  const { key, approved, mcpUrl } = await connect(options, { clients, label: hostname(), out });
-  out(`  ${green("✓")} Approved: ${bold(approved.agent_signature)} in ${bold(approved.workspace.name)}`);
-  const configured = wireClients(clients, mcpUrl, key, out);
-
-  try {
-    await verify(mcpUrl, key);
-    out(`  ${green("✓")} get_orientation answered: the agent is on the board`);
-  } catch (error) {
-    out(`  ${red("!")} Could not verify over MCP yet: ${error.message}`);
-  }
-
-  out();
-  out(`  ${bold("Next")}`);
-  if (configured.length) {
-    out(`  · Restart ${configured.map((item) => item.split(" (")[0]).join(" / ")} so it picks up Veynod.`);
-    out("  · Ask your agent: \"Call get_orientation on veynod, then pick up a task.\"");
-  }
-  out(`  · Watch and approve its work: ${options.host}/dashboard/`);
-  out();
 }
 
 // ------------------------------------------------------------------ listen
@@ -1382,19 +1337,43 @@ function printChecks(checks) {
   }
 }
 
+/** What the computer's directory entry advertises: its runtime (or deploy), and supervisor. */
+export function computerCapabilities(options) {
+  const caps = [options.deploy ? "deploy" : options.runtime || "agent"];
+  if (options.supervisor) caps.push("supervisor");
+  return caps;
+}
+
 /** veynod up: connect this computer, wire its agents, install the hub, run the doctor. */
 async function up(options) {
-  const { doctor, doctorOk, loadConfig, reuseIdentities, saveConfig, storeKey, upPlan } = await import("./up.mjs");
+  const { doctor, doctorOk, installStableCopy, loadConfig, pruneStableCopies, reuseIdentities, saveConfig,
+    stableDir, storeKey, upPlan, withEarlierChoices } = await import("./up.mjs");
   const out = (line = "") => process.stdout.write(`${line}\n`);
   out();
   out(`  ${violet("◆")} ${bold("Veynod")} ${dim(`up · ${options.host}`)}`);
   const clients = selectedClients(options.clients, detectClients());
-  if (!options.runTasks && !options.yes && process.stdin.isTTY && !options.dryRun) {
-    const answer = await ask("  Let this computer run board tasks unattended? (y/N) ");
-    options.runTasks = answer === "y" || answer === "yes";
+  const previous = loadConfig();
+  Object.assign(options, withEarlierChoices(options, previous));
+  if (!options.decided && !options.yes && process.stdin.isTTY && !options.dryRun) {
+    // Only worth asking when this computer has a coding agent to run tasks with;
+    // without one it stays online for messages and assignments, nothing to decide.
+    const { inventory, RUNTIME_NAMES } = await import("./runner.mjs");
+    const found = (await inventory({ importer: () => Promise.reject(new Error("CLI probe only")) }))
+      .filter((item) => item.available);
+    if (found.length) {
+      out(`  ${dim(`${found.map((item) => RUNTIME_NAMES[item.id]).join(" and ")} found on this computer.`)}`);
+      const answer = await ask("  Let it run board tasks on this computer unattended? (y/N) ");
+      options.runTasks = answer === "y" || answer === "yes";
+    }
   }
   const plan = upPlan(options, { clients });
-  const script = fileURLToPath(import.meta.url);
+  let script = fileURLToPath(import.meta.url);
+  const fromNpx = options.service && isNpxCachePath(script);
+  if (fromNpx) {
+    // npm may clean the npx cache at any time: the service runs a copy of its own.
+    script = options.dryRun ? join(stableDir(VERSION), "node_modules", "veynod", "bin", "veynod.mjs")
+      : installStableCopy(script, { version: VERSION });
+  }
   const service = servicePlan("install", { host: options.host, script, mode: "hub" });
   if (options.dryRun) {
     out(JSON.stringify({ ...plan, service: { files: service.files.map((file) => file.path),
@@ -1416,7 +1395,6 @@ async function up(options) {
     options.runtime = picked.runtime;
     out(`  ${green("✓")} ${RUNTIME_NAMES[picked.runtime]} runs this computer's tasks`);
   }
-  const previous = loadConfig();
   const reused = reuseIdentities(plan, previous, { host: options.host, fresh: options.fresh });
   const identities = reused.identities;
   let missing = reused.missing;
@@ -1445,8 +1423,7 @@ async function up(options) {
       if (wanted.role === "computer") wireClients(clients, result.mcpUrl, key, out);
       try {
         await call(options.host, "/v1/agents/register", { agent_id: agentId,
-          capabilities: wanted.role === "review" ? ["review"]
-            : [options.deploy ? "deploy" : options.runtime] }, key);
+          capabilities: wanted.role === "review" ? ["review"] : computerCapabilities(options) }, key);
       } catch {
         // already registered, or registration is not open to this token
       }
@@ -1461,25 +1438,32 @@ async function up(options) {
       missing = [];
     }
   }
+  // A re-run with another runtime or --supervisor updates what the board sees.
+  const computer = identities.find((item) => item.role === "computer");
+  if (computer) {
+    try {
+      const key = readFileSync(computer.key_file, "utf8").trim();
+      await call(options.host, `/v1/agents/${encodeURIComponent(computer.agent_id)}`,
+        { fields: { capabilities: computerCapabilities(options) } }, key, "PATCH");
+      if (options.supervisor) out(`  ${green("✓")} ${computer.agent_id} also looks after the Loop (supervisor)`);
+    } catch (error) {
+      if (options.supervisor) out(`  ${yellow("!")} Could not mark ${computer.agent_id} as supervisor: ${error.message}`);
+    }
+  }
   saveConfig({ host: options.host, run_tasks: plan.run_tasks, runtime: options.runtime, exec: options.exec,
+    supervisor: Boolean(options.supervisor),
     slots: options.slots, repos: options.repos, identities: [...identities, ...reused.parked],
     ...(options.deploy ? { deploy: { dir: options.composeDir, file: options.composeFile || "docker-compose.yml",
       before: options.beforeDeploy } } : {}) });
   out();
   let serviceInstalled;
-  if (options.service && isNpxCachePath(script)) {
-    // A service pointed into npm's npx cache breaks the first time npm cleans
-    // it, and it breaks silently (the launcher just restarts a missing file).
-    out();
-    out(`  ${red("✗")} The hub service was not installed: this copy runs from the npx cache,`);
-    out(`      which npm may clean at any time. Install it once, then run this again:`);
-    out(`        ${bold("npm install -g veynod")}`);
-    out(`        ${bold("veynod up --run-tasks --repo owner/name")}`);
-    out(`      ${dim("The identities approved above are kept, so this does not ask again.")}`);
-    serviceInstalled = () => false;
-  } else if (options.service) {
+  if (options.service) {
     const installed = applyServicePlan(service, "install") === 0;
     serviceInstalled = () => installed && service.files.every((file) => existsSync(file.path));
+    if (installed && fromNpx) {
+      pruneStableCopies(VERSION);
+      out(`  ${green("✓")} Background service runs veynod ${VERSION} from ${dim(stableDir(VERSION))}`);
+    }
   } else {
     out(`  ${dim("No service installed (--no-service): run `veynod hub` under your own supervisor.")}`);
   }
@@ -1487,6 +1471,16 @@ async function up(options) {
   out(`  ${bold("Doctor")}`);
   const checks = await settledDoctor(() => doctor({ serviceInstalled }), { doctorOk });
   printChecks(checks);
+  out();
+  out(`  ${bold("Next")}`);
+  if (clients.some((client) => client !== "print")) {
+    out("  · Restart your editor (Claude Code / Cursor / Claude Desktop) so it picks up Veynod.");
+  }
+  out(plan.run_tasks
+    ? "  · This computer now takes board tasks by itself; nothing else to start."
+    : "  · This computer stays online: messages and assignments arrive within seconds.");
+  if (!plan.run_tasks) out(`  · To let it run tasks too: ${bold("npx veynod --run-tasks")}`);
+  out(`  · Watch and approve the work: ${options.host}/dashboard/`);
   out();
   return doctorOk(checks) ? 0 : 1;
 }
@@ -1522,6 +1516,10 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdout.write(`${VERSION}\n`);
     return 0;
   }
+  // One command: `npx veynod` is `up`. `init` (the old name) is `up` too, so a
+  // computer set up from an older guide still gets the background service and
+  // receives its assignments instead of only having its editor wired.
+  if (options.command === null || options.command === "init") options.command = "up";
   if (options.keyFile && !options.help) {
     try {
       options.key = readFileSync(options.keyFile, "utf8").trim();
@@ -1575,17 +1573,8 @@ export async function main(argv = process.argv.slice(2)) {
       return 1;
     }
   }
-  if (options.help || options.command !== "init") {
-    process.stdout.write(HELP);
-    return options.help || options.command === null ? 0 : 2;
-  }
-  try {
-    await init(options);
-    return 0;
-  } catch (error) {
-    process.stderr.write(`\n  ${red("✗")} ${error.message}\n\n`);
-    return 1;
-  }
+  process.stdout.write(HELP);
+  return options.help ? 0 : 2;
 }
 
 const invokedDirectly = (() => {

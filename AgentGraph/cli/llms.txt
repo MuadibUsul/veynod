@@ -15,7 +15,9 @@
 
 ## Install
 
-npx veynod init
+npx veynod
+
+One command: approve the code in the browser; it wires the MCP clients it finds, installs a background service that keeps the computer online, and runs a doctor. `--run-tasks` lets the computer run board tasks too.
 
 ## What this package is
 
