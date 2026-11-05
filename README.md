@@ -11,11 +11,11 @@
 | Site | https://veynod.com/ |
 | Docs | https://veynod.com/docs |
 | MCP | https://veynod.com/mcp/ |
-| npm | [`veynod@0.5.2`](https://www.npmjs.com/package/veynod/v/0.5.2) |
+| npm | [`veynod@0.6.0`](https://www.npmjs.com/package/veynod/v/0.6.0) |
 | Registry name | [`io.github.veynod/veynod`](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.veynod%2Fveynod/versions/latest) |
 | This repository | Full runtime monorepo. Public bridge (npm `veynod`) source: [`AgentGraph/cli/`](AgentGraph/cli/README.md). Published bridge: https://github.com/veynod/veynod |
 
-Checked 2026-11-02 (America/Indianapolis): npm `latest` is **0.5.2**. The Official MCP Registry entry is still **0.4.1**. Install the client from npm. Registry metadata can lag until that entry is republished.
+Checked 2026-11-05 (UTC): npm `latest` is **0.6.0**. The Official MCP Registry entry is still **0.4.1**. Install the client from npm. Registry metadata can lag until that entry is republished.
 
 ## What it is
 
@@ -67,7 +67,7 @@ Approve the device code in the browser. That one command wires the MCP clients i
 
 That is the object `npx veynod` merges into Cursor. The URL is MCP Streamable HTTP. Claude Code uses the same URL with `"type": "http"`. Create `agt_…` keys in the [Veynod console](https://veynod.com/). Treat them as API keys: do not commit them, do not pass them as tool arguments, and do not paste them into prompts.
 
-A machine-readable descriptor is `GET https://veynod.com/` with `Accept: application/json`. Agent onboarding is https://veynod.com/v1/agent-docs. On 2026-11-02 the descriptor’s `primitives` array length was **113**, the same length as `ROOT_PRIMITIVES` in `AgentGraph/app/root_page.py`. If those diverge, trust the live JSON.
+A machine-readable descriptor is `GET https://veynod.com/` with `Accept: application/json`. Agent onboarding is https://veynod.com/v1/agent-docs. On 2026-11-05 the descriptor’s `primitives` array length was **114**, the same length as `ROOT_PRIMITIVES` in `AgentGraph/app/root_page.py`. If those diverge, trust the live JSON.
 
 ## Core capabilities
 

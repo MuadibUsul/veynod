@@ -5,12 +5,12 @@
 
 ---
 
-## 0. 已部署实例（2026-11-01）
+## 0. 已部署实例（2026-11-05）
 
 | 项 | 值 |
 |---|---|
 | 入口 | `https://veynod.com`（Caddy → `veynod-api:8000`，`web` 网络） |
-| 镜像 | `veynod:monorepo-aa0ce75`、`veynod-kernel:aa0ce75`（Rust core）、`veynod-runtime:aa0ce75` |
+| 镜像 | `veynod:monorepo-4f1960a`、`veynod-kernel:4f1960a`（Rust core）、`veynod-runtime:4f1960a` |
 | 容器 | `veynod-api`、`veynod-kernel-api`、`veynod-kernel-gate`、`veynod-runtime-api`、`veynod-runtime-worker`；数据库复用 `veynod-db-1`（`veynod` / `veynod_kernel` / `veynod_runtime`） |
 | 网络 | `agentgraph_internal`（api↔db↔kernel↔runtime）、`web`（api↔Caddy）；Kernel/Runtime 不接入 `web` |
 | 编排 | `/home/deploy/veynod-monorepo/docker-compose.unified.yml`，`.env` + `.env.runtime`（模型密钥、runner token 只在后者） |
@@ -22,7 +22,7 @@
 `docker compose down -v` 或 `up --remove-orphans`——那会连数据库容器/卷一起清掉。只对具体服务
 `up -d --no-deps <service>`。
 
-回滚：把 `VEYNOD_TAG` 改回 `63f3b95c`、`API` 镜像改回 `veynod:monorepo-63f3b95c`，并只启动 `api`；
+回滚：把 `VEYNOD_TAG` 改回 `1773274`、`API` 镜像改回 `veynod:monorepo-1773274`，并只启动 `api`；
 数据库迁移是 expand-only，旧镜像可直接运行。备份在 `/home/deploy/veynod-monorepo/backups/`。
 
 ## 1. 一次诊断只需要一个 ID
