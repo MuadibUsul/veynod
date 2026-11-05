@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
+
+import asyncpg
 import pytest
 
 from tests.test_integration import (
     CALC_FILES,
+    TEST_DB_URL,
     _calc_task,
     _freeze_calc,
     _patch,
@@ -78,3 +83,76 @@ def test_a_second_open_submission_is_refused(tmp_path) -> None:
             headers={"Authorization": f"Bearer {harness.token}"},
         ).json()
         assert queued["status"] in {"QUEUED", "RUNNING"}
+
+
+def _task_status(task_id: str) -> str:
+    async def read() -> str:
+        conn = await asyncpg.connect(
+            TEST_DB_URL.replace("postgresql+asyncpg://", "postgresql://", 1)
+        )
+        try:
+            return await conn.fetchval(
+                "SELECT status::text FROM dag_tasks WHERE task_id = $1", task_id
+            )
+        finally:
+            await conn.close()
+
+    return asyncio.run(read())
+
+
+def test_the_guard_still_answers_once_the_gate_has_started(tmp_path) -> None:
+    """The guard used to sit behind lease re-validation. Once the gate picked
+    the first submission up, the task was VERIFYING and a different patch got
+    a bare 409 "not LEASED" with no submission id; CI hit it intermittently in
+    test_a_second_open_submission_is_refused. Wait for VERIFYING to make the
+    late case deterministic."""
+    slow_gate = {
+        "VN_TEST_CMD": "sleep 6",
+        "VN_COLLECT_CMD": "true",
+        "VN_SKIP_TYPECHECK": "true",
+        "VN_SKIP_LINT": "true",
+    }
+    with kernel(tmp_path, CALC_FILES, worker_env=slow_gate) as harness:
+        _freeze_calc(harness)
+        task = _calc_task(harness)
+        token = harness.pull()["lease_token"]
+        first = _patch(
+            harness.base, harness.bare, harness.head, "src/calc.py", "    ...", "    return a + b"
+        )
+        second = _patch(
+            harness.base, harness.bare, harness.head, "src/calc.py", "    ...", "    return b + a"
+        )
+
+        def submit(diff: str, key: str):
+            return harness.client.post(
+                "/v2/syscalls/submit_patch",
+                headers={
+                    "Authorization": f"Bearer {harness.token}",
+                    "Idempotency-Key": key,
+                },
+                json={
+                    "task_id": task["task_id"],
+                    "lease_token": token,
+                    "git_diff": diff,
+                    "touched_symbols": ["src/calc.py::add"],
+                    "local_test_passed": True,
+                },
+            )
+
+        accepted = submit(first, "late-first")
+        assert accepted.status_code == 202, accepted.text
+        submission_id = accepted.json()["submission_id"]
+        deadline = time.monotonic() + 10
+        while _task_status(task["task_id"]) != "VERIFYING":
+            assert time.monotonic() < deadline, "the gate never picked the submission up"
+            time.sleep(0.05)
+
+        duplicate = submit(first, "late-second")
+        assert duplicate.status_code == 202, duplicate.text
+        assert duplicate.json()["submission_id"] == submission_id
+
+        conflicting = submit(second, "late-third")
+        assert conflicting.status_code == 409, conflicting.text
+        detail = conflicting.json()["detail"]
+        assert detail["error"] == "submission_in_progress"
+        assert submission_id in detail["message"]

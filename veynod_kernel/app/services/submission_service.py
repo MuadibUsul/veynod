@@ -478,6 +478,43 @@ class SubmissionService:
             payload["deduplicated"] = True
             payload["deduplicated_by_binding"] = True
             return payload
+
+        # A different patch under the same lease while its first submission is
+        # open. Once the gate picks that submission up the task is VERIFYING,
+        # so lease re-validation (which runs next) would refuse with a bare
+        # "not LEASED" and the caller would never learn which submission holds
+        # the task. Answer here, before lease re-validation, for this lease's
+        # holder only; accept() keeps the same guard for everyone else.
+        open_row = (
+            await session.execute(
+                text(
+                    """
+                    SELECT * FROM patch_submissions
+                    WHERE task_id = :task_id
+                      AND lease_token_hash = :lease_token_hash
+                      AND runner_id = :runner_id
+                      AND status IN ('QUEUED', 'RUNNING')
+                    ORDER BY created_at ASC
+                    LIMIT 1
+                    """
+                ),
+                {
+                    "task_id": task_id,
+                    "lease_token_hash": lease_token_hash,
+                    "runner_id": runner_id,
+                },
+            )
+        ).mappings().first()
+        if open_row is not None:
+            raise SubmissionConflict(
+                "submission_in_progress",
+                (
+                    "This task already has submission "
+                    f"{open_row['submission_id']} awaiting the gate; wait for "
+                    "its result before submitting a different patch."
+                ),
+                _status_payload(open_row),
+            )
         return None
 
     # ------------------------------------------------------------------ query
