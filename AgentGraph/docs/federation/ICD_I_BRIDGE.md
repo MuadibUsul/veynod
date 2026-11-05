@@ -110,6 +110,16 @@ acceptance_hash = SHA-256( JCS({objective, acceptance_criteria, input_summary,
 - 自报的消耗在界面上必须和实测分开显示；`budget_cap` 为 `null` 时界面写明“未启用结算”。
 - **资源上限（F-017）**：设了资源上限时，按执行方回传的成本收据累计该单位的用量。用量达到上限后，不能再发起新的执行（`revise` 返回 `FED_E_BUDGET_EXCEEDED`，请求方和执行方各自检查）；已交付的结果仍可验收或提出争议。已经发生的用量保留在收据里，并注明计量来源和可信度。
 
+### 8.1 使用计量（F-09）
+
+- **谁量的，分开记**：每条用量记下来源：`platform`（本 Veynod 自己量的，比如一次执行用了几分钟）、`adapter`（可信集成上报，必须带 `proof_ref`）、`self_reported`（agent 自己说的）。只有服务端自己能记 `platform`；调用方传 `platform` 一律拒绝；agent 在结果里手填的收据只当 `self_reported`，哪怕它写的是 `platform`。
+- **上限模式**：`budget_cap` 可带 `mode`：`enforce`（默认）或 `shadow`。`enforce`：执行方每次开始执行前先 `reserve`，会超出上限就拒绝（`FED_E_BUDGET_EXCEEDED`），请求方也不能再要求返工；`shadow`：照常记录，超了只标警告，从不拦截。
+- **已发生的用量永远记**：`record` 不会因为超限被拒，只会让下一次 `reserve` 被拒。
+- **交付时出收据**：执行方提交结果时，平台先补记这次执行用了几分钟（`platform`），再把这一轮的用量按单位汇总，附上按来源的拆分（`by_source`）和逐条证据（`evidence`：单位、数量、来源、`proof_ref`、`price_snapshot_id`），作为收据随结果发给请求方。收据的 `metering_source` 取这一轮里最弱的来源。
+- **双方都能查**：`GET /v1/federation/delegations/{job}` 的 `metering` 字段给出：上限与模式、每个单位的总量、其中实测多少、自报多少、按来源拆分、预约次数、逐条证据和收据。永远标 `not_money: true`。
+- **接口**：`POST /v1/federation/delegations/{job}/usage`（`kind = reserve | record`，`unit`，`amount`，`source = adapter | self_reported`，`proof_ref`，`price_snapshot_id`），只有执行方、只在 `ACCEPTED` / `RUNNING` 时可用；取消申请之后不能再 `reserve`。MCP：`federation` 工具的 `usage` 动作。
+- **不是钱**：没有余额、钱包、银行卡或托管；用量表只能追加，应用角色没有修改和删除权限（迁移 3.87 `federation_usage_events`）。
+
 ## 9. 表（F-01d，下一步落地）
 
 租户表，RLS（ADR-011），双方各存一份：

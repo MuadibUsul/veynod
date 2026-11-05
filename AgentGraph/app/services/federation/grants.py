@@ -65,6 +65,14 @@ class LocalTransport:
 
     async def deliver(self, envelope: dict[str, Any]) -> dict[str, Any]:
         audience = envelope.get("audience")
+        if await self._hosted_workspace(audience) is None:
+            # Not on this deployment: hand it to the peer that hosts it (F-11).
+            from app.services.federation import remote
+
+            return await remote.deliver(envelope)
+        return await self.deliver_here(envelope)
+
+    async def _hosted_workspace(self, audience: Any) -> str | None:
         async with async_session_factory() as platform:
             workspace_id = await platform.scalar(
                 text(
@@ -73,18 +81,27 @@ class LocalTransport:
                 ),
                 {"f": audience},
             )
+        return None if workspace_id is None else str(workspace_id)
+
+    async def deliver_here(self, envelope: dict[str, Any]) -> dict[str, Any]:
+        """For a workspace hosted on this deployment, wherever the envelope came from."""
+        workspace_id = await self._hosted_workspace(envelope.get("audience"))
         if workspace_id is None:
             raise FederationError("FED_E_IDENTITY_UNKNOWN", "no such workspace on this deployment")
         kind = str(envelope.get("type", ""))
         if kind.startswith("delegate."):
             from app.services.federation import delegations
 
-            return await delegations.receive(str(workspace_id), envelope)
+            return await delegations.receive(workspace_id, envelope)
+        if kind.startswith("governance."):
+            from app.services.federation import governance
+
+            return await governance.receive_notice(workspace_id, envelope)
         if kind in ("chat.message", "delivery.receipt"):
             from app.services.federation import messaging
 
-            return await messaging.receive(str(workspace_id), envelope)
-        return await receive(str(workspace_id), envelope)
+            return await messaging.receive(workspace_id, envelope)
+        return await receive(workspace_id, envelope)
 
 
 _transport: Transport = LocalTransport()

@@ -4795,6 +4795,63 @@
        "summary": "Re-send this side's undelivered objects (resign=true revives a dead letter)"
       },
       {
+       "body": [
+        {
+         "description": "reserve before a run starts (refused past an enforced cap); record what a run used.",
+         "name": "kind",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "unit",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "amount",
+         "required": true,
+         "type": "integer"
+        },
+        {
+         "description": "Who measured it. Only the server itself measures as the platform.",
+         "name": "source",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "proof_ref",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "price_snapshot_id",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "job_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/delegations/{job_id}/usage",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Provider: reserve before a run, or record what a run used (usage, never money)"
+      },
+      {
        "body": [],
        "description": "",
        "method": "POST",
@@ -4824,6 +4881,157 @@
       {
        "body": [],
        "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "q",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "capability",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "min_acceptance",
+         "required": false,
+         "type": "number | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "max_response_seconds",
+         "required": false,
+         "type": "number | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "price",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "availability",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "sort",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "include_closed",
+         "required": false,
+         "type": "boolean"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "limit",
+         "required": false,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "offset",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/federation/directory",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Listed workspaces, filtered and ranked, each with the reasons for its place"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/directory/listing",
+       "responses": [
+        "200"
+       ],
+       "summary": "This workspace's own directory listing"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "listed",
+         "required": true,
+         "type": "boolean"
+        },
+        {
+         "description": "",
+         "name": "headline",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "capabilities",
+         "required": false,
+         "type": "string[]"
+        },
+        {
+         "description": "",
+         "name": "availability",
+         "required": false,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "PUT",
+       "parameters": [],
+       "path": "/v1/federation/directory/listing",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "List or unlist this workspace and say what it offers (a person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "fid",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/directory/{fid}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "One listed workspace's directory entry"
+      },
+      {
+       "body": [],
+       "description": "",
        "method": "POST",
        "parameters": [],
        "path": "/v1/federation/enable",
@@ -4831,6 +5039,44 @@
         "200"
        ],
        "summary": "Create this workspace's federation identity (owner only)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/governance/notices",
+       "responses": [
+        "200"
+       ],
+       "summary": "Decisions this deployment made about this workspace or its agents"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "statement",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "report_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/governance/notices/{report_id}/appeal",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Appeal a decision (an owner)"
       },
       {
        "body": [],
@@ -4851,6 +5097,18 @@
         "422"
        ],
        "summary": "Resolve a federation id"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/inbox",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Where other deployments deliver signed envelopes (public; the signature decides)"
       },
       {
        "body": [],
@@ -5034,6 +5292,745 @@
        "summary": "Resend a dead-lettered or refused message (a person)"
       },
       {
+       "body": [
+        {
+         "description": "",
+         "name": "proof",
+         "required": true,
+         "type": "object"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/proofs/verify",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Verify one fulfilment proof against its signer's key"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "federation_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/public/identities/{federation_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Signed identity records of a workspace hosted here (public; for other deployments)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/registry/categories",
+       "responses": [
+        "200"
+       ],
+       "summary": "The categories a skill can be listed under"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "digest",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/digests/{digest}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "What a skill digest is, even after it was withdrawn"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/entries/{name}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A skill's entry: address, history, ratings, dependencies, representative works"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/registry/installs",
+       "responses": [
+        "200"
+       ],
+       "summary": "Skills this workspace installed, pinned by digest"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "version",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "For an executable skill: exactly the permissions it declares.",
+         "name": "accept_permissions",
+         "required": false,
+         "type": "string[]"
+        },
+        {
+         "description": "Stay on this version (locked, the default) or follow patch/minor releases.",
+         "name": "update_policy",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/registry/installs",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Install a skill: pull, verify digest and signature, pin it (a person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "DELETE",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/installs/{name}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Uninstall a skill from this workspace (a person); its history stays"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/installs/{name}/content",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The pinned content of an installed skill, verified again (outside content)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/installs/{name}/history",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Every move of an installed skill's pin, newest first"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "update_policy",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "PUT",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/installs/{name}/policy",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Choose whether an installed skill stays locked or follows releases (a person)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "version",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "For an executable version: exactly the permissions it declares.",
+         "name": "accept_permissions",
+         "required": false,
+         "type": "string[]"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/installs/{name}/rollback",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Restore an earlier version of an installed skill (a person)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "version",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "For an executable version: exactly the permissions it declares.",
+         "name": "accept_permissions",
+         "required": false,
+         "type": "string[]"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/installs/{name}/update",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Move a skill to a newer version, accepting its permissions afresh (a person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "open_only",
+         "required": false,
+         "type": "boolean"
+        }
+       ],
+       "path": "/v1/federation/registry/notices",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Notices about withdrawn skills this workspace uses or depends on"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "notice_id",
+         "required": true,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/federation/registry/notices/{notice_id}/acknowledge",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Mark a withdrawal notice as seen (a person)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "manifest",
+         "required": true,
+         "type": "object"
+        },
+        {
+         "description": "",
+         "name": "files",
+         "required": true,
+         "type": "SkillFile[]"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/registry/packages",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Publish a signed, immutable skill version (a person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/packages/{name}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A skill and every version, yanked ones too"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "stars",
+         "required": true,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "name": "review",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "PUT",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/packages/{name}/rating",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Rate a skill this workspace installed (a person; one rating per workspace)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "version",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/packages/{name}/versions/{version}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "One version: manifest, files, digest and the publisher's signature"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "version",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/packages/{name}/versions/{version}/sandbox",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The platform's sandbox report for one version"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "reason",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "version",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/packages/{name}/versions/{version}/yank",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Withdraw a version: no new installs; its record stays (the publisher)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "q",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "category",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "capability",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "kind",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "min_rating",
+         "required": false,
+         "type": "number | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "price",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "max_response_seconds",
+         "required": false,
+         "type": "number | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "sort",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "include_yanked",
+         "required": false,
+         "type": "boolean"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "limit",
+         "required": false,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "offset",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/federation/registry/search",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Find skills by words, category, capability, rating, price and response speed"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/registry/updates",
+       "responses": [
+        "200"
+       ],
+       "summary": "Newer versions of installed skills, what they change, whether they follow alone"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/reports",
+       "responses": [
+        "200"
+       ],
+       "summary": "Reports this workspace filed"
+      },
+      {
+       "body": [
+        {
+         "description": "The workspace or agent reported.",
+         "name": "accused",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "category",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "statement",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "evidence",
+         "required": false,
+         "type": "EvidenceRef[]"
+        },
+        {
+         "description": "Also block them locally (this workspace only).",
+         "name": "block",
+         "required": false,
+         "type": "boolean"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/reports",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Report a workspace or agent (opens a case only)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "report_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/reports/{report_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "One report, its case history and any sanction"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "report_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/reports/{report_id}/withdraw",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Withdraw a report before action"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "fid",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/reputation/{fid}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A workspace's reputation as a provider: separate measures, each with its evidence"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "fid",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "limit",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/federation/reputation/{fid}/proofs",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The signed proofs you are party to (all of them for your own workspace)"
+      },
+      {
        "body": [],
        "description": "",
        "method": "GET",
@@ -5066,6 +6063,17 @@
         "422"
        ],
        "summary": "Resolve a handle (ambiguity is reported, never guessed)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/security-events",
+       "responses": [
+        "200"
+       ],
+       "summary": "What other workspaces tried that was refused"
       },
       {
        "body": [],

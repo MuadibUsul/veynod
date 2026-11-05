@@ -199,6 +199,26 @@ EPHEMERAL = frozenset({
     "federation_replay_guard",
     # Delegations (v3.84) follow the same rule: bound to this deployment's identities.
     "federation_delegations", "federation_delegation_history", "federation_cost_receipts",
+    "federation_usage_events",
+    # Governance (v3.88): cases, sanctions and security events are about
+    # federation identities on this deployment.
+    "federation_reports", "federation_report_history", "federation_sanctions",
+    "federation_security_events",
+    "federation_remote_endpoints",
+    # Skill registry (v3.90): deployment-wide packages signed by federation keys.
+    "registry_packages", "registry_versions", "registry_installs",
+    # Discovery (v3.91): download counts and ratings about deployment-wide packages.
+    "registry_downloads", "registry_ratings",
+    # Sandbox reports and pin history (v3.92).
+    "registry_sandbox_reports", "registry_install_history",
+    # Withdrawal notices (v3.93).
+    "registry_notices",
+    # Fulfilment proofs (v3.94): signed by federation keys, deployment-wide.
+    "federation_proofs",
+    # Directory listings (v3.95): bound to this deployment's identities.
+    "federation_directory_listings",
+    # Reputation integrity (v3.96): operator links and pair reviews.
+    "federation_controller_links", "federation_pair_reviews",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")

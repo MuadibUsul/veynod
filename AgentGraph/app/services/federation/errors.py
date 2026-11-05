@@ -61,6 +61,33 @@ CODES: dict[str, int] = {
     # messages (I-MSG §4, §5)
     "FED_E_MESSAGE_UNKNOWN": 404,
     "FED_E_RATE_LIMITED": 429,
+    # governance (F-10)
+    "FED_E_CASE_UNKNOWN": 404,
+    "FED_E_CASE_TRANSITION": 409,
+    "FED_E_SANCTION_RULE": 409,
+    "FED_E_AUTHORITY_INVALID": 403,
+    # other deployments (F-11)
+    "FED_E_EGRESS_DISABLED": 403,
+    "FED_E_REMOTE_INVALID": 422,
+    # skill registry (P3)
+    "FED_E_PACKAGE_UNKNOWN": 404,
+    "FED_E_PACKAGE_INVALID": 422,
+    "FED_E_NAME_TAKEN": 409,
+    "FED_E_VERSION_EXISTS": 409,
+    "FED_E_YANKED": 410,
+    "FED_E_DIGEST_MISMATCH": 409,
+    "FED_E_PERMISSIONS_NOT_ACCEPTED": 403,
+    # discovery (P3-2)
+    "FED_E_RATING_NOT_ALLOWED": 403,
+    # sandbox and updates (P3-3)
+    "FED_E_SANDBOX_FAILED": 422,
+    "FED_E_NOT_INSTALLED": 404,
+    # withdrawals (P3-4)
+    "FED_E_NOTICE_UNKNOWN": 404,
+    # reputation (P4-1)
+    "FED_E_PROOF_INVALID": 422,
+    # directory (P4-2)
+    "FED_E_NOT_LISTED": 404,
 }
 
 

@@ -12,20 +12,41 @@ from __future__ import annotations
 from collections.abc import Awaitable
 from typing import Any, Literal, TypeVar
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Body, Depends, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import Principal, capability_role, get_principal
+from app.auth import Principal, capability_role, get_principal, require_admin
 from app.database import get_db
 from app.errors import ApiError, NotFound
 from app.schemas import AcceptanceItem, TaskCreateRequest
 from app.services import federation, tasks
-from app.services.federation import delegations, grants, identity, messaging
+from app.services.federation import (
+    delegations,
+    directory,
+    discovery,
+    governance,
+    grants,
+    identity,
+    integrity,
+    messaging,
+    metering,
+    registry,
+    remote,
+    reputation,
+    skill_updates,
+    withdrawals,
+)
 from app.services.federation.errors import FederationError
 from app.services.federation.grants import Actor
 
 router = APIRouter(prefix="/v1/federation", tags=["Federation"])
+# Deployment operators (the admin token): case handling and sanctions.
+admin_router = APIRouter(
+    prefix="/v1/admin/federation",
+    tags=["Federation"],
+    dependencies=[Depends(require_admin)],
+)
 
 T = TypeVar("T")
 _FID = r"^fed:(subject|workspace|agent):[a-z2-7]{26}$"
@@ -371,6 +392,23 @@ def _cancel_provider_task(session: AsyncSession, principal: Principal):
     return cancel
 
 
+class UsageEvent(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["reserve", "record"] = Field(
+        description="reserve before a run starts (refused past an enforced cap); "
+        "record what a run used."
+    )
+    unit: Literal["model_tokens", "tool_calls", "minutes"]
+    amount: int = Field(ge=1, le=10**12)
+    source: Literal["adapter", "self_reported"] = Field(
+        default="self_reported",
+        description="Who measured it. Only the server itself measures as the platform.",
+    )
+    proof_ref: str | None = Field(default=None, max_length=500)
+    price_snapshot_id: str | None = Field(default=None, max_length=200)
+
+
 class CancelRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -650,3 +688,870 @@ async def remember_federation_thread(
     )
     result = await documents.upsert_document(session, principal, body.doc_key, request)
     return {"document": result.model_dump(mode="json"), "source": draft["frontmatter"]}
+
+
+@router.post(
+    "/delegations/{job_id}/usage",
+    summary="Provider: reserve before a run, or record what a run used (usage, never money)",
+)
+async def federation_delegation_usage(
+    body: UsageEvent,
+    job_id: str = Path(pattern=_JOB),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        metering.use(
+            _workspace_id(principal),
+            job_id,
+            kind=body.kind,
+            unit=body.unit,
+            amount=body.amount,
+            actor_ref=_actor(principal).ref,
+            source=body.source,
+            proof_ref=body.proof_ref,
+            price_snapshot_id=body.price_snapshot_id,
+        )
+    )
+
+
+# ── governance (F-10, docs/federation/ICD_I_GOVERNANCE.md) ────────────────
+
+_REPORT = r"^frp_[a-z2-7]{26}$"
+_SANCTION = r"^fsn_[a-z2-7]{26}$"
+
+
+class EvidenceRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["message", "delegation"]
+    id: str = Field(min_length=5, max_length=64)
+
+
+class ReportFiling(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    accused: str = Field(pattern=_FID, description="The workspace or agent reported.")
+    category: Literal[
+        "spam", "abuse", "fraud", "impersonation", "data_leak", "prompt_injection", "other"
+    ]
+    statement: str = Field(min_length=10, max_length=4000)
+    evidence: list[EvidenceRef] = Field(default_factory=list, max_length=50)
+    block: bool = Field(default=False, description="Also block them locally (this workspace only).")
+
+
+class Statement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    statement: str = Field(min_length=10, max_length=4000)
+
+
+class CaseMove(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    to_state: Literal[
+        "TRIAGED",
+        "INVESTIGATING",
+        "INSUFFICIENT_EVIDENCE",
+        "DISMISSED",
+        "ACTION_PROPOSED",
+        "DECIDED",
+        "APPEAL_WINDOW",
+        "CLOSED",
+    ]
+    operator: str = Field(min_length=2, max_length=120, description="The person acting.")
+    note: str | None = Field(default=None, max_length=4000)
+    decision: str | None = Field(default=None, max_length=2000)
+
+
+class SanctionProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    report_id: str = Field(pattern=_REPORT)
+    kind: Literal["temporary_freeze", "permanent_block"]
+    reason: str = Field(min_length=5, max_length=2000)
+    operator: str = Field(min_length=2, max_length=120)
+    days: int | None = Field(default=None, ge=1, le=governance.MAX_FREEZE_DAYS)
+
+
+class OperatorAct(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operator: str = Field(min_length=2, max_length=120)
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/reports", status_code=201, summary="Report a workspace or agent (opens a case only)")
+async def file_federation_report(
+    body: ReportFiling, principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        governance.file_report(
+            _workspace_id(principal),
+            accused=body.accused,
+            category=body.category,
+            statement=body.statement,
+            evidence=[e.model_dump() for e in body.evidence],
+            block=body.block,
+            actor=_actor(principal),
+        )
+    )
+
+
+@router.get("/reports", summary="Reports this workspace filed")
+async def list_federation_reports(principal: Principal = Depends(get_principal)) -> dict:
+    _enabled()
+    return {"items": await _call(governance.list_reports(_workspace_id(principal)))}
+
+
+@router.get("/reports/{report_id}", summary="One report, its case history and any sanction")
+async def get_federation_report(
+    report_id: str = Path(pattern=_REPORT), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(governance.get_report(_workspace_id(principal), report_id))
+
+
+@router.post("/reports/{report_id}/withdraw", summary="Withdraw a report before action")
+async def withdraw_federation_report(
+    report_id: str = Path(pattern=_REPORT), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        governance.withdraw(_workspace_id(principal), report_id, actor=_actor(principal))
+    )
+
+
+@router.get(
+    "/governance/notices",
+    summary="Decisions this deployment made about this workspace or its agents",
+)
+async def federation_governance_notices(principal: Principal = Depends(get_principal)) -> dict:
+    _enabled()
+    return {"items": await _call(governance.notices(_workspace_id(principal)))}
+
+
+@router.post("/governance/notices/{report_id}/appeal", summary="Appeal a decision (an owner)")
+async def appeal_federation_decision(
+    body: Statement,
+    report_id: str = Path(pattern=_REPORT),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        governance.appeal(
+            _workspace_id(principal), report_id, statement=body.statement, actor=_actor(principal)
+        )
+    )
+
+
+@router.get("/security-events", summary="What other workspaces tried that was refused")
+async def federation_security_events(principal: Principal = Depends(get_principal)) -> dict:
+    _enabled()
+    return {"items": await _call(governance.list_security_events(_workspace_id(principal)))}
+
+
+@admin_router.get("/cases", summary="Operator: federation cases (evidence summaries only)")
+async def list_federation_cases(state: str | None = Query(default=None, max_length=24)) -> dict:
+    _enabled()
+    return {"items": await _call(governance.list_cases(state))}
+
+
+@admin_router.get("/cases/{report_id}", summary="Operator: one case")
+async def get_federation_case(report_id: str = Path(pattern=_REPORT)) -> dict[str, Any]:
+    _enabled()
+    return await _call(governance.get_case(report_id))
+
+
+@admin_router.post("/cases/{report_id}/move", summary="Operator: move a case one step")
+async def move_federation_case(
+    body: CaseMove, report_id: str = Path(pattern=_REPORT)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        governance.move_case(
+            report_id,
+            body.to_state,
+            operator=body.operator,
+            note=body.note,
+            decision=body.decision,
+        )
+    )
+
+
+@admin_router.post(
+    "/sanctions",
+    status_code=201,
+    summary="Operator: freeze for a while, or propose a permanent block (needs a second operator)",
+)
+async def propose_federation_sanction(body: SanctionProposal) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        governance.propose_sanction(
+            body.report_id,
+            kind=body.kind,
+            reason=body.reason,
+            operator=body.operator,
+            days=body.days,
+        )
+    )
+
+
+@admin_router.post("/sanctions/{sanction_id}/confirm", summary="Operator: second confirmation")
+async def confirm_federation_sanction(
+    body: OperatorAct, sanction_id: str = Path(pattern=_SANCTION)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(governance.confirm_sanction(sanction_id, operator=body.operator))
+
+
+@admin_router.post("/sanctions/{sanction_id}/lift", summary="Operator: lift a sanction")
+async def lift_federation_sanction(
+    body: OperatorAct, sanction_id: str = Path(pattern=_SANCTION)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        governance.lift_sanction(
+            sanction_id, operator=body.operator, reason=body.reason or "lifted by an operator"
+        )
+    )
+
+
+@admin_router.get(
+    "/identities/{federation_id}/status", summary="Operator: sanctions on one identity"
+)
+async def federation_identity_sanctions(federation_id: str = Path(pattern=_FID)) -> dict:
+    _enabled()
+    return await _call(governance.global_status(federation_id))
+
+
+# ── other deployments (F-11, docs/federation/ICD_I_I2I.md) ────────────────
+
+
+class PeerRegistration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    federation_id: str = Field(pattern=r"^fed:workspace:[a-z2-7]{26}$")
+    base_url: str = Field(min_length=8, max_length=300, pattern=r"^https?://")
+    operator: str = Field(min_length=2, max_length=120)
+
+
+@router.get(
+    "/public/identities/{federation_id}",
+    summary="Signed identity records of a workspace hosted here (public; for other deployments)",
+)
+async def federation_public_identity(federation_id: str = Path(pattern=_FID)) -> dict[str, Any]:
+    _enabled()
+    return await _call(remote.public_records(federation_id))
+
+
+@router.post(
+    "/inbox",
+    summary="Where other deployments deliver signed envelopes (public; the signature decides)",
+)
+async def federation_inbox(envelope: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    _enabled()
+    return await _call(remote.accept(envelope))
+
+
+@admin_router.post(
+    "/peers",
+    status_code=201,
+    summary="Operator: name where a workspace on another deployment lives and import its keys",
+)
+async def register_federation_peer(body: PeerRegistration) -> dict[str, Any]:
+    _enabled()
+    return await _call(remote.register(body.federation_id, body.base_url, operator=body.operator))
+
+
+# ── skill registry (P3, docs/federation/ICD_P3_REGISTRY.md) ───────────────
+
+_PKG = r"^[a-z0-9][a-z0-9-]{1,62}$"
+_SEMVER = r"^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$"
+
+
+class SkillFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=200)
+    content: str = Field(max_length=registry.MAX_BYTES)
+
+
+class SkillPublish(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    manifest: dict[str, Any]
+    files: list[SkillFile] = Field(min_length=1, max_length=registry.MAX_FILES)
+
+
+class SkillYank(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=5, max_length=1000)
+
+
+class SkillInstall(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(pattern=_PKG)
+    version: str = Field(pattern=_SEMVER)
+    accept_permissions: list[Literal["network", "filesystem", "exec", "secrets"]] = Field(
+        default_factory=list,
+        description="For an executable skill: exactly the permissions it declares.",
+    )
+    update_policy: Literal["locked", "follow_patch", "follow_minor"] | None = Field(
+        default=None,
+        description="Stay on this version (locked, the default) or follow patch/minor releases.",
+    )
+
+
+@router.post(
+    "/registry/packages",
+    status_code=201,
+    summary="Publish a signed, immutable skill version (a person)",
+)
+async def publish_skill(
+    body: SkillPublish, principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        registry.publish(
+            _workspace_id(principal),
+            manifest=body.manifest,
+            files=[f.model_dump() for f in body.files],
+            actor=_actor(principal),
+        )
+    )
+
+
+@router.get("/registry/packages/{name}", summary="A skill and every version, yanked ones too")
+async def get_skill_package(name: str = Path(pattern=_PKG)) -> dict[str, Any]:
+    _enabled()
+    return await _call(registry.package(name))
+
+
+@router.get(
+    "/registry/packages/{name}/versions/{version}",
+    summary="One version: manifest, files, digest and the publisher's signature",
+)
+async def get_skill_version(
+    name: str = Path(pattern=_PKG), version: str = Path(pattern=_SEMVER)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(registry.get_version(name, version))
+
+
+@router.post(
+    "/registry/packages/{name}/versions/{version}/yank",
+    summary="Withdraw a version: no new installs; its record stays (the publisher)",
+)
+async def yank_skill_version(
+    body: SkillYank,
+    name: str = Path(pattern=_PKG),
+    version: str = Path(pattern=_SEMVER),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        registry.yank(
+            name,
+            version,
+            reason=body.reason,
+            actor=_actor(principal),
+            workspace_id=_workspace_id(principal),
+        )
+    )
+
+
+@router.post(
+    "/registry/installs",
+    status_code=201,
+    summary="Install a skill: pull, verify digest and signature, pin it (a person)",
+)
+async def install_skill(
+    body: SkillInstall, principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        registry.install(
+            _workspace_id(principal),
+            body.name,
+            body.version,
+            actor=_actor(principal),
+            accept_permissions=list(body.accept_permissions),
+            update_policy=body.update_policy,
+        )
+    )
+
+
+@router.get("/registry/installs", summary="Skills this workspace installed, pinned by digest")
+async def list_skill_installs(principal: Principal = Depends(get_principal)) -> dict:
+    _enabled()
+    return {"items": await _call(registry.installs(_workspace_id(principal)))}
+
+
+@router.get(
+    "/registry/installs/{name}/content",
+    summary="The pinned content of an installed skill, verified again (outside content)",
+)
+async def use_installed_skill(
+    name: str = Path(pattern=_PKG), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(registry.use(_workspace_id(principal), name))
+
+
+# ── skill discovery (P3-2, docs/federation/ICD_P3_REGISTRY.md §7) ─────────
+
+
+class SkillRating(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stars: int = Field(ge=1, le=5)
+    review: str | None = Field(default=None, max_length=1000)
+
+
+@router.get("/registry/categories", summary="The categories a skill can be listed under")
+async def list_skill_categories() -> dict[str, Any]:
+    _enabled()
+    return {"items": discovery.categories()}
+
+
+@router.get(
+    "/registry/search",
+    summary="Find skills by words, category, capability, rating, price and response speed",
+)
+async def search_skills(
+    q: str | None = Query(default=None, max_length=100),
+    category: str | None = Query(default=None, max_length=24),
+    capability: str | None = Query(default=None, max_length=32),
+    kind: Literal["declarative", "executable"] | None = None,
+    min_rating: float | None = Query(default=None, ge=1, le=5),
+    price: Literal["any", "free", "paid"] | None = None,
+    max_response_seconds: float | None = Query(default=None, gt=0),
+    sort: Literal["relevance", "downloads", "rating", "response", "recent"] = "relevance",
+    include_yanked: bool = False,
+    limit: int = Query(default=20, ge=1, le=discovery.MAX_LIMIT),
+    offset: int = Query(default=0, ge=0, le=10_000),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        discovery.search(
+            q=q,
+            category=category,
+            capability=capability,
+            kind=kind,
+            min_rating=min_rating,
+            price=price,
+            max_response_seconds=max_response_seconds,
+            sort=sort,
+            include_yanked=include_yanked,
+            limit=limit,
+            offset=offset,
+        )
+    )
+
+
+@router.get(
+    "/registry/entries/{name}",
+    summary="A skill's entry: address, history, ratings, dependencies, representative works",
+)
+async def get_skill_entry(name: str = Path(pattern=_PKG)) -> dict[str, Any]:
+    _enabled()
+    return await _call(discovery.entry(name))
+
+
+@router.put(
+    "/registry/packages/{name}/rating",
+    summary="Rate a skill this workspace installed (a person; one rating per workspace)",
+)
+async def rate_skill(
+    body: SkillRating,
+    name: str = Path(pattern=_PKG),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        discovery.rate(
+            _workspace_id(principal),
+            name,
+            stars=body.stars,
+            review=body.review,
+            actor=_actor(principal),
+        )
+    )
+
+
+# ── sandbox, updates and rollback (P3-3, docs/federation/ICD_P3_REGISTRY.md §10) ──
+
+
+class SkillMove(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: str | None = Field(default=None, pattern=_SEMVER)
+    accept_permissions: list[Literal["network", "filesystem", "exec", "secrets"]] = Field(
+        default_factory=list,
+        description="For an executable version: exactly the permissions it declares.",
+    )
+
+
+class SkillPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    update_policy: Literal["locked", "follow_patch", "follow_minor"]
+
+
+@router.get(
+    "/registry/packages/{name}/versions/{version}/sandbox",
+    summary="The platform's sandbox report for one version",
+)
+async def get_skill_sandbox_report(
+    name: str = Path(pattern=_PKG), version: str = Path(pattern=_SEMVER)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(registry.sandbox_report(name, version))
+
+
+@router.get(
+    "/registry/updates",
+    summary="Newer versions of installed skills, what they change, whether they follow alone",
+)
+async def list_skill_updates(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    _enabled()
+    return {"items": await _call(skill_updates.updates(_workspace_id(principal)))}
+
+
+@router.post(
+    "/registry/installs/{name}/update",
+    summary="Move a skill to a newer version, accepting its permissions afresh (a person)",
+)
+async def update_installed_skill(
+    body: SkillMove, name: str = Path(pattern=_PKG), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        skill_updates.update(
+            _workspace_id(principal),
+            name,
+            version=body.version,
+            accept_permissions=list(body.accept_permissions),
+            actor=_actor(principal),
+        )
+    )
+
+
+@router.post(
+    "/registry/installs/{name}/rollback",
+    summary="Restore an earlier version of an installed skill (a person)",
+)
+async def rollback_installed_skill(
+    body: SkillMove, name: str = Path(pattern=_PKG), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        skill_updates.rollback(
+            _workspace_id(principal),
+            name,
+            version=body.version,
+            accept_permissions=list(body.accept_permissions),
+            actor=_actor(principal),
+        )
+    )
+
+
+@router.put(
+    "/registry/installs/{name}/policy",
+    summary="Choose whether an installed skill stays locked or follows releases (a person)",
+)
+async def set_installed_skill_policy(
+    body: SkillPolicy,
+    name: str = Path(pattern=_PKG),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        skill_updates.set_policy(
+            _workspace_id(principal), name, policy=body.update_policy, actor=_actor(principal)
+        )
+    )
+
+
+@router.get(
+    "/registry/installs/{name}/history",
+    summary="Every move of an installed skill's pin, newest first",
+)
+async def get_installed_skill_history(
+    name: str = Path(pattern=_PKG), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return {"items": await _call(skill_updates.history(_workspace_id(principal), name))}
+
+
+@router.delete(
+    "/registry/installs/{name}",
+    summary="Uninstall a skill from this workspace (a person); its history stays",
+)
+async def uninstall_skill(
+    name: str = Path(pattern=_PKG), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        skill_updates.uninstall(_workspace_id(principal), name, actor=_actor(principal))
+    )
+
+
+# ── withdrawal and notices (P3-4, docs/federation/ICD_P3_REGISTRY.md §11) ─────
+
+
+class SkillRevoke(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=5, max_length=1000)
+    operator: str = Field(min_length=2, max_length=120, description="The person acting.")
+
+
+@router.get(
+    "/registry/digests/{digest}",
+    summary="What a skill digest is, even after it was withdrawn",
+)
+async def lookup_skill_digest(
+    digest: str = Path(pattern=r"^sha256:[0-9a-f]{64}$"),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(withdrawals.lookup(digest))
+
+
+@router.get(
+    "/registry/notices",
+    summary="Notices about withdrawn skills this workspace uses or depends on",
+)
+async def list_skill_notices(
+    open_only: bool = False, principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return {
+        "items": await _call(withdrawals.notices(_workspace_id(principal), open_only=open_only))
+    }
+
+
+@router.post(
+    "/registry/notices/{notice_id}/acknowledge",
+    summary="Mark a withdrawal notice as seen (a person)",
+)
+async def acknowledge_skill_notice(
+    notice_id: int = Path(ge=1), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        withdrawals.acknowledge(_workspace_id(principal), notice_id, actor=_actor(principal))
+    )
+
+
+@admin_router.post(
+    "/registry/packages/{name}/versions/{version}/revoke",
+    summary="Operator: withdraw a skill version for everyone and notify those affected",
+)
+async def revoke_skill_version(
+    body: SkillRevoke, name: str = Path(pattern=_PKG), version: str = Path(pattern=_SEMVER)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        withdrawals.revoke(name, version, reason=body.reason, operator=body.operator)
+    )
+
+
+# ── reputation: fulfilment proofs and measures (P4-1, ICD_P4_REPUTATION.md) ──
+
+_FID_WS = r"^fed:workspace:[a-z2-7]{26}$"
+
+
+class ProofCheck(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    proof: dict[str, Any]
+
+
+async def _viewer_fid(principal: Principal) -> str:
+    """The caller's workspace federation id, or '' when it has none."""
+    from app.database import async_session_factory
+
+    try:
+        async with async_session_factory() as platform:
+            return await grants._local_fid(platform, _workspace_id(principal))
+    except FederationError:
+        return ""
+
+
+@router.get(
+    "/reputation/{fid}",
+    summary="A workspace's reputation as a provider: separate measures, each with its evidence",
+)
+async def get_reputation(
+    fid: str = Path(pattern=_FID_WS), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    if not await directory.can_view(fid, await _viewer_fid(principal)):
+        raise ApiError(
+            404,
+            "federation_not_found",
+            "this workspace is not listed and you are not connected with it",
+            details={"federation_code": "FED_E_NOT_LISTED"},
+        )
+    return await _call(reputation.profile(fid))
+
+
+@router.get(
+    "/reputation/{fid}/proofs",
+    summary="The signed proofs you are party to (all of them for your own workspace)",
+)
+async def list_reputation_proofs(
+    fid: str = Path(pattern=_FID_WS),
+    limit: int = Query(default=100, ge=1, le=500),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    viewer = await _viewer_fid(principal)
+    return {"items": await _call(reputation.proofs(fid, limit=limit, viewer_fid=viewer))}
+
+
+@router.post("/proofs/verify", summary="Verify one fulfilment proof against its signer's key")
+async def verify_fulfilment_proof(body: ProofCheck) -> dict[str, Any]:
+    _enabled()
+    return await _call(reputation.verify_proof(body.proof))
+
+
+# ── directory and explainable ranking (P4-2, ICD_P4_REPUTATION.md §8) ────────
+
+
+class DirectoryListing(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    listed: bool
+    headline: str = Field(default="", max_length=200)
+    capabilities: list[str] = Field(default_factory=list, max_length=10)
+    availability: Literal["open", "busy", "closed"] = "open"
+
+
+@router.get("/directory/listing", summary="This workspace's own directory listing")
+async def get_directory_listing(principal: Principal = Depends(get_principal)) -> dict:
+    _enabled()
+    return await _call(directory.my_listing(_workspace_id(principal)))
+
+
+@router.put(
+    "/directory/listing",
+    summary="List or unlist this workspace and say what it offers (a person)",
+)
+async def put_directory_listing(
+    body: DirectoryListing, principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        directory.set_listing(
+            _workspace_id(principal),
+            listed=body.listed,
+            headline=body.headline,
+            capabilities=list(body.capabilities),
+            availability=body.availability,
+            actor=_actor(principal),
+        )
+    )
+
+
+@router.get(
+    "/directory",
+    summary="Listed workspaces, filtered and ranked, each with the reasons for its place",
+)
+async def search_directory(
+    q: str | None = Query(default=None, max_length=100),
+    capability: str | None = Query(default=None, max_length=32),
+    min_acceptance: float | None = Query(default=None, ge=0, le=1),
+    max_response_seconds: float | None = Query(default=None, gt=0),
+    price: Literal["any", "free", "paid"] | None = None,
+    availability: Literal["open", "busy", "closed"] | None = None,
+    sort: Literal["rank", "evidence", "availability", "relevance"] = "rank",
+    include_closed: bool = False,
+    limit: int = Query(default=20, ge=1, le=directory.MAX_LIMIT),
+    offset: int = Query(default=0, ge=0, le=10_000),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        directory.search(
+            q=q,
+            capability=capability,
+            min_acceptance=min_acceptance,
+            max_response_seconds=max_response_seconds,
+            price=price,
+            availability=availability,
+            sort=sort,
+            include_closed=include_closed,
+            limit=limit,
+            offset=offset,
+        )
+    )
+
+
+@router.get("/directory/{fid}", summary="One listed workspace's directory entry")
+async def get_directory_entry(
+    fid: str = Path(pattern=_FID_WS), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(directory.entry(fid, viewer_fid=await _viewer_fid(principal)))
+
+
+# ── reputation integrity, operator side (P4-3, ICD_P4_REPUTATION.md §10) ────
+
+
+class PairReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    requester: str = Field(pattern=_FID_WS)
+    provider: str = Field(pattern=_FID_WS)
+    verdict: Literal["genuine", "collusive"]
+    note: str = Field(min_length=5, max_length=1000)
+    operator: str = Field(min_length=2, max_length=120)
+
+
+class ControllerLink(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    a: str = Field(pattern=_FID_WS)
+    b: str = Field(pattern=_FID_WS)
+    reason: str = Field(min_length=5, max_length=1000)
+    operator: str = Field(min_length=2, max_length=120)
+
+
+@admin_router.get(
+    "/integrity/anomalies",
+    summary="Operator: provider/requester pairs whose proofs wait for a review",
+)
+async def list_integrity_anomalies(limit: int = Query(default=100, ge=1, le=500)) -> dict:
+    _enabled()
+    return {"items": await _call(integrity.anomalies(limit=limit))}
+
+
+@admin_router.post(
+    "/integrity/reviews",
+    summary="Operator: judge a flagged pair genuine (counts again) or collusive (linked)",
+)
+async def review_integrity_pair(body: PairReview) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        integrity.review_pair(
+            body.requester,
+            body.provider,
+            verdict=body.verdict,
+            note=body.note,
+            operator=body.operator,
+        )
+    )
+
+
+@admin_router.post(
+    "/integrity/links",
+    summary="Operator: record that two workspaces share a controller",
+)
+async def link_controllers(body: ControllerLink) -> dict[str, Any]:
+    _enabled()
+    return await _call(integrity.link(body.a, body.b, reason=body.reason, operator=body.operator))
