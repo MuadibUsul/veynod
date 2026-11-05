@@ -219,11 +219,16 @@ async def test_another_process_delivery_is_judged_by_its_receipts_not_the_epoch(
     assert (await offer())["status"] == "offered"
 
     # Its socket stayed silent: it revoked the delivery and reopened the task.
-    await _sql("UPDATE collab_tasks SET dispatch_state = 'IDLE' WHERE task_key = $1", key)
+    # One statement, as nerve_hub._rollback commits both in one transaction: the
+    # background scheduling pass must never see IDLE without the revoke (it would
+    # read the moved epoch as a claim given back, failed/returned; CI saw that).
     await _sql(
+        "WITH reopened AS (UPDATE collab_tasks SET dispatch_state = 'IDLE' "
+        "WHERE task_key = $3 RETURNING id) "
         "INSERT INTO poke_deliveries (workspace_id, event_seq, recipient, channel, status, detail, "
-        "lease_epoch, qos_status, task_key, frame_id) VALUES ($1::uuid, 0, $2, 'nerve', "
-        "'delivered', 'NET_ACK_TIMEOUT', 1, 'TIMEOUT_REVOKED', $3, $4) ON CONFLICT DO NOTHING",
+        "lease_epoch, qos_status, task_key, frame_id) SELECT $1::uuid, 0, $2, 'nerve', "
+        "'delivered', 'NET_ACK_TIMEOUT', 1, 'TIMEOUT_REVOKED', $3, $4 FROM reopened "
+        "ON CONFLICT DO NOTHING",
         ws["id"], f"agent:{host['agent_id']}", key, placement["placement_id"])
     await _schedule(client, ws)
     items = (await client.get("/v1/runner/placements", headers=ws["owner"],
