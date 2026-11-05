@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -314,6 +314,11 @@ class Settings(BaseSettings):
     # bucket per pair of workspaces. P1 placeholders until load tests.
     federation_peer_rate_per_minute: int = Field(default=120, ge=1, le=60000)
     federation_peer_burst: int = Field(default=60, ge=1, le=10000)
+    # Other deployments (F-11): hosts this deployment may reach for
+    # federation. Empty (the default) means no outbound federation traffic at
+    # all, which is what a closed enterprise network wants (F-022).
+    federation_peer_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    federation_remote_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
 
     # ---------------------------------------------------- outbound actions
     outbound_dispatch_interval_seconds: int = Field(default=5, ge=1, le=300)
@@ -463,7 +468,9 @@ class Settings(BaseSettings):
     mcp_allowed_hosts: list[str] = Field(default_factory=list)
     mcp_allowed_origins: list[str] = Field(default_factory=list)
 
-    @field_validator("cors_origins", "outbound_allowed_hosts", mode="before")
+    @field_validator(
+        "cors_origins", "outbound_allowed_hosts", "federation_peer_hosts", mode="before"
+    )
     @classmethod
     def _split_origins(cls, value: object) -> object:
         if isinstance(value, str) and not value.startswith("["):

@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Awaitable
 from typing import Any, Literal, TypeVar
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Body, Depends, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,6 +28,7 @@ from app.services.federation import (
     identity,
     messaging,
     metering,
+    remote,
 )
 from app.services.federation.errors import FederationError
 from app.services.federation.grants import Actor
@@ -916,3 +917,42 @@ async def lift_federation_sanction(
 async def federation_identity_sanctions(federation_id: str = Path(pattern=_FID)) -> dict:
     _enabled()
     return await _call(governance.global_status(federation_id))
+
+
+# ── other deployments (F-11, docs/federation/ICD_I_I2I.md) ────────────────
+
+
+class PeerRegistration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    federation_id: str = Field(pattern=r"^fed:workspace:[a-z2-7]{26}$")
+    base_url: str = Field(min_length=8, max_length=300, pattern=r"^https?://")
+    operator: str = Field(min_length=2, max_length=120)
+
+
+@router.get(
+    "/public/identities/{federation_id}",
+    summary="Signed identity records of a workspace hosted here (public; for other deployments)",
+)
+async def federation_public_identity(federation_id: str = Path(pattern=_FID)) -> dict[str, Any]:
+    _enabled()
+    return await _call(remote.public_records(federation_id))
+
+
+@router.post(
+    "/inbox",
+    summary="Where other deployments deliver signed envelopes (public; the signature decides)",
+)
+async def federation_inbox(envelope: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    _enabled()
+    return await _call(remote.accept(envelope))
+
+
+@admin_router.post(
+    "/peers",
+    status_code=201,
+    summary="Operator: name where a workspace on another deployment lives and import its keys",
+)
+async def register_federation_peer(body: PeerRegistration) -> dict[str, Any]:
+    _enabled()
+    return await _call(remote.register(body.federation_id, body.base_url, operator=body.operator))

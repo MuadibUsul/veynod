@@ -43,9 +43,16 @@ class FlakyTransport(grants.LocalTransport):
     def __init__(self) -> None:
         self.up = True
         self.calls = 0
+        self.audiences: list[str] = []
+
+    def calls_to(self, fid: str) -> int:
+        """Deliveries addressed to one workspace. The delivery loop works on
+        the whole database, so other tests' due retries also pass through."""
+        return self.audiences.count(fid)
 
     async def deliver(self, envelope):
         self.calls += 1
+        self.audiences.append(envelope.get("audience"))
         if not self.up:
             raise FederationError("FED_E_UNREACHABLE", "peer unreachable (test)")
         return await super().deliver(envelope)
@@ -232,9 +239,9 @@ async def test_outage_is_retried_then_dead_lettered_then_resent(
     assert await _inbox(b) == []
 
     # Not due yet: the loop leaves it alone.
-    calls = transport.calls
+    calls = transport.calls_to(b["fid"])
     await messaging.deliver_due()
-    assert transport.calls == calls
+    assert transport.calls_to(b["fid"]) == calls
 
     transport.up = True
     await _make_due(queued["message_id"])
@@ -254,9 +261,9 @@ async def test_outage_is_retried_then_dead_lettered_then_resent(
     dead = await messaging.get(a["id"], lost["message_id"])
     assert dead["state"] == "dead_letter"
     assert dead["delivery"]["attempts"] == messaging.MAX_DELIVERY_ATTEMPTS
-    calls = transport.calls
+    calls = transport.calls_to(b["fid"])
     await messaging.deliver_due()
-    assert transport.calls == calls
+    assert transport.calls_to(b["fid"]) == calls
 
     # A person resends it once the peer is back: same message, delivered once.
     transport.up = True
@@ -280,11 +287,11 @@ async def test_outage_is_retried_then_dead_lettered_then_resent(
         )
         await platform.commit()
     await _make_due(stale["message_id"])
-    calls = transport.calls
+    calls = transport.calls_to(b["fid"])
     await messaging.deliver_due()
     expired = await messaging.get(a["id"], stale["message_id"])
     assert expired["state"] == "dead_letter" and expired["reject_code"] == "FED_E_EXPIRED"
-    assert transport.calls == calls
+    assert transport.calls_to(b["fid"]) == calls
 
 
 async def test_a_refusing_peer_is_not_retried(client, admin_headers, federation_on, transport):

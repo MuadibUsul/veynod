@@ -4950,6 +4950,18 @@
       {
        "body": [],
        "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/inbox",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Where other deployments deliver signed envelopes (public; the signature decides)"
+      },
+      {
+       "body": [],
+       "description": "",
        "method": "GET",
        "parameters": [],
        "path": "/v1/federation/me",
@@ -5127,6 +5139,26 @@
         "422"
        ],
        "summary": "Resend a dead-lettered or refused message (a person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "federation_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/public/identities/{federation_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Signed identity records of a workspace hosted here (public; for other deployments)"
       },
       {
        "body": [],

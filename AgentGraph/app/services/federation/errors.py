@@ -66,6 +66,9 @@ CODES: dict[str, int] = {
     "FED_E_CASE_TRANSITION": 409,
     "FED_E_SANCTION_RULE": 409,
     "FED_E_AUTHORITY_INVALID": 403,
+    # other deployments (F-11)
+    "FED_E_EGRESS_DISABLED": 403,
+    "FED_E_REMOTE_INVALID": 422,
 }
 
 

@@ -204,6 +204,7 @@ EPHEMERAL = frozenset({
     # federation identities on this deployment.
     "federation_reports", "federation_report_history", "federation_sanctions",
     "federation_security_events",
+    "federation_remote_endpoints",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")
