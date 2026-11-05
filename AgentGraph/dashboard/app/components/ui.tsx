@@ -214,14 +214,28 @@ export function IconLayers({ size = 18 }: { size?: number }) {
   );
 }
 
-/** A node joined to two others: several boards answering as one. */
+/**
+ * A globe with two hollow nodes on its rim, top right and bottom left: this
+ * workspace reaching other workspaces. Kept apart from IconGraph's three
+ * joined nodes. The rim is cut around each node by a mask rather than painted
+ * over, so the icon has no background colour of its own and works on any
+ * surface, theme or state.
+ */
 export function IconFederation({ size = 18 }: { size?: number }) {
+  const cut = `federation-cut-${useId().replace(/:/g, "")}`;
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden>
-      <circle cx="12" cy="6" r="2.4" stroke="currentColor" strokeWidth="1.5" />
-      <circle cx="5" cy="17" r="2.4" stroke="currentColor" strokeWidth="1.5" />
-      <circle cx="19" cy="17" r="2.4" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M10.3 8 6.6 14.8M13.7 8l3.7 6.8M7.4 17h9.2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden data-icon="federation">
+      <mask id={cut} maskUnits="userSpaceOnUse" x="0" y="0" width="24" height="24">
+        <rect width="24" height="24" fill="#fff" />
+        <circle cx="19.2" cy="4.8" r="3.4" fill="#000" />
+        <circle cx="4.8" cy="19.2" r="3.4" fill="#000" />
+      </mask>
+      <g mask={`url(#${cut})`} stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="8.25" />
+        <path d="M12 3.75c-2.7 2.3-4.1 5.05-4.1 8.25s1.4 5.95 4.1 8.25M12 3.75c2.7 2.3 4.1 5.05 4.1 8.25s-1.4 5.95-4.1 8.25M3.75 12h16.5" />
+      </g>
+      <circle cx="19.2" cy="4.8" r="2.15" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="4.8" cy="19.2" r="2.15" stroke="currentColor" strokeWidth="1.5" />
     </svg>
   );
 }
