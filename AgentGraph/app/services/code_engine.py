@@ -581,9 +581,16 @@ async def _event_cursor(engine: KernelEngineClient, kernel_workspace: str) -> in
             ),
             {"kernel_ws": kernel_workspace},
         )
-        if value is not None:
-            return int(value)
-        latest = await engine.latest_event_seq(kernel_workspace)
+    if value is not None:
+        return int(value)
+    # First sight of this Kernel workspace: its history is not replayed, so
+    # anything it finished before now would never arrive as an event (a commit
+    # landing before the first poll left its chunk `dispatched`). Read the head
+    # first, then bring what is already bound to it up to the Kernel's state:
+    # whatever happens after the head still arrives as an event.
+    latest = await engine.latest_event_seq(kernel_workspace)
+    await _catch_up_bound_work(kernel_workspace)
+    async with async_session_factory() as session:
         await session.execute(
             text(
                 """
@@ -596,7 +603,57 @@ async def _event_cursor(engine: KernelEngineClient, kernel_workspace: str) -> in
             {"kernel_ws": kernel_workspace, "seq": latest},
         )
         await session.commit()
-        return latest
+    return latest
+
+
+async def _catch_up_bound_work(kernel_workspace: str) -> int:
+    """Sync every task and open chunk bound to a Kernel workspace, once.
+
+    Idempotent (the lifecycle writer and the chunk projection dedupe), so two
+    consumers meeting the same new workspace at once is harmless.
+    """
+    async with async_session_factory() as session:
+        task_ids = (
+            await session.execute(
+                select(CollabTask.input_context["kernel"]["task_id"].astext).where(
+                    CollabTask.input_context["kernel"]["workspace_id"].astext
+                    == str(kernel_workspace),
+                    CollabTask.status.in_(_PROJECTABLE_STATUSES),
+                )
+            )
+        ).scalars().all()
+        chunk_ids = (
+            await session.execute(
+                text(
+                    "SELECT kernel_task_id::text FROM diagram_chunks "
+                    "WHERE kernel_workspace_id::text = :ws AND kernel_task_id IS NOT NULL "
+                    "AND state IN ('dispatched', 'rework')"
+                ),
+                {"ws": str(kernel_workspace)},
+            )
+        ).scalars().all()
+    moved = 0
+    chunks = {str(item) for item in chunk_ids if item}
+    for kernel_task_id in sorted({str(item) for item in task_ids if item} | chunks):
+        try:
+            stats = await sync_kernel_task_event(kernel_workspace, kernel_task_id)
+            moved += stats["synced"] + stats.get("diagram", 0)
+            if kernel_task_id in chunks and not stats.get("diagram"):
+                # A chunk whose task row does not carry the Kernel ids.
+                kernel = await _engine().task(kernel_workspace, kernel_task_id)
+                if kernel and str(kernel.get("status") or "") == "COMMITTED":
+                    async with async_session_factory() as session:
+                        moved += await _project_chunk(session, kernel_task_id, kernel)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - one task must not stop the catch-up
+            logger.exception(
+                "catch-up failed for kernel task %s in %s", kernel_task_id, kernel_workspace
+            )
+    if moved:
+        logger.info("caught up %s item(s) on first sight of kernel workspace %s",
+                    moved, kernel_workspace)
+    return moved
 
 
 def merge_kernel_workspace_ids(

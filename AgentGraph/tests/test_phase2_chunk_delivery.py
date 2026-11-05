@@ -420,3 +420,47 @@ async def test_the_reconciler_projects_a_lost_commit_event(kernel) -> None:
     assert stats["projected"] >= 1, stats
     row = await _chunk_row(client, ws, key, chunk_key)
     assert row["state"] == "merged" and row["merged_commit_sha"] == "b" * 40
+
+
+async def test_a_commit_before_the_first_poll_is_not_skipped(kernel) -> None:
+    """CI 2026-11-05: in a busy run the Kernel committed before the product's
+    event consumers first saw its workspace. A new cursor starts at the
+    Kernel's latest event, so the commit was never delivered and the chunk
+    stayed ``dispatched`` until the reconciler's next pass, minutes later.
+
+    Here the Kernel holds the commit with no event at all, and the product
+    has never polled the workspace: first sight must catch the chunk up.
+    """
+    client = kernel["client"]
+    ws = await _workspace(client)
+    await _bind_kernel(client, ws, kernel)
+    key, chunk_key = await _diagram_and_freeze(
+        client, ws, [{**_chunk("early", layer="interface"),
+                      "allowed_write_paths": ["main.py"]}])
+    bound = await _chunk_row(client, ws, key, chunk_key)
+
+    import asyncpg
+
+    conn = await asyncpg.connect(_plain(kernel["database"]))
+    try:
+        await conn.execute(
+            "UPDATE dag_tasks SET status = 'COMMITTED', result_commit_sha = $1 "
+            "WHERE task_id = $2::uuid", "c" * 40, bound["kernel_task_id"])
+    finally:
+        await conn.close()
+    conn = await asyncpg.connect(_plain())
+    try:
+        # The product has not looked at this Kernel workspace yet.
+        await conn.execute(
+            "DELETE FROM code_projection_cursors WHERE kernel_workspace_id = $1::uuid",
+            kernel["workspace"])
+    finally:
+        await conn.close()
+
+    for _ in range(40):
+        row = await _chunk_row(client, ws, key, chunk_key)
+        if row["state"] == "merged":
+            break
+        await asyncio.sleep(0.5)
+    assert row["state"] == "merged", row
+    assert row["merged_commit_sha"] == "c" * 40
