@@ -37,20 +37,42 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.COMMIT }}
-      - uses: actions/setup-python@v5
+      # The server numbers releases in the order they arrive, so a release
+      # for an older commit (a re-run of an old CI run, or CI runs finishing
+      # out of order) would count as the newest and auto targets would deploy
+      # it over newer code. Only the head of main is released from CI; when
+      # main has moved on, the newer commit's own CI run releases it. A run
+      # started by hand (workflow_dispatch) is a person's choice and is kept.
+      - name: Release only the head of main
+        id: head
+        if: github.event_name == 'workflow_run'
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          head="$(git rev-parse FETCH_HEAD)"
+          if [ "$head" != "$COMMIT" ]; then
+            echo "::notice::Not releasing $COMMIT: main is at $head, whose CI run releases it."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.head.outputs.skip != 'true'
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install pyyaml==6.0.2
-      - uses: docker/setup-buildx-action@v3
+      - if: steps.head.outputs.skip != 'true'
+        run: pip install pyyaml==6.0.2
+      - if: steps.head.outputs.skip != 'true'
+        uses: docker/setup-buildx-action@v3
       # `docker buildx build --cache-to type=gha` from a script needs the
       # runtime token and cache URL that actions normally keep to themselves.
-      - uses: crazy-max/ghaction-github-runtime@v3
-      - uses: docker/login-action@v3
+      - if: steps.head.outputs.skip != 'true'
+        uses: crazy-max/ghaction-github-runtime@v3
+      - if: steps.head.outputs.skip != 'true'
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build what changed, retag the rest, post the release
+        if: steps.head.outputs.skip != 'true'
         env:
           # The project's deploy target issues the token (console or
           # POST /v1/projects/{p}/deploys/{target}/release-token).
