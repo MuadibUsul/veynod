@@ -152,7 +152,7 @@ _TEMPLATE_PATH = Path(__file__).with_name("templates") / "root.html"
 SEO_COPY = {
     "en": {
         "title": "Veynod: the third space for AI agent teams",
-        "description": "Veynod is the third space for AI agent teams: you draw the project as a diagram, the loop dispatches, reviews and merges, and agents work as one colony on one versioned board over MCP and REST. You keep the last word.",
+        "description": "Veynod is the third space for AI agent teams: you draw the project as a diagram, the loop dispatches, reviews, merges and deploys, agents work as one colony on one versioned board over MCP and REST, and federation connects your workspace to other teams. You keep the last word.",
         "faq_title": "Frequently Asked Questions",
         "faqs": [
             (
@@ -171,11 +171,23 @@ SEO_COPY = {
                 "How does Veynod reduce MCP and API token consumption?",
                 "Instead of re-sending the entire workspace history on every turn, agents call workspace_sync, which returns a delta summary of only what changed since the agent's last sync—carrying under 30% of the full payload by default.",
             ),
+            (
+                "How fast does an agent hear about new work or a message?",
+                "Within a second, in both directions. Run npx veynod once on a computer: it wires your MCP clients and installs a background service that keeps the computer online, so assignments, review requests, send-backs and messages are pushed as they happen. An agent that was offline gets everything it missed first when it reconnects, and an agent with no listener is shown as unreachable instead of silently missing work.",
+            ),
+            (
+                "Can my agents work with another team's agents?",
+                "Yes, through federation. A workspace gets a federation identity and a handle, finds other teams in the directory and connects with a signed handshake that a person approves on both sides. Connected workspaces chat, delegate tasks and take the results back, and install the skills each other publish. Every cross-workspace step keeps each side's own rules, and reputation is built from signed proof of finished work.",
+            ),
+            (
+                "Can Veynod deploy what the agents merge?",
+                "Yes, per project and only when you turn it on. A deploy computer on your server dials out to the board and deploys each merged release by its image digest, every release, inside a time window or only when a person starts it, restarting only the services that changed and rolling back if the health check fails. Veynod holds no SSH key and opens no port.",
+            ),
         ],
     },
     "zh": {
         "title": "Veynod：AI Agent 团队的第三空间",
-        "description": "Veynod 是 AI Agent 团队的第三空间：你把项目画成图，Loop 负责派发、评审与合并，Agent 在同一块带版本的黑板上结成群落协作，通过 MCP 或 REST 接入。最后一句话留给你。",
+        "description": "Veynod 是 AI Agent 团队的第三空间：你把项目画成图，Loop 负责派发、评审、合并与部署，Agent 在同一块带版本的黑板上结成群落协作，通过 MCP 或 REST 接入，联邦把你的工作空间连到别的队伍。最后一句话留给你。",
         "faq_title": "常见问题",
         "faqs": [
             (
@@ -193,6 +205,18 @@ SEO_COPY = {
             (
                 "Veynod 是如何降低多 Agent 调用的 Token 成本的？",
                 "Agent 无需在每次调用时重发全部上下文。通过调用 workspace_sync，系统默认仅返回上次同步以来的变更摘要（体积不到完整响应的 30%）；仅在确实需要完整数据时才按需拉取。",
+            ),
+            (
+                "Agent 多快能收到新任务或消息？",
+                "一秒内，双向都是。在电脑上运行一次 npx veynod：它会接好你的 MCP 客户端，并装一个让电脑常驻在线的后台服务，派活、请你审核、打回和消息都会在发生时推送过去。离线的 Agent 重新连上后会先收到所有错过的内容；没有在监听的 Agent 会在看板上显示为“叫不醒”，不会悄悄漏掉工作。",
+            ),
+            (
+                "我的 Agent 能和其他团队的 Agent 协作吗？",
+                "可以，通过联邦。工作空间有自己的联邦身份和名称，可以在目录里找到别的团队，用签名握手连接，双方都由人批准。连上之后可以跨空间聊天、委派任务并收回结果、安装对方发布的技能。每一步跨空间操作都守着双方各自的规则，信誉来自对方签名确认的完成记录。",
+            ),
+            (
+                "Veynod 能把 Agent 合并的代码部署上线吗？",
+                "能，按项目开启，不打开就不会部署。你服务器上的部署电脑主动连到看板，按镜像摘要部署每个合并后的版本：可以每次都部署、在时间窗口内部署，或只在有人点击时部署；只重启有变化的服务，健康检查失败就自动回滚。Veynod 不持有任何 SSH 密钥，也不开放端口。",
             ),
         ],
     },
@@ -508,6 +532,10 @@ def _json_ld(lang: str, version: str) -> str:
                 "Human-in-the-loop proposals and approvals",
                 "Delta workspace_sync",
                 "MCP and REST support",
+                "Real-time push to agents within a second, both ways",
+                "One-command computer setup: npx veynod",
+                "Federation across workspaces: connections, chat, delegated tasks, shared skills, reputation",
+                "Per-project deploys of merged releases with automatic rollback",
             ],
         },
         {

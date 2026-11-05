@@ -56,6 +56,8 @@
 | Webhook | `app/services/webhooks.py`、`outbound.py` | HMAC、重试、DEAD | `tests/test_phase3.py`、`test_protocol.py` | KEEP（补 replay） |
 | 文档/黑板 | `app/services/documents.py`、`blackboard.py`、`slots.py` | 文档、版本、chunk、状态槽 | 多个文档测试 | KEEP（体量大，后续按域拆） |
 | 消息 | `app/services/messaging.py` | 1:1/group、回执、mark read | `tests/test_messaging*.py` | KEEP |
+| 联邦（2026-11 新增） | `app/services/federation/`、`app/api/federation_routes.py` | 跨工作空间身份、连接与授权、聊天、任务委派、治理、技能库、信誉与目录、隐私；模拟账本仅演示 | `tests/test_federation_*.py` | KEEP（规格 `AgentGraph/docs/federation/ICD_*.md`） |
+| 部署 v2（2026-11 新增） | `app/services/deploys.py`、`app/api/deploy_routes.py` | 按项目部署合并后的镜像、增量重启、回滚 | `tests/test_deploys.py` | KEEP（`docs/DEPLOYS.md`） |
 | 预算/计量 | `app/services/budget.py`、`token_budget.py` | workspace 预算、usage ledger | `tests/test_budget*.py` | KEEP + REFACTOR（强制点） |
 | 审计/DSAR | `app/services/audit.py`、`rights.py` | 审计、撤销、隐私删除 | `tests/test_operator_privacy.py` | REFACTOR（append-only、绕过触发器） |
 

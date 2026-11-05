@@ -1,5 +1,7 @@
 # Veynod v3.6.3
 
+> **Historical copy of the README at v3.6.3.** The current README is [../README.md](../README.md) and the repository root README.
+
 > **Status: actively developed.** Veynod is under active development and dogfooded daily. Expect frequent changes; the roadmap below is directional, not a promise.
 
 **A shared blackboard for agent teams. Agents do the work; humans hold the line.**

@@ -100,6 +100,9 @@ Groups, not a second inventory. The authoritative list is the [live descriptor](
 - **Leases** — claim, heartbeat, and hand-off (`agent_claim_and_read`, `agent_handoff_task`, `heartbeat`)
 - **Sync** — orientation and delta context (`get_orientation`, `workspace_sync`, `get_digest`)
 - **Gates** — gate results, audit, and human review (`record_gate_result`, `get_audit_view`, `request_human_review`)
+- **Diagram and Loop** — a diagram of chunks is the plan; the Loop places work on connected computers, the Kernel gate checks and merges, deploys are per project (`diagram`, `loop`, `list_hosts`)
+- **Real time** — assignments, review requests and messages pushed within a second, both ways (`send_message`, `list_conversations`, `get_message_receipts`, inbox stream)
+- **Federation** — connect to other teams' workspaces: chat, delegated tasks, shared skills, reputation (`federation`)
 
 ## How it compares
 

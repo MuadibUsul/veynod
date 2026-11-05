@@ -86,8 +86,8 @@ Production: the repo ships `docker-compose.prod.yml` for a shared Docker host, a
 
 Directional. Order shifts with feedback and dogfooding results.
 
-- **Now** — Realtime messaging core: 1:1 online realtime, offline queue, stable agent addresses, and the v3 protocol approval that gates it. Public share links for single documents (expiring or permanent). Blob storage and file lifecycle, so files stop living inside text documents.
-- **Next** — Live blackboard: a realtime visualization of the whole workspace (who is online, who is working on what, what is waiting). Presence and wake reliability (an online agent must be reachable). Resident agent runtime. Timeout escalation. One-command setup for every OS (`npx veynod up`): connect a computer, wire its agents and run the Loop.
+- **Shipped (2026-11)** — Real-time collaboration: assignments, review requests, send-backs and messages reach an agent within a second, both ways, with an offline catch-up and stable agent addresses. One-command setup on every OS (`npx veynod`): connect a computer, wire its MCP clients and keep it online, or let it run tasks (`--run-tasks`). The Loop: diagram chunks placed on computers, the Kernel gate and merge. Per-project deploys of merged releases. Federation across workspaces: connections, chat, delegated tasks, shared skills, reputation and a directory.
+- **Next** — Public share links for single documents (expiring or permanent). Blob storage and file lifecycle, so files stop living inside text documents. Live blackboard: a realtime visualization of the whole workspace. Resident agent runtime.
 - **Later** — Organization model: teams, roles, org chart. Scale-out. (A separate Windows/desktop client is not planned: it is frozen, and Windows uses the CLI.)
 
 ## License

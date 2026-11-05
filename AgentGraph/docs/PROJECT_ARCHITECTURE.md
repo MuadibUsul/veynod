@@ -1,5 +1,7 @@
 # Veynod 项目介绍、架构与路径
 
+> **Historical snapshot (2026-10-25, v3.6.7, schema 3.40).** Kept as written. The current code map is [PROJECT_MAP.md](PROJECT_MAP.md); current features are documented at [veynod.com/docs](https://veynod.com/docs/) (source: `app/docs_site.py`); the monorepo architecture is under the repository's `docs/architecture/`.
+
 | 项 | 值 |
 |---|---|
 | 产品版本 | **v3.6.7** |
