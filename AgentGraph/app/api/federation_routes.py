@@ -23,6 +23,7 @@ from app.schemas import AcceptanceItem, TaskCreateRequest
 from app.services import federation, tasks
 from app.services.federation import (
     delegations,
+    directory,
     discovery,
     governance,
     grants,
@@ -1370,27 +1371,129 @@ class ProofCheck(BaseModel):
     proof: dict[str, Any]
 
 
+async def _viewer_fid(principal: Principal) -> str:
+    """The caller's workspace federation id, or '' when it has none."""
+    from app.database import async_session_factory
+
+    try:
+        async with async_session_factory() as platform:
+            return await grants._local_fid(platform, _workspace_id(principal))
+    except FederationError:
+        return ""
+
+
 @router.get(
     "/reputation/{fid}",
     summary="A workspace's reputation as a provider: separate measures, each with its evidence",
 )
-async def get_reputation(fid: str = Path(pattern=_FID_WS)) -> dict[str, Any]:
+async def get_reputation(
+    fid: str = Path(pattern=_FID_WS), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
     _enabled()
+    if not await directory.can_view(fid, await _viewer_fid(principal)):
+        raise ApiError(
+            404,
+            "federation_not_found",
+            "this workspace is not listed and you are not connected with it",
+            details={"federation_code": "FED_E_NOT_LISTED"},
+        )
     return await _call(reputation.profile(fid))
 
 
 @router.get(
     "/reputation/{fid}/proofs",
-    summary="The signed fulfilment proofs behind a workspace's reputation, with their weights",
+    summary="The signed proofs you are party to (all of them for your own workspace)",
 )
 async def list_reputation_proofs(
-    fid: str = Path(pattern=_FID_WS), limit: int = Query(default=100, ge=1, le=500)
+    fid: str = Path(pattern=_FID_WS),
+    limit: int = Query(default=100, ge=1, le=500),
+    principal: Principal = Depends(get_principal),
 ) -> dict[str, Any]:
     _enabled()
-    return {"items": await _call(reputation.proofs(fid, limit=limit))}
+    viewer = await _viewer_fid(principal)
+    return {"items": await _call(reputation.proofs(fid, limit=limit, viewer_fid=viewer))}
 
 
 @router.post("/proofs/verify", summary="Verify one fulfilment proof against its signer's key")
 async def verify_fulfilment_proof(body: ProofCheck) -> dict[str, Any]:
     _enabled()
     return await _call(reputation.verify_proof(body.proof))
+
+
+# ── directory and explainable ranking (P4-2, ICD_P4_REPUTATION.md §8) ────────
+
+
+class DirectoryListing(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    listed: bool
+    headline: str = Field(default="", max_length=200)
+    capabilities: list[str] = Field(default_factory=list, max_length=10)
+    availability: Literal["open", "busy", "closed"] = "open"
+
+
+@router.get("/directory/listing", summary="This workspace's own directory listing")
+async def get_directory_listing(principal: Principal = Depends(get_principal)) -> dict:
+    _enabled()
+    return await _call(directory.my_listing(_workspace_id(principal)))
+
+
+@router.put(
+    "/directory/listing",
+    summary="List or unlist this workspace and say what it offers (a person)",
+)
+async def put_directory_listing(
+    body: DirectoryListing, principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        directory.set_listing(
+            _workspace_id(principal),
+            listed=body.listed,
+            headline=body.headline,
+            capabilities=list(body.capabilities),
+            availability=body.availability,
+            actor=_actor(principal),
+        )
+    )
+
+
+@router.get(
+    "/directory",
+    summary="Listed workspaces, filtered and ranked, each with the reasons for its place",
+)
+async def search_directory(
+    q: str | None = Query(default=None, max_length=100),
+    capability: str | None = Query(default=None, max_length=32),
+    min_acceptance: float | None = Query(default=None, ge=0, le=1),
+    max_response_seconds: float | None = Query(default=None, gt=0),
+    price: Literal["any", "free", "paid"] | None = None,
+    availability: Literal["open", "busy", "closed"] | None = None,
+    sort: Literal["rank", "evidence", "availability", "relevance"] = "rank",
+    include_closed: bool = False,
+    limit: int = Query(default=20, ge=1, le=directory.MAX_LIMIT),
+    offset: int = Query(default=0, ge=0, le=10_000),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        directory.search(
+            q=q,
+            capability=capability,
+            min_acceptance=min_acceptance,
+            max_response_seconds=max_response_seconds,
+            price=price,
+            availability=availability,
+            sort=sort,
+            include_closed=include_closed,
+            limit=limit,
+            offset=offset,
+        )
+    )
+
+
+@router.get("/directory/{fid}", summary="One listed workspace's directory entry")
+async def get_directory_entry(
+    fid: str = Path(pattern=_FID_WS), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(directory.entry(fid, viewer_fid=await _viewer_fid(principal)))

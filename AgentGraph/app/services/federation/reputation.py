@@ -371,12 +371,21 @@ async def profile(fid: str) -> dict[str, Any]:
     }
 
 
-async def proofs(fid: str, *, limit: int = 100) -> list[dict[str, Any]]:
-    """The signed proofs behind a provider's measures, newest first."""
+async def proofs(
+    fid: str, *, limit: int = 100, viewer_fid: str | None = None
+) -> list[dict[str, Any]]:
+    """The signed proofs behind a provider's measures, newest first.
+
+    Who worked with whom is private (vision §9.5, §12.4): the provider sees
+    all of its proofs, a requester only the proofs it signed itself. Weights
+    are computed over all proofs either way. ``viewer_fid=None`` is the
+    platform itself."""
     require_type(fid, "workspace")
     rows = await _rows(fid)
     weights = weigh(rows)
     out = [
-        {"proof": row["proof"], "weight": weight} for row, weight in zip(rows, weights, strict=True)
+        {"proof": row["proof"], "weight": weight}
+        for row, weight in zip(rows, weights, strict=True)
+        if viewer_fid is None or viewer_fid == fid or row["requester_fid"] == viewer_fid
     ]
     return list(reversed(out))[: max(1, min(int(limit), 500))]

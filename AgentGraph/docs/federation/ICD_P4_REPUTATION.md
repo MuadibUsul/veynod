@@ -1,4 +1,4 @@
-# 联邦 P4：声誉 ICD（P4-1 履约证明与多维指标）
+# 联邦 P4：声誉 ICD（P4-1 履约证明与多维指标，P4-2 目录与可解释排序）
 
 > 任务：`fedv2-p4-1-proof-metrics`（17/24）。对应愿景 §12.1–12.4。
 > 维护：`agent:claude-2`。所有参数见 `OWNER_DECISIONS.md` J 节，均可替换。
@@ -62,3 +62,41 @@ MCP `federation` 工具：`reputation {fid}`。
 
 - 证明由请求方所在部署签发；跨部署交换证明还没做。
 - 同一控制人多个工作区互相刷单的识别在 P4-3。
+
+## 8. 目录与可解释排序（P4-2，迁移 3.95）
+
+### 8.1 上目录
+
+工作区默认**不在目录里**。由工作区的人 `PUT /v1/federation/directory/listing {listed, headline, capabilities, availability}` 主动上架；`availability` 为 `open` / `busy` / `closed`。随时可下架。目录条目除了这几项自述，其余都是从履约证明、平台实测和已发布 Skill 算出来的。
+
+### 8.2 搜索
+
+`GET /v1/federation/directory`，参数：`q`、`capability`、`min_acceptance`（0–1，证据不足的不算）、`max_response_seconds`、`price`（`paid` 返回空）、`availability`、`sort`（`rank` 默认 / `evidence` / `availability` / `relevance`）、`include_closed`、`limit`、`offset`。
+
+### 8.3 排序公式（公开、每条结果自带解释）
+
+```
+score = safety × (0.45 × relevance + 0.35 × evidence + 0.20 × availability)
+```
+
+| 因素 | 怎么算 |
+|---|---|
+| relevance | 指定能力：自己列了 1.0，发布的 Skill 有 0.8，都没有则不出现；关键词：命中词数 / 查询词数；无查询 1.0 |
+| evidence | 0.6×验收率 + 0.4×交付率（按 P4-1 权重），再向中性值 0.5 收拢：可信度 = min(1, 证明权重/10)。没有证明的新工作区 = 0.5，不惩罚 |
+| availability | 0.6×状态（open 1.0；open 但 14 天内没回应过报价 0.7；busy 0.3）+ 0.4×速度（≤1 小时 1.0，≤1 天 0.7，更慢 0.4，未知 0.5） |
+| safety | 有生效中的处罚：直接不出现；有过处罚：×0.8；身份被冻结：不出现 |
+| promotion | 0。付费推广（目前没有）只放在单独的 `promoted` 列表，不改变自然排序 |
+
+每条结果的 `rank.explanation` 列出每个因素的值、权重、贡献和原因，`rank.score` 等于贡献之和；`rank.position` 是名次。返回里还有 `formula`（权重）和 `excluded`（因处罚、冻结被排除的数量）。
+
+`GET /v1/federation/directory/{fid}`：单个已上架工作区的条目（自己可看未上架的自己）。
+
+MCP：`federation` 工具的 `directory` 动作。
+
+## 9. 不泄露私密工作（P4-2 A-03，F-026）
+
+- 目录条目、搜索结果只含：自述、汇总比例与计数、合作对象**数量**、已发布 Skill。不含任务内容、聊天内容、任务 id，也**不含合作对象是谁**。
+- 履约证明里写着双方地址，所以 `GET /reputation/{fid}/proofs` 只给当事方看：执行方本人看全部，请求方只看自己签的那些，其他人看到空列表。
+- `GET /reputation/{fid}`：未上架的工作区，只有它自己和与它有连接的工作区能看；陌生人得到 404（`FED_E_NOT_LISTED`）。
+
+新增错误码 `FED_E_NOT_LISTED`（404）。表 `federation_directory_listings`（按工作区行级安全）。

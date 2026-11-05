@@ -13,6 +13,7 @@ import {
 
 import { useI18n } from "../i18n";
 import type { ApiRequest } from "../types";
+import { DirectoryCard } from "./federation-directory";
 import { ReputationPanel } from "./federation-reputation";
 import { SkillsCard } from "./federation-skills";
 import { IconFederation } from "./ui";
@@ -301,6 +302,8 @@ export function FederationView({ request, notify, sessionMode }: {
             <>
               <IdentityCard me={me} busy={busy} call={call} />
               <DiscoverCard request={request} notify={notify} connections={connections}
+                onConnect={(fid) => { setConnectTo(fid); setZone("contact"); }} />
+              <DirectoryCard request={request} notify={notify}
                 onConnect={(fid) => { setConnectTo(fid); setZone("contact"); }} />
             </>
           )}

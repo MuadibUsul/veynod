@@ -925,3 +925,43 @@ async def test_reputation_over_http_and_mcp(fed):
         fed, a["key"], "federation", {"action": "reputation", "args": {"fid": fid}}
     )
     assert via_mcp["fid"] == fid and via_mcp["single_score"] is None, via_mcp
+
+
+async def test_directory_over_http_and_mcp(fed):
+    """P4-2 over HTTP and MCP: listing, ranked search with reasons, privacy."""
+    a, b = await _workspace(fed, "dir-a"), await _workspace(fed, "dir-b")
+    a_fid = (await fed.post("/v1/federation/enable", headers=a["owner"])).json()["identity"][
+        "federation_id"
+    ]
+    b_fid = (await fed.post("/v1/federation/enable", headers=b["owner"])).json()["identity"][
+        "federation_id"
+    ]
+    tag = f"t{uuid.uuid4().hex[:8]}"
+    # Before listing, a stranger cannot read A's record.
+    hidden = await fed.get(f"/v1/federation/reputation/{a_fid}", headers=b["key"])
+    assert hidden.status_code == 404 and hidden.json()["error"]["details"]["federation_code"] == (
+        "FED_E_NOT_LISTED"
+    )
+    body = {"listed": True, "headline": "Translations", "capabilities": [tag]}
+    _refused(
+        await fed.put("/v1/federation/directory/listing", headers=a["key"], json=body),
+        403,
+        "federation_forbidden",
+        "FED_E_APPROVAL_NOT_HUMAN",
+    )
+    listed = await fed.put("/v1/federation/directory/listing", headers=a["owner"], json=body)
+    assert listed.status_code == 200 and listed.json()["listed"] is True, listed.text
+    found = await fed.get("/v1/federation/directory", params={"capability": tag}, headers=b["key"])
+    assert found.status_code == 200, found.text
+    [hit] = found.json()["items"]
+    assert hit["fid"] == a_fid and hit["rank"]["explanation"][0]["factor"] == "relevance"
+    entry = await fed.get(f"/v1/federation/directory/{a_fid}", headers=b["key"])
+    assert entry.status_code == 200 and entry.json()["headline"] == "Translations"
+    assert (
+        await fed.get(f"/v1/federation/reputation/{a_fid}", headers=b["key"])
+    ).status_code == 200
+    assert (await fed.get(f"/v1/federation/directory/{b_fid}", headers=a["key"])).status_code == 404
+    via_mcp = await _mcp(
+        fed, b["key"], "federation", {"action": "directory", "args": {"capability": tag}}
+    )
+    assert [i["fid"] for i in via_mcp["items"]] == [a_fid], via_mcp

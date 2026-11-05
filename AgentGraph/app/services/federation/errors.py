@@ -86,6 +86,8 @@ CODES: dict[str, int] = {
     "FED_E_NOTICE_UNKNOWN": 404,
     # reputation (P4-1)
     "FED_E_PROOF_INVALID": 422,
+    # directory (P4-2)
+    "FED_E_NOT_LISTED": 404,
 }
 
 
