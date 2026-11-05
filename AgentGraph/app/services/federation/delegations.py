@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import secrets
 from collections.abc import Awaitable, Callable
@@ -43,6 +44,7 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.database import async_session_factory
 from app.services.federation import grants, identity
 from app.services.federation.canonical import CanonicalError, canonical_bytes, sha256_hex
@@ -51,6 +53,8 @@ from app.services.federation.errors import FederationError
 from app.services.federation.grants import Actor
 from app.services.federation.ids import b32, parse_federation_id, require_type
 
+_log = logging.getLogger("agentgraph.federation")
+
 OFFER_TTL = timedelta(hours=24)  # P1 placeholder
 ENVELOPE_TTL = timedelta(hours=24)  # queued objects stay deliverable this long
 RETRY_BACKOFF = (30, 120, 600, 3600)  # seconds; the last one repeats
@@ -58,6 +62,9 @@ MAX_DELIVERY_ATTEMPTS = 8
 CANCEL_ACK_TIMEOUT = timedelta(hours=1)  # P1 placeholder
 MAX_REVISIONS = 3  # P1 placeholder
 MAX_RESULT_BYTES = 48 * 1024  # stays inside the 64 KiB envelope limit
+# When a newly queued object is first due for the delivery loop. The send right
+# after the commit normally delivers it first; this is the safety net.
+_FIRST_RETRY = f"NOW() + interval '{RETRY_BACKOFF[0]} seconds'"
 CLASSIFICATIONS = ("public", "internal", "confidential")
 TERM_FIELDS = (
     "objective",
@@ -263,13 +270,26 @@ def _validate_receipt(receipt: Any) -> dict[str, Any]:
 # ── storage helpers ───────────────────────────────────────────────────────
 
 
+def _state(row: dict[str, Any]) -> str:
+    """The state as of now. An offer past its deadline reads EXPIRED.
+
+    Expiry is not stored and takes no version: each side reaches it on its own
+    clock, without an envelope, so a version step for it would make the two
+    copies disagree about what the next version means (an accept sent before
+    the deadline but delivered after it was dropped as a duplicate).
+    """
+    if row["state"] == "OFFERED" and row["offer_expires_at"] <= _now():
+        return "EXPIRED"
+    return row["state"]
+
+
 def _out(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "federation_job_id": row["federation_job_id"],
         "peer_workspace": row["peer_workspace_fid"],
         "connection_id": row["connection_id"],
         "role": row["role"],
-        "state": row["state"],
+        "state": _state(row),
         "version": row["version"],
         "terms": row["terms"],
         "acceptance_hash": row["acceptance_hash"],
@@ -303,7 +323,7 @@ def _cancel_view(row: dict[str, Any]) -> dict[str, Any] | None:
     requested = row.get("cancel_requested_at")
     if requested is None:
         return None
-    open_ = row["state"] not in TERMINAL
+    open_ = _state(row) not in TERMINAL
     return {
         "requested_at": requested.isoformat(),
         "requested_by": row.get("cancel_requested_by"),
@@ -382,10 +402,14 @@ async def _history(
 
 
 async def _save(platform: AsyncSession, row: dict[str, Any]) -> None:
+    # Anything queued gets a retry time in the same transaction, so the delivery
+    # loop finds it even if the send that follows the commit never runs.
     await platform.execute(
         text(
             "UPDATE federation_delegations SET state = :s, version = :v, local_task_key = :k, "
             "result = CAST(:r AS jsonb), revisions = :rev, outbox = CAST(:o AS jsonb), "
+            "next_retry_at = CASE WHEN jsonb_array_length(CAST(:o AS jsonb)) > 0 "
+            f"THEN COALESCE(next_retry_at, {_FIRST_RETRY}) ELSE next_retry_at END, "
             "updated_at = NOW() WHERE workspace_id = CAST(:w AS uuid) AND peer_workspace_fid = :p "
             "AND federation_job_id = :j"
         ),
@@ -401,15 +425,6 @@ async def _save(platform: AsyncSession, row: dict[str, Any]) -> None:
             "j": row["federation_job_id"],
         },
     )
-
-
-async def _expire_if_due(platform: AsyncSession, row: dict[str, Any]) -> dict[str, Any]:
-    if row["state"] == "OFFERED" and row["offer_expires_at"] <= _now():
-        before = row["state"]
-        row = {**row, "state": "EXPIRED", "version": row["version"] + 1}
-        await _save(platform, row)
-        await _history(platform, row, "expire", from_state=before, actor="system", envelope=None)
-    return row
 
 
 async def _local_fid(workspace_id: str) -> str:
@@ -486,6 +501,9 @@ async def sync(workspace_id: str, job_id: str, *, resign: bool = False) -> dict[
             )
             await platform.commit()
     while True:
+        # Read the head of the queue, then let go of the row before sending: the
+        # receiver locks its own copy, and a sender holding its row across the
+        # send deadlocks with the peer sending the other way (ICD_I_BRIDGE §5).
         async with async_session_factory() as platform:
             row = await _row(platform, workspace_id, job_id, lock=True)
             outbox = list(row["outbox"] or [])
@@ -502,14 +520,33 @@ async def sync(workspace_id: str, job_id: str, *, resign: bool = False) -> dict[
                 )
                 await platform.commit()
                 break
-            try:
-                if _envelope_expired(outbox[0]):
-                    raise FederationError("FED_E_EXPIRED", "the queued object has expired")
-                await grants._transport.deliver(outbox[0])
-            except FederationError as exc:
-                last_error = exc.code
+            await platform.commit()
+        head = outbox[0]
+        head_hash = sha256_hex(head)
+        error: str | None = None
+        try:
+            if _envelope_expired(head):
+                raise FederationError("FED_E_EXPIRED", "the queued object has expired")
+            await grants._transport.deliver(head)
+        except FederationError as exc:
+            error = exc.code
+        except Exception:  # noqa: BLE001 - a failed send is retried, not lost
+            _log.exception("delivering %s for %s failed", head.get("type"), job_id)
+            error = "FED_E_UNREACHABLE"
+        async with async_session_factory() as platform:
+            row = await _row(platform, workspace_id, job_id, lock=True)
+            outbox = list(row["outbox"] or [])
+            if not outbox or sha256_hex(outbox[0]) != head_hash:
+                # Another sync moved the queue meanwhile; read it again.
+                await platform.commit()
+                if error is not None:
+                    last_error = error
+                    break
+                continue
+            if error is not None:
+                last_error = error
                 attempts = (row.get("delivery_attempts") or 0) + 1
-                dead = exc.code == "FED_E_EXPIRED" or attempts >= MAX_DELIVERY_ATTEMPTS
+                dead = error == "FED_E_EXPIRED" or attempts >= MAX_DELIVERY_ATTEMPTS
                 wait = RETRY_BACKOFF[min(attempts, len(RETRY_BACKOFF)) - 1]
                 await platform.execute(
                     text(
@@ -522,7 +559,7 @@ async def sync(workspace_id: str, job_id: str, *, resign: bool = False) -> dict[
                     {
                         **where,
                         "n": attempts,
-                        "e": exc.code,
+                        "e": error,
                         "dead": dead,
                         "next": None if dead else _now() + timedelta(seconds=wait),
                     },
@@ -572,7 +609,6 @@ async def delivery_loop() -> None:
     import asyncio
     import logging
 
-    from app.config import get_settings
     from app.services import federation
 
     log = logging.getLogger("agentgraph.federation")
@@ -641,9 +677,10 @@ async def offer(
             text(
                 "INSERT INTO federation_delegations (workspace_id, tenant_id, federation_job_id, "
                 "peer_workspace_fid, connection_id, role, state, version, terms, acceptance_hash, "
-                "local_task_key, outbox, offer_expires_at) VALUES (CAST(:w AS uuid), '', :j, "
-                ":p, :c, "
-                "'requester', 'OFFERED', 1, CAST(:t AS jsonb), :h, :k, CAST(:o AS jsonb), :x)"
+                "local_task_key, outbox, offer_expires_at, next_retry_at) VALUES "
+                "(CAST(:w AS uuid), '', :j, :p, :c, "
+                "'requester', 'OFFERED', 1, CAST(:t AS jsonb), :h, :k, CAST(:o AS jsonb), :x, "
+                f"{_FIRST_RETRY})"
             ),
             {
                 "w": str(workspace_id),
@@ -695,14 +732,12 @@ async def act(
     local_fid = await _local_fid(workspace_id)
     async with async_session_factory() as platform:
         row = await _row(platform, workspace_id, job_id, lock=True)
-        row = await _expire_if_due(platform, row)
         if row["role"] != role:
-            await platform.commit()
             raise FederationError("FED_E_JOB_TRANSITION", f"only the {role} can {action}")
-        if row["state"] not in from_states:
-            await platform.commit()
+        state = _state(row)
+        if state not in from_states:
             raise FederationError(
-                "FED_E_JOB_TRANSITION", f"cannot {action} in {row['state']}", state=row["state"]
+                "FED_E_JOB_TRANSITION", f"cannot {action} in {state}", state=state
             )
         if action == "revise" and row["revisions"] >= MAX_REVISIONS:
             raise FederationError("FED_E_JOB_TRANSITION", "revision limit reached; dispute instead")
@@ -773,15 +808,11 @@ async def request_cancel(
     local_fid = await _local_fid(workspace_id)
     async with async_session_factory() as platform:
         row = await _row(platform, workspace_id, job_id, lock=True)
-        row = await _expire_if_due(platform, row)
         if row["role"] != "requester":
-            await platform.commit()
             raise FederationError("FED_E_JOB_TRANSITION", "only the requester asks to cancel")
-        if row["state"] in TERMINAL:
-            await platform.commit()
-            raise FederationError("FED_E_JOB_TRANSITION", f"already {row['state']}")
+        if _state(row) in TERMINAL:
+            raise FederationError("FED_E_JOB_TRANSITION", f"already {_state(row)}")
         if row.get("cancel_requested_at") is not None:
-            await platform.commit()
             raise FederationError("FED_E_JOB_TRANSITION", "cancellation already requested")
         envelope = await identity.sign_as(
             local_fid,
@@ -798,7 +829,8 @@ async def request_cancel(
             text(
                 "UPDATE federation_delegations SET cancel_requested_at = NOW(), "
                 "cancel_requested_by = :who, cancel_reason = :r, "
-                "outbox = outbox || CAST(:e AS jsonb), updated_at = NOW() "
+                "outbox = outbox || CAST(:e AS jsonb), "
+                f"next_retry_at = COALESCE(next_retry_at, {_FIRST_RETRY}), updated_at = NOW() "
                 "WHERE workspace_id = CAST(:w AS uuid) AND peer_workspace_fid = :p "
                 "AND federation_job_id = :j"
             ),
@@ -830,7 +862,7 @@ async def _on_cancel(workspace_id: str, msg: Verified, job_id: str) -> dict[str,
             direction="in",
             signed_at=grants.signed_at(msg.envelope),
         )
-        if row["state"] in TERMINAL or row.get("cancel_requested_at") is not None:
+        if _state(row) in TERMINAL or row.get("cancel_requested_at") is not None:
             await platform.commit()
             return {"status": "duplicate", "version": row["version"]}
         await platform.execute(
@@ -890,15 +922,13 @@ async def list_delegations(workspace_id: str) -> list[dict[str, Any]]:
             .mappings()
             .all()
         )
-        out = [_out(await _expire_if_due(platform, _loads(r))) for r in rows]
-        await platform.commit()
+        out = [_out(_loads(r)) for r in rows]
     return out
 
 
 async def get(workspace_id: str, job_id: str) -> dict[str, Any]:
     async with async_session_factory() as platform:
-        row = await _expire_if_due(platform, await _row(platform, workspace_id, job_id, lock=True))
-        await platform.commit()
+        row = await _row(platform, workspace_id, job_id)
         history = (
             (
                 await platform.execute(
@@ -980,6 +1010,8 @@ async def _on_offer(workspace_id: str, msg: Verified, job_id: str) -> dict[str, 
         expires = datetime.fromisoformat(msg.payload["offer_expires_at"])
     except (KeyError, TypeError, ValueError) as exc:
         raise FederationError("FED_E_ENVELOPE_INVALID", "offer_expires_at is required") from exc
+    if expires.tzinfo is None:
+        raise FederationError("FED_E_ENVELOPE_INVALID", "offer_expires_at needs a time zone")
     expires = min(expires, _now() + OFFER_TTL)
     async with async_session_factory() as platform:
         inserted = await platform.scalar(
@@ -1002,8 +1034,13 @@ async def _on_offer(workspace_id: str, msg: Verified, job_id: str) -> dict[str, 
         )
         if inserted is None:
             # F-012: the same delegation again is acknowledged, never duplicated.
-            row = await _row(platform, workspace_id, job_id, peer=msg.issuer)
+            row = await _row(platform, workspace_id, job_id)
             await platform.commit()
+            if row["peer_workspace_fid"] != msg.issuer:
+                # A job id names one delegation in this workspace, whoever sent it.
+                raise FederationError(
+                    "FED_E_ENVELOPE_INVALID", "federation_job_id is already in use"
+                )
             return {"status": "duplicate", "version": row["version"]}
         row = await _row(platform, workspace_id, job_id, peer=msg.issuer)
         await _history(
@@ -1043,6 +1080,14 @@ async def _on_transition(
             )
         if row["state"] not in from_states:
             raise FederationError("FED_E_JOB_TRANSITION", f"cannot {action} in {row['state']}")
+        if action == "accept":
+            # Expiry is judged by when the provider signed, not by when the
+            # object arrived: an accept sent in time but delivered late counts.
+            skew = timedelta(seconds=get_settings().federation_clock_skew_seconds)
+            if grants.signed_at(msg.envelope) > row["offer_expires_at"] + skew:
+                raise FederationError(
+                    "FED_E_JOB_TRANSITION", "the offer had expired when it was accepted"
+                )
         await grants.authorize(
             workspace_id,
             msg.issuer,

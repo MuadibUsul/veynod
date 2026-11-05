@@ -361,3 +361,81 @@ async def test_cancelling_a_delegation_cancels_the_provider_task(fed):
     mine = (await fed.get(f"/v1/federation/delegations/{job}", headers=a["owner"])).json()
     assert mine["delegation"]["state"] == "CANCELLED"
     assert mine["delegation"]["cancel"]["work_may_continue"] is False
+
+
+async def test_an_accept_that_failed_after_creating_the_task_can_be_retried(fed):
+    """Accepting creates the provider's task (committed by the task service)
+    before the delegation commits. If the delegation's commit then fails, the
+    task is left behind; a retry used to hit 409 task_exists for good."""
+    from datetime import datetime, timedelta, timezone
+
+    import asyncpg
+
+    a, b = await _workspace(fed, "retry-a"), await _workspace(fed, "retry-b")
+    await fed.post("/v1/federation/enable", headers=a["owner"])
+    b_fid = (await fed.post("/v1/federation/enable", headers=b["owner"])).json()["identity"][
+        "federation_id"
+    ]
+    cid = (
+        await fed.post(
+            "/v1/federation/connections",
+            headers=a["owner"],
+            json={
+                "peer_workspace": b_fid,
+                "outbound_scopes": ["delegate"],
+                "inbound_scopes": [],
+                "reason": "retry drill",
+            },
+        )
+    ).json()["connection"]["connection_id"]
+    await fed.post(f"/v1/federation/connections/{cid}/approve", headers=b["owner"])
+    terms = {
+        "objective": "Check the release checklist.",
+        "acceptance_criteria": ["Every item is ticked or explained"],
+        "input_summary": "The public checklist.",
+        "data_classification": "public",
+        "allowed_use": "Only for this task.",
+        "deadline": (datetime.now(timezone.utc) + timedelta(days=1)).isoformat(),
+        "budget_cap": None,
+        "result_contract": "A short note.",
+        "cancellation_policy": "drain",
+        "external_side_effects": False,
+    }
+    job = (
+        await fed.post(
+            "/v1/federation/delegations",
+            headers=a["owner"],
+            json={"peer_workspace": b_fid, "terms": terms},
+        )
+    ).json()["delegation"]["federation_job_id"]
+    assert re.fullmatch(r"fjob_[a-z2-7]{26}", job)
+
+    db = await asyncpg.connect(
+        os.environ["TEST_DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://", 1)
+    )
+    try:
+        # The delegation's own commit fails once, after the task was created.
+        await db.execute(
+            "CREATE FUNCTION zz_fail_accept() RETURNS trigger AS $$ BEGIN "
+            "RAISE EXCEPTION 'injected failure'; END; $$ LANGUAGE plpgsql"
+        )
+        await db.execute(
+            "CREATE TRIGGER zz_fail_accept BEFORE UPDATE ON federation_delegations "
+            "FOR EACH ROW WHEN (NEW.state = 'ACCEPTED' AND NEW.role = 'provider' "
+            f"AND NEW.federation_job_id = '{job}') EXECUTE FUNCTION zz_fail_accept()"
+        )
+        failed = await fed.post(f"/v1/federation/delegations/{job}/accept", headers=b["owner"])
+        assert failed.status_code == 503, failed.text
+    finally:
+        await db.execute("DROP TRIGGER IF EXISTS zz_fail_accept ON federation_delegations")
+        await db.execute("DROP FUNCTION IF EXISTS zz_fail_accept()")
+        await db.close()
+    task_key = f"fed-{job[5:]}"
+    assert (await fed.get(f"/v1/tasks/{task_key}", headers=b["owner"])).status_code == 200
+
+    retried = await fed.post(f"/v1/federation/delegations/{job}/accept", headers=b["owner"])
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["delegation"]["state"] == "ACCEPTED"
+    assert retried.json()["delegation"]["local_task_key"] == task_key
+    mine = (await fed.get(f"/v1/federation/delegations/{job}", headers=a["owner"])).json()
+    assert mine["delegation"]["state"] == "ACCEPTED"

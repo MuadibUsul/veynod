@@ -59,6 +59,10 @@ COUNTED_AGAINST_HOST = {"not_claimed", "reported_failed"}
 # One scheduling pass at a time, whatever the number of server processes.
 _LOCK_SQL = "SELECT pg_try_advisory_lock(hashtext('veynod_scheduler')::bigint)"
 _UNLOCK_SQL = "SELECT pg_advisory_unlock(hashtext('veynod_scheduler')::bigint)"
+# One pass per workspace at a time, across processes; released at commit.
+_WORKSPACE_LOCK_SQL = (
+    "SELECT pg_advisory_xact_lock(hashtext('veynod_scheduler:' || CAST(:ws AS text))::bigint)"
+)
 # Reasons a task has no host, most specific last, in words for the owner.
 UNPLACED = {
     "no_host_online": "No runner is online.",
@@ -537,7 +541,14 @@ async def _undeliverable(session: AsyncSession, placement: dict[str, Any], reaso
 
 
 async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
-    """One scheduling pass over a workspace. Commits."""
+    """One scheduling pass over a workspace. Commits.
+
+    Passes on one workspace take turns: a pass by hand (``schedule_now``) does
+    not hold the background lock, and two passes acting on the same open
+    placements would end them from stale reads. The lock lasts until the
+    pass commits, before delivery.
+    """
+    await session.execute(text(_WORKSPACE_LOCK_SQL), {"ws": str(workspace_id)})
     hosts = await _hosts(session, workspace_id)
     if not any(host["status"] != "revoked" for host in hosts):
         return {"mode": None, "hosts": 0, "skipped": "no runner hosts"}
