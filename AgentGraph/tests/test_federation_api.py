@@ -854,3 +854,49 @@ async def test_skill_updates_and_rollback_over_http(fed):
     ]
     gone = await fed.delete(f"/v1/federation/registry/installs/{name}", headers=b["owner"])
     assert gone.status_code == 200, gone.text
+
+
+async def test_skill_withdrawal_over_http(fed):
+    """P3-4 over HTTP: operator revoke, notice, acknowledgement, digest lookup."""
+    a, b = await _workspace(fed, "wd-a"), await _workspace(fed, "wd-b")
+    await fed.post("/v1/federation/enable", headers=a["owner"])
+    await fed.post("/v1/federation/enable", headers=b["owner"])
+    name = f"http-wd-{uuid.uuid4().hex[:6]}"
+    published = await fed.post(
+        "/v1/federation/registry/packages",
+        headers=a["owner"],
+        json={
+            "manifest": {"name": name, "version": "1.0.0", "entry": "SKILL.md"},
+            "files": [{"path": "SKILL.md", "content": "# Steps"}],
+        },
+    )
+    digest = published.json()["digest"]
+    await fed.post(
+        "/v1/federation/registry/installs",
+        headers=b["owner"],
+        json={"name": name, "version": "1.0.0"},
+    )
+    path = f"/v1/admin/federation/registry/packages/{name}/versions/1.0.0/revoke"
+    body = {"reason": "Leaks inputs.", "operator": "ops-anna"}
+    assert (await fed.post(path, headers=b["owner"], json=body)).status_code in (401, 403)
+    revoked = await fed.post(path, headers=ADMIN, json=body)
+    assert revoked.status_code == 200, revoked.text
+    notices = await fed.get("/v1/federation/registry/notices?open_only=true", headers=b["key"])
+    [notice] = notices.json()["items"]
+    assert notice["source"] == "platform" and notice["digest"] == digest
+    _refused(
+        await fed.post(
+            f"/v1/federation/registry/notices/{notice['id']}/acknowledge", headers=b["key"]
+        ),
+        403,
+        "federation_forbidden",
+        "FED_E_APPROVAL_NOT_HUMAN",
+    )
+    seen = await fed.post(
+        f"/v1/federation/registry/notices/{notice['id']}/acknowledge", headers=b["owner"]
+    )
+    assert seen.status_code == 200, seen.text
+    record = await fed.get(f"/v1/federation/registry/digests/{digest}", headers=b["key"])
+    assert record.json()["state"] == "yanked" and record.json()["yank_source"] == "platform"
+    used = await fed.get(f"/v1/federation/registry/installs/{name}/content", headers=b["key"])
+    assert used.json()["warning"]["withdrawn"] is True

@@ -1869,6 +1869,16 @@ const ZH: Record<string, string> = {
   "follow": "自动跟进",
   "uninstall": "卸载",
   "policy": "改更新方式",
+  // Federation P3-4: withdrawal notices
+  "Withdrawn skills": "被撤回的 Skill",
+  "{name} {version}, which your skills {list} depend on, was withdrawn": "你发布的 {list} 依赖的 {name} {version} 已被撤回",
+  "The platform withdrew your skill {name} {version}": "平台撤回了你发布的 {name} {version}",
+  "{name} {version}, installed here, was withdrawn": "本工作区安装的 {name} {version} 已被撤回",
+  "by the platform": "由平台撤回",
+  "by its publisher": "由发布方撤回",
+  "you can update to {version}": "可以更新到 {version}",
+  "or restore {version}": "或还原到 {version}",
+  "Marked as seen": "已标记为已读",
 };
 
 const EN: Record<string, string> = {};

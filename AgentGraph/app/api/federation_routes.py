@@ -32,6 +32,7 @@ from app.services.federation import (
     registry,
     remote,
     skill_updates,
+    withdrawals,
 )
 from app.services.federation.errors import FederationError
 from app.services.federation.grants import Actor
@@ -1294,4 +1295,64 @@ async def uninstall_skill(
     _enabled()
     return await _call(
         skill_updates.uninstall(_workspace_id(principal), name, actor=_actor(principal))
+    )
+
+
+# ── withdrawal and notices (P3-4, docs/federation/ICD_P3_REGISTRY.md §11) ─────
+
+
+class SkillRevoke(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=5, max_length=1000)
+    operator: str = Field(min_length=2, max_length=120, description="The person acting.")
+
+
+@router.get(
+    "/registry/digests/{digest}",
+    summary="What a skill digest is, even after it was withdrawn",
+)
+async def lookup_skill_digest(
+    digest: str = Path(pattern=r"^sha256:[0-9a-f]{64}$"),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(withdrawals.lookup(digest))
+
+
+@router.get(
+    "/registry/notices",
+    summary="Notices about withdrawn skills this workspace uses or depends on",
+)
+async def list_skill_notices(
+    open_only: bool = False, principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return {
+        "items": await _call(withdrawals.notices(_workspace_id(principal), open_only=open_only))
+    }
+
+
+@router.post(
+    "/registry/notices/{notice_id}/acknowledge",
+    summary="Mark a withdrawal notice as seen (a person)",
+)
+async def acknowledge_skill_notice(
+    notice_id: int = Path(ge=1), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        withdrawals.acknowledge(_workspace_id(principal), notice_id, actor=_actor(principal))
+    )
+
+
+@admin_router.post(
+    "/registry/packages/{name}/versions/{version}/revoke",
+    summary="Operator: withdraw a skill version for everyone and notify those affected",
+)
+async def revoke_skill_version(
+    body: SkillRevoke, name: str = Path(pattern=_PKG), version: str = Path(pattern=_SEMVER)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        withdrawals.revoke(name, version, reason=body.reason, operator=body.operator)
     )

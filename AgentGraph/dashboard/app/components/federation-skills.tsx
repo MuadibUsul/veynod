@@ -84,6 +84,24 @@ type Update = {
   };
 };
 
+type Notice = {
+  id: number;
+  kind: "withdrawn" | "dependency_withdrawn";
+  source: "publisher" | "platform";
+  name: string;
+  version: string;
+  reason: string;
+  affected: {
+    as_dependency_of?: string | null;
+    update_to?: string | null;
+    roll_back_to?: string | null;
+    your_skills?: { name: string; version: string }[];
+    publisher?: boolean;
+  };
+  created_at: string;
+  acknowledged_at: string | null;
+};
+
 type HistoryLine = {
   action: string;
   from_version: string | null;
@@ -144,6 +162,7 @@ export function SkillsCard({ request, notify }: {
   const [open, setOpen] = useState<Entry | null>(null);
   const [installed, setInstalled] = useState<Installed[]>([]);
   const [updates, setUpdates] = useState<Update[]>([]);
+  const [notices, setNotices] = useState<Notice[]>([]);
   const [busy, setBusy] = useState(false);
 
   const search = useCallback(async () => {
@@ -153,11 +172,13 @@ export function SkillsCard({ request, notify }: {
     if (minRating) params.set("min_rating", minRating);
     if (maxResponse) params.set("max_response_seconds", String(maxResponse));
     try {
-      const [found, mine, pending] = await Promise.all([
+      const [found, mine, pending, told] = await Promise.all([
         request<{ items: Hit[]; total: number }>(`/v1/federation/registry/search?${params}`),
         request<{ items: Installed[] }>("/v1/federation/registry/installs"),
         request<{ items: Update[] }>("/v1/federation/registry/updates"),
+        request<{ items: Notice[] }>("/v1/federation/registry/notices?open_only=true"),
       ]);
+      setNotices(told.items ?? []);
       setHits(found.items ?? []);
       setTotal(found.total ?? 0);
       setInstalled(mine.items ?? []);
@@ -197,6 +218,41 @@ export function SkillsCard({ request, notify }: {
 
   return (
     <section className="lin-list" aria-label={t("Skills")}>
+      {notices.length > 0 && (
+        <>
+          <div className="lin-group"><i className="lamp red" />{t("Withdrawn skills")}</div>
+          {notices.map((notice) => (
+            <div key={notice.id} className="lin-row">
+              <span className="lin-title">
+                {notice.kind === "dependency_withdrawn"
+                  ? t("{name} {version}, which your skills {list} depend on, was withdrawn",
+                    { name: notice.name, version: notice.version,
+                      list: (notice.affected.your_skills ?? []).map((s) => s.name).join(", ") })
+                  : notice.affected.publisher
+                    ? t("The platform withdrew your skill {name} {version}",
+                      { name: notice.name, version: notice.version })
+                    : t("{name} {version}, installed here, was withdrawn",
+                      { name: notice.name, version: notice.version })}
+              </span>
+              <span className="flow-aside">
+                {notice.source === "platform" ? t("by the platform") : t("by its publisher")}
+                {" · "}{notice.reason}
+                {notice.affected.as_dependency_of
+                  && ` · ${t("needed by {name}", { name: notice.affected.as_dependency_of })}`}
+                {notice.affected.update_to
+                  && ` · ${t("you can update to {version}", { version: notice.affected.update_to })}`}
+                {notice.affected.roll_back_to
+                  && ` · ${t("or restore {version}", { version: notice.affected.roll_back_to })}`}
+              </span>
+              <button type="button" className="button ghost small" disabled={busy}
+                onClick={() => void act(`/v1/federation/registry/notices/${notice.id}/acknowledge`,
+                  {}, "Marked as seen")}>
+                {t("Seen")}
+              </button>
+            </div>
+          ))}
+        </>
+      )}
       {installed.length > 0 && (
         <InstalledList installed={installed} updates={updates} busy={busy} act={act}
           request={request} notify={notify} />

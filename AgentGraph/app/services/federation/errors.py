@@ -82,6 +82,8 @@ CODES: dict[str, int] = {
     # sandbox and updates (P3-3)
     "FED_E_SANDBOX_FAILED": 422,
     "FED_E_NOT_INSTALLED": 404,
+    # withdrawals (P3-4)
+    "FED_E_NOTICE_UNKNOWN": 404,
 }
 
 

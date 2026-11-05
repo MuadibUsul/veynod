@@ -5179,6 +5179,26 @@
         {
          "description": "",
          "in": "path",
+         "name": "digest",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/digests/{digest}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "What a skill digest is, even after it was withdrawn"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
          "name": "name",
          "required": true,
          "type": "string"
@@ -5391,6 +5411,46 @@
         "422"
        ],
        "summary": "Move a skill to a newer version, accepting its permissions afresh (a person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "open_only",
+         "required": false,
+         "type": "boolean"
+        }
+       ],
+       "path": "/v1/federation/registry/notices",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Notices about withdrawn skills this workspace uses or depends on"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "notice_id",
+         "required": true,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/federation/registry/notices/{notice_id}/acknowledge",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Mark a withdrawal notice as seen (a person)"
       },
       {
        "body": [

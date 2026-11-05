@@ -211,6 +211,8 @@ EPHEMERAL = frozenset({
     "registry_downloads", "registry_ratings",
     # Sandbox reports and pin history (v3.92).
     "registry_sandbox_reports", "registry_install_history",
+    # Withdrawal notices (v3.93).
+    "registry_notices",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")

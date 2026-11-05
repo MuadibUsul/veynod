@@ -1,4 +1,4 @@
-# 联邦 P3：Skill 仓库 ICD（P3-1 发布与版本，P3-2 搜索与发现，P3-3 沙箱检测与安装）
+# 联邦 P3：Skill 仓库 ICD（P3-1 发布与版本，P3-2 搜索与发现，P3-3 沙箱检测与安装，P3-4 撤回与通知）
 
 > 依据：愿景 v0.3 §11、§21 F-023、F-024；任务 `fedv2-p3-1-publish-version`。P3-2（搜索与发现）、P3-3（沙箱检测与安装）、P3-4（撤回与通知）在此基础上补充。
 > 收费不在本单：发布与安装都是免费的（愿景 §11.1：收费方式 TBD）。
@@ -173,3 +173,36 @@ MCP：`federation` 工具新增 `skills`（搜索，参数同上）和 `skill`�
 `GET /registry/installs` 每项现在带 `declared_permissions`、`accepted_permissions`、`update_policy`。
 
 新增错误码：`FED_E_SANDBOX_FAILED`（422，带 `findings`）、`FED_E_NOT_INSTALLED`（404）。
+
+## 11. 撤回与通知（P3-4，迁移 3.93）
+
+### 11.1 两种撤回
+
+| 谁 | 怎么做 | `yank_source` |
+|---|---|---|
+| 发布方的人 | `POST /registry/packages/{name}/versions/{v}/yank` | `publisher` |
+| 平台运营人员（如发现恶意） | `POST /v1/admin/federation/registry/packages/{name}/versions/{v}/revoke`，`{reason, operator}` | `platform` |
+
+发布方已撤回的版本，平台仍可再撤回一次（来源改为 `platform`，另发一轮通知）。两种撤回都：不能再新装、不能再被新版本依赖；记录与 digest 永远保留（数据库不允许删除）。
+
+### 11.2 谁会收到通知
+
+| 受影响方 | `kind` | `affected` |
+|---|---|---|
+| 锁定了这个版本的工作区（直接安装或作为依赖） | `withdrawn` | `pinned`、`as_dependency_of`、`update_to`（最新可装版本）、`roll_back_to`（本工作区之前锁定过、仍可装的版本） |
+| 自己发布的 Skill 依赖了这个版本的发布方 | `dependency_withdrawn` | `your_skills`、`update_to` |
+| 被平台撤回时的发布方本身 | `withdrawn` | `publisher: true` |
+
+每条通知同时写一条工作区事件 `timeline.skill_withdrawn`（agent 和控制台不用轮询就能知道）。同一工作区、同一 digest、同一类型、同一来源只通知一次。
+
+已安装的不会被自动删除：工作继续可用，`GET /registry/installs/{name}/content` 会附带 `warning`（已撤回、谁撤回、原因、建议找人更新或还原）。要不要更新或还原，由人决定（§10）。
+
+### 11.3 接口
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/v1/federation/registry/notices?open_only=` | 本工作区的撤回通知 |
+| `POST` | `/v1/federation/registry/notices/{id}/acknowledge` | 标记已读（人），通知仍保留 |
+| `GET` | `/v1/federation/registry/digests/{digest}` | 按 digest 查这是什么、状态、谁撤回、原因（F-023 旧版 digest 记录） |
+
+新增错误码：`FED_E_NOTICE_UNKNOWN`（404）。表：`registry_notices`（按工作区行级安全）；`registry_versions.yank_source`。
