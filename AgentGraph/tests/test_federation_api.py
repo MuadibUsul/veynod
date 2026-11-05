@@ -653,3 +653,42 @@ async def test_an_accept_that_failed_after_creating_the_task_can_be_retried(fed)
     assert retried.json()["delegation"]["local_task_key"] == task_key
     mine = (await fed.get(f"/v1/federation/delegations/{job}", headers=a["owner"])).json()
     assert mine["delegation"]["state"] == "ACCEPTED"
+
+
+async def test_reports_over_http_and_cases_are_for_operators_only(fed):
+    """F-10 over HTTP: a person files a report; only the deployment operator
+    (the admin token) sees and moves cases."""
+    a, b = await _workspace(fed, "gov-a"), await _workspace(fed, "gov-b")
+    await fed.post("/v1/federation/enable", headers=a["owner"])
+    b_fid = (await fed.post("/v1/federation/enable", headers=b["owner"])).json()["identity"][
+        "federation_id"
+    ]
+    body = {"accused": b_fid, "category": "spam", "statement": "Unsolicited advertising."}
+    _refused(
+        await fed.post("/v1/federation/reports", headers=a["key"], json=body),
+        403,
+        "federation_forbidden",
+        "FED_E_APPROVAL_NOT_HUMAN",
+    )
+    filed = await fed.post("/v1/federation/reports", headers=a["owner"], json=body)
+    assert filed.status_code == 201, filed.text
+    rid = filed.json()["report_id"]
+    assert filed.json()["case_state"] == "SUBMITTED"
+    assert (await fed.get(f"/v1/federation/reports/{rid}", headers=b["owner"])).status_code == 404
+    # A workspace owner is not an operator.
+    assert (await fed.get("/v1/admin/federation/cases", headers=a["owner"])).status_code in (
+        401,
+        403,
+    )
+    cases = await fed.get("/v1/admin/federation/cases?state=SUBMITTED", headers=ADMIN)
+    assert cases.status_code == 200, cases.text
+    assert rid in [c["report_id"] for c in cases.json()["items"]]
+    moved = await fed.post(
+        f"/v1/admin/federation/cases/{rid}/move",
+        headers=ADMIN,
+        json={"to_state": "TRIAGED", "operator": "Ana"},
+    )
+    assert moved.status_code == 200, moved.text
+    assert moved.json()["case_state"] == "TRIAGED"
+    status = await fed.get(f"/v1/admin/federation/identities/{b_fid}/status", headers=ADMIN)
+    assert status.json()["active"] == []

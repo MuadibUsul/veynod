@@ -756,6 +756,15 @@ async def _on_message(workspace_id: str, local_fid: str, msg: Verified) -> dict[
             "federation security: inbound message carried a credential",
             extra={"peer": msg.issuer, "message_id": msg.envelope["object_id"]},
         )
+        from app.services.federation import governance
+
+        await governance.record_security_event(
+            workspace_id,
+            "credential_in_message",
+            peer=msg.issuer,
+            code="FED_E_CREDENTIAL_IN_PAYLOAD",
+            detail={"message_id": msg.envelope["object_id"]},
+        )
         raise
     async with async_session_factory() as platform:
         await _ensure_thread(

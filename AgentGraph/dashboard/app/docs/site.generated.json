@@ -4893,6 +4893,44 @@
        "body": [],
        "description": "",
        "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/governance/notices",
+       "responses": [
+        "200"
+       ],
+       "summary": "Decisions this deployment made about this workspace or its agents"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "statement",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "report_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/governance/notices/{report_id}/appeal",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Appeal a decision (an owner)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
        "parameters": [
         {
          "description": "",
@@ -5094,6 +5132,100 @@
        "body": [],
        "description": "",
        "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/reports",
+       "responses": [
+        "200"
+       ],
+       "summary": "Reports this workspace filed"
+      },
+      {
+       "body": [
+        {
+         "description": "The workspace or agent reported.",
+         "name": "accused",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "category",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "statement",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "evidence",
+         "required": false,
+         "type": "EvidenceRef[]"
+        },
+        {
+         "description": "Also block them locally (this workspace only).",
+         "name": "block",
+         "required": false,
+         "type": "boolean"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/reports",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Report a workspace or agent (opens a case only)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "report_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/reports/{report_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "One report, its case history and any sanction"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "report_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/reports/{report_id}/withdraw",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Withdraw a report before action"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
        "parameters": [
         {
          "description": "",
@@ -5123,6 +5255,17 @@
         "422"
        ],
        "summary": "Resolve a handle (ambiguity is reported, never guessed)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/security-events",
+       "responses": [
+        "200"
+       ],
+       "summary": "What other workspaces tried that was refused"
       },
       {
        "body": [],

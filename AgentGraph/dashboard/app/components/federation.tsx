@@ -1226,6 +1226,142 @@ function SafetyCard({ connections, delegations, request, call, busy }: {
           </div>
         ))}
       </section>
+      <GovernanceCard connections={connections} request={request} call={call} busy={busy} />
+    </>
+  );
+}
+
+type Report = {
+  report_id: string; accused: string; category: string; case_state: string;
+  decision: string | null; created_at: string; also_blocked: boolean;
+};
+type Notice = {
+  report_id: string; category: string; case_state: string; decision: string | null;
+  appeal_until: string | null; appealed: boolean;
+};
+type SecurityEvent = { event_id: number; kind: string; peer: string | null; code: string | null;
+  at: string };
+
+const CATEGORIES = ["spam", "abuse", "fraud", "impersonation", "data_leak", "prompt_injection",
+  "other"];
+
+function GovernanceCard({ connections, request, call, busy }: {
+  connections: Connection[]; request: ApiRequest; call: Call; busy: boolean;
+}) {
+  const { t } = useI18n();
+  const [reports, setReports] = useState<Report[]>([]);
+  const [notices, setNotices] = useState<Notice[]>([]);
+  const [events, setEvents] = useState<SecurityEvent[]>([]);
+  const [target, setTarget] = useState("");
+  const [category, setCategory] = useState("spam");
+  const [statement, setStatement] = useState("");
+  const [block, setBlock] = useState(false);
+  const load = useCallback(async () => {
+    const [r, n, e] = await Promise.all([
+      request<{ items: Report[] }>("/v1/federation/reports").catch(() => ({ items: [] })),
+      request<{ items: Notice[] }>("/v1/federation/governance/notices")
+        .catch(() => ({ items: [] })),
+      request<{ items: SecurityEvent[] }>("/v1/federation/security-events")
+        .catch(() => ({ items: [] })),
+    ]);
+    setReports(r.items ?? []);
+    setNotices(n.items ?? []);
+    setEvents((e.items ?? []).slice(0, 20));
+  }, [request]);
+  useEffect(() => { void load(); }, [load]);
+
+  return (
+    <>
+      <section className="lin-list" aria-label={t("Reports")}>
+        <div className="lin-group"><i className="lamp" />{t("Reports")}
+          <span className="lin-count">{reports.length}</span></div>
+        <form className="deploy-form" onSubmit={async (event) => {
+          event.preventDefault();
+          if (!target || statement.trim().length < 10) return;
+          const done = await call("/v1/federation/reports", {
+            accused: target, category, statement: statement.trim(), block,
+          }, "Report filed. An operator reviews it; nothing happens to them automatically.");
+          if (done) { setStatement(""); setBlock(false); await load(); }
+        }}>
+          <label>{t("Workspace")}
+            <select value={target} onChange={(event) => setTarget(event.target.value)} required>
+              <option value="">{t("Choose…")}</option>
+              {connections.map((item) => (
+                <option key={item.connection_id} value={item.peer_workspace}>
+                  {shortId(item.peer_workspace)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>{t("What happened")}
+            <select value={category} onChange={(event) => setCategory(event.target.value)}>
+              {CATEGORIES.map((c) => <option key={c} value={c}>{t(c)}</option>)}
+            </select>
+          </label>
+          <label className="federation-wide">{t("Describe it (the other side will not see this)")}
+            <textarea value={statement} onChange={(event) => setStatement(event.target.value)}
+              minLength={10} maxLength={4000} rows={3} required />
+          </label>
+          <label className="check">
+            <input type="checkbox" checked={block} onChange={(event) =>
+              setBlock(event.target.checked)} />
+            {t("Also block them for this workspace")}
+          </label>
+          <span className="lin-actions">
+            <button type="submit" className="button small" disabled={busy}>{t("File report")}</button>
+            <span className="flow-aside">
+              {t("A report opens a case for this server's operators. It never punishes anyone by itself.")}
+            </span>
+          </span>
+        </form>
+        {reports.map((item) => (
+          <div key={item.report_id} className="lin-row">
+            <span className="flow-aside">{t(item.case_state)}</span>
+            <span className="lin-title"><Peer id={item.accused} />: {t(item.category)}</span>
+            <span className="flow-aside">{item.decision ?? ""}</span>
+          </div>
+        ))}
+      </section>
+      <section className="lin-list" aria-label={t("Decisions about us")}>
+        <div className="lin-group"><i className={`lamp ${notices.length ? "amber" : ""}`} />
+          {t("Decisions about us")}<span className="lin-count">{notices.length}</span></div>
+        {notices.length === 0 && (
+          <div className="lin-row quiet"><span className="lin-title">
+            {t("None. Only this server's operators can decide; a message claiming a platform verdict is ignored.")}
+          </span></div>
+        )}
+        {notices.map((item) => (
+          <div key={item.report_id} className="lin-row">
+            <span className="flow-aside">{t(item.case_state)}</span>
+            <span className="lin-title">{t(item.category)}: {item.decision}</span>
+            <span className="lin-actions">
+              {item.case_state === "APPEAL_WINDOW" && !item.appealed && (
+                <button type="button" className="button ghost small" disabled={busy} onClick={() => {
+                  const text = window.prompt(t("Your appeal (an owner)"));
+                  if (text && text.trim().length >= 10) {
+                    void call(`/v1/federation/governance/notices/${item.report_id}/appeal`,
+                      { statement: text.trim() }, "Appeal filed.").then(() => load());
+                  }
+                }}>{t("Appeal")}</button>
+              )}
+            </span>
+          </div>
+        ))}
+      </section>
+      <section className="lin-list" aria-label={t("Refused for safety")}>
+        <div className="lin-group"><i className={`lamp ${events.length ? "red" : "green"}`} />
+          {t("Refused for safety")}<span className="lin-count">{events.length}</span></div>
+        {events.length === 0 && (
+          <div className="lin-row quiet"><span className="lin-title">{t("Nothing refused yet.")}</span></div>
+        )}
+        {events.map((item) => (
+          <div key={item.event_id} className="lin-row">
+            <span className="flow-aside">{new Date(item.at).toLocaleString()}</span>
+            <span className="lin-title">{t(item.kind)}</span>
+            <span className="flow-aside">{item.peer ? <Peer id={item.peer} /> : null} {item.code}</span>
+          </div>
+        ))}
+      </section>
     </>
   );
 }

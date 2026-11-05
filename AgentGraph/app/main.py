@@ -41,6 +41,7 @@ from app.api.deploy_gate_routes import public_router as deploy_gate_public_route
 from app.api.deploy_gate_routes import runner_router as deploy_gate_runner_router
 from app.api.deploy_routes import router as deploy_router
 from app.api.event_admin_routes import router as event_admin_router
+from app.api.federation_routes import admin_router as federation_admin_router
 from app.api.federation_routes import router as federation_router
 from app.api.human_routes import router as human_router
 from app.api.inbox_stream import router as inbox_stream_router
@@ -387,6 +388,7 @@ app.include_router(agent_run_router)
 app.include_router(project_router)
 app.include_router(deploy_router)
 app.include_router(federation_router)
+app.include_router(federation_admin_router)
 app.include_router(auth_router)
 app.include_router(human_router)
 app.include_router(org_router)

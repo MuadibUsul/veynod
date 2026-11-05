@@ -16,16 +16,29 @@ from fastapi import APIRouter, Depends, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import Principal, capability_role, get_principal
+from app.auth import Principal, capability_role, get_principal, require_admin
 from app.database import get_db
 from app.errors import ApiError, NotFound
 from app.schemas import AcceptanceItem, TaskCreateRequest
 from app.services import federation, tasks
-from app.services.federation import delegations, grants, identity, messaging, metering
+from app.services.federation import (
+    delegations,
+    governance,
+    grants,
+    identity,
+    messaging,
+    metering,
+)
 from app.services.federation.errors import FederationError
 from app.services.federation.grants import Actor
 
 router = APIRouter(prefix="/v1/federation", tags=["Federation"])
+# Deployment operators (the admin token): case handling and sanctions.
+admin_router = APIRouter(
+    prefix="/v1/admin/federation",
+    tags=["Federation"],
+    dependencies=[Depends(require_admin)],
+)
 
 T = TypeVar("T")
 _FID = r"^fed:(subject|workspace|agent):[a-z2-7]{26}$"
@@ -692,3 +705,214 @@ async def federation_delegation_usage(
             price_snapshot_id=body.price_snapshot_id,
         )
     )
+
+
+# ── governance (F-10, docs/federation/ICD_I_GOVERNANCE.md) ────────────────
+
+_REPORT = r"^frp_[a-z2-7]{26}$"
+_SANCTION = r"^fsn_[a-z2-7]{26}$"
+
+
+class EvidenceRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["message", "delegation"]
+    id: str = Field(min_length=5, max_length=64)
+
+
+class ReportFiling(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    accused: str = Field(pattern=_FID, description="The workspace or agent reported.")
+    category: Literal[
+        "spam", "abuse", "fraud", "impersonation", "data_leak", "prompt_injection", "other"
+    ]
+    statement: str = Field(min_length=10, max_length=4000)
+    evidence: list[EvidenceRef] = Field(default_factory=list, max_length=50)
+    block: bool = Field(default=False, description="Also block them locally (this workspace only).")
+
+
+class Statement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    statement: str = Field(min_length=10, max_length=4000)
+
+
+class CaseMove(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    to_state: Literal[
+        "TRIAGED",
+        "INVESTIGATING",
+        "INSUFFICIENT_EVIDENCE",
+        "DISMISSED",
+        "ACTION_PROPOSED",
+        "DECIDED",
+        "APPEAL_WINDOW",
+        "CLOSED",
+    ]
+    operator: str = Field(min_length=2, max_length=120, description="The person acting.")
+    note: str | None = Field(default=None, max_length=4000)
+    decision: str | None = Field(default=None, max_length=2000)
+
+
+class SanctionProposal(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    report_id: str = Field(pattern=_REPORT)
+    kind: Literal["temporary_freeze", "permanent_block"]
+    reason: str = Field(min_length=5, max_length=2000)
+    operator: str = Field(min_length=2, max_length=120)
+    days: int | None = Field(default=None, ge=1, le=governance.MAX_FREEZE_DAYS)
+
+
+class OperatorAct(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    operator: str = Field(min_length=2, max_length=120)
+    reason: str | None = Field(default=None, max_length=2000)
+
+
+@router.post("/reports", status_code=201, summary="Report a workspace or agent (opens a case only)")
+async def file_federation_report(
+    body: ReportFiling, principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        governance.file_report(
+            _workspace_id(principal),
+            accused=body.accused,
+            category=body.category,
+            statement=body.statement,
+            evidence=[e.model_dump() for e in body.evidence],
+            block=body.block,
+            actor=_actor(principal),
+        )
+    )
+
+
+@router.get("/reports", summary="Reports this workspace filed")
+async def list_federation_reports(principal: Principal = Depends(get_principal)) -> dict:
+    _enabled()
+    return {"items": await _call(governance.list_reports(_workspace_id(principal)))}
+
+
+@router.get("/reports/{report_id}", summary="One report, its case history and any sanction")
+async def get_federation_report(
+    report_id: str = Path(pattern=_REPORT), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(governance.get_report(_workspace_id(principal), report_id))
+
+
+@router.post("/reports/{report_id}/withdraw", summary="Withdraw a report before action")
+async def withdraw_federation_report(
+    report_id: str = Path(pattern=_REPORT), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        governance.withdraw(_workspace_id(principal), report_id, actor=_actor(principal))
+    )
+
+
+@router.get(
+    "/governance/notices",
+    summary="Decisions this deployment made about this workspace or its agents",
+)
+async def federation_governance_notices(principal: Principal = Depends(get_principal)) -> dict:
+    _enabled()
+    return {"items": await _call(governance.notices(_workspace_id(principal)))}
+
+
+@router.post("/governance/notices/{report_id}/appeal", summary="Appeal a decision (an owner)")
+async def appeal_federation_decision(
+    body: Statement,
+    report_id: str = Path(pattern=_REPORT),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        governance.appeal(
+            _workspace_id(principal), report_id, statement=body.statement, actor=_actor(principal)
+        )
+    )
+
+
+@router.get("/security-events", summary="What other workspaces tried that was refused")
+async def federation_security_events(principal: Principal = Depends(get_principal)) -> dict:
+    _enabled()
+    return {"items": await _call(governance.list_security_events(_workspace_id(principal)))}
+
+
+@admin_router.get("/cases", summary="Operator: federation cases (evidence summaries only)")
+async def list_federation_cases(state: str | None = Query(default=None, max_length=24)) -> dict:
+    _enabled()
+    return {"items": await _call(governance.list_cases(state))}
+
+
+@admin_router.get("/cases/{report_id}", summary="Operator: one case")
+async def get_federation_case(report_id: str = Path(pattern=_REPORT)) -> dict[str, Any]:
+    _enabled()
+    return await _call(governance.get_case(report_id))
+
+
+@admin_router.post("/cases/{report_id}/move", summary="Operator: move a case one step")
+async def move_federation_case(
+    body: CaseMove, report_id: str = Path(pattern=_REPORT)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        governance.move_case(
+            report_id,
+            body.to_state,
+            operator=body.operator,
+            note=body.note,
+            decision=body.decision,
+        )
+    )
+
+
+@admin_router.post(
+    "/sanctions",
+    status_code=201,
+    summary="Operator: freeze for a while, or propose a permanent block (needs a second operator)",
+)
+async def propose_federation_sanction(body: SanctionProposal) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        governance.propose_sanction(
+            body.report_id,
+            kind=body.kind,
+            reason=body.reason,
+            operator=body.operator,
+            days=body.days,
+        )
+    )
+
+
+@admin_router.post("/sanctions/{sanction_id}/confirm", summary="Operator: second confirmation")
+async def confirm_federation_sanction(
+    body: OperatorAct, sanction_id: str = Path(pattern=_SANCTION)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(governance.confirm_sanction(sanction_id, operator=body.operator))
+
+
+@admin_router.post("/sanctions/{sanction_id}/lift", summary="Operator: lift a sanction")
+async def lift_federation_sanction(
+    body: OperatorAct, sanction_id: str = Path(pattern=_SANCTION)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        governance.lift_sanction(
+            sanction_id, operator=body.operator, reason=body.reason or "lifted by an operator"
+        )
+    )
+
+
+@admin_router.get(
+    "/identities/{federation_id}/status", summary="Operator: sanctions on one identity"
+)
+async def federation_identity_sanctions(federation_id: str = Path(pattern=_FID)) -> dict:
+    _enabled()
+    return await _call(governance.global_status(federation_id))

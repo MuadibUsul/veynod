@@ -61,6 +61,11 @@ CODES: dict[str, int] = {
     # messages (I-MSG §4, §5)
     "FED_E_MESSAGE_UNKNOWN": 404,
     "FED_E_RATE_LIMITED": 429,
+    # governance (F-10)
+    "FED_E_CASE_UNKNOWN": 404,
+    "FED_E_CASE_TRANSITION": 409,
+    "FED_E_SANCTION_RULE": 409,
+    "FED_E_AUTHORITY_INVALID": 403,
 }
 
 

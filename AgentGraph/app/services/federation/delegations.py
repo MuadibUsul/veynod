@@ -705,10 +705,11 @@ async def delivery_loop() -> None:
     while True:
         try:
             if federation.is_enabled():
-                from app.services.federation import messaging
+                from app.services.federation import governance, messaging
 
                 await deliver_due()
                 await messaging.deliver_due()
+                await governance.expire_due()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - the loop must survive one bad pass

@@ -80,6 +80,10 @@ class LocalTransport:
             from app.services.federation import delegations
 
             return await delegations.receive(str(workspace_id), envelope)
+        if kind.startswith("governance."):
+            from app.services.federation import governance
+
+            return await governance.receive_notice(str(workspace_id), envelope)
         if kind in ("chat.message", "delivery.receipt"):
             from app.services.federation import messaging
 
