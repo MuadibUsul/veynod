@@ -35,7 +35,9 @@ PROTOCOL_VERSION = "0.1"
 MAX_ENVELOPE_BYTES = 64 * 1024  # P1 placeholder (ICD_I_MSG §2)
 MAX_LIFETIME = timedelta(hours=24)  # P1 placeholder
 MAX_PAYLOAD_DEPTH = 16
-PUBLIC_TYPES = frozenset({"identity.record", "identity.rotation", "identity.revocation"})
+PUBLIC_TYPES = frozenset(
+    {"identity.record", "identity.rotation", "identity.revocation", "skill.release"}
+)
 KNOWN_TYPES = PUBLIC_TYPES | frozenset(
     {
         "identity.lookup",

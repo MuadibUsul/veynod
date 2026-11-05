@@ -692,3 +692,35 @@ async def test_reports_over_http_and_cases_are_for_operators_only(fed):
     assert moved.json()["case_state"] == "TRIAGED"
     status = await fed.get(f"/v1/admin/federation/identities/{b_fid}/status", headers=ADMIN)
     assert status.json()["active"] == []
+
+
+async def test_skill_registry_over_http(fed):
+    """P3-1 over HTTP: an owner publishes, another workspace installs, its agent reads."""
+    a, b = await _workspace(fed, "reg-a"), await _workspace(fed, "reg-b")
+    await fed.post("/v1/federation/enable", headers=a["owner"])
+    await fed.post("/v1/federation/enable", headers=b["owner"])
+    name = f"http-skill-{uuid.uuid4().hex[:6]}"
+    body = {
+        "manifest": {"name": name, "version": "0.1.0", "description": "Demo.", "entry": "SKILL.md"},
+        "files": [{"path": "SKILL.md", "content": "# Demo skill"}],
+    }
+    _refused(
+        await fed.post("/v1/federation/registry/packages", headers=a["key"], json=body),
+        403,
+        "federation_forbidden",
+        "FED_E_APPROVAL_NOT_HUMAN",
+    )
+    published = await fed.post("/v1/federation/registry/packages", headers=a["owner"], json=body)
+    assert published.status_code == 201, published.text
+    digest = published.json()["digest"]
+    installed = await fed.post(
+        "/v1/federation/registry/installs",
+        headers=b["owner"],
+        json={"name": name, "version": "0.1.0"},
+    )
+    assert installed.status_code == 201, installed.text
+    used = await fed.get(f"/v1/federation/registry/installs/{name}/content", headers=b["key"])
+    assert used.status_code == 200, used.text
+    assert used.json()["digest"] == digest and used.json()["verified"]["digest"] == digest
+    listed = await fed.get(f"/v1/federation/registry/packages/{name}", headers=b["key"])
+    assert [v["digest"] for v in listed.json()["versions"]] == [digest]

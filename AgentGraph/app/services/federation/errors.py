@@ -69,6 +69,14 @@ CODES: dict[str, int] = {
     # other deployments (F-11)
     "FED_E_EGRESS_DISABLED": 403,
     "FED_E_REMOTE_INVALID": 422,
+    # skill registry (P3)
+    "FED_E_PACKAGE_UNKNOWN": 404,
+    "FED_E_PACKAGE_INVALID": 422,
+    "FED_E_NAME_TAKEN": 409,
+    "FED_E_VERSION_EXISTS": 409,
+    "FED_E_YANKED": 410,
+    "FED_E_DIGEST_MISMATCH": 409,
+    "FED_E_PERMISSIONS_NOT_ACCEPTED": 403,
 }
 
 

@@ -28,6 +28,7 @@ from app.services.federation import (
     identity,
     messaging,
     metering,
+    registry,
     remote,
 )
 from app.services.federation.errors import FederationError
@@ -956,3 +957,135 @@ async def federation_inbox(envelope: dict[str, Any] = Body(...)) -> dict[str, An
 async def register_federation_peer(body: PeerRegistration) -> dict[str, Any]:
     _enabled()
     return await _call(remote.register(body.federation_id, body.base_url, operator=body.operator))
+
+
+# ── skill registry (P3, docs/federation/ICD_P3_REGISTRY.md) ───────────────
+
+_PKG = r"^[a-z0-9][a-z0-9-]{1,62}$"
+_SEMVER = r"^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$"
+
+
+class SkillFile(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=200)
+    content: str = Field(max_length=registry.MAX_BYTES)
+
+
+class SkillPublish(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    manifest: dict[str, Any]
+    files: list[SkillFile] = Field(min_length=1, max_length=registry.MAX_FILES)
+
+
+class SkillYank(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=5, max_length=1000)
+
+
+class SkillInstall(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(pattern=_PKG)
+    version: str = Field(pattern=_SEMVER)
+    accept_permissions: list[Literal["network", "filesystem", "exec", "secrets"]] = Field(
+        default_factory=list,
+        description="For an executable skill: exactly the permissions it declares.",
+    )
+
+
+@router.post(
+    "/registry/packages",
+    status_code=201,
+    summary="Publish a signed, immutable skill version (a person)",
+)
+async def publish_skill(
+    body: SkillPublish, principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        registry.publish(
+            _workspace_id(principal),
+            manifest=body.manifest,
+            files=[f.model_dump() for f in body.files],
+            actor=_actor(principal),
+        )
+    )
+
+
+@router.get("/registry/packages/{name}", summary="A skill and every version, yanked ones too")
+async def get_skill_package(name: str = Path(pattern=_PKG)) -> dict[str, Any]:
+    _enabled()
+    return await _call(registry.package(name))
+
+
+@router.get(
+    "/registry/packages/{name}/versions/{version}",
+    summary="One version: manifest, files, digest and the publisher's signature",
+)
+async def get_skill_version(
+    name: str = Path(pattern=_PKG), version: str = Path(pattern=_SEMVER)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(registry.get_version(name, version))
+
+
+@router.post(
+    "/registry/packages/{name}/versions/{version}/yank",
+    summary="Withdraw a version: no new installs; its record stays (the publisher)",
+)
+async def yank_skill_version(
+    body: SkillYank,
+    name: str = Path(pattern=_PKG),
+    version: str = Path(pattern=_SEMVER),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        registry.yank(
+            name,
+            version,
+            reason=body.reason,
+            actor=_actor(principal),
+            workspace_id=_workspace_id(principal),
+        )
+    )
+
+
+@router.post(
+    "/registry/installs",
+    status_code=201,
+    summary="Install a skill: pull, verify digest and signature, pin it (a person)",
+)
+async def install_skill(
+    body: SkillInstall, principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        registry.install(
+            _workspace_id(principal),
+            body.name,
+            body.version,
+            actor=_actor(principal),
+            accept_permissions=list(body.accept_permissions),
+        )
+    )
+
+
+@router.get("/registry/installs", summary="Skills this workspace installed, pinned by digest")
+async def list_skill_installs(principal: Principal = Depends(get_principal)) -> dict:
+    _enabled()
+    return {"items": await _call(registry.installs(_workspace_id(principal)))}
+
+
+@router.get(
+    "/registry/installs/{name}/content",
+    summary="The pinned content of an installed skill, verified again (outside content)",
+)
+async def use_installed_skill(
+    name: str = Path(pattern=_PKG), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(registry.use(_workspace_id(principal), name))

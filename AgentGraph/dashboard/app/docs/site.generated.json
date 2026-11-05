@@ -5165,6 +5165,174 @@
        "description": "",
        "method": "GET",
        "parameters": [],
+       "path": "/v1/federation/registry/installs",
+       "responses": [
+        "200"
+       ],
+       "summary": "Skills this workspace installed, pinned by digest"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "version",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "For an executable skill: exactly the permissions it declares.",
+         "name": "accept_permissions",
+         "required": false,
+         "type": "string[]"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/registry/installs",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Install a skill: pull, verify digest and signature, pin it (a person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/installs/{name}/content",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The pinned content of an installed skill, verified again (outside content)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "manifest",
+         "required": true,
+         "type": "object"
+        },
+        {
+         "description": "",
+         "name": "files",
+         "required": true,
+         "type": "SkillFile[]"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/registry/packages",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Publish a signed, immutable skill version (a person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/packages/{name}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A skill and every version, yanked ones too"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "version",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/packages/{name}/versions/{version}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "One version: manifest, files, digest and the publisher's signature"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "reason",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "version",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/packages/{name}/versions/{version}/yank",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Withdraw a version: no new installs; its record stays (the publisher)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
        "path": "/v1/federation/reports",
        "responses": [
         "200"

@@ -205,6 +205,8 @@ EPHEMERAL = frozenset({
     "federation_reports", "federation_report_history", "federation_sanctions",
     "federation_security_events",
     "federation_remote_endpoints",
+    # Skill registry (v3.90): deployment-wide packages signed by federation keys.
+    "registry_packages", "registry_versions", "registry_installs",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")
