@@ -57,6 +57,10 @@ CODES: dict[str, int] = {
     "FED_E_ACCEPTANCE_MISMATCH": 409,
     "FED_E_TERMS_INVALID": 422,
     "FED_E_SETTLEMENT_DISABLED": 422,
+    "FED_E_BUDGET_EXCEEDED": 403,
+    # messages (I-MSG §4, §5)
+    "FED_E_MESSAGE_UNKNOWN": 404,
+    "FED_E_RATE_LIMITED": 429,
 }
 
 

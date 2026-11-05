@@ -383,7 +383,7 @@ async def test_what_may_not_cross(client, admin_headers, federation_on):
     assert await _code(offer(budget_cap={"amount": 50, "unit": "USD"})) == (
         "FED_E_SETTLEMENT_DISABLED"
     )
-    assert await _code(offer(cancellation_policy="hard_cancel")) == "FED_E_TERMS_INVALID"
+    assert await _code(offer(cancellation_policy="abort")) == "FED_E_TERMS_INVALID"
     assert (
         await _code(
             delegations.offer(a["id"], peer_workspace=b["fid"], terms=_terms(), actor=a["agent"])
@@ -590,6 +590,158 @@ async def test_a_withdrawn_offer_cannot_be_taken_on(client, admin_headers, feder
     assert (await _one(a, job))["state"] == "CANCELLED"
 
 
+async def test_frozen_terms_cannot_be_changed_by_a_resent_offer(
+    client, admin_headers, federation_on
+):
+    """F-015: after delivery, changing the acceptance criteria without both sides
+    agreeing does not touch the original contract snapshot."""
+    a, b = await _ws(client, admin_headers, "a"), await _ws(client, admin_headers, "b")
+    await _connect(a, b)
+    job = (
+        await delegations.offer(a["id"], peer_workspace=b["fid"], terms=_terms(), actor=a["owner"])
+    )["delegation"]["federation_job_id"]
+    await delegations.act(
+        b["id"], job, "accept", actor=b["owner"], create_local_task=Tasks().create
+    )
+    await delegations.act(b["id"], job, "submit", actor=b["agent"], result=RESULT)
+    before_a, before_b = await _one(a, job), await _one(b, job)
+    altered = delegations.validate_terms(_terms(acceptance_criteria=["Anything goes"]))
+    resent = await identity.sign_as(
+        a["fid"],
+        type="delegate.offer",
+        audience=b["fid"],
+        payload={
+            "federation_job_id": job,
+            "version": 1,
+            "terms": altered,
+            "offer_expires_at": before_b["offer_expires_at"],
+        },
+    )
+    assert (await delegations.receive(b["id"], resent))["status"] == "duplicate"
+    after_b = await _one(b, job)
+    assert after_b["terms"] == before_b["terms"]
+    assert after_b["acceptance_hash"] == before_b["acceptance_hash"] == before_a["acceptance_hash"]
+    assert after_b["acceptance_hash"] == delegations.acceptance_hash(before_a["terms"])
+
+
+async def test_hard_cancel_stops_delivery_drain_lets_it_finish(
+    client, admin_headers, federation_on
+):
+    """F-016 under both policies (kept configurable until the owner decides)."""
+    a, b = await _ws(client, admin_headers, "a"), await _ws(client, admin_headers, "b")
+    await _connect(a, b)
+    jobs = {}
+    for policy in ("hard_cancel", "drain"):
+        job = (
+            await delegations.offer(
+                a["id"],
+                peer_workspace=b["fid"],
+                terms=_terms(cancellation_policy=policy),
+                actor=a["owner"],
+            )
+        )["delegation"]["federation_job_id"]
+        await delegations.act(
+            b["id"], job, "accept", actor=b["owner"], create_local_task=Tasks().create
+        )
+        await delegations.request_cancel(a["id"], job, actor=a["owner"], reason="plans changed")
+        jobs[policy] = job
+    # hard_cancel: the provider may not deliver any more, only confirm.
+    assert (
+        await _code(
+            delegations.act(b["id"], jobs["hard_cancel"], "submit", actor=b["agent"], result=RESULT)
+        )
+        == "FED_E_JOB_TRANSITION"
+    )
+    await delegations.act(b["id"], jobs["hard_cancel"], "cancel_ack", actor=b["owner"])
+    assert (await _one(a, jobs["hard_cancel"]))["state"] == "CANCELLED"
+    # drain: what is already done may still be delivered and judged.
+    await delegations.act(b["id"], jobs["drain"], "submit", actor=b["agent"], result=RESULT)
+    assert (await _one(a, jobs["drain"]))["state"] == "SUBMITTED"
+
+
+async def test_no_new_execution_past_the_resource_cap(client, admin_headers, federation_on):
+    """F-017: over the cap no new execution starts; the usage stays recorded and explained."""
+    a, b = await _ws(client, admin_headers, "a"), await _ws(client, admin_headers, "b")
+    await _connect(a, b)
+    assert (
+        await _code(
+            delegations.offer(
+                a["id"],
+                peer_workspace=b["fid"],
+                actor=a["owner"],
+                terms=_terms(budget_cap={"amount": 50, "unit": "USD"}),
+            )
+        )
+        == "FED_E_SETTLEMENT_DISABLED"
+    )
+    job = (
+        await delegations.offer(
+            a["id"],
+            peer_workspace=b["fid"],
+            actor=a["owner"],
+            terms=_terms(budget_cap={"amount": 10000, "unit": "model_tokens"}),
+        )
+    )["delegation"]["federation_job_id"]
+    await delegations.act(
+        b["id"], job, "accept", actor=b["owner"], create_local_task=Tasks().create
+    )
+    # Within the cap: a revision is allowed.
+    await delegations.act(
+        b["id"],
+        job,
+        "submit",
+        actor=b["agent"],
+        result={
+            **RESULT,
+            "cost_receipt": {
+                "metering_source": "self_reported",
+                "confidence": "low",
+                "usage": {"model_tokens": 6000},
+            },
+        },
+    )
+    await delegations.act(a["id"], job, "revise", actor=a["owner"], note="Add sources.")
+    # The second result pushes usage past the cap.
+    await delegations.act(
+        b["id"],
+        job,
+        "submit",
+        actor=b["agent"],
+        result={
+            **RESULT,
+            "cost_receipt": {
+                "metering_source": "self_reported",
+                "confidence": "low",
+                "usage": {"model_tokens": 7000},
+            },
+        },
+    )
+    mine = await delegations.get(a["id"], job)
+    assert mine["delegation"]["budget"] == {
+        "unit": "model_tokens",
+        "cap": 10000,
+        "spent": 13000,
+        "remaining": 0,
+        "over": True,
+    }
+    assert [r["metering_source"] for r in mine["cost_receipts"]] == ["self_reported"] * 2
+    assert await _code(delegations.act(a["id"], job, "revise", actor=a["owner"], note="More")) == (
+        "FED_E_BUDGET_EXCEEDED"
+    )
+    # A requester that skips its own check is refused by the provider too.
+    theirs = await _one(b, job)
+    forged = await identity.sign_as(
+        a["fid"],
+        type="delegate.revise",
+        audience=b["fid"],
+        payload={"federation_job_id": job, "version": theirs["version"] + 1, "note": "again"},
+    )
+    assert await _code(delegations.receive(b["id"], forged)) == "FED_E_BUDGET_EXCEEDED"
+    # Judging what was delivered is still possible.
+    await delegations.act(a["id"], job, "accept_result", actor=a["owner"])
+    assert (await _one(b, job))["state"] == "ACCEPTED_RESULT"
+
+
 # ── found reviewing #98 ───────────────────────────────────────────────────
 
 
@@ -787,3 +939,35 @@ async def test_both_sides_sending_at_once_do_not_wait_on_each_other(
     req, prov = await _one(a, job), await _one(b, job)
     assert req["state"] == prov["state"] == "REJECTED"
     assert req["pending_deliveries"] == prov["pending_deliveries"] == 0
+
+
+async def test_a_lost_answer_does_not_block_the_queue(client, admin_headers, federation_on):
+    """The peer applied an object but its answer was lost. The retry of the same
+    envelope used to be refused as a replay, so it stayed at the head of the
+    queue (and everything behind it) until it was dead-lettered."""
+    a, b = await _ws(client, admin_headers, "lost-a2"), await _ws(client, admin_headers, "lost-b2")
+    await _connect(a, b)
+    job = (
+        await delegations.offer(a["id"], peer_workspace=b["fid"], terms=_terms(), actor=a["person"])
+    )["delegation"]["federation_job_id"]
+
+    class AnswerLost(grants.LocalTransport):
+        async def deliver(self, envelope):
+            await super().deliver(envelope)
+            raise ConnectionResetError("the answer was lost on the way back (test)")
+
+    grants.set_transport(AnswerLost())
+    try:
+        await delegations.act(
+            b["id"], job, "accept", actor=b["person"], create_local_task=Tasks().create
+        )
+    finally:
+        grants.set_transport(grants.LocalTransport())
+    assert (await _one(b, job))["pending_deliveries"] == 1
+
+    out = await delegations.sync(b["id"], job)
+    assert out["last_error"] is None and out["delivered"] == 1
+    prov, req = await _one(b, job), await _one(a, job)
+    assert prov["pending_deliveries"] == 0
+    # Applied once: the retry is a duplicate, not a second step.
+    assert (req["state"], req["version"]) == ("ACCEPTED", 2)

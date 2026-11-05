@@ -72,6 +72,7 @@ ROOT_PRIMITIVES: tuple[str, ...] = (
     "create_group",
     "update_task",
     "diagram",
+    "federation",
     "get_tenant_tree",
     "create_child_tenant",
     "move_tenant",

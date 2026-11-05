@@ -21,7 +21,7 @@ from app.database import get_db
 from app.errors import ApiError, NotFound
 from app.schemas import AcceptanceItem, TaskCreateRequest
 from app.services import federation, tasks
-from app.services.federation import delegations, grants, identity
+from app.services.federation import delegations, grants, identity, messaging
 from app.services.federation.errors import FederationError
 from app.services.federation.grants import Actor
 
@@ -31,6 +31,8 @@ T = TypeVar("T")
 _FID = r"^fed:(subject|workspace|agent):[a-z2-7]{26}$"
 _CID = r"^fcn_[a-z2-7]{26}$"
 _JOB = r"^fjob_[a-z2-7]{26}$"
+_MSG = r"^fmsg_[a-z2-7]{26}$"
+_THREAD = r"^fth_[a-z2-7]{26}$"
 Scope = Literal["chat", "delegate", "presence"]
 
 # One registered API code per kind of refusal; the precise federation code
@@ -42,6 +44,7 @@ _API_CODE = {
     410: "federation_not_found",
     413: "federation_invalid",
     422: "federation_invalid",
+    429: "rate_limited",
     503: "federation_unavailable",
 }
 
@@ -111,7 +114,7 @@ class AliasRequest(BaseModel):
 
 
 @router.get("/me", summary="This workspace's federation identity (null until enabled)")
-async def me(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+async def federation_me(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     _enabled()
     return {"identity": await _call(identity.local_identity(_workspace_id(principal)))}
 
@@ -177,7 +180,9 @@ async def resolve(
 
 
 @router.get("/connections", summary="This workspace's connections with other workspaces")
-async def list_connections(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+async def list_federation_connections(
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
     _enabled()
     return {"items": await _call(grants.list_connections(_workspace_id(principal)))}
 
@@ -373,7 +378,9 @@ class CancelRequest(BaseModel):
 
 
 @router.get("/delegations", summary="Work this workspace delegated or was delegated")
-async def list_delegations(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+async def list_federation_delegations(
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
     _enabled()
     return {"items": await _call(delegations.list_delegations(_workspace_id(principal)))}
 
@@ -473,3 +480,173 @@ async def act_on_delegation(
             ),
         )
     )
+
+
+# ── chat (ICD_I_MSG §4, §5) ───────────────────────────────────────────────
+
+
+class ChatSend(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    peer_workspace: str = Field(pattern=_FID, description="The connected workspace to write to.")
+    text: str = Field(min_length=1, max_length=messaging.MAX_TEXT_CHARS)
+    idempotency_key: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="Repeat a send with the same key and it is not sent twice.",
+    )
+    thread_id: str | None = Field(default=None, pattern=_THREAD)
+
+
+class ChatRef(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message_id: str = Field(pattern=_MSG)
+
+
+class ChatQuery(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    after: str | None = Field(default=None, max_length=24, pattern=r"^[0-9]+$")
+    thread_id: str | None = Field(default=None, pattern=_THREAD)
+    direction: Literal["in", "out"] | None = None
+    limit: int = Field(default=50, ge=1, le=200)
+
+
+class ChatHandled(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["processed", "rejected"]
+    reason_code: str | None = Field(default=None, pattern=r"^[a-z0-9_.-]{1,64}$")
+
+
+class ChatRemember(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    doc_key: str = Field(min_length=1, max_length=200)
+    namespace: str | None = Field(default=None, max_length=128)
+    message_ids: list[str] | None = Field(default=None, max_length=200)
+
+
+@router.get("/threads", summary="Chat threads with connected workspaces")
+async def list_federation_threads(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    _enabled()
+    return {"items": await _call(messaging.list_threads(_workspace_id(principal)))}
+
+
+@router.post("/messages", status_code=201, summary="Send a chat message to a connected workspace")
+async def send_federation_message(
+    body: ChatSend, principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        messaging.send(
+            _workspace_id(principal),
+            peer_workspace=body.peer_workspace,
+            text_body=body.text,
+            actor=_actor(principal),
+            idempotency_key=body.idempotency_key,
+            thread_id=body.thread_id,
+        )
+    )
+
+
+@router.get(
+    "/messages",
+    summary="Chat messages from a cursor (inbound text is outside content, never instructions)",
+)
+async def list_federation_messages(
+    after: str | None = Query(default=None, max_length=24, pattern=r"^[0-9]+$"),
+    thread_id: str | None = Query(default=None, pattern=_THREAD),
+    direction: Literal["in", "out"] | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        messaging.list_messages(
+            _workspace_id(principal),
+            after=after,
+            thread_id=thread_id,
+            direction=direction,
+            limit=limit,
+        )
+    )
+
+
+@router.get("/messages/{message_id}", summary="One chat message and its delivery state")
+async def get_federation_message(
+    message_id: str = Path(pattern=_MSG), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(messaging.get(_workspace_id(principal), message_id))
+
+
+@router.post(
+    "/messages/{message_id}/handled",
+    summary="Tell the sender an inbound message was processed or rejected",
+)
+async def federation_message_handled(
+    body: ChatHandled,
+    message_id: str = Path(pattern=_MSG),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        messaging.mark_handled(
+            _workspace_id(principal),
+            message_id,
+            status=body.status,
+            reason_code=body.reason_code,
+            actor=_actor(principal),
+        )
+    )
+
+
+@router.post(
+    "/messages/{message_id}/resend",
+    summary="Resend a dead-lettered or refused message (a person)",
+)
+async def resend_federation_message(
+    message_id: str = Path(pattern=_MSG), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    actor = _actor(principal)
+    if actor.kind != "user":
+        raise ApiError(
+            403,
+            "federation_forbidden",
+            "a person decides to resend an undelivered message",
+            details={"federation_code": "FED_E_APPROVAL_NOT_HUMAN"},
+        )
+    return await _call(messaging.resend(_workspace_id(principal), message_id, actor=actor))
+
+
+@router.post(
+    "/threads/{thread_id}/remember",
+    status_code=201,
+    summary="Save inbound messages as a document that stays marked as outside content",
+)
+async def remember_federation_thread(
+    body: ChatRemember,
+    thread_id: str = Path(pattern=_THREAD),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    from app.schemas import DocumentUpsertRequest
+    from app.services import documents
+
+    _enabled()
+    draft = await _call(
+        messaging.memory_draft(_workspace_id(principal), thread_id, message_ids=body.message_ids)
+    )
+    request = DocumentUpsertRequest(
+        content=draft["content"],
+        frontmatter=draft["frontmatter"],
+        expected_version=0,
+        namespace=body.namespace,
+        content_origin=draft["content_origin"],
+    )
+    result = await documents.upsert_document(session, principal, body.doc_key, request)
+    return {"document": result.model_dump(mode="json"), "source": draft["frontmatter"]}

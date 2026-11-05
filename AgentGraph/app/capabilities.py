@@ -116,6 +116,11 @@ TOOL_ACTION_HANDLERS = {
         "request_diagram_increment", "decide_diagram_change", "signal_chunk",
         "escalate_chunk", "chunk_usage", "replay_diagram",
     ),
+    "federation": (
+        "federation_me", "list_federation_connections", "list_federation_delegations",
+        "list_federation_threads", "list_federation_messages", "get_federation_message",
+        "send_federation_message", "federation_message_handled",
+    ),
     "loop": (
         "loop_agenda", "list_placements", "get_placement", "report_placement",
         "move_placement", "withdraw_placement", "schedule_now", "list_hosts",

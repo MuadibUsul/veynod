@@ -24,10 +24,12 @@ provider confirms with a versioned ``cancel_ack``; until then the work may
 still deliver (``drain``), and after ``CANCEL_ACK_TIMEOUT`` the requester's view
 says the stop is not confirmed and work may continue.
 
-P1 (ICD placeholders): ``cancellation_policy`` is ``drain`` only, ``budget_cap``
-is null or zero (no settlement), offers expire after 24 hours, at most three
-revisions, results travel inline, and only people accept, reject, judge,
-cancel or confirm a cancellation.
+P1 (ICD placeholders): ``cancellation_policy`` is ``drain`` or ``hard_cancel``
+per delegation until the owner picks one; ``budget_cap`` is null, zero, or a
+resource cap (model tokens, tool calls, minutes; never money, so no
+settlement); offers expire after 24 hours, at most three revisions, results
+travel inline, and only people accept, reject, judge, cancel or confirm a
+cancellation.
 """
 
 from __future__ import annotations
@@ -61,6 +63,11 @@ RETRY_BACKOFF = (30, 120, 600, 3600)  # seconds; the last one repeats
 MAX_DELIVERY_ATTEMPTS = 8
 CANCEL_ACK_TIMEOUT = timedelta(hours=1)  # P1 placeholder
 MAX_REVISIONS = 3  # P1 placeholder
+# ICD_I_BRIDGE §2: until the owner decides (vision §5.3 TBD) both stay
+# available per delegation; drain is the default the console offers.
+CANCELLATION_POLICIES = ("drain", "hard_cancel")
+# F-017: resource caps only; money is not a unit while settlement is off.
+USAGE_UNITS = ("model_tokens", "tool_calls", "minutes")
 MAX_RESULT_BYTES = 48 * 1024  # stays inside the 64 KiB envelope limit
 # When a newly queued object is first due for the delivery loop. The send right
 # after the commit normally delivers it first; this is the safety net.
@@ -159,16 +166,15 @@ def validate_terms(terms: Any) -> dict[str, Any]:
         raise FederationError("FED_E_TERMS_INVALID", "acceptance_criteria: 1-20 non-empty items")
     if terms["data_classification"] not in CLASSIFICATIONS:
         raise FederationError("FED_E_TERMS_INVALID", "unknown data_classification")
-    if terms["cancellation_policy"] != "drain":
-        raise FederationError("FED_E_TERMS_INVALID", "P1 supports cancellation_policy 'drain' only")
+    if terms["cancellation_policy"] not in CANCELLATION_POLICIES:
+        raise FederationError(
+            "FED_E_TERMS_INVALID",
+            "cancellation_policy is 'drain' or 'hard_cancel'",
+            allowed=list(CANCELLATION_POLICIES),
+        )
     if not isinstance(terms["external_side_effects"], bool):
         raise FederationError("FED_E_TERMS_INVALID", "external_side_effects is true or false")
-    budget = terms["budget_cap"]
-    if budget is not None and budget != {"amount": 0, "unit": "none"}:
-        raise FederationError(
-            "FED_E_SETTLEMENT_DISABLED",
-            "settlement is not enabled: budget_cap must be null or {amount: 0, unit: none}",
-        )
+    budget = _validate_budget(terms["budget_cap"])
     try:
         deadline = datetime.fromisoformat(str(terms["deadline"]).replace("Z", "+00:00"))
     except ValueError as exc:
@@ -184,11 +190,98 @@ def validate_terms(terms: Any) -> dict[str, Any]:
         "deadline": deadline.astimezone(timezone.utc).replace(microsecond=0).isoformat(),
         "budget_cap": budget,
         "result_contract": _text(terms, "result_contract", 2000),
-        "cancellation_policy": "drain",
+        "cancellation_policy": terms["cancellation_policy"],
         "external_side_effects": terms["external_side_effects"],
     }
     scrub(normal)
     return normal
+
+
+def _validate_budget(budget: Any) -> dict[str, Any] | None:
+    """A resource cap, never money (F-017; settlement stays off, ADR-005).
+
+    null or {amount: 0, unit: none}: no cap. {amount: n, unit: model_tokens |
+    tool_calls | minutes}: the provider's reported usage of that unit may not
+    be exceeded by a new execution. Any other unit (a currency) is refused.
+    """
+    if budget is None or budget == {"amount": 0, "unit": "none"}:
+        return budget
+    if (
+        isinstance(budget, dict)
+        and set(budget) == {"amount", "unit"}
+        and budget["unit"] in USAGE_UNITS
+        and isinstance(budget["amount"], int)
+        and not isinstance(budget["amount"], bool)
+        and 1 <= budget["amount"] <= 10**12
+    ):
+        return {"amount": budget["amount"], "unit": budget["unit"]}
+    raise FederationError(
+        "FED_E_SETTLEMENT_DISABLED",
+        "settlement is not enabled: budget_cap is null, {amount: 0, unit: none}, or a "
+        "resource cap {amount: n, unit: model_tokens | tool_calls | minutes}",
+        allowed_units=list(USAGE_UNITS),
+    )
+
+
+def _cap(row: dict[str, Any]) -> dict[str, Any] | None:
+    budget = (row.get("terms") or {}).get("budget_cap")
+    return budget if budget and budget.get("unit") in USAGE_UNITS else None
+
+
+async def _spent(platform: AsyncSession, row: dict[str, Any], unit: str) -> int:
+    """Usage of one unit the provider reported for this delegation, all results."""
+    receipts = (
+        (
+            await platform.execute(
+                text(
+                    "SELECT usage FROM federation_cost_receipts WHERE workspace_id = "
+                    "CAST(:w AS uuid) AND peer_workspace_fid = :p AND federation_job_id = :j"
+                ),
+                {
+                    "w": str(row["workspace_id"]),
+                    "p": row["peer_workspace_fid"],
+                    "j": row["federation_job_id"],
+                },
+            )
+        )
+        .scalars()
+        .all()
+    )
+    total = 0
+    for usage in receipts:
+        usage = json.loads(usage) if isinstance(usage, str) else usage
+        value = (usage or {}).get(unit)
+        if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+            total += value
+    return total
+
+
+async def _budget_view(platform: AsyncSession, row: dict[str, Any]) -> dict[str, Any] | None:
+    cap = _cap(row)
+    if cap is None:
+        return None
+    spent = await _spent(platform, row, cap["unit"])
+    return {
+        "unit": cap["unit"],
+        "cap": cap["amount"],
+        "spent": spent,
+        "remaining": max(cap["amount"] - spent, 0),
+        # F-017: what was used stays recorded and explained by its receipts;
+        # over the cap, no new execution may start.
+        "over": spent >= cap["amount"],
+    }
+
+
+async def _require_budget_left(platform: AsyncSession, row: dict[str, Any]) -> None:
+    view = await _budget_view(platform, row)
+    if view is not None and view["over"]:
+        raise FederationError(
+            "FED_E_BUDGET_EXCEEDED",
+            "the resource cap is used up: no new execution; accept, dispute or cancel",
+            unit=view["unit"],
+            cap=view["cap"],
+            spent=view["spent"],
+        )
 
 
 def acceptance_hash(terms: dict[str, Any]) -> str:
@@ -615,7 +708,10 @@ async def delivery_loop() -> None:
     while True:
         try:
             if federation.is_enabled():
+                from app.services.federation import messaging
+
                 await deliver_due()
+                await messaging.deliver_due()
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - the loop must survive one bad pass
@@ -747,6 +843,18 @@ async def act(
         if action == "accept" and cancel_asked:
             # The requester withdrew the offer before it was taken on.
             raise FederationError("FED_E_JOB_TRANSITION", "cancellation requested; confirm it")
+        if (
+            action == "submit"
+            and cancel_asked
+            and row["terms"].get("cancellation_policy") == "hard_cancel"
+        ):
+            # hard_cancel: once asked, stop; only the confirmation may follow.
+            raise FederationError(
+                "FED_E_JOB_TRANSITION", "hard cancel requested: stop and confirm the cancellation"
+            )
+        if action == "revise":
+            # F-017: a revision is a new execution; none past the resource cap.
+            await _require_budget_left(platform, row)
         await grants.authorize(
             workspace_id, row["peer_workspace_fid"], "delegate", direction=_direction(role)
         )
@@ -922,7 +1030,10 @@ async def list_delegations(workspace_id: str) -> list[dict[str, Any]]:
             .mappings()
             .all()
         )
-        out = [_out(_loads(r)) for r in rows]
+        out = []
+        for raw in rows:
+            row = _loads(raw)
+            out.append({**_out(row), "budget": await _budget_view(platform, row)})
     return out
 
 
@@ -958,9 +1069,12 @@ async def get(workspace_id: str, job_id: str) -> dict[str, Any]:
             .mappings()
             .all()
         )
+        budget = await _budget_view(platform, row)
     return {
-        "delegation": _out(row),
+        "delegation": {**_out(row), "budget": budget},
         "history": [{**dict(h), "created_at": h["created_at"].isoformat()} for h in history],
+        # Each receipt says who measured the usage and how sure that is;
+        # self-reported usage is the provider's own claim (vision §8.3).
         "cost_receipts": [dict(r) for r in receipts],
     }
 
@@ -970,12 +1084,28 @@ async def get(workspace_id: str, job_id: str) -> dict[str, Any]:
 
 async def receive(workspace_id: str, envelope: dict[str, Any]) -> dict[str, Any]:
     local_fid = await _local_fid(workspace_id)
-    verified = await verify_envelope(
-        envelope,
-        local_workspace_fid=local_fid,
-        key_lookup=identity.key_lookup,
-        replay_check=identity.replay_check_for(workspace_id),
-    )
+    try:
+        verified = await verify_envelope(
+            envelope,
+            local_workspace_fid=local_fid,
+            key_lookup=identity.key_lookup,
+            replay_check=identity.replay_check_for(workspace_id),
+        )
+    except FederationError as exc:
+        if exc.code != "FED_E_REPLAY":
+            raise
+        # The sender is retrying the very same envelope (the guard runs last, so
+        # it verified). Refusing it as a replay left the sender's queue stuck
+        # behind an object the first try had applied but whose answer was lost.
+        # Every delegate.* handler is idempotent (an offer by job id, a cancel
+        # request by its flag, a transition by version), so let it answer the
+        # repeat as a duplicate, or apply it if the first try never got there.
+        verified = await verify_envelope(
+            envelope,
+            local_workspace_fid=local_fid,
+            key_lookup=identity.key_lookup,
+            replay_check=identity.accept_recorded,
+        )
     if parse_federation_id(verified.issuer)[0] != "workspace":
         raise FederationError("FED_E_TYPE_MISMATCH", "delegations are between workspaces")
     job_id = verified.payload.get("federation_job_id")
@@ -1104,6 +1234,8 @@ async def _on_transition(
         if action == "submit":
             new["result"] = validate_result(msg.payload.get("result"))
         if action == "revise":
+            # The provider checks its own copy: no new execution past the cap.
+            await _require_budget_left(platform, row)
             new["revisions"] = row["revisions"] + 1
         note = msg.payload.get("note") if isinstance(msg.payload.get("note"), str) else None
         await _save(platform, new)

@@ -26,9 +26,9 @@
 | `data_classification` | `public` / `internal` / `confidential`【P1 占位】 |
 | `allowed_use` | B 可以如何使用输入，例如“仅用于本次任务，不得留存” |
 | `deadline` | RFC 3339 UTC |
-| `budget_cap` | `{amount, unit}` 或 `null`；P1 只允许 `null` 或 `{"amount": 0, "unit": "none"}`，并显式标注“未启用结算” |
+| `budget_cap` | `null`、`{"amount": 0, "unit": "none"}`（不设上限），或资源上限 `{"amount": n, "unit": "model_tokens" \| "tool_calls" \| "minutes"}`（F-017）。**不允许货币单位**：结算未启用，带金额的预算返回 `FED_E_SETTLEMENT_DISABLED` |
 | `result_contract` | 结果格式说明（例如“一份 Markdown 报告 + 文件清单与 SHA-256”） |
-| `cancellation_policy` | `hard_cancel` / `drain`；P1 只允许 `drain`【P1 占位，愿景 §5.3 TBD】 |
+| `cancellation_policy` | `drain` / `hard_cancel`，按委派选择【愿景 §5.3 TBD：owner 定下统一政策之前两者都可选，控制台默认 `drain`】。`drain`：申请取消后，已完成的部分仍可交付；`hard_cancel`：申请取消后执行方不得再交付，只能确认取消 |
 | `external_side_effects` | 布尔值；为 `true` 时 B 必须由本侧人批准才能接单 |
 
 **BRIDGE-INV-1 无 delegate 无副作用**：A→B 方向的连接上，A 的 `outbound_scopes` 和 B 的 `inbound_scopes` 都必须含 `delegate`（I-GRANT GRANT-INV-3）。否则 B 在写入任何数据之前返回 `FED_E_SCOPE_DENIED`，不建本地任务（F-002）。
@@ -108,6 +108,7 @@ acceptance_hash = SHA-256( JCS({objective, acceptance_criteria, input_summary,
 
 - P1 不做真实支付，不转借任何凭证。B 只回传 `cost_receipt`：`{metering_source: platform|adapter|self_reported, confidence, usage{...}, price_snapshot_id|null, proof_ref|null}`。
 - 自报的消耗在界面上必须和实测分开显示；`budget_cap` 为 `null` 时界面写明“未启用结算”。
+- **资源上限（F-017）**：设了资源上限时，按执行方回传的成本收据累计该单位的用量。用量达到上限后，不能再发起新的执行（`revise` 返回 `FED_E_BUDGET_EXCEEDED`，请求方和执行方各自检查）；已交付的结果仍可验收或提出争议。已经发生的用量保留在收据里，并注明计量来源和可信度。
 
 ## 9. 表（F-01d，下一步落地）
 
@@ -123,7 +124,7 @@ acceptance_hash = SHA-256( JCS({objective, acceptance_criteria, input_summary,
 ## 10. 错误码
 
 `FED_E_JOB_UNKNOWN`（404）、`FED_E_JOB_TRANSITION`（409）、`FED_E_JOB_STALE`（409，版本落后）、`FED_E_ACCEPTANCE_MISMATCH`（409，hash 不一致）、
-`FED_E_TERMS_INVALID`（422，委派对象字段不合法）、`FED_E_SETTLEMENT_DISABLED`（422，P1 带了非零预算）；另沿用 `FED_E_SCOPE_DENIED`、`FED_E_GRANT_*`。
+`FED_E_TERMS_INVALID`（422，委派对象字段不合法）、`FED_E_SETTLEMENT_DISABLED`（422，预算带了货币单位）、`FED_E_BUDGET_EXCEEDED`（403，资源上限已用完）；另沿用 `FED_E_SCOPE_DENIED`、`FED_E_GRANT_*`。
 
 ## 11. 不变量汇总
 
