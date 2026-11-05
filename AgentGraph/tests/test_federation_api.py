@@ -900,3 +900,28 @@ async def test_skill_withdrawal_over_http(fed):
     assert record.json()["state"] == "yanked" and record.json()["yank_source"] == "platform"
     used = await fed.get(f"/v1/federation/registry/installs/{name}/content", headers=b["key"])
     assert used.json()["warning"]["withdrawn"] is True
+
+
+async def test_reputation_over_http_and_mcp(fed):
+    """P4-1 over HTTP and MCP: measures without a single score, proofs, verify."""
+    a = await _workspace(fed, "rep-a")
+    fid = (await fed.post("/v1/federation/enable", headers=a["owner"])).json()["identity"][
+        "federation_id"
+    ]
+    page = await fed.get(f"/v1/federation/reputation/{fid}", headers=a["key"])
+    assert page.status_code == 200, page.text
+    assert page.json()["single_score"] is None
+    assert page.json()["completion"]["enough_evidence"] is False
+    proofs = await fed.get(f"/v1/federation/reputation/{fid}/proofs", headers=a["key"])
+    assert proofs.json()["items"] == []
+    bad = await fed.post(
+        "/v1/federation/proofs/verify", headers=a["key"], json={"proof": {"type": "x"}}
+    )
+    _refused(bad, 422, "federation_invalid", "FED_E_PROOF_INVALID")
+    assert (
+        await fed.get("/v1/federation/reputation/not-a-fid", headers=a["key"])
+    ).status_code == 422
+    via_mcp = await _mcp(
+        fed, a["key"], "federation", {"action": "reputation", "args": {"fid": fid}}
+    )
+    assert via_mcp["fid"] == fid and via_mcp["single_score"] is None, via_mcp

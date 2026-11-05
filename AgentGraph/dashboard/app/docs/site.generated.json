@@ -5141,6 +5141,25 @@
        "summary": "Resend a dead-lettered or refused message (a person)"
       },
       {
+       "body": [
+        {
+         "description": "",
+         "name": "proof",
+         "required": true,
+         "type": "object"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/proofs/verify",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Verify one fulfilment proof against its signer's key"
+      },
+      {
        "body": [],
        "description": "",
        "method": "GET",
@@ -5812,6 +5831,53 @@
         "422"
        ],
        "summary": "Withdraw a report before action"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "fid",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/reputation/{fid}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A workspace's reputation as a provider: separate measures, each with its evidence"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "fid",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "limit",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/federation/reputation/{fid}/proofs",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The signed fulfilment proofs behind a workspace's reputation, with their weights"
       },
       {
        "body": [],

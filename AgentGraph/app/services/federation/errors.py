@@ -84,6 +84,8 @@ CODES: dict[str, int] = {
     "FED_E_NOT_INSTALLED": 404,
     # withdrawals (P3-4)
     "FED_E_NOTICE_UNKNOWN": 404,
+    # reputation (P4-1)
+    "FED_E_PROOF_INVALID": 422,
 }
 
 

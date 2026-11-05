@@ -1879,6 +1879,23 @@ const ZH: Record<string, string> = {
   "you can update to {version}": "可以更新到 {version}",
   "or restore {version}": "或还原到 {version}",
   "Marked as seen": "已标记为已读",
+  // Federation P4-1: reputation
+  "not enough evidence": "证据不足",
+  "Delivers work it takes on": "接手的活按时交付",
+  "{n} signed records": "{n} 份对方签名的记录",
+  "Work accepted by the requester": "交付后被对方验收",
+  "first time: {rate}": "一次通过：{rate}",
+  "Answers delegation offers": "回应委派报价",
+  "{n} offers": "{n} 次报价",
+  "not enough ratings": "评分不足",
+  "{n} published": "已发布 {n} 个",
+  "Sanctions": "处罚",
+  "{n} ever": "历史 {n} 次",
+  "Has worked with": "合作过",
+  "{n} partner workspaces": "{n} 个工作区",
+  "{n} came back · longest {d} days": "{n} 个回头合作 · 最长 {d} 天",
+  "Reputation": "声誉",
+  "No single score: each line has its own evidence": "没有总分：每一项都有自己的依据",
 };
 
 const EN: Record<string, string> = {};

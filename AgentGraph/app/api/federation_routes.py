@@ -31,6 +31,7 @@ from app.services.federation import (
     metering,
     registry,
     remote,
+    reputation,
     skill_updates,
     withdrawals,
 )
@@ -1356,3 +1357,40 @@ async def revoke_skill_version(
     return await _call(
         withdrawals.revoke(name, version, reason=body.reason, operator=body.operator)
     )
+
+
+# ── reputation: fulfilment proofs and measures (P4-1, ICD_P4_REPUTATION.md) ──
+
+_FID_WS = r"^fed:workspace:[a-z2-7]{26}$"
+
+
+class ProofCheck(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    proof: dict[str, Any]
+
+
+@router.get(
+    "/reputation/{fid}",
+    summary="A workspace's reputation as a provider: separate measures, each with its evidence",
+)
+async def get_reputation(fid: str = Path(pattern=_FID_WS)) -> dict[str, Any]:
+    _enabled()
+    return await _call(reputation.profile(fid))
+
+
+@router.get(
+    "/reputation/{fid}/proofs",
+    summary="The signed fulfilment proofs behind a workspace's reputation, with their weights",
+)
+async def list_reputation_proofs(
+    fid: str = Path(pattern=_FID_WS), limit: int = Query(default=100, ge=1, le=500)
+) -> dict[str, Any]:
+    _enabled()
+    return {"items": await _call(reputation.proofs(fid, limit=limit))}
+
+
+@router.post("/proofs/verify", summary="Verify one fulfilment proof against its signer's key")
+async def verify_fulfilment_proof(body: ProofCheck) -> dict[str, Any]:
+    _enabled()
+    return await _call(reputation.verify_proof(body.proof))

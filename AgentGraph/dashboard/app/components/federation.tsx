@@ -13,6 +13,7 @@ import {
 
 import { useI18n } from "../i18n";
 import type { ApiRequest } from "../types";
+import { ReputationPanel } from "./federation-reputation";
 import { SkillsCard } from "./federation-skills";
 import { IconFederation } from "./ui";
 
@@ -903,6 +904,7 @@ function DiscoverCard({ request, notify, connections, onConnect }: {
           </span>
         </div>
       )}
+      {found && <ReputationPanel fid={found.federation_id} request={request} />}
       <div className="lin-row quiet">
         <span className="lin-title">
           {t("Ask the other team for their handle or federation id. Nothing is shared until both owners agree.")}
