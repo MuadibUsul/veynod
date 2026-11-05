@@ -724,3 +724,40 @@ async def test_skill_registry_over_http(fed):
     assert used.json()["digest"] == digest and used.json()["verified"]["digest"] == digest
     listed = await fed.get(f"/v1/federation/registry/packages/{name}", headers=b["key"])
     assert [v["digest"] for v in listed.json()["versions"]] == [digest]
+
+    # P3-2: rate, search and read the entry over HTTP and MCP.
+    _refused(
+        await fed.put(
+            f"/v1/federation/registry/packages/{name}/rating",
+            headers=b["key"],
+            json={"stars": 5},
+        ),
+        403,
+        "federation_forbidden",
+        "FED_E_APPROVAL_NOT_HUMAN",
+    )
+    rated = await fed.put(
+        f"/v1/federation/registry/packages/{name}/rating",
+        headers=b["owner"],
+        json={"stars": 5, "review": "Does what it says."},
+    )
+    assert rated.status_code == 200, rated.text
+    found = await fed.get("/v1/federation/registry/search", params={"q": name}, headers=b["key"])
+    assert found.status_code == 200, found.text
+    [hit] = found.json()["items"]
+    assert hit["name"] == name and hit["downloads"] == 1 and hit["rating"]["count"] == 1
+    bad = await fed.get(
+        "/v1/federation/registry/search", params={"sort": "loudest"}, headers=b["key"]
+    )
+    assert bad.status_code == 422
+    entry = await fed.get(f"/v1/federation/registry/entries/{name}", headers=b["key"])
+    assert entry.status_code == 200, entry.text
+    assert entry.json()["address"]["pin"] == f"{name}@0.1.0"
+    cats = await fed.get("/v1/federation/registry/categories", headers=b["key"])
+    assert "research" in cats.json()["items"]
+    via_mcp = await _mcp(fed, b["key"], "federation", {"action": "skills", "args": {"q": name}})
+    assert [i["name"] for i in via_mcp["items"]] == [name], via_mcp
+    page = await _mcp(fed, b["key"], "federation", {"action": "skill", "args": {"name": name}})
+    assert page["address"]["digest"] == digest, page
+    wrong = await _mcp(fed, b["key"], "federation", {"action": "skills", "args": {"stars": 5}})
+    assert wrong["error"]["code"] == "validation_error"

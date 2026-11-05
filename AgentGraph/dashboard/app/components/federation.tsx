@@ -13,6 +13,7 @@ import {
 
 import { useI18n } from "../i18n";
 import type { ApiRequest } from "../types";
+import { SkillsCard } from "./federation-skills";
 import { IconFederation } from "./ui";
 
 /*
@@ -73,11 +74,12 @@ type Message = {
   delivery?: { attempts: number; last_error?: string | null; next_retry_at?: string | null };
 };
 
-type Zone = "discover" | "contact" | "collaborate" | "safety";
+type Zone = "discover" | "contact" | "collaborate" | "skills" | "safety";
 const ZONES: { key: Zone; label: string }[] = [
   { key: "discover", label: "Discover" },
   { key: "contact", label: "Contact" },
   { key: "collaborate", label: "Collaborate" },
+  { key: "skills", label: "Skills" },
   { key: "safety", label: "Safety" },
 ];
 
@@ -255,7 +257,8 @@ export function FederationView({ request, notify, sessionMode }: {
   // Open where something is waiting; otherwise where the work is.
   const current: Zone = zone ?? (pendingRequests ? "contact" : live ? "collaborate" : "discover");
   const badge: Record<Zone, number> = {
-    discover: 0, contact: pendingRequests, collaborate: unhandled + waitingWork, safety: restricted,
+    discover: 0, contact: pendingRequests, collaborate: unhandled + waitingWork, skills: 0,
+    safety: restricted,
   };
 
   if (!sessionMode) {
@@ -312,6 +315,7 @@ export function FederationView({ request, notify, sessionMode }: {
                 call={call} />
             </>
           )}
+          {current === "skills" && <SkillsCard request={request} notify={notify} />}
           {current === "safety" && (
             <SafetyCard connections={connections} delegations={delegations} request={request}
               call={call} busy={busy} />

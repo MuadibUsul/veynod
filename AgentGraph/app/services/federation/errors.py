@@ -77,6 +77,8 @@ CODES: dict[str, int] = {
     "FED_E_YANKED": 410,
     "FED_E_DIGEST_MISMATCH": 409,
     "FED_E_PERMISSIONS_NOT_ACCEPTED": 403,
+    # discovery (P3-2)
+    "FED_E_RATING_NOT_ALLOWED": 403,
 }
 
 

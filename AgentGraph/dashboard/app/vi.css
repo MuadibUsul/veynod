@@ -2521,3 +2521,26 @@ button.timeline-row:disabled {
     max-width: 100%;
   }
 }
+
+/* Federation P3: skills (search, entry, install, rate). */
+.federation-view .skills-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.federation-view .skills-entry {
+  display: grid;
+  gap: 2px;
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.federation-view .skills-permission {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-right: 10px;
+}

@@ -43,6 +43,9 @@ MAX_FILES = 50
 MAX_BYTES = 256 * 1024  # P1 placeholder: text skills, not binaries
 MAX_DEPENDENCIES = 20
 MAX_DEPTH = 5
+CATEGORIES = ("research", "writing", "coding", "data", "design", "operations", "other")
+CAPABILITY = re.compile(r"^[a-z0-9][a-z0-9-]{1,31}$")
+MAX_CAPABILITIES = 10
 
 
 def _invalid(message: str, **detail: Any) -> FederationError:
@@ -73,6 +76,8 @@ def validate(manifest: Any, files: Any) -> tuple[dict[str, Any], list[dict[str, 
         "inputs",
         "outputs",
         "license",
+        "category",
+        "capabilities",
     }
     unknown = sorted(set(manifest) - allowed)
     if unknown:
@@ -93,6 +98,18 @@ def validate(manifest: Any, files: Any) -> tuple[dict[str, Any], list[dict[str, 
     description = manifest.get("description", "")
     if not isinstance(description, str) or len(description) > 500:
         raise _invalid("description is text up to 500 characters")
+    category = manifest.get("category", "other")
+    if category not in CATEGORIES:
+        raise _invalid("category is one of " + ", ".join(CATEGORIES))
+    capabilities = manifest.get("capabilities", [])
+    if (
+        not isinstance(capabilities, list)
+        or len(capabilities) > MAX_CAPABILITIES
+        or not all(isinstance(c, str) and CAPABILITY.fullmatch(c) for c in capabilities)
+    ):
+        raise _invalid(
+            f"capabilities are up to {MAX_CAPABILITIES} lowercase tags (letters, digits, dashes)"
+        )
     dependencies = manifest.get("dependencies", [])
     if not isinstance(dependencies, list) or len(dependencies) > MAX_DEPENDENCIES:
         raise _invalid(f"dependencies is a list of up to {MAX_DEPENDENCIES}")
@@ -139,6 +156,8 @@ def validate(manifest: Any, files: Any) -> tuple[dict[str, Any], list[dict[str, 
         "inputs": manifest.get("inputs"),
         "outputs": manifest.get("outputs"),
         "license": manifest.get("license"),
+        "category": category,
+        "capabilities": sorted(set(capabilities)),
     }
     clean_files.sort(key=lambda f: f["path"])
     return canonical_manifest, clean_files
@@ -230,6 +249,20 @@ async def publish(workspace_id: str, *, manifest: Any, files: Any, actor: Actor)
                 ),
                 {"n": name, "p": publisher, "d": manifest["description"]},
             )
+        # What search shows follows the latest version (P3-2).
+        await platform.execute(
+            text(
+                "UPDATE registry_packages SET description = :d, category = :c, "
+                "capabilities = :caps, latest_version = :v, updated_at = NOW() WHERE name = :n"
+            ),
+            {
+                "d": manifest["description"],
+                "c": manifest["category"],
+                "caps": manifest["capabilities"],
+                "v": version,
+                "n": name,
+            },
+        )
         await platform.execute(
             text(
                 "INSERT INTO registry_versions (name, version, major, minor, patch, digest, kind, "
@@ -427,6 +460,14 @@ async def install(
                 "parent": _parent,
                 "by": actor.ref,
             },
+        )
+        # A download is one workspace pulling one version, counted once.
+        await platform.execute(
+            text(
+                "INSERT INTO registry_downloads (name, version, workspace_id) VALUES "
+                "(:n, :v, CAST(:w AS uuid)) ON CONFLICT DO NOTHING"
+            ),
+            {"n": name, "v": version, "w": str(workspace_id)},
         )
         await platform.commit()
     return {"name": name, "version": version, "pinned": proof}

@@ -23,6 +23,7 @@ from app.schemas import AcceptanceItem, TaskCreateRequest
 from app.services import federation, tasks
 from app.services.federation import (
     delegations,
+    discovery,
     governance,
     grants,
     identity,
@@ -1089,3 +1090,84 @@ async def use_installed_skill(
 ) -> dict[str, Any]:
     _enabled()
     return await _call(registry.use(_workspace_id(principal), name))
+
+
+# ── skill discovery (P3-2, docs/federation/ICD_P3_REGISTRY.md §7) ─────────
+
+
+class SkillRating(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    stars: int = Field(ge=1, le=5)
+    review: str | None = Field(default=None, max_length=1000)
+
+
+@router.get("/registry/categories", summary="The categories a skill can be listed under")
+async def list_skill_categories() -> dict[str, Any]:
+    _enabled()
+    return {"items": discovery.categories()}
+
+
+@router.get(
+    "/registry/search",
+    summary="Find skills by words, category, capability, rating, price and response speed",
+)
+async def search_skills(
+    q: str | None = Query(default=None, max_length=100),
+    category: str | None = Query(default=None, max_length=24),
+    capability: str | None = Query(default=None, max_length=32),
+    kind: Literal["declarative", "executable"] | None = None,
+    min_rating: float | None = Query(default=None, ge=1, le=5),
+    price: Literal["any", "free", "paid"] | None = None,
+    max_response_seconds: float | None = Query(default=None, gt=0),
+    sort: Literal["relevance", "downloads", "rating", "response", "recent"] = "relevance",
+    include_yanked: bool = False,
+    limit: int = Query(default=20, ge=1, le=discovery.MAX_LIMIT),
+    offset: int = Query(default=0, ge=0, le=10_000),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        discovery.search(
+            q=q,
+            category=category,
+            capability=capability,
+            kind=kind,
+            min_rating=min_rating,
+            price=price,
+            max_response_seconds=max_response_seconds,
+            sort=sort,
+            include_yanked=include_yanked,
+            limit=limit,
+            offset=offset,
+        )
+    )
+
+
+@router.get(
+    "/registry/entries/{name}",
+    summary="A skill's entry: address, history, ratings, dependencies, representative works",
+)
+async def get_skill_entry(name: str = Path(pattern=_PKG)) -> dict[str, Any]:
+    _enabled()
+    return await _call(discovery.entry(name))
+
+
+@router.put(
+    "/registry/packages/{name}/rating",
+    summary="Rate a skill this workspace installed (a person; one rating per workspace)",
+)
+async def rate_skill(
+    body: SkillRating,
+    name: str = Path(pattern=_PKG),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        discovery.rate(
+            _workspace_id(principal),
+            name,
+            stars=body.stars,
+            review=body.review,
+            actor=_actor(principal),
+        )
+    )

@@ -5165,6 +5165,37 @@
        "description": "",
        "method": "GET",
        "parameters": [],
+       "path": "/v1/federation/registry/categories",
+       "responses": [
+        "200"
+       ],
+       "summary": "The categories a skill can be listed under"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/entries/{name}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A skill's entry: address, history, ratings, dependencies, representative works"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
        "path": "/v1/federation/registry/installs",
        "responses": [
         "200"
@@ -5268,6 +5299,39 @@
        "summary": "A skill and every version, yanked ones too"
       },
       {
+       "body": [
+        {
+         "description": "",
+         "name": "stars",
+         "required": true,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "name": "review",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "PUT",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/packages/{name}/rating",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Rate a skill this workspace installed (a person; one rating per workspace)"
+      },
+      {
        "body": [],
        "description": "",
        "method": "GET",
@@ -5327,6 +5391,96 @@
         "422"
        ],
        "summary": "Withdraw a version: no new installs; its record stays (the publisher)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "q",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "category",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "capability",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "kind",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "min_rating",
+         "required": false,
+         "type": "number | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "price",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "max_response_seconds",
+         "required": false,
+         "type": "number | null"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "sort",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "include_yanked",
+         "required": false,
+         "type": "boolean"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "limit",
+         "required": false,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "in": "query",
+         "name": "offset",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/federation/registry/search",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Find skills by words, category, capability, rating, price and response speed"
       },
       {
        "body": [],

@@ -1,4 +1,4 @@
-# 联邦 P3：Skill 仓库 ICD（P3-1 发布与版本）
+# 联邦 P3：Skill 仓库 ICD（P3-1 发布与版本，P3-2 搜索与发现）
 
 > 依据：愿景 v0.3 §11、§21 F-023、F-024；任务 `fedv2-p3-1-publish-version`。P3-2（搜索与发现）、P3-3（沙箱检测与安装）、P3-4（撤回与通知）在此基础上补充。
 > 收费不在本单：发布与安装都是免费的（愿景 §11.1：收费方式 TBD）。
@@ -62,3 +62,60 @@
 ## 8. 错误码
 
 `FED_E_PACKAGE_UNKNOWN`（404）、`FED_E_PACKAGE_INVALID`（422）、`FED_E_NAME_TAKEN`（409）、`FED_E_VERSION_EXISTS`（409）、`FED_E_YANKED`（410）、`FED_E_DIGEST_MISMATCH`（409）、`FED_E_PERMISSIONS_NOT_ACCEPTED`（403）。
+
+## 9. 搜索与发现（P3-2，迁移 3.91）
+
+清单多了两个可选字段：`category`（`research`、`writing`、`coding`、`data`、`design`、`operations`、`other` 之一，默认 `other`）和 `capabilities`（最多 10 个小写标签）。版本本身仍不可变；包上记录的分类、标签和简介跟随最新版本。
+
+条目上的每个数字都标明来源（愿景 §12.1）：
+
+| 来源 | 内容 |
+|---|---|
+| 发布方自述 | 简介、分类、能力标签 |
+| 机器验证 | 每个版本的 digest 和发布方签名 |
+| 其他工作区 | 下载量、评分 |
+| 平台实测 | 发布方作为执行方回应委派报价的速度、被验收的委派数 |
+
+- **下载量**：拉取过某个版本的**不同工作区**数（安装与作为依赖安装都算）；同一工作区重装不重复计数。
+- **评分**：1–5 星，可附 1000 字以内评语（会做凭证扫描）。只有人能评；只有装过这个包的工作区能评；发布方不能给自己评；每个工作区对每个包只有一条，再评即覆盖。评语展示时**不显示评分方地址**。
+- **平均分**：至少 3 条评分才显示，不足时显示“证据不足”（`enough_evidence: false`），不给新包打低分。
+- **响应速度**：发布方工作区作为执行方，从收到委派报价到接单或拒单的中位时间，统计最近 90 天，至少 3 次才显示。
+- **价格**：目前全部免费（`{"model": "free"}`）；按“收费”筛选返回空。
+
+### 9.1 搜索
+
+`GET /v1/federation/registry/search`，参数：
+
+| 参数 | 含义 |
+|---|---|
+| `q` | 名称或简介包含的词 |
+| `category` / `capability` / `kind` | 分类 / 能力标签 / `declarative` 或 `executable` |
+| `min_rating` | 平均分不低于此值（证据不足的不算） |
+| `price` | `any`、`free`、`paid` |
+| `max_response_seconds` | 发布方响应中位时间不超过此值（证据不足的不算） |
+| `sort` | `relevance`（默认）、`downloads`、`rating`、`response`、`recent` |
+| `include_yanked` | 是否包含已无可装版本的包（默认否） |
+| `limit` / `offset` | 每页最多 50 |
+
+### 9.2 条目主页
+
+`GET /v1/federation/registry/entries/{name}` 返回：
+
+- `address`：包名、发布方联邦地址和别名、安装会锁定的版本（`pin`）及其 digest；
+- `history`：全部版本（新到旧），每个带 digest、权限、状态、撤回原因、该版本下载量和评分；
+- `rating`：平均分、条数、1–5 星分布、最近评语；
+- `dependencies` / `dependants`：最新版本依赖了谁（及其当前状态），谁依赖了它；
+- `publisher`：包数量、被验收的委派数、响应速度；
+- `representative_works`：同一发布方下载量最高的其他 3 个包；
+- `evidence`：上面各项来自哪一类来源。
+
+### 9.3 评分与其他入口
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `PUT` | `/v1/federation/registry/packages/{name}/rating` | 评分（人；装过的工作区；发布方除外） |
+| `GET` | `/v1/federation/registry/categories` | 分类列表 |
+
+MCP：`federation` 工具新增 `skills`（搜索，参数同上）和 `skill`（`{name}`，条目主页）。安装与评分仍是人的决定。
+
+新增错误码：`FED_E_RATING_NOT_ALLOWED`（403）。表：`registry_downloads`、`registry_ratings`，部署级，应用角色无权限。
