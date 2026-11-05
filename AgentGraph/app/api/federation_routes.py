@@ -31,6 +31,7 @@ from app.services.federation import (
     metering,
     registry,
     remote,
+    skill_updates,
 )
 from app.services.federation.errors import FederationError
 from app.services.federation.grants import Actor
@@ -995,6 +996,10 @@ class SkillInstall(BaseModel):
         default_factory=list,
         description="For an executable skill: exactly the permissions it declares.",
     )
+    update_policy: Literal["locked", "follow_patch", "follow_minor"] | None = Field(
+        default=None,
+        description="Stay on this version (locked, the default) or follow patch/minor releases.",
+    )
 
 
 @router.post(
@@ -1071,6 +1076,7 @@ async def install_skill(
             body.version,
             actor=_actor(principal),
             accept_permissions=list(body.accept_permissions),
+            update_policy=body.update_policy,
         )
     )
 
@@ -1170,4 +1176,122 @@ async def rate_skill(
             review=body.review,
             actor=_actor(principal),
         )
+    )
+
+
+# ── sandbox, updates and rollback (P3-3, docs/federation/ICD_P3_REGISTRY.md §10) ──
+
+
+class SkillMove(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    version: str | None = Field(default=None, pattern=_SEMVER)
+    accept_permissions: list[Literal["network", "filesystem", "exec", "secrets"]] = Field(
+        default_factory=list,
+        description="For an executable version: exactly the permissions it declares.",
+    )
+
+
+class SkillPolicy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    update_policy: Literal["locked", "follow_patch", "follow_minor"]
+
+
+@router.get(
+    "/registry/packages/{name}/versions/{version}/sandbox",
+    summary="The platform's sandbox report for one version",
+)
+async def get_skill_sandbox_report(
+    name: str = Path(pattern=_PKG), version: str = Path(pattern=_SEMVER)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(registry.sandbox_report(name, version))
+
+
+@router.get(
+    "/registry/updates",
+    summary="Newer versions of installed skills, what they change, whether they follow alone",
+)
+async def list_skill_updates(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    _enabled()
+    return {"items": await _call(skill_updates.updates(_workspace_id(principal)))}
+
+
+@router.post(
+    "/registry/installs/{name}/update",
+    summary="Move a skill to a newer version, accepting its permissions afresh (a person)",
+)
+async def update_installed_skill(
+    body: SkillMove, name: str = Path(pattern=_PKG), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        skill_updates.update(
+            _workspace_id(principal),
+            name,
+            version=body.version,
+            accept_permissions=list(body.accept_permissions),
+            actor=_actor(principal),
+        )
+    )
+
+
+@router.post(
+    "/registry/installs/{name}/rollback",
+    summary="Restore an earlier version of an installed skill (a person)",
+)
+async def rollback_installed_skill(
+    body: SkillMove, name: str = Path(pattern=_PKG), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        skill_updates.rollback(
+            _workspace_id(principal),
+            name,
+            version=body.version,
+            accept_permissions=list(body.accept_permissions),
+            actor=_actor(principal),
+        )
+    )
+
+
+@router.put(
+    "/registry/installs/{name}/policy",
+    summary="Choose whether an installed skill stays locked or follows releases (a person)",
+)
+async def set_installed_skill_policy(
+    body: SkillPolicy,
+    name: str = Path(pattern=_PKG),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        skill_updates.set_policy(
+            _workspace_id(principal), name, policy=body.update_policy, actor=_actor(principal)
+        )
+    )
+
+
+@router.get(
+    "/registry/installs/{name}/history",
+    summary="Every move of an installed skill's pin, newest first",
+)
+async def get_installed_skill_history(
+    name: str = Path(pattern=_PKG), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return {"items": await _call(skill_updates.history(_workspace_id(principal), name))}
+
+
+@router.delete(
+    "/registry/installs/{name}",
+    summary="Uninstall a skill from this workspace (a person); its history stays",
+)
+async def uninstall_skill(
+    name: str = Path(pattern=_PKG), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _enabled()
+    return await _call(
+        skill_updates.uninstall(_workspace_id(principal), name, actor=_actor(principal))
     )

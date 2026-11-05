@@ -5221,6 +5221,12 @@
          "name": "accept_permissions",
          "required": false,
          "type": "string[]"
+        },
+        {
+         "description": "Stay on this version (locked, the default) or follow patch/minor releases.",
+         "name": "update_policy",
+         "required": false,
+         "type": "string | null"
         }
        ],
        "description": "",
@@ -5232,6 +5238,26 @@
         "422"
        ],
        "summary": "Install a skill: pull, verify digest and signature, pin it (a person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "DELETE",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/installs/{name}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Uninstall a skill from this workspace (a person); its history stays"
       },
       {
        "body": [],
@@ -5252,6 +5278,119 @@
         "422"
        ],
        "summary": "The pinned content of an installed skill, verified again (outside content)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/installs/{name}/history",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Every move of an installed skill's pin, newest first"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "update_policy",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "PUT",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/installs/{name}/policy",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Choose whether an installed skill stays locked or follows releases (a person)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "version",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "For an executable version: exactly the permissions it declares.",
+         "name": "accept_permissions",
+         "required": false,
+         "type": "string[]"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/installs/{name}/rollback",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Restore an earlier version of an installed skill (a person)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "version",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "For an executable version: exactly the permissions it declares.",
+         "name": "accept_permissions",
+         "required": false,
+         "type": "string[]"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/installs/{name}/update",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Move a skill to a newer version, accepting its permissions afresh (a person)"
       },
       {
        "body": [
@@ -5357,6 +5496,33 @@
         "422"
        ],
        "summary": "One version: manifest, files, digest and the publisher's signature"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "in": "path",
+         "name": "version",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/registry/packages/{name}/versions/{version}/sandbox",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The platform's sandbox report for one version"
       },
       {
        "body": [
@@ -5481,6 +5647,17 @@
         "422"
        ],
        "summary": "Find skills by words, category, capability, rating, price and response speed"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/registry/updates",
+       "responses": [
+        "200"
+       ],
+       "summary": "Newer versions of installed skills, what they change, whether they follow alone"
       },
       {
        "body": [],

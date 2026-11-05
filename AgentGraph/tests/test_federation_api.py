@@ -761,3 +761,96 @@ async def test_skill_registry_over_http(fed):
     assert page["address"]["digest"] == digest, page
     wrong = await _mcp(fed, b["key"], "federation", {"action": "skills", "args": {"stars": 5}})
     assert wrong["error"]["code"] == "validation_error"
+
+
+async def test_skill_updates_and_rollback_over_http(fed):
+    """P3-3 over HTTP: sandbox report, update with fresh consent, history, rollback."""
+    a, b = await _workspace(fed, "upd-a"), await _workspace(fed, "upd-b")
+    await fed.post("/v1/federation/enable", headers=a["owner"])
+    await fed.post("/v1/federation/enable", headers=b["owner"])
+    name = f"http-exe-{uuid.uuid4().hex[:6]}"
+
+    def body(version: str, code: str, permissions: list[str]) -> dict:
+        return {
+            "manifest": {
+                "name": name,
+                "version": version,
+                "kind": "executable",
+                "entry": "run.py",
+                "permissions": permissions,
+            },
+            "files": [{"path": "run.py", "content": code}],
+        }
+
+    first = await fed.post(
+        "/v1/federation/registry/packages",
+        headers=a["owner"],
+        json=body("1.0.0", "import subprocess\nsubprocess.run(['true'])\n", ["exec"]),
+    )
+    assert first.status_code == 201, first.text
+    refused = await fed.post(
+        "/v1/federation/registry/packages",
+        headers=a["owner"],
+        json=body("1.0.1", "import socket\nimport subprocess\n", ["exec"]),
+    )
+    _refused(refused, 422, "federation_invalid", "FED_E_SANDBOX_FAILED")
+    second = await fed.post(
+        "/v1/federation/registry/packages",
+        headers=a["owner"],
+        json=body("1.0.2", "import socket\nimport subprocess\n", ["exec", "network"]),
+    )
+    assert second.status_code == 201, second.text
+    report = await fed.get(
+        f"/v1/federation/registry/packages/{name}/versions/1.0.2/sandbox", headers=b["key"]
+    )
+    assert report.json()["verdict"] == "passed" and report.json()["detected"] == [
+        "exec",
+        "network",
+    ]
+
+    installed = await fed.post(
+        "/v1/federation/registry/installs",
+        headers=b["owner"],
+        json={"name": name, "version": "1.0.0", "accept_permissions": ["exec"]},
+    )
+    assert installed.status_code == 201, installed.text
+    pending = await fed.get("/v1/federation/registry/updates", headers=b["owner"])
+    [item] = [i for i in pending.json()["items"] if i["name"] == name]
+    assert item["available"]["permissions"]["added"] == ["network"]
+    _refused(
+        await fed.post(
+            f"/v1/federation/registry/installs/{name}/update",
+            headers=b["owner"],
+            json={"accept_permissions": ["exec"]},
+        ),
+        403,
+        "federation_forbidden",
+        "FED_E_PERMISSIONS_NOT_ACCEPTED",
+    )
+    moved = await fed.post(
+        f"/v1/federation/registry/installs/{name}/update",
+        headers=b["owner"],
+        json={"accept_permissions": ["exec", "network"]},
+    )
+    assert moved.status_code == 200, moved.text
+    back = await fed.post(
+        f"/v1/federation/registry/installs/{name}/rollback",
+        headers=b["owner"],
+        json={"accept_permissions": ["exec"]},
+    )
+    assert back.status_code == 200, back.text
+    policy = await fed.put(
+        f"/v1/federation/registry/installs/{name}/policy",
+        headers=b["owner"],
+        json={"update_policy": "follow_patch"},
+    )
+    assert policy.status_code == 200, policy.text
+    lines = await fed.get(f"/v1/federation/registry/installs/{name}/history", headers=b["key"])
+    assert [h["action"] for h in lines.json()["items"]] == [
+        "policy",
+        "rollback",
+        "update",
+        "install",
+    ]
+    gone = await fed.delete(f"/v1/federation/registry/installs/{name}", headers=b["owner"])
+    assert gone.status_code == 200, gone.text

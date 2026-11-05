@@ -27,7 +27,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import async_session_factory
-from app.services.federation import identity, keys
+from app.services.federation import identity, keys, sandbox
 from app.services.federation.canonical import CanonicalError, sha256_hex
 from app.services.federation.envelope import signing_bytes
 from app.services.federation.errors import FederationError
@@ -234,6 +234,14 @@ async def publish(workspace_id: str, *, manifest: Any, files: Any, actor: Actor)
                     "FED_E_YANKED", "a dependency was yanked", dependency=dep["name"]
                 )
             pinned.append({**dep, "digest": row["digest"]})
+        # The platform's sandbox check (P3-3): refused before anything is signed.
+        report = sandbox.inspect(manifest, files)
+        if report["verdict"] != "passed":
+            raise FederationError(
+                "FED_E_SANDBOX_FAILED",
+                "the sandbox check refused this version",
+                findings=[f for f in report["findings"] if f["severity"] == "block"][:10],
+            )
         digest = digest_of({**manifest, "dependencies": pinned}, files)
         release = await identity.sign_as(
             publisher,
@@ -285,8 +293,50 @@ async def publish(workspace_id: str, *, manifest: Any, files: Any, actor: Actor)
                 "by": actor.ref,
             },
         )
+        await _store_report(platform, digest, report)
         await platform.commit()
     return await get_version(name, version)
+
+
+async def _store_report(platform: AsyncSession, digest: str, report: dict[str, Any]) -> None:
+    await platform.execute(
+        text(
+            "INSERT INTO registry_sandbox_reports (digest, checker, verdict, report) VALUES "
+            "(:d, :c, :v, CAST(:r AS jsonb)) ON CONFLICT (digest) DO UPDATE SET checker = "
+            "EXCLUDED.checker, verdict = EXCLUDED.verdict, report = EXCLUDED.report, "
+            "checked_at = NOW()"
+        ),
+        {"d": digest, "c": report["checker"], "v": report["verdict"], "r": json.dumps(report)},
+    )
+
+
+async def check(row: dict[str, Any]) -> dict[str, Any]:
+    """Run the current sandbox checker over a stored version and keep the report."""
+    report = sandbox.inspect(_loads(row["manifest"]), _loads(row["files"]))
+    async with async_session_factory() as platform:
+        await _store_report(platform, row["digest"], report)
+        await platform.commit()
+    return report
+
+
+async def sandbox_report(name: str, version: str) -> dict[str, Any]:
+    """The stored report for one version, re-judged if an older checker wrote it."""
+    async with async_session_factory() as platform:
+        row = await _version_row(platform, name, version)
+        stored = (
+            (
+                await platform.execute(
+                    text("SELECT report FROM registry_sandbox_reports WHERE digest = :d"),
+                    {"d": row["digest"]},
+                )
+            )
+            .mappings()
+            .first()
+        )
+    report = _loads(stored["report"]) if stored else None
+    if report is None or report.get("checker") != sandbox.CHECKER_VERSION:
+        report = await check(row)
+    return {"name": name, "version": version, "digest": row["digest"], **report}
 
 
 def _version_out(row: dict[str, Any], *, with_files: bool = False) -> dict[str, Any]:
@@ -400,6 +450,115 @@ async def verify(row: dict[str, Any]) -> dict[str, Any]:
     return {"digest": row["digest"], "publisher": release["issuer"], "key_id": release["key_id"]}
 
 
+POLICIES = ("locked", "follow_patch", "follow_minor")
+ACTIONS = ("install", "update", "follow", "rollback")
+
+
+async def _current_pin(workspace_id: str, name: str) -> dict[str, Any] | None:
+    async with async_session_factory() as platform:
+        row = (
+            (
+                await platform.execute(
+                    text(
+                        "SELECT * FROM registry_installs WHERE workspace_id = CAST(:w AS uuid) "
+                        "AND name = :n"
+                    ),
+                    {"w": str(workspace_id), "n": name},
+                )
+            )
+            .mappings()
+            .first()
+        )
+    return dict(row) if row else None
+
+
+def permission_change(before: list[str], after: list[str]) -> dict[str, list[str]]:
+    return {
+        "added": sorted(set(after) - set(before)),
+        "removed": sorted(set(before) - set(after)),
+    }
+
+
+async def admissible(row: dict[str, Any]) -> dict[str, Any]:
+    """What every new pin needs: not yanked, signature and digest good, and a
+    passing sandbox check by the current checker. Returns the proof."""
+    if row["state"] == "yanked":
+        raise FederationError("FED_E_YANKED", "this version was yanked", reason=row["yank_reason"])
+    proof = await verify(row)
+    report = await check(row)
+    if report["verdict"] != "passed":
+        raise FederationError(
+            "FED_E_SANDBOX_FAILED",
+            "the sandbox check refused this version",
+            findings=[f for f in report["findings"] if f["severity"] == "block"][:10],
+        )
+    return proof
+
+
+async def _pin(
+    workspace_id: str,
+    row: dict[str, Any],
+    *,
+    accepted: list[str],
+    parent: str | None,
+    actor_ref: str,
+    action: str,
+    update_policy: str | None,
+) -> None:
+    """Write one pin, its download and its history line in one transaction."""
+    before = await _current_pin(workspace_id, row["name"])
+    policy = update_policy or (before["update_policy"] if before else "locked")
+    async with async_session_factory() as platform:
+        await platform.execute(
+            text(
+                "INSERT INTO registry_installs (workspace_id, tenant_id, name, version, digest, "
+                "accepted_permissions, as_dependency_of, installed_by, update_policy) VALUES "
+                "(CAST(:w AS uuid), '', :n, :v, :d, :p, :parent, :by, :pol) ON CONFLICT "
+                "(workspace_id, name) DO UPDATE SET version = EXCLUDED.version, digest = "
+                "EXCLUDED.digest, accepted_permissions = EXCLUDED.accepted_permissions, "
+                "installed_by = EXCLUDED.installed_by, update_policy = EXCLUDED.update_policy, "
+                "installed_at = NOW()"
+            ),
+            {
+                "w": str(workspace_id),
+                "n": row["name"],
+                "v": row["version"],
+                "d": row["digest"],
+                "p": accepted,
+                "parent": parent,
+                "by": actor_ref,
+                "pol": policy,
+            },
+        )
+        # A download is one workspace pulling one version, counted once.
+        await platform.execute(
+            text(
+                "INSERT INTO registry_downloads (name, version, workspace_id) VALUES "
+                "(:n, :v, CAST(:w AS uuid)) ON CONFLICT DO NOTHING"
+            ),
+            {"n": row["name"], "v": row["version"], "w": str(workspace_id)},
+        )
+        await platform.execute(
+            text(
+                "INSERT INTO registry_install_history (workspace_id, tenant_id, name, action, "
+                "from_version, version, digest, accepted_permissions, update_policy, actor) "
+                "VALUES (CAST(:w AS uuid), '', :n, :a, :f, :v, :d, :p, :pol, :by)"
+            ),
+            {
+                "w": str(workspace_id),
+                "n": row["name"],
+                "a": action,
+                "f": before["version"] if before else None,
+                "v": row["version"],
+                "d": row["digest"],
+                "p": accepted,
+                "pol": policy,
+                "by": actor_ref,
+            },
+        )
+        await platform.commit()
+
+
 async def install(
     workspace_id: str,
     name: str,
@@ -407,27 +566,43 @@ async def install(
     *,
     actor: Actor,
     accept_permissions: list[str] | None = None,
+    update_policy: str | None = None,
+    _action: str = "install",
     _parent: str | None = None,
     _depth: int = 0,
 ) -> dict[str, Any]:
-    """Pull, verify and pin one version (and its dependencies)."""
+    """Pull, check, verify and pin one version (and its dependencies).
+
+    Also how a pin moves: an update or a rollback is an install of another
+    version, with the same checks. The permissions accepted for the version
+    pinned before never carry over: an executable version installs only when
+    exactly its own declared permissions are accepted (F-024)."""
     if actor.kind != "user":
         raise FederationError("FED_E_APPROVAL_NOT_HUMAN", "a person installs a skill")
+    if update_policy is not None and update_policy not in POLICIES:
+        raise _invalid("update_policy is locked, follow_patch or follow_minor")
     if _depth > MAX_DEPTH:
         raise _invalid("dependencies nest too deep")
     async with async_session_factory() as platform:
         row = await _version_row(platform, name, version)
-    if row["state"] == "yanked":
-        raise FederationError("FED_E_YANKED", "this version was yanked", reason=row["yank_reason"])
-    proof = await verify(row)
+    proof = await admissible(row)
     manifest = _loads(row["manifest"])
     wanted = sorted(manifest.get("permissions", []))
     accepted = sorted(set(accept_permissions or []))
     if row["kind"] == "executable" and accepted != wanted:
+        before = await _current_pin(workspace_id, name)
         raise FederationError(
             "FED_E_PERMISSIONS_NOT_ACCEPTED",
             "accept exactly the permissions this version declares",
             declared=wanted,
+            **(
+                {
+                    "pinned_version": before["version"],
+                    **permission_change(list(before["accepted_permissions"]), wanted),
+                }
+                if before
+                else {}
+            ),
         )
     for dep in _loads(row["dependencies"]):
         async with async_session_factory() as platform:
@@ -441,35 +616,15 @@ async def install(
             _parent=name,
             _depth=_depth + 1,
         )
-    async with async_session_factory() as platform:
-        await platform.execute(
-            text(
-                "INSERT INTO registry_installs (workspace_id, tenant_id, name, version, digest, "
-                "accepted_permissions, as_dependency_of, installed_by) VALUES (CAST(:w AS uuid), "
-                "'', :n, :v, :d, :p, :parent, :by) ON CONFLICT (workspace_id, name) DO UPDATE SET "
-                "version = EXCLUDED.version, digest = EXCLUDED.digest, accepted_permissions = "
-                "EXCLUDED.accepted_permissions, installed_by = EXCLUDED.installed_by, "
-                "installed_at = NOW()"
-            ),
-            {
-                "w": str(workspace_id),
-                "n": name,
-                "v": version,
-                "d": row["digest"],
-                "p": wanted if row["kind"] == "executable" else [],
-                "parent": _parent,
-                "by": actor.ref,
-            },
-        )
-        # A download is one workspace pulling one version, counted once.
-        await platform.execute(
-            text(
-                "INSERT INTO registry_downloads (name, version, workspace_id) VALUES "
-                "(:n, :v, CAST(:w AS uuid)) ON CONFLICT DO NOTHING"
-            ),
-            {"n": name, "v": version, "w": str(workspace_id)},
-        )
-        await platform.commit()
+    await _pin(
+        workspace_id,
+        row,
+        accepted=wanted if row["kind"] == "executable" else [],
+        parent=_parent,
+        actor_ref=actor.ref,
+        action=_action if _depth == 0 else "install",
+        update_policy=update_policy if _depth == 0 else None,
+    )
     return {"name": name, "version": version, "pinned": proof}
 
 
@@ -479,7 +634,8 @@ async def installs(workspace_id: str) -> list[dict[str, Any]]:
             (
                 await platform.execute(
                     text(
-                        "SELECT i.*, v.state FROM registry_installs i JOIN registry_versions v "
+                        "SELECT i.*, v.state, v.manifest->'permissions' AS declared "
+                        "FROM registry_installs i JOIN registry_versions v "
                         "ON v.digest = i.digest WHERE i.workspace_id = CAST(:w AS uuid) "
                         "ORDER BY i.name"
                     ),
@@ -495,6 +651,8 @@ async def installs(workspace_id: str) -> list[dict[str, Any]]:
             "version": r["version"],
             "digest": r["digest"],
             "accepted_permissions": list(r["accepted_permissions"]),
+            "declared_permissions": list(_loads(r["declared"]) or []),
+            "update_policy": r["update_policy"],
             "as_dependency_of": r["as_dependency_of"],
             "installed_at": r["installed_at"].isoformat(),
             # Yanked after install: still pinned and usable, flagged (P3-4 notifies).

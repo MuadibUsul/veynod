@@ -1,4 +1,4 @@
-# 联邦 P3：Skill 仓库 ICD（P3-1 发布与版本，P3-2 搜索与发现）
+# 联邦 P3：Skill 仓库 ICD（P3-1 发布与版本，P3-2 搜索与发现，P3-3 沙箱检测与安装）
 
 > 依据：愿景 v0.3 §11、§21 F-023、F-024；任务 `fedv2-p3-1-publish-version`。P3-2（搜索与发现）、P3-3（沙箱检测与安装）、P3-4（撤回与通知）在此基础上补充。
 > 收费不在本单：发布与安装都是免费的（愿景 §11.1：收费方式 TBD）。
@@ -119,3 +119,57 @@
 MCP：`federation` 工具新增 `skills`（搜索，参数同上）和 `skill`（`{name}`，条目主页）。安装与评分仍是人的决定。
 
 新增错误码：`FED_E_RATING_NOT_ALLOWED`（403）。表：`registry_downloads`、`registry_ratings`，部署级，应用角色无权限。
+
+## 10. 沙箱检测、更新与还原（P3-3，迁移 3.92）
+
+### 10.1 沙箱检测
+
+每个版本在**发布前**检测一次，**每次安装前**按当前检测器再检测一次（检测器升级后，旧版本在下次安装时会被重新判定）。检测结果存在 `registry_sandbox_reports`，带检测器版本号。
+
+检测是**静态的**：平台读代码、不在服务器上执行代码。判定为 `failed` 的情况：
+
+| 规则 | 含义 |
+|---|---|
+| `undeclared_permission` | 代码用到了没声明的权限（网络、写文件、执行命令、读环境变量或凭证文件） |
+| `refused_pattern` | 不论声明什么都拒绝：清空磁盘或主目录、fork 炸弹、读写 SSH 密钥、读浏览器 Cookie、执行解码出来的代码、`curl … \| sh`、挖矿 |
+| `does_not_parse` | Python 文件语法错误（入口文件不能解析即“跑不起来”） |
+| `no_runnable_entry` | 可执行 Skill 的入口不是代码文件 |
+| `code_in_declarative` | 声明式 Skill 带了代码文件 |
+| `language_not_checked` | 检测器读不了的语言（目前只支持 Python、JavaScript、shell） |
+
+声明了却没用到的权限只记一条提示（`declared_but_unused`），不阻止。检测器认识：Python（按语法树）、JavaScript/TypeScript 与 shell（按模式匹配）；shell 脚本本身就算“执行命令”。
+
+**通过只表示“检测器 N 没发现越权”，不表示安全。** 真正在隔离环境里运行一遍，要等有独立的运行沙箱（容器/微虚拟机）后再加。
+
+`GET /v1/federation/registry/packages/{name}/versions/{version}/sandbox` 返回报告；条目页 `history[].sandbox` 显示每个版本的结论。
+
+### 10.2 锁定与跟进
+
+安装时可选 `update_policy`：
+
+- `locked`（默认）：一直停在这个版本，直到有人手动改。
+- `follow_patch`：自动跟进同一 `X.Y` 下的新补丁版。
+- `follow_minor`：自动跟进同一 `X` 下的新版本。
+
+自动跟进（后台任务）**只在全部满足时**才动：版本可装（未撤回、签名和 digest 正确、沙箱通过）、**不要求任何新权限**、类型不变、依赖不变。否则留给人决定。`GET /v1/federation/registry/updates` 列出每个已装 Skill 的可用新版本，以及它改了什么（权限增减、文件增删改、依赖、类型、沙箱结论）和“为什么需要人来决定”。
+
+### 10.3 重新授权（F-024）
+
+手动更新、还原都等于安装那个版本：同样的检查；可执行版本必须**正好接受它自己声明的权限**。之前接受过的权限**不会沿用**：补丁版多要了网络或写文件，就必须重新勾选；不勾选返回 `FED_E_PERMISSIONS_NOT_ACCEPTED`，并在 `added` / `removed` 里列出相对当前锁定版本的变化。
+
+### 10.4 还原与历史
+
+每次安装、更新、自动跟进、还原、改策略、卸载都追加一行到 `registry_install_history`（只能追加）。还原默认回到上一个锁定过的版本，也可指定版本；已撤回或检测不通过的版本不能还原。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/v1/federation/registry/updates` | 可用更新及改动 |
+| `POST` | `/v1/federation/registry/installs/{name}/update` | 更新（人），`{version?, accept_permissions}` |
+| `POST` | `/v1/federation/registry/installs/{name}/rollback` | 还原（人），`{version?, accept_permissions}` |
+| `PUT` | `/v1/federation/registry/installs/{name}/policy` | 改跟进策略（人） |
+| `GET` | `/v1/federation/registry/installs/{name}/history` | 历史 |
+| `DELETE` | `/v1/federation/registry/installs/{name}` | 卸载（人），历史保留 |
+
+`GET /registry/installs` 每项现在带 `declared_permissions`、`accepted_permissions`、`update_policy`。
+
+新增错误码：`FED_E_SANDBOX_FAILED`（422，带 `findings`）、`FED_E_NOT_INSTALLED`（404）。

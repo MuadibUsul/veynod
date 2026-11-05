@@ -2544,3 +2544,8 @@ button.timeline-row:disabled {
   gap: 4px;
   margin-right: 10px;
 }
+
+.federation-view .skills-installed {
+  display: grid;
+  gap: 2px;
+}

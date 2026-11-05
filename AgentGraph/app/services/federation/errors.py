@@ -79,6 +79,9 @@ CODES: dict[str, int] = {
     "FED_E_PERMISSIONS_NOT_ACCEPTED": 403,
     # discovery (P3-2)
     "FED_E_RATING_NOT_ALLOWED": 403,
+    # sandbox and updates (P3-3)
+    "FED_E_SANDBOX_FAILED": 422,
+    "FED_E_NOT_INSTALLED": 404,
 }
 
 

@@ -310,6 +310,18 @@ async def entry(name: str) -> dict[str, Any]:
             .mappings()
             .all()
         )
+        verdicts = {
+            r["digest"]: {"verdict": r["verdict"], "checker": r["checker"]}
+            for r in (
+                await platform.execute(
+                    text(
+                        "SELECT s.digest, s.verdict, s.checker FROM registry_sandbox_reports s "
+                        "JOIN registry_versions v ON v.digest = s.digest WHERE v.name = :n"
+                    ),
+                    {"n": name},
+                )
+            ).mappings()
+        }
         packages = await platform.scalar(
             text("SELECT count(*) FROM registry_packages WHERE publisher_fid = :f"),
             {"f": publisher},
@@ -341,6 +353,7 @@ async def entry(name: str) -> dict[str, Any]:
             "yanked_at": v["yanked_at"],
             "yank_reason": v["yank_reason"],
             "downloads": downloads.get(v["version"], 0),
+            "sandbox": verdicts.get(v["digest"]),
             "rating": _rating(
                 sum(by_version.get(v["version"], [])) / len(by_version[v["version"]])
                 if by_version.get(v["version"])
@@ -413,7 +426,11 @@ async def entry(name: str) -> dict[str, Any]:
         ],
         "evidence": {
             "self_declared": ["description", "category", "capabilities"],
-            "machine_verified": ["history[].digest", "signature per version"],
+            "machine_verified": [
+                "history[].digest",
+                "signature per version",
+                "history[].sandbox",
+            ],
             "from_other_workspaces": ["downloads", "rating"],
             "measured_by_platform": ["publisher.response", "publisher.accepted_results"],
         },

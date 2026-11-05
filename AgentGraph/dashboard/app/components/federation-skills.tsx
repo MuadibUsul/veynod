@@ -58,7 +58,46 @@ type Entry = {
     rating: Rating }[];
 };
 
-type Installed = { name: string; version: string; digest: string; yanked: boolean };
+type Installed = {
+  name: string;
+  version: string;
+  digest: string;
+  yanked: boolean;
+  accepted_permissions: string[];
+  declared_permissions: string[];
+  update_policy: "locked" | "follow_patch" | "follow_minor";
+  as_dependency_of: string | null;
+};
+
+type Update = {
+  name: string;
+  pinned_version: string;
+  applies_on_its_own: boolean;
+  needs_a_person_because: string[];
+  available: {
+    version: string;
+    declared_permissions: string[];
+    permissions: { added: string[]; removed: string[] };
+    files: { added: string[]; removed: string[]; changed: string[] };
+    dependencies_changed: boolean;
+    sandbox: string;
+  };
+};
+
+type HistoryLine = {
+  action: string;
+  from_version: string | null;
+  version: string | null;
+  accepted_permissions: string[];
+  actor: string;
+  at: string;
+};
+
+const POLICY_LABEL: Record<string, string> = {
+  locked: "Stay on this version",
+  follow_patch: "Follow patch releases",
+  follow_minor: "Follow minor releases",
+};
 
 const CATEGORY_LABEL: Record<string, string> = {
   research: "Research", writing: "Writing", coding: "Coding", data: "Data", design: "Design",
@@ -104,6 +143,7 @@ export function SkillsCard({ request, notify }: {
   const [total, setTotal] = useState(0);
   const [open, setOpen] = useState<Entry | null>(null);
   const [installed, setInstalled] = useState<Installed[]>([]);
+  const [updates, setUpdates] = useState<Update[]>([]);
   const [busy, setBusy] = useState(false);
 
   const search = useCallback(async () => {
@@ -113,13 +153,15 @@ export function SkillsCard({ request, notify }: {
     if (minRating) params.set("min_rating", minRating);
     if (maxResponse) params.set("max_response_seconds", String(maxResponse));
     try {
-      const [found, mine] = await Promise.all([
+      const [found, mine, pending] = await Promise.all([
         request<{ items: Hit[]; total: number }>(`/v1/federation/registry/search?${params}`),
         request<{ items: Installed[] }>("/v1/federation/registry/installs"),
+        request<{ items: Update[] }>("/v1/federation/registry/updates"),
       ]);
       setHits(found.items ?? []);
       setTotal(found.total ?? 0);
       setInstalled(mine.items ?? []);
+      setUpdates(pending.items ?? []);
     } catch (error) {
       notify((error as Error)?.message ?? t("Something went wrong."));
     }
@@ -155,6 +197,10 @@ export function SkillsCard({ request, notify }: {
 
   return (
     <section className="lin-list" aria-label={t("Skills")}>
+      {installed.length > 0 && (
+        <InstalledList installed={installed} updates={updates} busy={busy} act={act}
+          request={request} notify={notify} />
+      )}
       <div className="lin-group"><i className="lamp cyan" />{t("Find a skill")}</div>
       <form className="lin-row" onSubmit={(event) => { event.preventDefault(); void search(); }}>
         <input value={query} onChange={(event) => setQuery(event.target.value)}
@@ -391,5 +437,121 @@ function SkillEntry({ entry, busy, installed, onClose, onOpen, act }: {
         </form>
       )}
     </div>
+  );
+}
+
+function InstalledList({ installed, updates, busy, act, request, notify }: {
+  installed: Installed[];
+  updates: Update[];
+  busy: boolean;
+  act: (path: string, body: unknown, done: string, method?: string) => Promise<void>;
+  request: ApiRequest;
+  notify: (message: string) => void;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState<string | null>(null);
+  const [lines, setLines] = useState<HistoryLine[]>([]);
+  const [accepted, setAccepted] = useState<Record<string, string[]>>({});
+
+  async function showHistory(name: string) {
+    if (open === name) {
+      setOpen(null);
+      return;
+    }
+    try {
+      const page = await request<{ items: HistoryLine[] }>(
+        `/v1/federation/registry/installs/${name}/history`);
+      setLines(page.items ?? []);
+      setOpen(name);
+    } catch (error) {
+      notify((error as Error)?.message ?? t("Something went wrong."));
+    }
+  }
+
+  const toggle = (name: string, permission: string, on: boolean) => setAccepted((prev) => ({
+    ...prev,
+    [name]: on ? [...(prev[name] ?? []), permission]
+      : (prev[name] ?? []).filter((p) => p !== permission),
+  }));
+
+  return (
+    <>
+      <div className="lin-group"><i className="lamp green" />{t("Installed here")}</div>
+      {installed.map((pin) => {
+        const update = updates.find((u) => u.name === pin.name);
+        const wanted = update?.available.declared_permissions ?? [];
+        const ticked = accepted[pin.name] ?? [];
+        const ready = wanted.every((p) => ticked.includes(p));
+        return (
+          <div key={pin.name} className="skills-installed">
+            <div className="lin-row">
+              <span className="lin-title">{pin.name} <code>{pin.version}</code></span>
+              <span className="flow-aside">
+                {pin.accepted_permissions.length
+                  ? t("Allowed: {list}", { list: pin.accepted_permissions.join(", ") })
+                  : t("Reads text only, no permissions")}
+                {pin.yanked && ` · ${t("this version was withdrawn")}`}
+                {pin.as_dependency_of && ` · ${t("needed by {name}", { name: pin.as_dependency_of })}`}
+              </span>
+              <select value={pin.update_policy} aria-label={t("Updates")} disabled={busy}
+                onChange={(event) => void act(`/v1/federation/registry/installs/${pin.name}/policy`,
+                  { update_policy: event.target.value }, "Update choice saved", "PUT")}>
+                {Object.entries(POLICY_LABEL).map(([key, label]) => (
+                  <option key={key} value={key}>{t(label)}</option>
+                ))}
+              </select>
+              <button type="button" className="button ghost small"
+                onClick={() => void showHistory(pin.name)}>{t("History")}</button>
+            </div>
+            {update && (
+              <div className="lin-row">
+                <span className="lin-title">
+                  {t("Version {version} is available", { version: update.available.version })}
+                  {update.available.permissions.added.length > 0 && (
+                    <strong> · {t("asks for new permissions: {list}",
+                      { list: update.available.permissions.added.join(", ") })}</strong>
+                  )}
+                  {update.available.files.added.length > 0
+                    && ` · ${t("adds files: {list}", { list: update.available.files.added.join(", ") })}`}
+                  {update.available.sandbox !== "passed" && ` · ${t("fails the sandbox check")}`}
+                </span>
+                {wanted.map((p) => (
+                  <label key={p} className="skills-permission">
+                    <input type="checkbox" checked={ticked.includes(p)}
+                      onChange={(event) => toggle(pin.name, p, event.target.checked)} /> {p}
+                  </label>
+                ))}
+                <button type="button" className="button small"
+                  disabled={busy || !ready || update.available.sandbox !== "passed"}
+                  onClick={() => void act(`/v1/federation/registry/installs/${pin.name}/update`,
+                    { version: update.available.version, accept_permissions: ticked },
+                    "Updated")}>
+                  {t("Update")}
+                </button>
+              </div>
+            )}
+            {open === pin.name && lines.map((line, index) => (
+              <div key={`${line.at}-${index}`} className="lin-row quiet">
+                <span className="lin-title">
+                  {t(line.action)} {line.from_version ? `${line.from_version} → ` : ""}
+                  {line.version ?? ""}
+                </span>
+                <span className="flow-aside">
+                  {line.accepted_permissions.join(", ") || "—"} · {line.at.slice(0, 16)}
+                </span>
+                {line.version && line.version !== pin.version && line.action !== "uninstall" && (
+                  <button type="button" className="button ghost small" disabled={busy}
+                    onClick={() => void act(`/v1/federation/registry/installs/${pin.name}/rollback`,
+                      { version: line.version, accept_permissions: line.accepted_permissions },
+                      "Restored")}>
+                    {t("Restore {version}", { version: line.version })}
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </>
   );
 }
