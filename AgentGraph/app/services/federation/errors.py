@@ -88,6 +88,13 @@ CODES: dict[str, int] = {
     "FED_E_PROOF_INVALID": 422,
     # directory (P4-2)
     "FED_E_NOT_LISTED": 404,
+    # simulated market (P5)
+    "FED_E_OFFER_UNKNOWN": 404,
+    "FED_E_OFFER_STATE": 409,
+    "FED_E_CONTRACT_UNKNOWN": 404,
+    "FED_E_CONTRACT_STATE": 409,
+    "FED_E_INSUFFICIENT_FUNDS": 409,
+    "FED_E_NOT_AVAILABLE": 422,
 }
 
 

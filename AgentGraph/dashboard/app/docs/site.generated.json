@@ -5121,6 +5121,173 @@
        "description": "",
        "method": "GET",
        "parameters": [],
+       "path": "/v1/federation/market/contracts",
+       "responses": [
+        "200"
+       ],
+       "summary": "Contracts this workspace is a party to"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "contract_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/market/contracts/{contract_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "One contract, its escrow and receipt"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "contract_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/market/contracts/{contract_id}/cancel",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Cancel before delivery: the escrow goes back to the buyer (the buyer's person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/market/machines",
+       "responses": [
+        "200"
+       ],
+       "summary": "The contract states of each value stream"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/market/offers",
+       "responses": [
+        "200"
+       ],
+       "summary": "Offers this workspace made or received"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "kind",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "job id, or name@version",
+         "name": "subject",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "SIM demonstration credits, not money",
+         "name": "price",
+         "required": true,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "name": "buyer",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "expires_hours",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/market/offers",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Put a price on a task or a skill (a person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "offer_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/market/offers/{offer_id}/accept",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Accept an offer: the contract is created and the price held in escrow (a person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "offer_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/market/offers/{offer_id}/withdraw",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Withdraw an open offer (the seller)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/market/wallet",
+       "responses": [
+        "200"
+       ],
+       "summary": "This workspace's simulated credits (SIM, not money)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
        "path": "/v1/federation/me",
        "responses": [
         "200"

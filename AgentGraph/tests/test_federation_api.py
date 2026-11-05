@@ -1043,3 +1043,60 @@ async def test_privacy_policy_and_disclosure_over_http(fed):
     assert "complaints" in seen.json()["governance"]
     own = await fed.get(f"/v1/federation/reputation/{a_fid}", headers=a["key"])
     assert "counterparts" in own.json()["cooperation"]
+
+
+async def test_simulated_market_over_http(fed):
+    """P5-1 over HTTP: wallet, a skill sold through escrow, operator tools."""
+    a, b = await _workspace(fed, "mkt-a"), await _workspace(fed, "mkt-b")
+    a_fid = (await fed.post("/v1/federation/enable", headers=a["owner"])).json()["identity"][
+        "federation_id"
+    ]
+    await fed.post("/v1/federation/enable", headers=b["owner"])
+    wallet = await fed.get("/v1/federation/market/wallet", headers=b["key"])
+    assert wallet.status_code == 200 and wallet.json()["simulated"] is True
+    start = wallet.json()["available"]
+    name = f"mkt-{uuid.uuid4().hex[:6]}"
+    await fed.post(
+        "/v1/federation/registry/packages",
+        headers=a["owner"],
+        json={
+            "manifest": {"name": name, "version": "1.0.0", "entry": "SKILL.md"},
+            "files": [{"path": "SKILL.md", "content": "# Steps"}],
+        },
+    )
+    offer = await fed.post(
+        "/v1/federation/market/offers",
+        headers=a["owner"],
+        json={"kind": "skill", "subject": f"{name}@1.0.0", "price": 40},
+    )
+    assert offer.status_code == 201, offer.text
+    _refused(
+        await fed.post(
+            f"/v1/federation/market/offers/{offer.json()['offer_id']}/accept", headers=b["key"]
+        ),
+        403,
+        "federation_forbidden",
+        "FED_E_APPROVAL_NOT_HUMAN",
+    )
+    contract = await fed.post(
+        f"/v1/federation/market/offers/{offer.json()['offer_id']}/accept", headers=b["owner"]
+    )
+    assert contract.status_code == 200 and contract.json()["state"] == "FUNDED", contract.text
+    cid = contract.json()["contract_id"]
+    held = await fed.get("/v1/federation/market/wallet", headers=b["key"])
+    assert held.json()["available"] == start - 40 and held.json()["held_in_escrow"] == 40
+    await fed.post(
+        "/v1/federation/registry/installs",
+        headers=b["owner"],
+        json={"name": name, "version": "1.0.0"},
+    )
+    seen = await fed.get(f"/v1/federation/market/contracts/{cid}", headers=b["key"])
+    assert seen.json()["state"] in ("INSTALLED", "RELEASED"), seen.text
+    minted = await fed.post(
+        "/v1/admin/federation/market/mint",
+        headers=ADMIN,
+        json={"fid": a_fid, "amount": 25, "reason": "Demo top-up.", "operator": "ops"},
+    )
+    assert minted.status_code == 200, minted.text
+    check = await fed.get("/v1/admin/federation/market/ledger/check", headers=ADMIN)
+    assert check.json()["unbalanced_transactions"] == 0
