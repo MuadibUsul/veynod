@@ -686,11 +686,27 @@ async def receive(workspace_id: str, envelope: dict[str, Any]) -> dict[str, Any]
             replay_check=identity.replay_check_for(workspace_id),
         )
     except FederationError as exc:
-        if exc.code == "FED_E_REPLAY" and envelope.get("type") == "chat.message":
-            # The signature was checked before the replay guard, so this is the
-            # sender retrying the very same envelope: answer as the first time.
-            return await _duplicate(workspace_id, local_fid, envelope["issuer"], envelope)
-        raise
+        if exc.code != "FED_E_REPLAY" or envelope.get("type") not in (
+            "chat.message",
+            "delivery.receipt",
+        ):
+            raise
+        # The replay guard is the last check, so the signature verified: this is
+        # the sender retrying the very same envelope. A message already stored
+        # is answered as the first time. One the guard recorded but that was
+        # never stored (the first try failed after the guard) is handled now:
+        # storing is idempotent by message_id and idempotency key, and receipts
+        # only move a message forward, so a retry can never count twice.
+        if envelope.get("type") == "chat.message":
+            answer = await _duplicate(workspace_id, local_fid, envelope["issuer"], envelope)
+            if answer is not None:
+                return answer
+        verified = await verify_envelope(
+            envelope,
+            local_workspace_fid=local_fid,
+            key_lookup=identity.key_lookup,
+            replay_check=identity.accept_recorded,
+        )
     if parse_federation_id(verified.issuer)[0] != "workspace":
         raise FederationError("FED_E_TYPE_MISMATCH", "messages are between workspaces")
     if verified.type == "chat.message":
@@ -702,13 +718,14 @@ async def receive(workspace_id: str, envelope: dict[str, Any]) -> dict[str, Any]
 
 async def _duplicate(
     workspace_id: str, local_fid: str, peer: str, envelope: dict[str, Any]
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
+    """The first answer for a message already stored; None if it never was."""
     async with async_session_factory() as platform:
         row = await _message_row(
             platform, workspace_id, direction="in", message_id=envelope.get("object_id"), peer=peer
         )
     if row is None:
-        raise FederationError("FED_E_REPLAY", "envelope was already accepted")
+        return None
     status = row["state"] if row["state"] in RECEIPT_STATUSES else "received"
     return {
         "status": "duplicate",

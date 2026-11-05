@@ -1084,12 +1084,28 @@ async def get(workspace_id: str, job_id: str) -> dict[str, Any]:
 
 async def receive(workspace_id: str, envelope: dict[str, Any]) -> dict[str, Any]:
     local_fid = await _local_fid(workspace_id)
-    verified = await verify_envelope(
-        envelope,
-        local_workspace_fid=local_fid,
-        key_lookup=identity.key_lookup,
-        replay_check=identity.replay_check_for(workspace_id),
-    )
+    try:
+        verified = await verify_envelope(
+            envelope,
+            local_workspace_fid=local_fid,
+            key_lookup=identity.key_lookup,
+            replay_check=identity.replay_check_for(workspace_id),
+        )
+    except FederationError as exc:
+        if exc.code != "FED_E_REPLAY":
+            raise
+        # The sender is retrying the very same envelope (the guard runs last, so
+        # it verified). Refusing it as a replay left the sender's queue stuck
+        # behind an object the first try had applied but whose answer was lost.
+        # Every delegate.* handler is idempotent (an offer by job id, a cancel
+        # request by its flag, a transition by version), so let it answer the
+        # repeat as a duplicate, or apply it if the first try never got there.
+        verified = await verify_envelope(
+            envelope,
+            local_workspace_fid=local_fid,
+            key_lookup=identity.key_lookup,
+            replay_check=identity.accept_recorded,
+        )
     if parse_federation_id(verified.issuer)[0] != "workspace":
         raise FederationError("FED_E_TYPE_MISMATCH", "delegations are between workspaces")
     job_id = verified.payload.get("federation_job_id")

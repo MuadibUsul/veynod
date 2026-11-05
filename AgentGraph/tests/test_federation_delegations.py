@@ -939,3 +939,35 @@ async def test_both_sides_sending_at_once_do_not_wait_on_each_other(
     req, prov = await _one(a, job), await _one(b, job)
     assert req["state"] == prov["state"] == "REJECTED"
     assert req["pending_deliveries"] == prov["pending_deliveries"] == 0
+
+
+async def test_a_lost_answer_does_not_block_the_queue(client, admin_headers, federation_on):
+    """The peer applied an object but its answer was lost. The retry of the same
+    envelope used to be refused as a replay, so it stayed at the head of the
+    queue (and everything behind it) until it was dead-lettered."""
+    a, b = await _ws(client, admin_headers, "lost-a2"), await _ws(client, admin_headers, "lost-b2")
+    await _connect(a, b)
+    job = (
+        await delegations.offer(a["id"], peer_workspace=b["fid"], terms=_terms(), actor=a["person"])
+    )["delegation"]["federation_job_id"]
+
+    class AnswerLost(grants.LocalTransport):
+        async def deliver(self, envelope):
+            await super().deliver(envelope)
+            raise ConnectionResetError("the answer was lost on the way back (test)")
+
+    grants.set_transport(AnswerLost())
+    try:
+        await delegations.act(
+            b["id"], job, "accept", actor=b["person"], create_local_task=Tasks().create
+        )
+    finally:
+        grants.set_transport(grants.LocalTransport())
+    assert (await _one(b, job))["pending_deliveries"] == 1
+
+    out = await delegations.sync(b["id"], job)
+    assert out["last_error"] is None and out["delivered"] == 1
+    prov, req = await _one(b, job), await _one(a, job)
+    assert prov["pending_deliveries"] == 0
+    # Applied once: the retry is a duplicate, not a second step.
+    assert (req["state"], req["version"]) == ("ACCEPTED", 2)

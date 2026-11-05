@@ -549,3 +549,54 @@ async def test_a_peer_cannot_write_into_another_peers_thread(
     )
     assert await _code(transport.deliver(hijack)) == "FED_E_ENVELOPE_INVALID"
     assert [m["peer_workspace"] for m in await _inbox(a)] == [b["fid"]]
+
+
+async def test_a_retry_after_the_receiver_failed_is_delivered_not_rejected(
+    client, admin_headers, federation_on, transport, monkeypatch
+):
+    """The replay guard records a signature before the message is stored. When
+    storing failed once, the sender's retry of the same envelope used to be
+    refused as a replay and the message ended "rejected" (FED_E_REPLAY) though
+    the receiver never had it."""
+    a, b = await _ws(client, admin_headers, "rf-a"), await _ws(client, admin_headers, "rf-b")
+    await _connect(a, b)
+    real = messaging._ensure_thread
+    failed: list[bool] = []
+
+    async def fails_once_on_the_receiver(platform, workspace_id, *args, **kwargs):
+        if str(workspace_id) == b["id"] and not failed:
+            failed.append(True)
+            raise RuntimeError("receiver database hiccup (test)")
+        return await real(platform, workspace_id, *args, **kwargs)
+
+    monkeypatch.setattr(messaging, "_ensure_thread", fails_once_on_the_receiver)
+    sent = await messaging.send(
+        a["id"], peer_workspace=b["fid"], text_body="hello", actor=a["agent"]
+    )
+    assert sent["state"] == "accepted_locally"
+    assert sent["delivery"]["last_error"] == "FED_E_UNREACHABLE"
+    async with async_session_factory() as platform:
+        await platform.execute(
+            text(
+                "UPDATE federation_delivery_attempts SET next_retry_at = NOW() - INTERVAL "
+                "'1 second' WHERE result = 'retry'"
+            )
+        )
+        await platform.commit()
+    await messaging.deliver_due()
+
+    after = await messaging.get(a["id"], sent["message_id"], direction="out")
+    assert after["state"] == "received", after
+    inbox = await _inbox(b)
+    assert [m["message_id"] for m in inbox] == [sent["message_id"]]
+    # And the very same envelope again is still one message.
+    async with async_session_factory() as platform:
+        envelope = await platform.scalar(
+            text(
+                "SELECT envelope FROM federation_messages WHERE direction = 'out' "
+                "AND message_id = :m"
+            ),
+            {"m": sent["message_id"]},
+        )
+    assert (await transport.deliver(envelope))["status"] == "duplicate"
+    assert len(await _inbox(b)) == 1

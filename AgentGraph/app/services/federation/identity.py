@@ -894,6 +894,21 @@ def replay_check_for(workspace_id: str):
     return check
 
 
+async def accept_recorded(digest: str, expires_at: datetime) -> bool:
+    """A ReplayCheck for an envelope the replay guard has already recorded.
+
+    The guard commits a signature as soon as it verifies, before the object is
+    handled, so the sender's retry of the very same envelope is refused as a
+    replay even when the first try failed after the guard (a crash, a lost
+    answer). For objects whose handler is idempotent on its own (chat messages
+    and receipts by id, delegation objects by version), re-read the envelope
+    with this check and let the handler answer it as the first time, or finish
+    it if the first try never got that far. Never for other types.
+    """
+    del digest, expires_at
+    return True
+
+
 def require_workspace_id(value: object) -> str:
     return require_type(value, "workspace")
 
@@ -913,6 +928,7 @@ __all__ = [
     "resolve_alias",
     "normalize_handle",
     "key_lookup",
+    "accept_recorded",
     "replay_check_for",
     "require_workspace_id",
 ]
