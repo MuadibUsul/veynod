@@ -14,6 +14,7 @@ import {
 import { useI18n } from "../i18n";
 import type { ApiRequest } from "../types";
 import { DirectoryCard } from "./federation-directory";
+import { MarketCard } from "./federation-market";
 import { ReputationPanel } from "./federation-reputation";
 import { SkillsCard } from "./federation-skills";
 import { IconFederation } from "./ui";
@@ -317,6 +318,7 @@ export function FederationView({ request, notify, sessionMode }: {
                 notify={notify} reload={load} />
               <DelegationsCard delegations={delegations} connections={connections} busy={busy}
                 call={call} />
+              <MarketCard request={request} notify={notify} myFid={me.federation_id} />
             </>
           )}
           {current === "skills" && <SkillsCard request={request} notify={notify} />}

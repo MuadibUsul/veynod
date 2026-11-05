@@ -318,6 +318,8 @@ class Settings(BaseSettings):
     # federation. Empty (the default) means no outbound federation traffic at
     # all, which is what a closed enterprise network wants (F-022).
     federation_peer_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # P5 simulated market: demonstration credits (SIM) each workspace gets once.
+    federation_sim_allowance: int = Field(default=1000, ge=0, le=1_000_000)
     federation_remote_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
 
     # ---------------------------------------------------- outbound actions

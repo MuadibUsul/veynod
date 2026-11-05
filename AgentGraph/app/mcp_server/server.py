@@ -2250,18 +2250,11 @@ async def federation_tool(action: str, args: dict[str, Any] | None = None) -> di
                                           details={"error": str(exc)[:200]})) from exc
             return _compact(found)
         if action == "reputation":
-            from app.services.federation import directory as fed_directory
-            from app.services.federation import reputation as fed_reputation
-
             fid = args.get("fid")
             if not isinstance(fid, str):
                 raise _api_error(ApiError(422, "validation_error", "reputation needs fid"))
-            if not await fed_directory.can_view(fid, await routes._viewer_fid(principal)):
-                raise _api_error(ApiError(404, "federation_not_found",
-                                          "this workspace is not listed and you are not "
-                                          "connected with it",
-                                          details={"federation_code": "FED_E_NOT_LISTED"}))
-            return _compact(await routes._call(fed_reputation.profile(fid)))
+            return _compact(await routes._call(routes.public_reputation(
+                fid, await routes._viewer_fid(principal))))
         if action == "directory":
             from app.services.federation import directory as fed_directory
 

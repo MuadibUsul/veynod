@@ -28,7 +28,23 @@ type Card = {
   rank: { score: number; position: number; explanation: Factor[] };
 };
 
-type Listing = { listed: boolean; headline: string; capabilities: string[]; availability: string };
+type Disclosure = Record<"completion" | "acceptance" | "response" | "skills" | "cooperation",
+  boolean>;
+type Listing = {
+  listed: boolean;
+  headline: string;
+  capabilities: string[];
+  availability: string;
+  disclosure: Disclosure;
+};
+
+const DISCLOSURE_LABEL: Record<keyof Disclosure, string> = {
+  completion: "Delivery rate",
+  acceptance: "Acceptance rate",
+  response: "Response speed",
+  skills: "Skills",
+  cooperation: "How many we worked with",
+};
 
 const FACTOR_LABEL: Record<string, string> = {
   relevance: "Fits the request",
@@ -49,6 +65,9 @@ export function DirectoryCard({ request, notify, onConnect }: {
   const [open, setOpen] = useState<string | null>(null);
   const [mine, setMine] = useState<Listing | null>(null);
   const [draft, setDraft] = useState({ headline: "", tags: "", availability: "open" });
+  const [shown, setShown] = useState<Disclosure>({
+    completion: true, acceptance: true, response: true, skills: true, cooperation: true,
+  });
 
   const search = useCallback(async () => {
     const params = new URLSearchParams({ limit: "20" });
@@ -68,6 +87,7 @@ export function DirectoryCard({ request, notify, onConnect }: {
       setMine(value);
       setDraft({ headline: value.headline, tags: value.capabilities.join(", "),
         availability: value.availability });
+      if (value.disclosure) setShown(value.disclosure);
     }).catch(() => setMine(null));
     // Load once; searching is explicit.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -82,6 +102,7 @@ export function DirectoryCard({ request, notify, onConnect }: {
           headline: draft.headline.trim(),
           capabilities: draft.tags.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
           availability: draft.availability,
+          disclosure: shown,
         }),
       });
       setMine(value);
@@ -154,6 +175,21 @@ export function DirectoryCard({ request, notify, onConnect }: {
             {t("Unlist")}
           </button>
         )}
+      </div>
+      <div className="lin-row">
+        <span className="lin-title">{t("Show to others")}</span>
+        {(Object.keys(DISCLOSURE_LABEL) as (keyof Disclosure)[]).map((key) => (
+          <label key={key} className="skills-permission">
+            <input type="checkbox" checked={shown[key]}
+              onChange={(event) => setShown({ ...shown, [key]: event.target.checked })} />
+            {" "}{t(DISCLOSURE_LABEL[key])}
+          </label>
+        ))}
+      </div>
+      <div className="lin-row quiet">
+        <span className="lin-title">
+          {t("Hidden figures do not count for ranking. Sanctions and resolved complaints are always shown.")}
+        </span>
       </div>
       <div className="lin-row quiet">
         <span className="lin-title">

@@ -26,6 +26,10 @@ async def fed(api_base_url) -> AsyncIterator[httpx.AsyncClient]:
     del api_base_url
     env = {
         "FEDERATION_ENABLED": "true",
+        # This module signs in two or three people per test from one address;
+        # it is not testing the per-IP sign-in limit (60/min by default),
+        # which the whole module would otherwise brush against.
+        "AUTH_IP_MAX_ATTEMPTS_PER_MINUTE": "1000",
         "FEDERATION_KEK": base64.b64encode(os.urandom(32)).decode(),
     }
     async with run_server(env, ".server-federation.log") as base_url:
@@ -33,7 +37,7 @@ async def fed(api_base_url) -> AsyncIterator[httpx.AsyncClient]:
             yield http
 
 
-async def _workspace(client: httpx.AsyncClient, name: str) -> dict:
+async def _workspace(client: httpx.AsyncClient, name: str, *, reviewer: bool = False) -> dict:
     created = await client.post(
         "/v1/admin/workspaces", headers=ADMIN, json={"name": f"{name}-{uuid.uuid4().hex[:6]}"}
     )
@@ -43,7 +47,9 @@ async def _workspace(client: httpx.AsyncClient, name: str) -> dict:
         "id": body["workspace"]["id"],
         "key": {"Authorization": f"Bearer {body['api_key']}"},
     }
-    for role in ("OWNER", "REVIEWER"):
+    # Sign in only the people a test uses: every login counts against the
+    # per-IP window that the other test servers share.
+    for role in ("OWNER", "REVIEWER") if reviewer else ("OWNER",):
         email = f"{role.lower()}-{uuid.uuid4().hex[:8]}@example.test"
         made = await client.post(
             f"/v1/admin/workspaces/{ws['id']}/human-users",
@@ -79,7 +85,10 @@ async def test_disabled_deployment_answers_federation_disabled(client):
 
 
 async def test_connection_lifecycle_over_http(fed):
-    a, b = await _workspace(fed, "api-a"), await _workspace(fed, "api-b")
+    a, b = (
+        await _workspace(fed, "api-a", reviewer=True),
+        await _workspace(fed, "api-b", reviewer=True),
+    )
     assert (await fed.get("/v1/federation/me", headers=a["owner"])).json() == {"identity": None}
 
     # Only an owner-level person enables federation for a workspace.
@@ -206,7 +215,10 @@ async def test_delegation_over_http_creates_one_real_provider_task(fed):
     """The task bridge end to end: the provider's task comes from the task service."""
     from datetime import datetime, timedelta, timezone
 
-    a, b = await _workspace(fed, "dl-a"), await _workspace(fed, "dl-b")
+    a, b = (
+        await _workspace(fed, "dl-a", reviewer=True),
+        await _workspace(fed, "dl-b", reviewer=True),
+    )
     (await fed.post("/v1/federation/enable", headers=a["owner"])).json()["identity"][
         "federation_id"
     ]
@@ -299,7 +311,10 @@ async def test_delegation_over_http_creates_one_real_provider_task(fed):
 async def test_cancelling_a_delegation_cancels_the_provider_task(fed):
     from datetime import datetime, timedelta, timezone
 
-    a, b = await _workspace(fed, "cx-a"), await _workspace(fed, "cx-b")
+    a, b = (
+        await _workspace(fed, "cx-a", reviewer=True),
+        await _workspace(fed, "cx-b", reviewer=True),
+    )
     await fed.post("/v1/federation/enable", headers=a["owner"])
     b_fid = (await fed.post("/v1/federation/enable", headers=b["owner"])).json()["identity"][
         "federation_id"
@@ -1001,3 +1016,87 @@ async def test_integrity_operator_routes_over_http(fed):
     assert reviewed.status_code == 200 and reviewed.json()["verdict"] == "genuine"
     page = await fed.get(f"/v1/federation/reputation/{b_fid}", headers=b["key"])
     assert "integrity" in page.json() and page.json()["integrity"]["cold_start"] is True
+
+
+async def test_privacy_policy_and_disclosure_over_http(fed):
+    """P4-4 over HTTP: the policy, a disclosure choice, what a stranger sees."""
+    a, b = await _workspace(fed, "prv-a"), await _workspace(fed, "prv-b")
+    a_fid = (await fed.post("/v1/federation/enable", headers=a["owner"])).json()["identity"][
+        "federation_id"
+    ]
+    await fed.post("/v1/federation/enable", headers=b["owner"])
+    policy = await fed.get("/v1/federation/privacy", headers=b["key"])
+    assert policy.status_code == 200 and "never_published" in policy.json()
+    listed = await fed.put(
+        "/v1/federation/directory/listing",
+        headers=a["owner"],
+        json={
+            "listed": True,
+            "headline": "Audits",
+            "capabilities": ["audit"],
+            "disclosure": {"cooperation": False},
+        },
+    )
+    assert listed.status_code == 200 and listed.json()["disclosure"]["cooperation"] is False
+    seen = await fed.get(f"/v1/federation/reputation/{a_fid}", headers=b["key"])
+    assert seen.json()["cooperation"] == {"hidden_by_owner": True}
+    assert "complaints" in seen.json()["governance"]
+    own = await fed.get(f"/v1/federation/reputation/{a_fid}", headers=a["key"])
+    assert "counterparts" in own.json()["cooperation"]
+
+
+async def test_simulated_market_over_http(fed):
+    """P5-1 over HTTP: wallet, a skill sold through escrow, operator tools."""
+    a, b = await _workspace(fed, "mkt-a"), await _workspace(fed, "mkt-b")
+    a_fid = (await fed.post("/v1/federation/enable", headers=a["owner"])).json()["identity"][
+        "federation_id"
+    ]
+    await fed.post("/v1/federation/enable", headers=b["owner"])
+    wallet = await fed.get("/v1/federation/market/wallet", headers=b["key"])
+    assert wallet.status_code == 200 and wallet.json()["simulated"] is True
+    start = wallet.json()["available"]
+    name = f"mkt-{uuid.uuid4().hex[:6]}"
+    await fed.post(
+        "/v1/federation/registry/packages",
+        headers=a["owner"],
+        json={
+            "manifest": {"name": name, "version": "1.0.0", "entry": "SKILL.md"},
+            "files": [{"path": "SKILL.md", "content": "# Steps"}],
+        },
+    )
+    offer = await fed.post(
+        "/v1/federation/market/offers",
+        headers=a["owner"],
+        json={"kind": "skill", "subject": f"{name}@1.0.0", "price": 40},
+    )
+    assert offer.status_code == 201, offer.text
+    _refused(
+        await fed.post(
+            f"/v1/federation/market/offers/{offer.json()['offer_id']}/accept", headers=b["key"]
+        ),
+        403,
+        "federation_forbidden",
+        "FED_E_APPROVAL_NOT_HUMAN",
+    )
+    contract = await fed.post(
+        f"/v1/federation/market/offers/{offer.json()['offer_id']}/accept", headers=b["owner"]
+    )
+    assert contract.status_code == 200 and contract.json()["state"] == "FUNDED", contract.text
+    cid = contract.json()["contract_id"]
+    held = await fed.get("/v1/federation/market/wallet", headers=b["key"])
+    assert held.json()["available"] == start - 40 and held.json()["held_in_escrow"] == 40
+    await fed.post(
+        "/v1/federation/registry/installs",
+        headers=b["owner"],
+        json={"name": name, "version": "1.0.0"},
+    )
+    seen = await fed.get(f"/v1/federation/market/contracts/{cid}", headers=b["key"])
+    assert seen.json()["state"] in ("INSTALLED", "RELEASED"), seen.text
+    minted = await fed.post(
+        "/v1/admin/federation/market/mint",
+        headers=ADMIN,
+        json={"fid": a_fid, "amount": 25, "reason": "Demo top-up.", "operator": "ops"},
+    )
+    assert minted.status_code == 200, minted.text
+    check = await fed.get("/v1/admin/federation/market/ledger/check", headers=ADMIN)
+    assert check.json()["unbalanced_transactions"] == 0
