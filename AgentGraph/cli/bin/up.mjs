@@ -186,6 +186,43 @@ export function withEarlierChoices(options, previous) {
   };
 }
 
+/**
+ * Keeps only saved identities whose key the board still accepts. A key that
+ * was revoked or expired answers 401/403: that identity goes back to the plan's
+ * missing list, so this run asks for a new key instead of saying "already
+ * connected" while the doctor says the key is refused. A network error keeps
+ * the identity (no new approval just because the board was unreachable).
+ */
+export async function dropRefusedKeys(reused, plan, { host, fetchImpl = fetch, readKeyFile = readKey } = {}) {
+  const refused = [];
+  const accepted = async (identity) => {
+    try {
+      const { status } = await getJson(fetchImpl, `${host}/v1/whoami`, readKeyFile(identity));
+      return status !== 401 && status !== 403;
+    } catch {
+      return true;
+    }
+  };
+  const identities = [];
+  const missing = [...reused.missing];
+  for (const identity of reused.identities) {
+    if (await accepted(identity)) {
+      identities.push(identity);
+      continue;
+    }
+    refused.push(identity.agent_id);
+    const wanted = plan.identities.find((item) => item.role === identity.role);
+    if (wanted && !missing.includes(wanted)) missing.push(wanted);
+  }
+  // A parked identity whose key is refused is of no use: forget it.
+  const parked = [];
+  for (const identity of reused.parked) {
+    if (await accepted(identity)) parked.push(identity);
+    else refused.push(identity.agent_id);
+  }
+  return { identities, missing, parked, refused };
+}
+
 export function upPlan(options, { home = defaultHome(), clients = [], name = hostname() } = {}) {
   // Names are agent ids too (a letter, then letters, digits and dashes, at most 40 long).
   const base = agentName(options.name || name);

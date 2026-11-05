@@ -31,7 +31,7 @@ import { dirname, isAbsolute, join, posix } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-export const VERSION = "0.6.0";
+export const VERSION = "0.6.1";
 const SEAL_INFO = Buffer.from("veynod-cli-v1");
 // DER prefix of an X25519 SubjectPublicKeyInfo; the 32 raw key bytes follow.
 const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
@@ -1346,8 +1346,8 @@ export function computerCapabilities(options) {
 
 /** veynod up: connect this computer, wire its agents, install the hub, run the doctor. */
 async function up(options) {
-  const { doctor, doctorOk, installStableCopy, loadConfig, pruneStableCopies, reuseIdentities, saveConfig,
-    stableDir, storeKey, upPlan, withEarlierChoices } = await import("./up.mjs");
+  const { doctor, doctorOk, dropRefusedKeys, installStableCopy, loadConfig, pruneStableCopies,
+    reuseIdentities, saveConfig, stableDir, storeKey, upPlan, withEarlierChoices } = await import("./up.mjs");
   const out = (line = "") => process.stdout.write(`${line}\n`);
   out();
   out(`  ${violet("◆")} ${bold("Veynod")} ${dim(`up · ${options.host}`)}`);
@@ -1395,9 +1395,15 @@ async function up(options) {
     options.runtime = picked.runtime;
     out(`  ${green("✓")} ${RUNTIME_NAMES[picked.runtime]} runs this computer's tasks`);
   }
-  const reused = reuseIdentities(plan, previous, { host: options.host, fresh: options.fresh });
+  const reused = options.dryRun
+    ? reuseIdentities(plan, previous, { host: options.host, fresh: options.fresh })
+    : await dropRefusedKeys(reuseIdentities(plan, previous, { host: options.host, fresh: options.fresh }),
+      plan, { host: options.host });
   const identities = reused.identities;
   let missing = reused.missing;
+  for (const agentId of reused.refused || []) {
+    out(`  ${yellow("!")} The board no longer accepts ${agentId}'s key (revoked or expired): asking for a new one.`);
+  }
   for (const kept of identities) out(`  ${green("✓")} ${kept.agent_id} is already connected`);
   // One approval for every identity still missing; an older server mints one
   // per code, so the rest are asked for again, one code each.
