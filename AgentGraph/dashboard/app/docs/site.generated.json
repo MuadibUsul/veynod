@@ -4997,6 +4997,12 @@
          "name": "availability",
          "required": false,
          "type": "string"
+        },
+        {
+         "description": "Which measures others may see: completion, acceptance, response, skills, cooperation (all shown by default; sanctions and complaints always are).",
+         "name": "disclosure",
+         "required": false,
+         "type": "object | null"
         }
        ],
        "description": "",
@@ -5290,6 +5296,17 @@
         "422"
        ],
        "summary": "Resend a dead-lettered or refused message (a person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/privacy",
+       "responses": [
+        "200"
+       ],
+       "summary": "What the federation directory shows, to whom, and never"
       },
       {
        "body": [

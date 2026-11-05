@@ -170,11 +170,12 @@ async def test_fulfilment_proofs_verify_and_every_dimension_is_there(
     assert page["acceptance"]["first_pass"]["weighted_hits"] == 1.5
     assert page["response"]["samples"] == 5 and page["response"]["enough_evidence"]
     assert page["skills"]["published"] == 0 and page["skills"]["average"] is None
-    assert page["governance"] == {
+    assert {k: page["governance"][k] for k in ("sanctions_in_force", "sanctions_ever")} == {
         "sanctions_in_force": 0,
         "sanctions_ever": 0,
-        "open_reports": "not shown",
     }
+    assert page["governance"]["open_reports"] == "not shown"
+    assert page["governance"]["complaints"]["resolved"] == 0
     assert page["cooperation"]["counterparts"] == 2
     assert page["cooperation"]["repeat_counterparts"] == 2
     assert set(page["evidence"]) == {

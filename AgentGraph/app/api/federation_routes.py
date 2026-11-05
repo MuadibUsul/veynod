@@ -1391,14 +1391,30 @@ async def get_reputation(
     fid: str = Path(pattern=_FID_WS), principal: Principal = Depends(get_principal)
 ) -> dict[str, Any]:
     _enabled()
-    if not await directory.can_view(fid, await _viewer_fid(principal)):
-        raise ApiError(
-            404,
-            "federation_not_found",
-            "this workspace is not listed and you are not connected with it",
-            details={"federation_code": "FED_E_NOT_LISTED"},
+    viewer = await _viewer_fid(principal)
+    return await _call(public_reputation(fid, viewer))
+
+
+async def public_reputation(fid: str, viewer: str) -> dict[str, Any]:
+    """A workspace's reputation as this viewer may see it (P4-2 gate, P4-4
+    disclosure): its own in full, anyone else's as its owner chose."""
+    from app.services.federation import privacy
+
+    if not await directory.can_view(fid, viewer):
+        raise FederationError(
+            "FED_E_NOT_LISTED", "this workspace is not listed and you are not connected with it"
         )
-    return await _call(reputation.profile(fid))
+    page = await reputation.profile(fid)
+    if viewer == fid:
+        return page
+    return privacy.apply_disclosure(page, await directory.disclosure_of(fid))
+
+
+@router.get("/privacy", summary="What the federation directory shows, to whom, and never")
+async def get_privacy_policy() -> dict[str, Any]:
+    from app.services.federation import privacy
+
+    return privacy.POLICY
 
 
 @router.get(
@@ -1431,6 +1447,11 @@ class DirectoryListing(BaseModel):
     headline: str = Field(default="", max_length=200)
     capabilities: list[str] = Field(default_factory=list, max_length=10)
     availability: Literal["open", "busy", "closed"] = "open"
+    disclosure: dict[str, bool] | None = Field(
+        default=None,
+        description="Which measures others may see: completion, acceptance, response, "
+        "skills, cooperation (all shown by default; sanctions and complaints always are).",
+    )
 
 
 @router.get("/directory/listing", summary="This workspace's own directory listing")
@@ -1455,6 +1476,7 @@ async def put_directory_listing(
             capabilities=list(body.capabilities),
             availability=body.availability,
             actor=_actor(principal),
+            disclosure=body.disclosure,
         )
     )
 

@@ -128,3 +128,11 @@ MCP：`federation` 工具的 `directory` 动作。
 | `POST` | `/v1/admin/federation/integrity/links` | `{a, b, reason, operator}`：记录两个工作区同属一个控制人 |
 
 表：`federation_controller_links`、`federation_pair_reviews`（部署级）。
+
+## 11. 隐私边界与投诉记录（P4-4，迁移 3.97）
+
+完整说明见 `docs/federation/PRIVACY.md`；机器可读 `GET /v1/federation/privacy`。
+
+- 上架信息新增 `disclosure`（`completion`、`acceptance`、`response`、`skills`、`cooperation`，默认 true）。隐藏项对他人显示 `{"hidden_by_owner": true}`，并按中性/未知参与排序。
+- `GET /reputation/{fid}`：本人看完整；他人看所有者选择公开的。`governance.complaints` 为已结案投诉记录。
+- 目录安全系数加入投诉：近一年每条成立 ×0.9（最低 0.6）。
