@@ -275,6 +275,11 @@ BEGIN
         'workspace_id', row_data->>'workspace_id',
         'record_id', row_data->>'id',
         'actor', COALESCE(
+            -- A task names no "updated_by": once a handoff releases the claim,
+            -- the columns below fall through to the task's creator, who then
+            -- never hears "review requested" (an actor never hears itself).
+            -- Who made the request says who acted.
+            CASE WHEN TG_TABLE_NAME = 'collab_tasks' THEN event_actor END,
             row_data->>'updated_by',
             row_data->>'claimed_by',
             row_data->>'created_by',
