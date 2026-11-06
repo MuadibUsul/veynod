@@ -80,6 +80,29 @@ jobs:
           node-version: 22
       - run: scripts/test_all.sh ${{ matrix.suite }}
 
+  # The worker on the three systems people run it on (v2 phase 1): the CLI's
+  # tests, then the CLI packed and installed as npx does, its version, its
+  # background-service plan, and the copy the service runs from. Node 18 is
+  # the CLI's own minimum (package.json engines).
+  worker:
+    name: worker (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, node: 18 }
+          - { os: ubuntu-latest, node: 24 }
+          - { os: macos-latest, node: 22 }
+          - { os: windows-latest, node: 22 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test --prefix AgentGraph/cli
+      - run: node scripts/worker_smoke.mjs
+
   protocol:
     runs-on: ubuntu-latest
     steps:
