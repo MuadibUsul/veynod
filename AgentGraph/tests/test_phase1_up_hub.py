@@ -81,7 +81,7 @@ async def test_a_host_that_cannot_pin_its_sessions_is_named_by_the_doctor(client
     assert host["capabilities_report"] == {"mcp_pinning": False, "runtime": "codex"}
     red = await pinning()
     assert red["ok"] is False and red["required"] is False
-    assert agent["agent_id"] in red["text"] and "Node 24" in red["fix"]
+    assert agent["agent_id"] in red["text"] and "0.7.0 or newer" in red["fix"]
 
     await hello({"mcp_pinning": True, "runtime": "oar:codex"})
     green = await pinning()

@@ -1155,11 +1155,11 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
           "Every online computer starts its sessions with its own key." if not unpinned
           else f"{', '.join(unpinned[:5])} start(s) sessions without their own key, so "
                "claims there are refused (not_assignee).",
-          # veynod 0.6.0's service copy lacked OAR's dependencies, so even with
-          # Node 24 OAR never loaded there: upgrading is the first fix.
-          "On each of them run `npx veynod@latest` (0.6.1 or newer) with Node 24 or newer, so OAR "
-          "starts the runtime with the computer's own key; or use the claude runtime "
-          "(`npx veynod --runtime claude`).")
+          # Before 0.7.0 Codex pinned only through OAR (Node 24 and a service copy
+          # that could load it); from 0.7.0 Claude Code and Codex pin through their
+          # own CLIs on any Node.
+          "On each of them run `npx veynod@latest` (0.7.0 or newer): Claude Code and Codex then "
+          "start every session with the computer's own key, on any Node version.")
     check("supervisor", bool(supervisors), False,
           "A supervisor computer looks after the Loop." if supervisors
           else "No supervisor computer: stuck work is listed for you instead.",

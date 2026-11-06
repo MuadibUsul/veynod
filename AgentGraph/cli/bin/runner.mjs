@@ -10,8 +10,9 @@
 // agent: if the wake fails three times the placement is reported failed and
 // the scheduler moves it on.
 //
-// Runtimes go through OAR (@botiverse/oar, Node 24+) when it is installed, else
-// through the runtime's own CLI (`claude -p`, `codex exec`); `--runtime custom
+// Claude Code and Codex run through their own command-line tools (agents.mjs),
+// each run pinned to Veynod with the run's own key; OAR (@botiverse/oar), when
+// installed, only reports models and subscription usage. `--runtime custom
 // --exec CMD` runs any command (tests, other agents). Every wake leaves
 // receipts in ~/.veynod/runner-receipts.jsonl: delivered, accepted, started,
 // then finished or failed.
@@ -20,6 +21,8 @@ import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { arch as osArch, homedir, hostname, platform } from "node:os";
 import { join, resolve, sep, win32 } from "node:path";
+
+import { claudeInvocation, codexInvocation } from "./agents.mjs";
 
 export const RUNNER_HEARTBEAT_MS = 30_000;
 // Leases are at least 60 s and heartbeat at a third of their TTL; renewing every
@@ -523,14 +526,12 @@ export function claudeMcpConfig(pin) {
 
 /**
  * One way to run a prompt in a directory; resolves when the agent's turn ends.
- * `pin` ({host, key}) pins the session's MCP to Veynod with that key: through OAR
- * with `mcpServers` and `userConfiguration: "exclude"`, through Claude Code's CLI
- * with `--mcp-config <file> --strict-mcp-config` and an explicit permission mode
- * (nobody answers a prompt in an unattended run). Codex's CLI has no verified
- * equivalent, so a Codex run without OAR is reported as not pinned.
+ * Claude Code and Codex run through their own command-line tools (agents.mjs),
+ * never through OAR: `pin` ({host, key}), or the Kernel's combined `mcpConfig`,
+ * becomes the only MCP servers the run sees, with the run's own key.
  */
-export function adapterFor(runtime, { exec = "", importer = (spec) => import(spec), spawner = spawnRun,
-  permissionMode = "bypassPermissions" } = {}) {
+export function adapterFor(runtime, { exec = "", spawner = spawnRun, permissionMode = "bypassPermissions",
+  model = "" } = {}) {
   if (runtime === "custom") {
     if (!exec) throw new Error("--runtime custom needs --exec CMD");
     return {
@@ -542,50 +543,21 @@ export function adapterFor(runtime, { exec = "", importer = (spec) => import(spe
   return {
     id: runtime,
     async run({ cwd, prompt, env, pin, configDir, mcpConfig }) {
-      const oar = await oarRuntime(runtime, importer);
-      if (oar) {
-        try {
-          const { promptAndWait } = await importer("@botiverse/oar/observe");
-          const installation = await oar.installation();
-          if (installation?.kind === "available") {
-            // A runtime declares the options it refuses, and session() rejects
-            // them (Codex refuses userConfiguration, in OAR 0.75 as in 0.87).
-            const refused = oar.refusedSessionOptions || {};
-            const options = { cwd, env };
-            if (pin && !refused.mcpServers) {
-              options.mcpServers = [veynodMcpServer(pin)];
-              // Leave the user's own servers out where the runtime can. Where it
-              // cannot (Codex), the session's server has the name `init` gave the
-              // user's ("veynod"), and Codex merges it over that one field by
-              // field: the run's URL and key win for this session.
-              if (!refused.userConfiguration) options.userConfiguration = "exclude";
-            }
-            if (refused.env) delete options.env;
-            const session = await oar.session(installation, options);
-            try {
-              const result = await promptAndWait(session, prompt);
-              if (result.kind === "rejected") return { ok: false, reason: result.reason };
-              return { ok: result.kind === "ended", reason: result.kind === "ended" ? undefined : `interrupted by ${result.by}` };
-            } finally {
-              await session.dispose().catch(() => {});
-            }
-          }
-        } catch (error) {
-          return { ok: false, reason: error instanceof Error ? error.message : String(error) };
-        }
-      }
-      if (runtime !== "claude") return spawner(runtime, ["exec", prompt], { cwd, env });
-      const args = ["-p", prompt, "--permission-mode", permissionMode];
-      let file = null;
       const mounted = mcpConfig || (pin ? claudeMcpConfig(pin) : null);
+      if (runtime === "codex") {
+        // Bearer tokens travel in environment variables, never on the command line.
+        const call = codexInvocation({ prompt, model, mcp: mounted });
+        return spawner(call.command, call.args, { cwd, env: { ...env, ...call.env } });
+      }
+      let file = null;
       if (mounted) {
         mkdirSync(configDir, { recursive: true, mode: 0o700 });
         file = join(configDir, `mcp-${process.pid}-${Date.now()}.json`);
         writeFileSync(file, JSON.stringify(mounted), { mode: 0o600 });
-        args.push("--mcp-config", file, "--strict-mcp-config");
       }
+      const call = claudeInvocation({ prompt, model, permissionMode, mcpFile: file });
       try {
-        return await spawner("claude", args, { cwd, env });
+        return await spawner(call.command, call.args, { cwd, env });
       } finally {
         if (file) rmSync(file, { force: true });
       }
@@ -593,12 +565,13 @@ export function adapterFor(runtime, { exec = "", importer = (spec) => import(spe
   };
 }
 
-/** Whether a run on this adapter claims as the runner's own agent. */
-export async function pinsIdentity(runtime, { importer = (spec) => import(spec) } = {}) {
-  if (runtime === "custom" || runtime === "claude") return true;
-  const oar = await oarRuntime(runtime, importer);
-  // Pinning needs the session to take Veynod's server with the run's key.
-  return Boolean(oar) && !(oar.refusedSessionOptions || {}).mcpServers;
+/**
+ * Whether a run on this adapter claims as the runner's own agent. Claude Code
+ * (--strict-mcp-config) and Codex (--ignore-user-config) both take only the
+ * servers the run gives them, with no adapter layer in between.
+ */
+export async function pinsIdentity(runtime) {
+  return ["claude", "codex", "custom"].includes(runtime);
 }
 
 const repoSlug = (repo) => repo.replace(/[^A-Za-z0-9_.-]+/g, "__");
@@ -668,7 +641,7 @@ export async function createRunner(options, {
     say(`warning: ${picked.reason} The board shows this computer without a runtime until one is installed:`);
     for (const line of installSteps(null)) say(`  ${line}`);
   }
-  const makeAdapter = (runtime) => adapterFor(runtime, { exec: options.exec, importer,
+  const makeAdapter = (runtime) => adapterFor(runtime, { exec: options.exec, model: options.model || "",
     ...(spawner ? { spawner } : {}), ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}) });
   // A deploy computer drives docker, not an agent runtime.
   let adapter = deploys ? { id: "deploy" } : makeAdapter(picked.runtime || options.runtime || "claude");
@@ -691,8 +664,8 @@ export async function createRunner(options, {
     // A deploy computer runs deploys and nothing else; the scheduler gives it no work.
     ...(deploys ? { deploy: true } : {}),
   });
-  const mcpPinning = deploys ? null : await pinsIdentity(adapter.id, { importer });
-  if (mcpPinning === false) say(`warning: ${adapter.id} without OAR cannot pin Veynod's MCP to this runner's key; install OAR (Node 24+)`);
+  const mcpPinning = deploys ? null : await pinsIdentity(adapter.id);
+  if (mcpPinning === false) say(`warning: ${adapter.id} cannot pin Veynod's MCP to this runner's key, so its claims would be refused`);
   // The host record: only the process that owns the computer's socket says
   // hello. A worker that did would overwrite the record with its own options.
   const hello = async () => {

@@ -379,9 +379,9 @@ export async function doctor({ home = defaultHome(), config = loadConfig(home), 
   }
   const major = Number(String(nodeVersion).split(".")[0]);
   add("node", major >= NODE_FOR_OAR, false,
-    major >= NODE_FOR_OAR ? `Node ${nodeVersion}: OAR can drive the runtimes.`
-      : `Node ${nodeVersion}: below ${NODE_FOR_OAR}, so OAR is unavailable and the runtime's CLI is used.`,
-    major >= NODE_FOR_OAR ? null : `Install Node ${NODE_FOR_OAR} or newer for OAR (quota-aware, pinned sessions).`);
+    major >= NODE_FOR_OAR ? `Node ${nodeVersion}: subscription usage is reported, so the Loop can route around a full quota.`
+      : `Node ${nodeVersion}: tasks run, but subscription usage is not reported (that needs Node ${NODE_FOR_OAR}).`,
+    major >= NODE_FOR_OAR ? null : `Optional: install Node ${NODE_FOR_OAR} or newer so the Loop sees how much quota is left.`);
   if (config.run_tasks && config.deploy) {
     // A deploy computer: docker and its compose directory, no agent runtime.
     const docker = onPath(run, "docker");
