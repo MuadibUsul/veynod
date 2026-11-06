@@ -21,6 +21,9 @@ export const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000;
 // How often a hub with a newer version waiting looks for a moment with no task running.
 export const IDLE_CHECK_MS = 60 * 1000;
 const VERSION = /^\d+\.\d+\.\d+$/;
+// What may reach the shell npm runs in: a package spec or a tarball path, with
+// nothing sh or cmd.exe treats as special inside double quotes.
+const SPEC = /^[\w@./:\\~ -]+$/;
 
 /** Whether version `a` is newer than `b` (plain x.y.z). */
 export function newer(a, b) {
@@ -147,17 +150,18 @@ export async function latestVersion(fetchImpl = fetch) {
  * Installs `spec` (veynod@<version>, or a tarball) as root/<version> with npm:
  * into a scratch directory first, then moved into place in one rename, so the
  * launcher never finds half a version. npm is npm.cmd on Windows, which only a
- * shell starts; the version is checked and the spec quoted, so nothing from
- * outside reaches that shell.
+ * shell starts; the version and the spec are checked and the spec is quoted,
+ * so nothing from outside reaches that shell.
  */
 export function npmInstall(version, root, { spec = `veynod@${version}`, run = execFile } = {}) {
   if (!VERSION.test(version)) return Promise.reject(new Error(`not a version: ${version}`));
+  if (!SPEC.test(spec)) return Promise.reject(new Error(`not a package spec: ${spec}`));
   const scratch = join(root, `.install-${version}`);
   rmSync(scratch, { recursive: true, force: true });
   mkdirSync(scratch, { recursive: true });
   writeFileSync(join(scratch, "package.json"), "{}\n");
   return new Promise((resolve, reject) => {
-    run("npm", ["install", "--no-audit", "--no-fund", "--loglevel=error", JSON.stringify(spec)],
+    run("npm", ["install", "--no-audit", "--no-fund", "--loglevel=error", `"${spec}"`],
       { cwd: scratch, shell: true, timeout: 10 * 60_000, windowsHide: true }, (error) => {
         try {
           if (error) throw error;

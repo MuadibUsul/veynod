@@ -166,7 +166,10 @@ test("npm installs into a scratch directory, then the version moves into place w
   const empty = (command, args, options, done) => done(null);
   await assert.rejects(npmInstall("1.3.0", root, { run: empty }), /installed no veynod/);
   await assert.rejects(npmInstall("1.0.0 && echo hi", root, { run }), /not a version/);
-  assert.deepEqual(readdirSync(root), ["1.1.0"]);
+  await assert.rejects(npmInstall("1.4.0", root, { run, spec: 'veynod@1.4.0" & calc "' }), /not a package spec/);
+  await npmInstall("1.4.0", root, { run, spec: "C:\\Users\\RUNNER~1\\veynod-1.4.0.tgz" });
+  assert.equal(calls.at(-1).args.at(-1), '"C:\\Users\\RUNNER~1\\veynod-1.4.0.tgz"', "a Windows path keeps single backslashes");
+  assert.deepEqual(readdirSync(root).sort(), ["1.1.0", "1.4.0"]);
 });
 
 test("the hub's updater confirms, installs, and restarts only once no task runs", async () => {
