@@ -23,6 +23,7 @@ import { arch as osArch, homedir, hostname, platform } from "node:os";
 import { join, resolve, sep, win32 } from "node:path";
 
 import { claudeInvocation, codexInvocation } from "./agents.mjs";
+import { loginEnv, loginRuntimes, signedIn } from "./login.mjs";
 import { readAgent } from "./usage.mjs";
 
 export const RUNNER_HEARTBEAT_MS = 30_000;
@@ -124,7 +125,7 @@ export function installSteps(runtime, { platform = process.platform } = {}) {
  * offers and the subscription usage it reports (usage.mjs), with no OAR.
  */
 export async function inventory({ run = execFileSync, resolve = resolveCommand, details = true,
-  reader = readAgent } = {}) {
+  reader = readAgent, env = process.env } = {}) {
   const found = [];
   for (const id of RUNTIME_IDS) {
     const version = commandWorks(id, { run, resolve });
@@ -134,7 +135,7 @@ export async function inventory({ run = execFileSync, resolve = resolveCommand, 
     }
     const entry = { id, available: true, via: "cli", version: version.split("\n")[0].slice(0, 32) };
     if (details) {
-      const extra = await reader(id, { resolve }).catch(() => null);
+      const extra = await reader(id, { resolve, env }).catch(() => null);
       if (extra?.models?.length) entry.models = extra.models.slice(0, 20);
       if (extra?.usage?.windows?.length) {
         entry.usage = { ...(extra.usage.plan ? { plan: extra.usage.plan } : {}), windows: extra.usage.windows.slice(0, 4) };
@@ -596,7 +597,8 @@ export async function createRunner(options, {
   leaseEvery = LEASE_KEEP_MS,
   sleepMs = 2_000,
   stateDir = process.env.VEYNOD_STATE_DIR || join(homedir(), ".veynod"),
-  takeInventory = () => inventory(),
+  // A login made through Veynod (login.mjs) is the one whose models and quota count.
+  takeInventory = () => inventory({ env: { ...process.env, ...loginEnv(options.agent, { stateDir }) } }),
 } = {}) {
   const slots = Math.max(1, Number(options.slots) || 1);
   const repos = options.repos || [];
@@ -635,6 +637,8 @@ export async function createRunner(options, {
     leases: [...leaseBook.values()],
     // A deploy computer runs deploys and nothing else; the scheduler gives it no work.
     ...(deploys ? { deploy: true } : {}),
+    // What the console can sign in here, and what it already did (login.mjs).
+    ...(deploys ? {} : { logins: loginRuntimes(runtimes), signed_in: signedIn(options.agent, { stateDir }) }),
   });
   const mcpPinning = deploys ? null : await pinsIdentity(adapter.id);
   if (mcpPinning === false) say(`warning: ${adapter.id} cannot pin Veynod's MCP to this runner's key, so its claims would be refused`);
@@ -775,7 +779,9 @@ export async function createRunner(options, {
         prompt = promptFor({ taskKey, placementId, host: options.host,
           step, diagramKey, chunkKey, agenda });
       }
-      const env = { VEYNOD_KEY: options.key, VEYNOD_HOST: options.host, VEYNOD_TASK_KEY: taskKey ?? "",
+      // The subscription signed in through Veynod for this identity, if any.
+      const env = { ...loginEnv(options.agent, { stateDir }), VEYNOD_KEY: options.key, VEYNOD_HOST: options.host,
+        VEYNOD_TASK_KEY: taskKey ?? "",
         VEYNOD_PLACEMENT_ID: placementId, VEYNOD_STEP: step, VEYNOD_CWD: cwd };
       const mcpConfig = kernelCoding ? combinedMcpConfig({
         product: pin, kernelUrl, kernelToken,
@@ -834,6 +840,11 @@ export async function createRunner(options, {
   return {
     hello,
     beat,
+    // Right after a sign-in: read the runtimes again now, not in ten minutes.
+    refresh: async () => {
+      lastInventory = 0;
+      await beat();
+    },
     work,
     report,
     running,

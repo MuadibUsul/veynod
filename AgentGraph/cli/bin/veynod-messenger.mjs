@@ -64,7 +64,7 @@ export class Messenger {
    * runner.mjs), or null when something else keeps the host record.
    */
   constructor({ host, key, agentId, runner, runnerOptions = {}, slots = 1, hostRecord = null,
-    say = () => {}, spawner = spawn }) {
+    say = () => {}, spawner = spawn, startLogin = null }) {
     this.host = host;
     this.key = key;
     this.agentId = agentId || "";
@@ -84,6 +84,9 @@ export class Messenger {
     this.hostTimer = null;
     this.attempts = 0;
     this.stopped = false;
+    // login_id -> a sign-in running here for the console (login.mjs).
+    this.logins = new Map();
+    this.startLogin = startLogin;
   }
 
   get full() {
@@ -166,6 +169,19 @@ export class Messenger {
           this.#killWorker(id, reason || "revoked");
         }
       }
+      return;
+    }
+    if (type === "login.start" || type === "login.code" || type === "login.cancel") {
+      // A sign-in that goes wrong says so; it never takes the hub down.
+      this.#login(type, payload).catch((error) => {
+        this.say(`[login] ${error.message}`);
+        const id = typeof payload.login_id === "string" ? payload.login_id.slice(0, 64) : "";
+        if (id) {
+          if (this.logins.get(id) === null) this.logins.delete(id);
+          this.#send("login.update", { login_id: id, state: "failed",
+            message: "The sign-in could not start on this computer." });
+        }
+      });
       return;
     }
     if (type !== "task.poke") return;
@@ -277,6 +293,41 @@ export class Messenger {
   #clearTimers() {
     for (const timer of this.timers) clearInterval(timer);
     this.timers = [];
+  }
+
+  /** A subscription sign-in the console started (login.mjs); only its updates go back. */
+  async #login(type, payload) {
+    const id = typeof payload.login_id === "string" ? payload.login_id.slice(0, 64) : "";
+    if (!id) return;
+    if (type === "login.code") {
+      if (!this.logins.get(id)?.code(payload.code)) {
+        this.#send("login.update", { login_id: id, state: "failed",
+          message: "That code could not be used here. Start the sign-in again." });
+      }
+      return;
+    }
+    if (type === "login.cancel") {
+      this.logins.get(id)?.cancel();
+      return;
+    }
+    if (this.logins.has(id)) return;
+    // One sign-in per runtime at a time: a new one replaces the old.
+    for (const running of this.logins.values()) {
+      if (running?.runtime === payload.runtime) running.cancel();
+    }
+    this.logins.set(id, null); // taken while the module loads, so a repeated frame starts nothing
+    const start = this.startLogin ?? (await import("./login.mjs")).startLogin;
+    const { resolveCommand } = await import("./runner.mjs");
+    this.say(`[login] signing ${payload.runtime} in for the console`);
+    const login = start({ runtime: payload.runtime, agentId: this.agentId, resolve: resolveCommand,
+      send: (update) => this.#send("login.update", { login_id: id, runtime: payload.runtime, ...update }) });
+    login.runtime = payload.runtime;
+    this.logins.set(id, login);
+    const state = await login.done;
+    this.logins.delete(id);
+    this.say(`[login] ${payload.runtime}: ${state}`);
+    // The new login's models and quota reach the board now.
+    if (state === "connected") void this.hostRecord?.refresh?.();
   }
 
   #send(type, payload, frameId = crypto.randomUUID()) {

@@ -1482,6 +1482,18 @@ class HostRevokeRequest(StrictModel):
     reason: str | None = Field(default=None, max_length=500)
 
 
+class HostLoginRequest(StrictModel):
+    """Which agent on the computer to sign in to the owner's own subscription."""
+
+    runtime: str = Field(pattern="^(claude|codex)$")
+
+
+class HostLoginCodeRequest(StrictModel):
+    """The code Claude's sign-in page shows once the person signed in."""
+
+    code: str = Field(min_length=8, max_length=2048)
+
+
 class AgentRegisterRequest(StrictModel):
     agent_id: str | None = Field(
         default=None, min_length=3, max_length=40,

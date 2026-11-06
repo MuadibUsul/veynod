@@ -949,6 +949,7 @@ service, and re-runs the doctor. `veynod down` revokes this computer's keys
   cli/state.json       current, previous, confirmed, attempts, rolled_back
   cli/<version>/       the copies the service runs from: the current one and the one before
   keys/<agent_id>.key  one per identity, 0600
+  logins/<agent_id>/   subscriptions signed in from the console (0.8.0+): claude-oauth-token (0600), codex/
   hub-<agent_id>.lock  one per key
   hub-<agent_id>.sock  local socket (named pipe on Windows)
   hub-<agent_id>.json  cursor, sessions, pending wakes
@@ -978,6 +979,39 @@ launcher, never a version directly, so updating works the same on every OS:
 - The CLI's floor is Node 22 (`engines`, and a required doctor check): the
   runner's nerve socket uses the built-in WebSocket, which Node 18 and 20 lack.
   The worker job's Node 18 run found it.
+
+**Subscriptions on a server (CLI 0.8.0, `cli/bin/login.mjs`, `app/services/logins.py`).**
+The owner signs a server's agent in to their own subscription from the console;
+the nerve socket carries it:
+
+| Frame | Way | Payload |
+| --- | --- | --- |
+| `login.start` | hub → computer | `login_id`, `runtime` (`claude` or `codex`) |
+| `login.update` | computer → hub | `login_id`, `state`, and only what the person must see: `url`, `user_code`, `expires_in_s`, `plan`, `message` |
+| `login.code` | hub → computer | `login_id`, `code` (Claude Code only) |
+| `login.cancel` | hub → computer | `login_id` |
+
+- States: `starting`, then `enter_code` (Claude Code: open the link, sign in,
+  paste the code) or `open_url` (Codex: open the link, enter the code), then
+  `verifying`, then `connected`, `failed` or `cancelled`.
+- The computer runs the agent's own sign-in. For Claude Code that is `claude
+  setup-token` under `script` (it draws a terminal UI). For Codex it is `codex
+  login --device-auth` with a `CODEX_HOME` of that identity's own.
+- The login never leaves the computer. The Claude code the person pastes is
+  useless without the PKCE verifier, which stays in the process.
+- The server keeps a sign-in in memory for 20 minutes. It shows it only to
+  the person who started it, moves it only on that computer's frames, and
+  passes on only links to the providers' own sign-in pages.
+- Runs and the quota read of that identity get `CLAUDE_CODE_OAUTH_TOKEN` or
+  `CODEX_HOME`. An identity without one uses the agents' own login, as on a
+  PC.
+- The host report carries `logins` (what the console can sign in there) and
+  `signed_in`.
+- Endpoints, owner or admin only:
+  - `POST /v1/runner/hosts/{ref}/logins`
+  - `GET …/logins/{id}`
+  - `POST …/logins/{id}/code`
+  - `POST …/logins/{id}/cancel`
 
 ### 14.5 Server changes `up` needs
 

@@ -2585,3 +2585,111 @@ button.timeline-row:disabled {
   display: grid;
   gap: 2px;
 }
+
+/* Connect a subscription (v2 P1-D): the computer signs in, the person uses their own browser. */
+.connect-sub p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.connect-sub-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.connect-sub-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.connect-sub-choice:hover,
+.connect-sub-choice:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.connect-sub-choice span,
+.connect-sub-choice small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.connect-sub-terms {
+  font-size: 12px;
+}
+
+.connect-sub-steps {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding-left: 20px;
+  line-height: 1.5;
+}
+
+.connect-sub-steps label {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.connect-sub-code {
+  display: flex;
+  gap: 8px;
+}
+
+.connect-sub-code input {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono, ui-monospace, monospace);
+}
+
+.connect-sub-device {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+}
+
+.connect-sub-device code {
+  padding: 4px 10px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  font-size: 18px;
+  letter-spacing: 0.08em;
+}
+
+.connect-sub-steps small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
+.connect-sub-wait {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.connect-sub-done {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.connect-sub-failed {
+  margin: 8px 0 0;
+  color: var(--danger);
+}

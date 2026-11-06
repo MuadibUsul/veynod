@@ -460,6 +460,8 @@ test("hello says whether the runner pins its MCP identity", async () => {
   const hello = fake.calls.find((call) => call.path === "/v1/runner/hello");
   assert.deepEqual(hello.body.host.capabilities_report, {
     mcp_pinning: true, runtime: "custom", delivery: "kernel", leases: [],
+    // A custom command has no sign-in the console could start.
+    logins: [], signed_in: [],
   });
   assert.deepEqual(Object.keys(hello.body), ["host"], "nothing outside host: the hello schema is strict");
 });

@@ -47,6 +47,15 @@ class NerveFrameType(str, Enum):
     # just delivery, so the messenger can still wake the agent for it
     EVENT_NOTICE = "event.notice"
 
+    # a subscription sign-in on the computer, started from the console (v2
+    # P1-D): the hub asks, the computer reports only what the person must see
+    # (a sign-in link, a one-time code), the code the person pastes goes back.
+    # The login itself never leaves the computer.
+    LOGIN_START = "login.start"
+    LOGIN_UPDATE = "login.update"
+    LOGIN_CODE = "login.code"
+    LOGIN_CANCEL = "login.cancel"
+
 
 #: The hub closes the socket when the first receipt does not arrive in time:
 #: the peer is not reading, whatever TCP thinks. 200 ms is the budget for a

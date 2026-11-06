@@ -133,6 +133,30 @@ with the prompt in `VEYNOD_PROMPT`. Repositories are cloned from
 Install it as a service with `veynod service install --runner --key KEY` plus
 the same runner options.
 
+### A server on your own subscription
+
+A server has no browser and nobody at its keyboard, so you sign its agents in
+from the console instead (0.8.0+). In the Loop's Computers, an online computer
+offers **Connect a subscription**:
+
+- **Claude Code (Pro or Max).** The computer runs `claude setup-token`; the
+  console shows Claude's sign-in link. Sign in in your own browser, then paste
+  the code the page shows into the console. It goes to the computer, which
+  finishes the sign-in. The code is useless anywhere else (PKCE).
+- **Codex (ChatGPT Plus or Pro).** The computer runs `codex login
+  --device-auth`; the console shows the link and a one-time code to enter on
+  auth.openai.com.
+
+The login stays on the computer and never passes through Veynod: Claude Code's
+1-year token in `~/.veynod/logins/<agent>/claude-oauth-token` (mode 600), Codex's
+login in `~/.veynod/logins/<agent>/codex/`. It belongs to that computer identity,
+so it serves only the workspace that identity works for; runs and the quota
+report use it from then on. A computer without one keeps using whatever login
+its agents already have, as a PC does. Claude Code's sign-in needs a terminal,
+which `script` (util-linux on Linux, built into macOS) provides; on Windows,
+sign the agent in on the computer itself. Your subscription is used under its
+provider's terms.
+
 ## Deploy a project's releases: `up --deploy`
 
 On the server that runs your project, one computer can deploy what your board

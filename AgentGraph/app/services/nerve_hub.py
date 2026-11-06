@@ -176,6 +176,12 @@ class NerveHub:
                 frame_id=frame_id or str(uuid.uuid4()),
                 payload={"server_ts_ms": int(time.time() * 1000)},
             ).to_dict()
+        if frame_type == NerveFrameType.LOGIN_UPDATE.value:
+            # A subscription sign-in this computer runs for the console.
+            from app.services import logins
+
+            logins.on_update(sock, payload)
+            return None
         if not frame_id:
             return None
         if frame_type == NerveFrameType.TASK_ACK_NET.value:
