@@ -14,6 +14,7 @@
     "bin/deploy.mjs",
     "bin/agents.mjs",
     "bin/usage.mjs",
+    "bin/update.mjs",
     "README.md",
     "USAGE.md",
     "LICENSE"
@@ -22,7 +23,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "engines": {
-    "node": ">=18.17"
+    "node": ">=22"
   },
   "keywords": [
     "veynod",

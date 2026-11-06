@@ -14,7 +14,7 @@
 // this process can open it. The key goes straight into the MCP client config
 // (never into the project directory) and is not printed unless --client print.
 //
-// No dependencies: Node 18.17+ (fetch, X25519, HKDF and AES-GCM are built in).
+// No dependencies: Node 22+ (fetch, WebSocket, X25519, HKDF and AES-GCM are built in).
 
 import { execFileSync, spawn } from "node:child_process";
 import {
@@ -327,6 +327,7 @@ export function parseArgs(argv) {
     name: "",
     fresh: false,
     service: true,
+    autoUpdate: true,
     // Flags given on the command line, so a re-run of `up` keeps the rest.
     explicit: new Set(),
   };
@@ -384,6 +385,10 @@ export function parseArgs(argv) {
       options.explicit.add("supervisor");
     }
     else if (arg === "--no-service") options.service = false;
+    else if (arg === "--auto-update" || arg === "--no-auto-update") {
+      options.autoUpdate = arg === "--auto-update";
+      options.explicit.add("autoUpdate");
+    }
     else if (!arg.startsWith("-") && !options.command) options.command = arg;
     else if (!arg.startsWith("-") && options.command === "service" && !options.subcommand) {
       options.subcommand = arg;
@@ -442,6 +447,7 @@ ${bold("Options")}
   --no-open               Print the approval link instead of opening a browser.
   --yes                   Ask nothing.   --fresh  New identities.   --dry-run  Show the plan.
   --no-service            Leave starting \`veynod hub\` to your own supervisor.
+  --no-auto-update        Keep the service on this version (it updates itself from npm by default).
 
 ${bold("Advanced")}
   npx veynod up --deploy --compose-dir DIR [--compose-file FILE] [--before-deploy CMD]
@@ -1347,7 +1353,8 @@ export function computerCapabilities(options) {
 /** veynod up: connect this computer, wire its agents, install the hub, run the doctor. */
 async function up(options) {
   const { doctor, doctorOk, dropRefusedKeys, installStableCopy, loadConfig, pruneStableCopies,
-    reuseIdentities, saveConfig, stableDir, storeKey, upPlan, withEarlierChoices } = await import("./up.mjs");
+    reuseIdentities, saveConfig, stableDir, storeKey, upPlan, veynodDir, withEarlierChoices } = await import("./up.mjs");
+  const { installLauncher, readState } = await import("./update.mjs");
   const out = (line = "") => process.stdout.write(`${line}\n`);
   out();
   out(`  ${violet("◆")} ${bold("Veynod")} ${dim(`up · ${options.host}`)}`);
@@ -1369,10 +1376,15 @@ async function up(options) {
   const plan = upPlan(options, { clients });
   let script = fileURLToPath(import.meta.url);
   const fromNpx = options.service && isNpxCachePath(script);
+  const cliRoot = join(veynodDir(), "cli");
   if (fromNpx) {
-    // npm may clean the npx cache at any time: the service runs a copy of its own.
-    script = options.dryRun ? join(stableDir(VERSION), "node_modules", "veynod", "bin", "veynod.mjs")
-      : installStableCopy(script, { version: VERSION });
+    // npm may clean the npx cache at any time: the service runs a copy of its
+    // own, through the launcher that also lets it update itself (update.mjs).
+    if (!options.dryRun) {
+      installStableCopy(script, { version: VERSION });
+      installLauncher(VERSION, cliRoot);
+    }
+    script = join(cliRoot, "veynod.mjs");
   }
   const service = servicePlan("install", { host: options.host, script, mode: "hub" });
   if (options.dryRun) {
@@ -1457,7 +1469,7 @@ async function up(options) {
     }
   }
   saveConfig({ host: options.host, run_tasks: plan.run_tasks, runtime: options.runtime, exec: options.exec,
-    supervisor: Boolean(options.supervisor),
+    supervisor: Boolean(options.supervisor), auto_update: options.autoUpdate !== false,
     slots: options.slots, repos: options.repos, identities: [...identities, ...reused.parked],
     ...(options.deploy ? { deploy: { dir: options.composeDir, file: options.composeFile || "docker-compose.yml",
       before: options.beforeDeploy } } : {}) });
@@ -1467,8 +1479,11 @@ async function up(options) {
     const installed = applyServicePlan(service, "install") === 0;
     serviceInstalled = () => installed && service.files.every((file) => existsSync(file.path));
     if (installed && fromNpx) {
-      pruneStableCopies(VERSION);
+      // The version before stays for a rollback, should this one not start.
+      pruneStableCopies([VERSION, readState(cliRoot).previous]);
       out(`  ${green("✓")} Background service runs veynod ${VERSION} from ${dim(stableDir(VERSION))}`);
+      out(`  ${options.autoUpdate === false ? dim("  Auto-update is off (--no-auto-update).")
+        : dim("  It updates itself from npm, between tasks; --no-auto-update keeps it on this version.")}`);
     }
   } else {
     out(`  ${dim("No service installed (--no-service): run `veynod hub` under your own supervisor.")}`);
@@ -1564,8 +1579,12 @@ export async function main(argv = process.argv.slice(2)) {
       }
       const { runComputer } = await import("./veynod-messenger.mjs");
       const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
+      const { startUpdates } = await import("./update.mjs");
+      // Under the launcher (the service), the hub keeps itself current.
+      const onStarted = ({ config, busy, restart }) => startUpdates({ version: VERSION, config, say, busy,
+        restart, root: join(hubModule.veynodDir(), "cli") });
       return await hubModule.runHub(options, { listen: (opts) => listen(opts), runComputer,
-        version: VERSION, say });
+        version: VERSION, say, onStarted });
     } catch (error) {
       process.stderr.write(`\n  ${red("✗")} ${error.message}\n\n`);
       return 1;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -432,7 +432,8 @@ test("work without a repository runs in its own scratch directory, removed after
     [{ task_key: "write-spec", placement_id: PLC_A }], { version: "t", stateDir: state, sleepMs: 0 });
   fake.close();
   const cwd = readFileSync(out, "utf8");
-  assert.ok(cwd.startsWith(join(state, "runner", "scratch")), cwd);
+  // The child reports its real path; macOS's temp directory is behind a symlink (/var -> /private/var).
+  assert.ok(cwd.startsWith(join(realpathSync(state), "runner", "scratch")), cwd);
   assert.equal(existsSync(cwd), false);
   assert.deepEqual(fake.calls.filter((call) => call.path.endsWith("/report")).map((call) => call.body), [{ outcome: "finished" }]);
 });

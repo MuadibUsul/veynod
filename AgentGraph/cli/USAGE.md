@@ -20,7 +20,11 @@ npx veynod
    a hidden Windows logon task). It starts at login, restarts itself, and keeps
    this computer online: assignments and messages arrive within seconds. Run
    from `npx`, the CLI first copies itself to `~/.veynod/cli/<version>/` so the
-   service never depends on npm's cache.
+   service never depends on npm's cache. The service then keeps itself up to
+   date: every six hours it checks npm, installs a newer veynod beside the
+   current one, and switches to it once no task is running. If a new version
+   fails to start three times, the service goes back to the one before.
+   `--no-auto-update` keeps it on the version you installed.
 5. The doctor checks the key, the service and the board, and says in plain
    words what is still missing.
 
@@ -45,6 +49,7 @@ repository. `up` and `init` are other names for the same command.
 | `--supervisor` | Runs tasks and also looks after the Loop; one computer is enough. |
 | `--yes` | Ask nothing. |
 | `--no-service` | Leave starting `veynod hub` to your own supervisor. |
+| `--no-auto-update` | Keep the service on this version. By default it updates itself from npm, between tasks. `--auto-update` turns it back on. |
 | `--dry-run` | Print the plan instead of doing it. |
 
 Requires Node.js 18.17 or newer. No dependencies.
@@ -120,7 +125,7 @@ MCP server, with this computer's key (Claude Code `--strict-mcp-config`, Codex
 `--ignore-user-config`). The same tools report the computer's models and how
 much of each subscription is left (Codex through its app-server, Claude Code
 through its control requests), so the Loop can route around a full quota.
-Nothing else needs installing, and any Node from 18 works. `--runtime custom --exec CMD` runs any command
+Nothing else needs installing; Node 22 or newer is enough. `--runtime custom --exec CMD` runs any command
 with the prompt in `VEYNOD_PROMPT`. Repositories are cloned from
 `https://github.com/<owner>/<name>.git` with your own git credentials
 (`--git-base` changes the base).

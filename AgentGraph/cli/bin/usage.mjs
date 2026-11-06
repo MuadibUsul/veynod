@@ -1,6 +1,6 @@
 // What a computer's agents can report about themselves: the models they offer
 // and how much of the person's subscription is left, read from each agent's
-// own command-line tool. It runs on any Node, with no adapter layer:
+// own command-line tool, with no adapter layer:
 //   Codex        `codex app-server --listen stdio://`, JSON lines:
 //                initialize, account/read, account/rateLimits/read, model/list
 //   Claude Code  `claude -p --input-format stream-json --output-format

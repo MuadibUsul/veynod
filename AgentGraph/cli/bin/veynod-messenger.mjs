@@ -292,6 +292,10 @@ export class Messenger {
  * call `stop()` on the result to leave.
  */
 export async function runComputer(options, { say = () => {}, version, createRunner, spawner } = {}) {
+  if (typeof WebSocket === "undefined") {
+    // Node 18 and 20 have no built-in WebSocket; without one no work can arrive.
+    throw new Error(`Node ${process.versions.node} cannot hold the Loop's connection: install Node 22 or newer, then run \`npx veynod\` again`);
+  }
   const make = createRunner ?? (await import("./runner.mjs")).createRunner;
   const runnerOptions = { repos: options.repos || [], runtime: options.runtime || "", exec: options.exec || "",
     ...(options.deploy ? { deploy: options.deploy } : {}) };

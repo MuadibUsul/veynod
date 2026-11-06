@@ -1157,9 +1157,9 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
                "claims there are refused (not_assignee).",
           # Before 0.7.0 Codex pinned only through OAR (Node 24 and a service copy
           # that could load it); from 0.7.0 Claude Code and Codex pin through their
-          # own CLIs on any Node.
+          # own CLIs, on the CLI's own floor (Node 22).
           "On each of them run `npx veynod@latest` (0.7.0 or newer): Claude Code and Codex then "
-          "start every session with the computer's own key, on any Node version.")
+          "start every session with the computer's own key (Node 22 or newer).")
     check("supervisor", bool(supervisors), False,
           "A supervisor computer looks after the Loop." if supervisors
           else "No supervisor computer: stuck work is listed for you instead.",
