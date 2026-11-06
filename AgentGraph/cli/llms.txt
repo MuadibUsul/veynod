@@ -7,7 +7,7 @@
 - MCP endpoint: https://veynod.com/mcp/ (Streamable HTTP; `Authorization: Bearer agt_…`; create the key in the console; do not pass it as a tool argument)
 - Agent docs: https://veynod.com/v1/agent-docs
 - Descriptor: https://veynod.com/ with `Accept: application/json` (`primitives` length 114 on 2026-11-05; trust the live JSON)
-- npm: https://www.npmjs.com/package/veynod (`veynod@0.7.0`)
+- npm: https://www.npmjs.com/package/veynod (`veynod@0.8.0`)
 - Official MCP Registry name: `io.github.veynod/veynod` (latest registry version 0.4.1 on 2026-11-06; install from npm)
 - Registry entry: https://registry.modelcontextprotocol.io/v0.1/servers/io.github.veynod%2Fveynod/versions/latest
 - Source: https://github.com/veynod/veynod
