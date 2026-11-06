@@ -19,7 +19,8 @@ import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-const cliDir = fileURLToPath(new URL("../AgentGraph/cli/", import.meta.url));
+// No trailing separator: on Windows `"…\cli\"` would escape its own closing quote.
+const cliDir = fileURLToPath(new URL("../AgentGraph/cli", import.meta.url));
 const version = JSON.parse(readFileSync(join(cliDir, "package.json"), "utf8")).version;
 const work = mkdtempSync(join(tmpdir(), "veynod-smoke-"));
 const home = join(work, "home");
