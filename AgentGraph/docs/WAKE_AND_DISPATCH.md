@@ -200,7 +200,17 @@ There are three layers, each owning one question:
 
 ## 5. OAR: how it fits
 
-**Today.**
+> **2026-11-06 (CLI 0.7.0):** runs no longer go through OAR. Claude Code and
+> Codex are driven through their own CLIs (`cli/bin/agents.mjs`): `claude -p
+> --mcp-config --strict-mcp-config` and `codex exec --ignore-user-config -c
+> mcp_servers.*`, each pinned to the run's key. OAR's Codex session was refused
+> (`refusedSessionOptions.userConfiguration`) and its service copy could not
+> load its dependencies; see PR #117 and the v2 design. Models and
+> subscription usage are read from the same CLIs (`cli/bin/usage.mjs`: Codex's
+> app-server, Claude Code's control requests), and OAR is no longer a
+> dependency. The rest of this section records the earlier design.
+
+**Earlier.**
 - The desktop sidecar opens one OAR session per runtime and folder and calls
   `deliver(prompt, {when: "now"})` on `task.assigned`.
 - `veynod runner` uses `promptAndWait` when OAR is installed, otherwise

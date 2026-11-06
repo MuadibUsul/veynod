@@ -113,10 +113,14 @@ Without `--runtime` the runner uses whichever of Claude Code and Codex is
 installed: the command-line tool, not the desktop app (`npm install -g
 @anthropic-ai/claude-code` or `npm install -g @openai/codex`, then sign in).
 `npx veynod --run-tasks` stops before asking for keys when neither is there.
-`--runtime claude` or `codex` runs through [OAR](https://www.npmjs.com/package/@botiverse/oar)
-when it is installed (Node 24+, quota-aware), else through the runtime's own
-CLI (`claude -p`, `codex exec`; on Windows an npm `.cmd` shim is started
-without a shell). `--runtime custom --exec CMD` runs any command
+`--runtime claude` or `codex` runs through the runtime's own CLI (`claude -p`,
+`codex exec`; on Windows an npm `.cmd` shim is started without a shell), with
+your own login, so a subscription works as it is. Each run sees only Veynod's
+MCP server, with this computer's key (Claude Code `--strict-mcp-config`, Codex
+`--ignore-user-config`). The same tools report the computer's models and how
+much of each subscription is left (Codex through its app-server, Claude Code
+through its control requests), so the Loop can route around a full quota.
+Nothing else needs installing, and any Node from 18 works. `--runtime custom --exec CMD` runs any command
 with the prompt in `VEYNOD_PROMPT`. Repositories are cloned from
 `https://github.com/<owner>/<name>.git` with your own git credentials
 (`--git-base` changes the base).

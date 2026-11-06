@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { adapterFor, chooseRuntime, claudeMcpConfig, commandWorks, createRunner, installSteps, inventory,
+import { adapterFor, chooseRuntime, claudeMcpConfig, combinedMcpConfig, commandWorks, createRunner, installSteps, inventory,
     pinsIdentity, pipelineLines, placementOf, promptFor, resolveCommand, resolveLeaseCwd,
     shimTarget, veynodMcpServer }
   from "../bin/runner.mjs";
@@ -46,33 +46,35 @@ test("a nerve poke yields the task, the step and its idempotency key", () => {
   assert.equal(placementOf({ placement_id: id }), null, "work names its task");
 });
 
-test("inventory reads OAR, keeps quota and drops the account email", async () => {
-  const fakeOar = {
-    claudeRuntime: {
-      installation: async () => ({ kind: "available", version: "2.1.3" }),
-      listModels: async () => ({ kind: "ok", models: [{ id: "sonnet" }, { id: "opus" }] }),
-      accountUsage: async () => ({ kind: "available", plan: "max", email: "dou@example.com", rateLimited: false,
-        windows: [{ label: "5h", usedRatio: 0.415, resetsAt: "2026-10-29T10:00:00Z" }] }),
-    },
-  };
-  const importer = async (spec) => {
-    if (spec.endsWith("/claude")) return fakeOar;
-    throw new Error("not installed");
+test("inventory asks each agent's own CLI for its models and quota, never an email", async () => {
+  const asked = [];
+  const reader = async (id) => {
+    asked.push(id);
+    return id === "claude"
+      ? { models: ["default", "opus", "sonnet"], email: "dou@example.com",
+        usage: { plan: "max", windows: [{ name: "Current session", used_percent: 41.5, resets_at: "2026-10-29T10:00:00.000Z" }] } }
+      : null;
   };
   const run = (command) => {
-    if (command === "codex") return "codex-cli 0.80.0\n";
+    if (command === "claude") return "2.1.318 (Claude Code)\n";
+    if (command === "codex") return "codex-cli 0.167.0\n";
     throw new Error("missing");
   };
   // commandWorks resolves the binary first and only then asks `run` for its
   // version, so the probe must see the bare name, not a host path.
   const resolve = (name) => ({ command: name, prefix: [] });
-  const found = await inventory({ importer, run, resolve });
+  const found = await inventory({ run, resolve, reader });
   assert.deepEqual(found, [
-    { id: "claude", available: true, via: "oar", version: "2.1.3", models: ["sonnet", "opus"],
-      usage: { plan: "max", windows: [{ name: "5h", used_percent: 41.5, resets_at: "2026-10-29T10:00:00Z" }] } },
-    { id: "codex", available: true, via: "cli", version: "codex-cli 0.80.0" },
+    { id: "claude", available: true, via: "cli", version: "2.1.318 (Claude Code)", models: ["default", "opus", "sonnet"],
+      usage: { plan: "max", windows: [{ name: "Current session", used_percent: 41.5, resets_at: "2026-10-29T10:00:00.000Z" }] } },
+    { id: "codex", available: true, via: "cli", version: "codex-cli 0.167.0" },
   ]);
+  assert.deepEqual(asked, ["claude", "codex"]);
   assert.ok(!JSON.stringify(found).includes("dou@example.com"));
+  // The first question `up` asks only needs the versions: no agent is started.
+  asked.length = 0;
+  await inventory({ run, resolve, reader, details: false });
+  assert.deepEqual(asked, []);
 });
 
 test("each step gets its own prompt", () => {
@@ -344,63 +346,64 @@ test("claude without OAR runs with Veynod's MCP pinned to the runner key and a p
   assert.equal(existsSync(seen.file), false, "the config file with the key is removed after the run");
 });
 
-test("OAR sessions get only Veynod's MCP, with the runner key", async () => {
-  let options = null;
-  const importer = async (spec) => {
-    if (spec === "@botiverse/oar/runtimes/claude") {
-      return { claudeRuntime: {
-        installation: async () => ({ kind: "available" }),
-        session: async (_installation, opts) => { options = opts; return { dispose: async () => {} }; },
-      } };
-    }
-    if (spec === "@botiverse/oar/observe") return { promptAndWait: async () => ({ kind: "ended" }) };
-    throw new Error(spec);
-  };
-  const adapter = adapterFor("claude", { importer });
-  const result = await adapter.run({ cwd: "/tmp", prompt: "p", env: { A: "1" }, pin: { host: "https://h", key: "ag_k" } });
+test("Claude Code never goes through OAR, even when OAR is installed", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "veynod-pin-"));
+  const calls = [];
+  const spawner = async (command, args) => { calls.push([command, args]); return { ok: true }; };
+  const oarEverywhere = async () => ({ claudeRuntime: { installation: async () => ({ kind: "available" }),
+    session: async () => { throw new Error("OAR must not be used"); } } });
+  const adapter = adapterFor("claude", { importer: oarEverywhere, spawner, model: "opus" });
+  const result = await adapter.run({ cwd: dir, prompt: "p", env: {}, pin: { host: "https://h", key: "ag_k" },
+    configDir: join(dir, "run") });
   assert.equal(result.ok, true);
-  assert.deepEqual(options.mcpServers, [veynodMcpServer({ host: "https://h", key: "ag_k" })]);
-  assert.equal(options.userConfiguration, "exclude");
-  assert.deepEqual(options.env, { A: "1" });
+  assert.equal(calls[0][0], "claude");
+  assert.deepEqual(calls[0][1].slice(0, 6), ["-p", "p", "--permission-mode", "bypassPermissions", "--model", "opus"]);
 });
 
-test("a Codex session through OAR leaves out the userConfiguration Codex refuses, and still pins", async () => {
-  // OAR's codex runtime declares refusedSessionOptions.userConfiguration (0.75
-  // and 0.87) and session() rejects it: every Codex run through OAR failed.
-  let options = null;
-  const importer = async (spec) => {
-    if (spec === "@botiverse/oar/runtimes/codex") {
-      return { codexRuntime: {
-        refusedSessionOptions: { userConfiguration: "not supported" },
-        installation: async () => ({ kind: "available" }),
-        session: async (_installation, opts) => {
-          if (opts.userConfiguration !== undefined) throw new Error("UnsupportedOptionError: userConfiguration");
-          options = opts;
-          return { dispose: async () => {} };
-        },
-      } };
-    }
-    if (spec === "@botiverse/oar/observe") return { promptAndWait: async () => ({ kind: "ended" }) };
-    throw new Error(spec);
-  };
-  const pin = { host: "https://h", key: "ag_k" };
-  const result = await adapterFor("codex", { importer }).run({ cwd: "/tmp", prompt: "p", env: { A: "1" }, pin });
-  assert.equal(result.ok, true, result.reason);
-  assert.equal("userConfiguration" in options, false);
-  assert.deepEqual(options.mcpServers, [veynodMcpServer(pin)], "the run's own key, under the user's server name");
-  assert.equal(options.mcpServers[0].name, "veynod");
-  assert.equal(await pinsIdentity("codex", { importer }), true);
-  const noMcp = async (spec) => (spec.endsWith("/codex")
-    ? { codexRuntime: { refusedSessionOptions: { mcpServers: "no" } } } : noOar(spec));
-  assert.equal(await pinsIdentity("codex", { importer: noMcp }), false);
+test("Codex runs through its own CLI with only Veynod's server and the run's key in the environment", async () => {
+  // OAR passed Codex an option it refuses (userConfiguration), so every Codex
+  // session through OAR failed; and without OAR a Codex run was not pinned.
+  let seen = null;
+  const spawner = async (command, args, options) => { seen = { command, args, env: options.env }; return { ok: true }; };
+  const pin = { host: "https://veynod.example/", key: "ag_box" };
+  const result = await adapterFor("codex", { spawner, model: "gpt-5-codex" })
+    .run({ cwd: "/tmp", prompt: "do it", env: { A: "1" }, pin });
+  assert.equal(result.ok, true);
+  assert.equal(seen.command, "codex");
+  assert.deepEqual(seen.args, ["exec", "--ignore-user-config", "--skip-git-repo-check",
+    "--dangerously-bypass-approvals-and-sandbox",
+    "-c", 'mcp_servers.veynod.url="https://veynod.example/mcp/"',
+    "-c", 'mcp_servers.veynod.bearer_token_env_var="VEYNOD_MCP_VEYNOD_TOKEN"',
+    "--model", "gpt-5-codex", "do it"]);
+  assert.equal(seen.env.VEYNOD_MCP_VEYNOD_TOKEN, "ag_box");
+  assert.equal(seen.env.A, "1");
+  assert.ok(!seen.args.some((arg) => arg.includes("ag_box")), "the key is never on the command line");
 });
 
-test("codex without OAR is reported as not pinned", async () => {
-  assert.equal(await pinsIdentity("claude", { importer: noOar }), true);
-  assert.equal(await pinsIdentity("custom", { importer: noOar }), true);
-  assert.equal(await pinsIdentity("codex", { importer: noOar }), false);
-  const withOar = async (spec) => (spec.endsWith("/codex") ? { codexRuntime: {} } : noOar(spec));
-  assert.equal(await pinsIdentity("codex", { importer: withOar }), true);
+test("A Kernel coding run gives Codex both servers, each with its own token variable", async () => {
+  let seen = null;
+  const spawner = async (command, args, options) => { seen = { args, env: options.env }; return { ok: true }; };
+  const mcpConfig = combinedMcpConfig({ product: { host: "https://h", key: "ag_k" },
+    kernelUrl: "http://kernel:8001/", kernelToken: "kt_secret" });
+  await adapterFor("codex", { spawner }).run({ cwd: "/tmp", prompt: "p", env: {}, mcpConfig });
+  assert.ok(seen.args.includes('mcp_servers.veynod-kernel.url="http://kernel:8001/mcp"'));
+  assert.ok(seen.args.includes('mcp_servers.veynod-kernel.bearer_token_env_var="VEYNOD_MCP_VEYNOD_KERNEL_TOKEN"'));
+  assert.equal(seen.env.VEYNOD_MCP_VEYNOD_KERNEL_TOKEN, "kt_secret");
+  assert.equal(seen.env.VEYNOD_MCP_VEYNOD_TOKEN, "ag_k");
+});
+
+test("Without a pin, Codex runs as the user configured it", async () => {
+  let seen = null;
+  const spawner = async (command, args) => { seen = args; return { ok: true }; };
+  await adapterFor("codex", { spawner }).run({ cwd: "/tmp", prompt: "p", env: {} });
+  assert.deepEqual(seen, ["exec", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox", "p"]);
+});
+
+test("Claude Code, Codex and custom runs all pin, with or without OAR", async () => {
+  assert.equal(await pinsIdentity("claude"), true);
+  assert.equal(await pinsIdentity("codex"), true);
+  assert.equal(await pinsIdentity("custom"), true);
+  assert.equal(await pinsIdentity("gemini"), false);
 });
 
 test("a placement the platform moved on is not worked and not reported", async () => {
@@ -506,8 +509,8 @@ test("an npm .cmd shim on Windows runs its script with Node, no shell", () => {
     "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js", "--version"]]);
 });
 
-test("inventory without OAR finds a runtime through its shim", async () => {
-  const found = await inventory({ importer: noOar,
+test("inventory finds a runtime through its shim", async () => {
+  const found = await inventory({ reader: async () => null,
     resolve: (name) => (name === "codex" ? { command: "node", prefix: ["codex.js"] } : null),
     run: (command, args) => `${command} ${args.join(" ")}` });
   assert.deepEqual(found, [{ id: "claude", available: false },

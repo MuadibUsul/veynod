@@ -10,8 +10,9 @@
 // agent: if the wake fails three times the placement is reported failed and
 // the scheduler moves it on.
 //
-// Runtimes go through OAR (@botiverse/oar, Node 24+) when it is installed, else
-// through the runtime's own CLI (`claude -p`, `codex exec`); `--runtime custom
+// Claude Code and Codex run through their own command-line tools (agents.mjs),
+// each run pinned to Veynod with the run's own key; the same tools report their
+// models and subscription usage (usage.mjs). `--runtime custom
 // --exec CMD` runs any command (tests, other agents). Every wake leaves
 // receipts in ~/.veynod/runner-receipts.jsonl: delivered, accepted, started,
 // then finished or failed.
@@ -20,6 +21,9 @@ import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { arch as osArch, homedir, hostname, platform } from "node:os";
 import { join, resolve, sep, win32 } from "node:path";
+
+import { claudeInvocation, codexInvocation } from "./agents.mjs";
+import { readAgent } from "./usage.mjs";
 
 export const RUNNER_HEARTBEAT_MS = 30_000;
 // Leases are at least 60 s and heartbeat at a third of their TTL; renewing every
@@ -34,15 +38,6 @@ const PLACEMENT = /\bplc_[0-9A-Z]{10,}\b/;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ------------------------------------------------------------------ runtimes
-
-async function oarRuntime(id, importer) {
-  try {
-    const mod = await importer(`@botiverse/oar/runtimes/${id}`);
-    return mod[`${id}Runtime`] ?? null;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * The script an npm `.cmd` shim runs (cmd-shim writes `"%dp0%\node_modules\...\cli.js" %*`),
@@ -123,48 +118,29 @@ export function installSteps(runtime, { platform = process.platform } = {}) {
   return lines;
 }
 
-/** What runtimes this computer has, without account emails or tokens. */
-export async function inventory({ importer = (spec) => import(spec), run = execFileSync,
-  resolve = resolveCommand } = {}) {
+/**
+ * What runtimes this computer has, without account emails or tokens: each
+ * agent's version from its own CLI and, unless `details` is off, the models it
+ * offers and the subscription usage it reports (usage.mjs), on any Node.
+ */
+export async function inventory({ run = execFileSync, resolve = resolveCommand, details = true,
+  reader = readAgent } = {}) {
   const found = [];
   for (const id of RUNTIME_IDS) {
-    const runtime = await oarRuntime(id, importer);
-    if (runtime) {
-      try {
-        const installation = await runtime.installation();
-        if (installation?.kind === "available") {
-          const entry = { id, available: true, via: "oar" };
-          if (installation.version) entry.version = String(installation.version);
-          if (typeof runtime.listModels === "function") {
-            const models = await runtime.listModels(installation).catch(() => null);
-            if (models?.kind === "ok") entry.models = models.models.slice(0, 20).map((item) => item.id);
-          }
-          if (typeof runtime.accountUsage === "function") {
-            const usage = await runtime.accountUsage(installation, { timeoutMs: 10_000 }).catch(() => null);
-            if (usage?.kind === "available") {
-              entry.usage = {
-                ...(usage.plan ? { plan: usage.plan } : {}),
-                windows: usage.windows.slice(0, 4).map((window) => ({
-                  name: window.label,
-                  used_percent: Math.round(window.usedRatio * 1000) / 10,
-                  ...(window.resetsAt ? { resets_at: window.resetsAt } : {}),
-                })),
-              };
-            }
-          }
-          found.push(entry);
-          continue;
-        }
-      } catch {
-        // fall through to the CLI probe
+    const version = commandWorks(id, { run, resolve });
+    if (version === null) {
+      found.push({ id, available: false });
+      continue;
+    }
+    const entry = { id, available: true, via: "cli", version: version.split("\n")[0].slice(0, 32) };
+    if (details) {
+      const extra = await reader(id, { resolve }).catch(() => null);
+      if (extra?.models?.length) entry.models = extra.models.slice(0, 20);
+      if (extra?.usage?.windows?.length) {
+        entry.usage = { ...(extra.usage.plan ? { plan: extra.usage.plan } : {}), windows: extra.usage.windows.slice(0, 4) };
       }
     }
-    const version = commandWorks(id, { run, resolve });
-    if (version !== null) {
-      found.push({ id, available: true, via: "cli", version: version.split("\n")[0].slice(0, 32) });
-    } else {
-      found.push({ id, available: false });
-    }
+    found.push(entry);
   }
   return found;
 }
@@ -523,14 +499,12 @@ export function claudeMcpConfig(pin) {
 
 /**
  * One way to run a prompt in a directory; resolves when the agent's turn ends.
- * `pin` ({host, key}) pins the session's MCP to Veynod with that key: through OAR
- * with `mcpServers` and `userConfiguration: "exclude"`, through Claude Code's CLI
- * with `--mcp-config <file> --strict-mcp-config` and an explicit permission mode
- * (nobody answers a prompt in an unattended run). Codex's CLI has no verified
- * equivalent, so a Codex run without OAR is reported as not pinned.
+ * Claude Code and Codex run through their own command-line tools (agents.mjs),
+ * never through OAR: `pin` ({host, key}), or the Kernel's combined `mcpConfig`,
+ * becomes the only MCP servers the run sees, with the run's own key.
  */
-export function adapterFor(runtime, { exec = "", importer = (spec) => import(spec), spawner = spawnRun,
-  permissionMode = "bypassPermissions" } = {}) {
+export function adapterFor(runtime, { exec = "", spawner = spawnRun, permissionMode = "bypassPermissions",
+  model = "" } = {}) {
   if (runtime === "custom") {
     if (!exec) throw new Error("--runtime custom needs --exec CMD");
     return {
@@ -542,50 +516,21 @@ export function adapterFor(runtime, { exec = "", importer = (spec) => import(spe
   return {
     id: runtime,
     async run({ cwd, prompt, env, pin, configDir, mcpConfig }) {
-      const oar = await oarRuntime(runtime, importer);
-      if (oar) {
-        try {
-          const { promptAndWait } = await importer("@botiverse/oar/observe");
-          const installation = await oar.installation();
-          if (installation?.kind === "available") {
-            // A runtime declares the options it refuses, and session() rejects
-            // them (Codex refuses userConfiguration, in OAR 0.75 as in 0.87).
-            const refused = oar.refusedSessionOptions || {};
-            const options = { cwd, env };
-            if (pin && !refused.mcpServers) {
-              options.mcpServers = [veynodMcpServer(pin)];
-              // Leave the user's own servers out where the runtime can. Where it
-              // cannot (Codex), the session's server has the name `init` gave the
-              // user's ("veynod"), and Codex merges it over that one field by
-              // field: the run's URL and key win for this session.
-              if (!refused.userConfiguration) options.userConfiguration = "exclude";
-            }
-            if (refused.env) delete options.env;
-            const session = await oar.session(installation, options);
-            try {
-              const result = await promptAndWait(session, prompt);
-              if (result.kind === "rejected") return { ok: false, reason: result.reason };
-              return { ok: result.kind === "ended", reason: result.kind === "ended" ? undefined : `interrupted by ${result.by}` };
-            } finally {
-              await session.dispose().catch(() => {});
-            }
-          }
-        } catch (error) {
-          return { ok: false, reason: error instanceof Error ? error.message : String(error) };
-        }
-      }
-      if (runtime !== "claude") return spawner(runtime, ["exec", prompt], { cwd, env });
-      const args = ["-p", prompt, "--permission-mode", permissionMode];
-      let file = null;
       const mounted = mcpConfig || (pin ? claudeMcpConfig(pin) : null);
+      if (runtime === "codex") {
+        // Bearer tokens travel in environment variables, never on the command line.
+        const call = codexInvocation({ prompt, model, mcp: mounted });
+        return spawner(call.command, call.args, { cwd, env: { ...env, ...call.env } });
+      }
+      let file = null;
       if (mounted) {
         mkdirSync(configDir, { recursive: true, mode: 0o700 });
         file = join(configDir, `mcp-${process.pid}-${Date.now()}.json`);
         writeFileSync(file, JSON.stringify(mounted), { mode: 0o600 });
-        args.push("--mcp-config", file, "--strict-mcp-config");
       }
+      const call = claudeInvocation({ prompt, model, permissionMode, mcpFile: file });
       try {
-        return await spawner("claude", args, { cwd, env });
+        return await spawner(call.command, call.args, { cwd, env });
       } finally {
         if (file) rmSync(file, { force: true });
       }
@@ -593,12 +538,13 @@ export function adapterFor(runtime, { exec = "", importer = (spec) => import(spe
   };
 }
 
-/** Whether a run on this adapter claims as the runner's own agent. */
-export async function pinsIdentity(runtime, { importer = (spec) => import(spec) } = {}) {
-  if (runtime === "custom" || runtime === "claude") return true;
-  const oar = await oarRuntime(runtime, importer);
-  // Pinning needs the session to take Veynod's server with the run's key.
-  return Boolean(oar) && !(oar.refusedSessionOptions || {}).mcpServers;
+/**
+ * Whether a run on this adapter claims as the runner's own agent. Claude Code
+ * (--strict-mcp-config) and Codex (--ignore-user-config) both take only the
+ * servers the run gives them, with no adapter layer in between.
+ */
+export async function pinsIdentity(runtime) {
+  return ["claude", "codex", "custom"].includes(runtime);
 }
 
 const repoSlug = (repo) => repo.replace(/[^A-Za-z0-9_.-]+/g, "__");
@@ -646,12 +592,11 @@ export async function createRunner(options, {
   version,
   say = () => {},
   fetchImpl = fetch,
-  importer = (spec) => import(spec),
   spawner,
   leaseEvery = LEASE_KEEP_MS,
   sleepMs = 2_000,
   stateDir = process.env.VEYNOD_STATE_DIR || join(homedir(), ".veynod"),
-  takeInventory = () => inventory({ importer }),
+  takeInventory = () => inventory(),
 } = {}) {
   const slots = Math.max(1, Number(options.slots) || 1);
   const repos = options.repos || [];
@@ -668,7 +613,7 @@ export async function createRunner(options, {
     say(`warning: ${picked.reason} The board shows this computer without a runtime until one is installed:`);
     for (const line of installSteps(null)) say(`  ${line}`);
   }
-  const makeAdapter = (runtime) => adapterFor(runtime, { exec: options.exec, importer,
+  const makeAdapter = (runtime) => adapterFor(runtime, { exec: options.exec, model: options.model || "",
     ...(spawner ? { spawner } : {}), ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}) });
   // A deploy computer drives docker, not an agent runtime.
   let adapter = deploys ? { id: "deploy" } : makeAdapter(picked.runtime || options.runtime || "claude");
@@ -691,8 +636,8 @@ export async function createRunner(options, {
     // A deploy computer runs deploys and nothing else; the scheduler gives it no work.
     ...(deploys ? { deploy: true } : {}),
   });
-  const mcpPinning = deploys ? null : await pinsIdentity(adapter.id, { importer });
-  if (mcpPinning === false) say(`warning: ${adapter.id} without OAR cannot pin Veynod's MCP to this runner's key; install OAR (Node 24+)`);
+  const mcpPinning = deploys ? null : await pinsIdentity(adapter.id);
+  if (mcpPinning === false) say(`warning: ${adapter.id} cannot pin Veynod's MCP to this runner's key, so its claims would be refused`);
   // The host record: only the process that owns the computer's socket says
   // hello. A worker that did would overwrite the record with its own options.
   const hello = async () => {

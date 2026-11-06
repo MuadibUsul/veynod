@@ -31,7 +31,7 @@ import { dirname, isAbsolute, join, posix } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-export const VERSION = "0.6.1";
+export const VERSION = "0.7.0";
 const SEAL_INFO = Buffer.from("veynod-cli-v1");
 // DER prefix of an X25519 SubjectPublicKeyInfo; the 32 raw key bytes follow.
 const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
@@ -1358,7 +1358,7 @@ async function up(options) {
     // Only worth asking when this computer has a coding agent to run tasks with;
     // without one it stays online for messages and assignments, nothing to decide.
     const { inventory, RUNTIME_NAMES } = await import("./runner.mjs");
-    const found = (await inventory({ importer: () => Promise.reject(new Error("CLI probe only")) }))
+    const found = (await inventory({ details: false }))
       .filter((item) => item.available);
     if (found.length) {
       out(`  ${dim(`${found.map((item) => RUNTIME_NAMES[item.id]).join(" and ")} found on this computer.`)}`);
