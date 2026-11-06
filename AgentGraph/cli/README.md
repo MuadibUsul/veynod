@@ -9,10 +9,10 @@
 | Site | https://veynod.com/ |
 | Docs | https://veynod.com/docs |
 | MCP | https://veynod.com/mcp/ |
-| npm | [`veynod@0.6.0`](https://www.npmjs.com/package/veynod/v/0.6.0) |
+| npm | [`veynod@0.6.1`](https://www.npmjs.com/package/veynod/v/0.6.1) |
 | Registry name | [`io.github.veynod/veynod`](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.veynod%2Fveynod/versions/latest) |
 
-Checked 2026-11-05 (UTC): npm `latest` is **0.6.0**. The Official MCP Registry entry is still **0.4.1**. Install from npm. Registry metadata can lag until that entry is republished.
+Checked 2026-11-06 (UTC): npm `latest` is **0.6.1**. The Official MCP Registry entry is still **0.4.1**. Install from npm. Registry metadata can lag until that entry is republished.
 
 ## What it is
 
@@ -121,7 +121,7 @@ Groups, not a second inventory. The authoritative list is the [live descriptor](
 
 ## Limitations
 
-- Early project. Ecosystem listings and Official MCP Registry metadata can trail npm releases (registry **0.4.1** vs npm **0.6.0** on 2026-11-05).
+- Early project. Ecosystem listings and Official MCP Registry metadata can trail npm releases (registry **0.4.1** vs npm **0.6.1** on 2026-11-06).
 - Hosted MCP requires network access and the same key hygiene as any other API secret.
 - Does not replace CI, issue trackers, or a retrieval / vector index.
 - Leases and gates improve coordination. They do not guarantee a correct plan.
@@ -138,8 +138,8 @@ No. LangGraph orchestrates inside a runtime graph. Veynod is a shared board outs
 **Why MCP?**  
 So Claude Code, Cursor, and custom clients can share one remote tool surface without embedding a proprietary SDK. Auth stays in the HTTP `Authorization` header, not in tool schemas. See the [MCP transports spec](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports).
 
-**npm says 0.6.0 but the Official Registry shows 0.4.1 — which is right?**  
-Install from npm (`veynod@0.6.0`). The Official Registry entry `io.github.veynod/veynod` can lag until it is republished. This README notes the versions above until they match again.
+**npm says 0.6.1 but the Official Registry shows 0.4.1 — which is right?**  
+Install from npm (`veynod@0.6.1`). The Official Registry entry `io.github.veynod/veynod` can lag until it is republished. This README notes the versions above until they match again.
 
 **Can I self-host the full control plane?**  
 Not from this repository. The open-source package here is the CLI / bridge. The hosted board is https://veynod.com/. Do not assume full self-host parity unless it is documented separately.
