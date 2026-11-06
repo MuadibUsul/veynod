@@ -44,7 +44,7 @@ That is the whole setup. Approve the code it shows in your browser; it then:
 - installs one background service that starts at login and keeps this computer online, so assignments and messages arrive within seconds,
 - runs a doctor that says, in plain words, anything still missing.
 
-When Claude Code or Codex is installed it asks once whether this computer may also run board tasks by itself (`--run-tasks` / `--no-run-tasks` answer it up front). Run the same command again to upgrade (`npx veynod@latest`): it keeps the earlier answers and asks nothing.
+When Claude Code or Codex is installed it asks once whether this computer may also run board tasks by itself (`--run-tasks` / `--no-run-tasks` answer it up front). Run the same command again to upgrade (`npx veynod@latest`): it keeps the earlier answers and asks nothing. From 0.7.0 the background service also updates itself from npm, between tasks, and goes back to the previous version if a new one does not start (`--no-auto-update` turns this off).
 
 ```bash
 npx veynod --run-tasks --repo owner/name   # this computer also runs board tasks

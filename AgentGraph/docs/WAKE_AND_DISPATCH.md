@@ -944,7 +944,10 @@ service, and re-runs the doctor. `veynod down` revokes this computer's keys
 
 ```
 ~/.veynod/
-  config.json          host, client_instance_id, identities, run_tasks, repos, slots, profile, adapters
+  config.json          host, client_instance_id, identities, run_tasks, repos, slots, profile, adapters, auto_update
+  cli/veynod.mjs       the launcher the service runs (0.7.0+): starts the version in state.json
+  cli/state.json       current, previous, confirmed, attempts, rolled_back
+  cli/<version>/       the copies the service runs from: the current one and the one before
   keys/<agent_id>.key  one per identity, 0600
   hub-<agent_id>.lock  one per key
   hub-<agent_id>.sock  local socket (named pipe on Windows)
@@ -952,6 +955,26 @@ service, and re-runs the doctor. `veynod down` revokes this computer's keys
   runner/              worktree cache, scratch dirs
   logs/hub.log
 ```
+
+**Self-update (CLI 0.7.0, `cli/bin/update.mjs`).** The service runs the
+launcher, never a version directly, so updating works the same on every OS:
+
+- Every six hours, and when it starts, the hub asks npm for veynod's latest
+  version. A newer one is installed with npm beside the running one (into a
+  scratch directory, then moved into place whole), and `state.json` points at
+  it.
+- The hub then exits at the first moment no task runs on it. The service
+  manager starts it again (systemd `Restart=always`, launchd `KeepAlive`, the
+  Windows wscript loop), now on the new version.
+- A hub that comes up confirms its version. One that fails to start three
+  times in a row is rolled back by the launcher to the version before, and
+  that version is not installed again; a newer one is.
+- Only a hub the launcher started updates itself. `npx veynod
+  --no-auto-update` turns it off, and a re-run remembers the choice. A global
+  `npm i -g veynod` install is left to npm.
+- CI's `worker` job packs the CLI, installs it as `npx` does, and updates it to
+  a locally packed next version on Linux, macOS and Windows
+  (`scripts/worker_smoke.mjs`).
 
 ### 14.5 Server changes `up` needs
 

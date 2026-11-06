@@ -10,11 +10,12 @@
 // missing, in plain words, with the fix.
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 import { RUNTIME_NAMES, commandWorks } from "./runner.mjs";
+import { pruneVersions } from "./update.mjs";
 
 export const CONFIG_VERSION = 1;
 // The oldest Node the CLI runs on (package.json engines).
@@ -109,17 +110,12 @@ export function installStableCopy(script, { version, home = defaultHome(), fs = 
   return join(target, basename(packageDir), "bin", basename(script));
 }
 
-/** Removes the copies of other versions once the service runs the new one. */
-export function pruneStableCopies(version, home = defaultHome(), fs = { existsSync, readdirSync, rmSync }) {
-  const root = join(veynodDir(home), "cli");
-  if (!fs.existsSync(root)) return [];
-  const removed = [];
-  for (const name of fs.readdirSync(root)) {
-    if (name === String(version)) continue;
-    fs.rmSync(join(root, name), { recursive: true, force: true });
-    removed.push(name);
-  }
-  return removed;
+/**
+ * Removes the copies of versions not in `keep` (one version or several) once
+ * the service runs the new one. The launcher and its state stay beside them.
+ */
+export function pruneStableCopies(keep, home = defaultHome()) {
+  return pruneVersions(join(veynodDir(home), "cli"), [keep].flat().filter(Boolean).map(String));
 }
 
 // ------------------------------------------------------------------ plan
@@ -182,6 +178,7 @@ export function withEarlierChoices(options, previous) {
     exec: options.exec || (runtime === "custom" ? previous.exec || "" : options.exec),
     slots: keep("slots", options.slots, previous.slots || undefined),
     supervisor: keep("supervisor", options.supervisor, previous.supervisor === undefined ? undefined : Boolean(previous.supervisor)),
+    autoUpdate: keep("autoUpdate", options.autoUpdate, previous.auto_update === undefined ? undefined : previous.auto_update !== false),
     // --repo on a re-run adds a repository; it never drops the ones kept before.
     repos: [...new Set([...(previous.repos || []), ...(options.repos || [])])],
     decided: true,
@@ -286,7 +283,7 @@ function isAlive(pid) {
  * reviews on it); otherwise each one listens, so pokes reach --exec hooks.
  */
 export async function runHub(options, { listen, runComputer, version, say = () => {}, home = defaultHome(),
-  config = loadConfig(home), forever = () => new Promise(() => {}) } = {}) {
+  config = loadConfig(home), forever = () => new Promise(() => {}), onStarted } = {}) {
   if (!config?.identities?.length) {
     throw new Error("no identities on this computer yet: run `npx veynod` first");
   }
@@ -302,6 +299,7 @@ export async function runHub(options, { listen, runComputer, version, say = () =
   try {
     const workers = hubWorkers(config);
     const loops = [];
+    const messengers = [];
     for (const identity of workers) {
       releases.push(acquireLock(identity.agent_id, { home }));
       const key = readKey(identity);
@@ -313,11 +311,19 @@ export async function runHub(options, { listen, runComputer, version, say = () =
           repos: config.repos || [], ...(config.deploy ? { deploy: config.deploy } : {}) },
         { version, say: tag });
         releases.push(() => messenger.stop());
+        messengers.push(messenger);
         loops.push(forever());
       } else {
         loops.push(listen({ host, key, exec: config.exec || "", heartbeat: true }, tag));
       }
     }
+    // Every worker is up: the updater (update.mjs) may confirm this version
+    // and restart the hub on a newer one, while no task is running. It exits
+    // the way a service stop does: on Windows a process cannot signal itself
+    // gracefully, so it calls stop() instead of sending SIGTERM.
+    const stopUpdates = onStarted?.({ config, restart: stop,
+      busy: () => messengers.some((messenger) => messenger.running?.size > 0) });
+    if (typeof stopUpdates === "function") releases.push(stopUpdates);
     const results = await Promise.all(loops);
     return results.some((code) => code) ? 1 : 0;
   } finally {
