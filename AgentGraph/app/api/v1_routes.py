@@ -57,6 +57,8 @@ from app.schemas import (
     ExternalActionCreateRequest,
     ExternalActionListResponse,
     ExternalActionOut,
+    HostLoginCodeRequest,
+    HostLoginRequest,
     HostRevokeRequest,
     InboxAckRequest,
     LeaseHeartbeatRequest,
@@ -1663,6 +1665,55 @@ async def revoke_host(
     from app.services import runners
 
     return await runners.revoke_host(session, principal, ref, body.reason)
+
+
+@router.post("/runner/hosts/{ref}/logins", status_code=201,
+             summary="Owner: sign an agent on this computer in to your own subscription")
+async def start_host_login(
+    body: HostLoginRequest,
+    ref: str = Path(max_length=64),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import logins
+
+    return await logins.start(session, principal, ref, body.runtime)
+
+
+@router.get("/runner/hosts/{ref}/logins/{login_id}",
+            summary="Owner: where a sign-in is (its link and code, then connected or failed)")
+async def get_host_login(
+    ref: str = Path(max_length=64),
+    login_id: str = Path(max_length=40),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    from app.services import logins
+
+    return await logins.get(principal, ref, login_id)
+
+
+@router.post("/runner/hosts/{ref}/logins/{login_id}/code",
+             summary="Owner: the code Claude's sign-in page showed, for the computer")
+async def submit_host_login_code(
+    body: HostLoginCodeRequest,
+    ref: str = Path(max_length=64),
+    login_id: str = Path(max_length=40),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    from app.services import logins
+
+    return await logins.submit_code(principal, ref, login_id, body.code)
+
+
+@router.post("/runner/hosts/{ref}/logins/{login_id}/cancel", summary="Owner: stop a sign-in")
+async def cancel_host_login(
+    ref: str = Path(max_length=64),
+    login_id: str = Path(max_length=40),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    from app.services import logins
+
+    return await logins.cancel(principal, ref, login_id)
 
 
 @router.get("/presence",

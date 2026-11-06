@@ -318,6 +318,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `rate_limited` | 429 | `retry_after` |
 | `sse_capacity` | 429 | `retry_after` |
 | `overloaded` | 503 | `retry_after` |
+| `computer_offline` | 409 | `retry_backoff` |
 | `kernel_not_committed` | 409 | `retry_backoff` |
 | `internal_error` | 500 | `retry_backoff` |
 | `embedding_failed` | 502 | `retry_backoff` |
@@ -327,6 +328,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `google_unavailable` | 503 | `retry_backoff` |
 | `tenant_context_unavailable` | 503 | `retry_backoff` |
 | `federation_conflict` | 409 | `refresh_and_retry` |
+| `login_not_waiting` | 409 | `refresh_and_retry` |
 | `proposal_conflict` | 409 | `refresh_and_retry` |
 | `rebase_conflict` | 409 | `refresh_and_retry` |
 | `section_conflict` | 409 | `refresh_and_retry` |
@@ -431,6 +433,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `invalid_task_status` | 422 | `fix_request` |
 | `invalid_verification_status` | 422 | `fix_request` |
 | `limit_too_large` | 422 | `fix_request` |
+| `login_code_invalid` | 422 | `fix_request` |
 | `namespace_not_registered` | 422 | `fix_request` |
 | `namespace_protected` | 422 | `fix_request` |
 | `not_chunk_lineage` | 422 | `fix_request` |
@@ -445,6 +448,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `review_note_required` | 422 | `fix_request` |
 | `review_out_of_scope` | 422 | `fix_request` |
 | `rollup_summary_required` | 422 | `fix_request` |
+| `runtime_unsupported` | 422 | `fix_request` |
 | `scope_unknown` | 422 | `fix_request` |
 | `subject_identifier_required` | 422 | `fix_request` |
 | `task_tree_too_deep` | 422 | `fix_request` |
@@ -518,6 +522,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `lease_lost` | 409 | `abandon` |
 | `lineage_unavailable` | 409 | `abandon` |
 | `link_exists` | 409 | `abandon` |
+| `login_unavailable` | 409 | `abandon` |
 | `no_submission` | 409 | `abandon` |
 | `not_queue_head` | 409 | `abandon` |
 | `nothing_to_probe` | 409 | `abandon` |

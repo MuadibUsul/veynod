@@ -33,6 +33,7 @@ do not edit by hand. Every error body is
 | `rate_limited` | 429 | `retry_after` | `wait_retry_after_then_retry_same_request` | Wait for Retry-After. |
 | `sse_capacity` | 429 | `retry_after` | `wait_retry_after_then_retry_same_request` | Too many event streams; reconnect later. |
 | `overloaded` | 503 | `retry_after` | `wait_retry_after_then_retry_same_request` | Wait for Retry-After; never resend earlier. |
+| `computer_offline` | 409 | `retry_backoff` | `backoff_then_retry_same_request` | Start veynod on that computer (it must be online), then try again. |
 | `kernel_not_committed` | 409 | `retry_backoff` | `backoff_then_retry_same_request` | The Kernel has not committed this chunk yet; wait for the commit projection. |
 | `internal_error` | 500 | `retry_backoff` | `backoff_then_retry_same_request` | Back off and retry at most 5 times, then escalate_human. |
 | `embedding_failed` | 502 | `retry_backoff` | `backoff_then_retry_same_request` | Embedding provider failed; back off. |
@@ -42,6 +43,7 @@ do not edit by hand. Every error body is
 | `google_unavailable` | 503 | `retry_backoff` | `backoff_then_retry_same_request` | Back off and retry sign-in. |
 | `tenant_context_unavailable` | 503 | `retry_backoff` | `backoff_then_retry_same_request` | Back off and retry. |
 | `federation_conflict` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Re-read the connection; its state changed or the object is stale. |
+| `login_not_waiting` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Read the sign-in again; it moved on. |
 | `proposal_conflict` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Re-read the document and rebase the proposal. |
 | `rebase_conflict` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Re-read from base_version and redo non-overlapping edits. |
 | `section_conflict` | 409 | `refresh_and_retry` | `refresh_state_then_retry_once` | Re-read the section, then rewrite. |
@@ -146,6 +148,7 @@ do not edit by hand. Every error body is
 | `invalid_task_status` | 422 | `fix_request` | `fix_request_then_resend` | Use a valid task status. |
 | `invalid_verification_status` | 422 | `fix_request` | `fix_request_then_resend` | Use a valid status. |
 | `limit_too_large` | 422 | `fix_request` | `fix_request_then_resend` | Lower limit to the documented maximum. |
+| `login_code_invalid` | 422 | `fix_request` | `fix_request_then_resend` | Paste the whole code the sign-in page shows. |
 | `namespace_not_registered` | 422 | `fix_request` | `register_namespace` | Call register_namespace, then resend. |
 | `namespace_protected` | 422 | `fix_request` | `fix_request_then_resend` | default and reserved namespaces stay. |
 | `not_chunk_lineage` | 422 | `fix_request` | `fix_request_then_resend` | Name a task of this chunk (DG-<diagram>-<chunk>[-n]); details list them. |
@@ -160,6 +163,7 @@ do not edit by hand. Every error body is
 | `review_note_required` | 422 | `fix_request` | `fix_request_then_resend` | Say why in note, then resend. |
 | `review_out_of_scope` | 422 | `fix_request` | `fix_request_then_resend` | Answer exactly the rules in details.rules, then resend. |
 | `rollup_summary_required` | 422 | `fix_request` | `fix_request_then_resend` | Attach a rollup summary. |
+| `runtime_unsupported` | 422 | `fix_request` | `fix_request_then_resend` | Use runtime claude or codex. |
 | `scope_unknown` | 422 | `fix_request` | `fix_request_then_resend` | Use permissions listed in details.allowed. |
 | `subject_identifier_required` | 422 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
 | `task_tree_too_deep` | 422 | `fix_request` | `fix_request_then_resend` | Split under a shallower task. |
@@ -233,6 +237,7 @@ do not edit by hand. Every error body is
 | `lease_lost` | 409 | `abandon` | `abandon_and_release_local_state` | Drop local state and claim again. |
 | `lineage_unavailable` | 409 | `abandon` | `abandon_and_release_local_state` | This subject has no signed lineage; give up. |
 | `link_exists` | 409 | `abandon` | `abandon_and_release_local_state` | The link already exists. |
+| `login_unavailable` | 409 | `abandon` | `abandon_and_release_local_state` | Update veynod on that computer, or sign the agent in on it directly. |
 | `no_submission` | 409 | `abandon` | `abandon_and_release_local_state` | Run the sandbox after a submission is accepted. |
 | `not_queue_head` | 409 | `abandon` | `abandon_and_release_local_state` | Only the queue head is checked; wait for this chunk's turn. |
 | `nothing_to_probe` | 409 | `abandon` | `abandon_and_release_local_state` | Write and index documents first. |

@@ -132,6 +132,12 @@ def _clean_report(given: Any) -> dict[str, Any] | None:
     if given.get("deploy") is True:
         # A deploy computer (`veynod up --deploy`): it runs deploys and nothing else.
         report["deploy"] = True
+    # What the console can sign in on this computer, and what it already did
+    # (services/logins.py); absent from a CLI older than 0.8.0.
+    for name in ("logins", "signed_in"):
+        given_list = given.get(name)
+        if isinstance(given_list, list):
+            report[name] = [item for item in given_list if item in ("claude", "codex")][:4]
     return report
 
 
@@ -394,6 +400,9 @@ def computers_out(items: list[dict[str, Any]], roles: dict[str, str]) -> list[di
                     runtimes[runtime["id"]] = runtime
         first = next(host for host in hosts if host["host_id"] == seats[0]["host_id"])
         states = [seat["state"] for seat in seats]
+        # What the console can sign in on it (services/logins.py), from its work seat.
+        report = first.get("capabilities_report")
+        report = report if isinstance(report, dict) else {}
         out.append({
             "computer_id": seats[0]["host_id"],
             "name": _computer_name(seats),
@@ -413,6 +422,8 @@ def computers_out(items: list[dict[str, Any]], roles: dict[str, str]) -> list[di
             "last_seen_at": max((seat["last_seen_at"] or "" for seat in seats), default="") or None,
             "seats": seats,
             "kernel": kernel_card(live),
+            "logins": list(report.get("logins") or []),
+            "signed_in": list(report.get("signed_in") or []),
         })
     out.sort(key=lambda computer: (order.get(computer["state"], 9), computer["name"]))
     return out

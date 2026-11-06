@@ -6,6 +6,7 @@ import { useI18n } from "../i18n";
 import type { ApiRequest } from "../types";
 import { relativeTime } from "../types";
 import { AgentFace } from "./agent-face";
+import { SubscriptionConnect } from "./subscription-connect";
 
 /*
  * The computers that run this workspace's agents. A computer is a
@@ -14,7 +15,8 @@ import { AgentFace } from "./agent-face";
  * by machine. The owner can pause a computer (its tasks move to others) or
  * take it off the Loop for good; both act on every seat. It refreshes when the
  * Loop's event stream says something about hosts or placements; it does not
- * poll.
+ * poll. An online computer whose agents the console can sign in (a server,
+ * usually) offers "Connect a subscription" (subscription-connect.tsx).
  */
 
 type Runtime = {
@@ -68,6 +70,9 @@ type Computer = {
   runner_version?: string | null;
   /** Its CLI predates nerve-only dispatch: it looks online but gets no work. */
   outdated?: boolean;
+  /** Runtimes the console can sign in on it (CLI 0.8.0+), and those it already did. */
+  logins?: string[];
+  signed_in?: string[];
 };
 
 const OS_LABEL: Record<string, string> = {
@@ -135,6 +140,7 @@ export function HostsPanel({
   const { t } = useI18n();
   const [computers, setComputers] = useState<Computer[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [connecting, setConnecting] = useState<Computer | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -276,6 +282,11 @@ export function HostsPanel({
                 <code>{RECONNECT}</code>
               </p>
             )}
+            {(computer.signed_in ?? []).length > 0 && (
+              <p className="station-kernel">
+                {t("Signed in through Veynod:")} {(computer.signed_in ?? []).map(runtimeName).join(", ")}
+              </p>
+            )}
             {left === 0 && waitingForQuota > 0 && (
               <p className="station-note">
                 {t("Out of quota: {n} tasks wait and start on their own when it resets.", { n: waitingForQuota })}
@@ -283,6 +294,10 @@ export function HostsPanel({
             )}
             {canManage && (
               <div className="station-actions">
+                {computer.state === "online" && (computer.logins ?? []).length > 0 && (
+                  <button type="button" className="button ghost small" disabled={busy !== null}
+                    onClick={() => setConnecting(computer)}>{t("Connect a subscription")}</button>
+                )}
                 {!paused ? (
                   <button type="button" className="button ghost small" disabled={busy !== null}
                     onClick={() => void act(computer, "pause")}>{t("Pause")}</button>
@@ -297,6 +312,12 @@ export function HostsPanel({
           </div>
         );
       })}
+      {connecting && (
+        <SubscriptionConnect request={request} hostId={connecting.computer_id} computerName={connecting.name}
+          logins={connecting.logins ?? []} signedIn={connecting.signed_in ?? []}
+          onClose={() => setConnecting(null)}
+          onConnected={() => { notify(t("Subscription connected.")); void load(); }} />
+      )}
       <div className={`lin-row quiet station-connect${computers.length ? "" : " empty"}`}>
         <span className="lin-title">
           {computers.length ? t("Connect a computer:")

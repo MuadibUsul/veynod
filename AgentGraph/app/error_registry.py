@@ -178,6 +178,16 @@ REGISTRY: dict[str, ErrorSpec] = {
     ),
     "agent_id_taken": _spec(409, FIX_REQUEST, "Choose another agent_id."),
     "host_revoked": _spec(409, ABANDON, "Ask the owner for a new runner token."),
+    # Signing a computer in to a subscription from the console (services/logins.py).
+    "computer_offline": _spec(
+        409, RETRY_BACKOFF, "Start veynod on that computer (it must be online), then try again."
+    ),
+    "login_unavailable": _spec(
+        409, ABANDON, "Update veynod on that computer, or sign the agent in on it directly."
+    ),
+    "login_not_waiting": _spec(409, REFRESH_AND_RETRY, "Read the sign-in again; it moved on."),
+    "login_code_invalid": _spec(422, FIX_REQUEST, "Paste the whole code the sign-in page shows."),
+    "runtime_unsupported": _spec(422, FIX_REQUEST, "Use runtime claude or codex."),
     "placement_not_movable": _spec(
         409, ABANDON, "Read the placement again; it ended or its task moved past this step."
     ),
