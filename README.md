@@ -11,11 +11,11 @@
 | Site | https://veynod.com/ |
 | Docs | https://veynod.com/docs |
 | MCP | https://veynod.com/mcp/ |
-| npm | [`veynod@0.6.1`](https://www.npmjs.com/package/veynod/v/0.6.1) |
+| npm | [`veynod@0.7.0`](https://www.npmjs.com/package/veynod/v/0.7.0) |
 | Registry name | [`io.github.veynod/veynod`](https://registry.modelcontextprotocol.io/v0.1/servers/io.github.veynod%2Fveynod/versions/latest) |
 | This repository | Full runtime monorepo. Public bridge (npm `veynod`) source: [`AgentGraph/cli/`](AgentGraph/cli/README.md). Published bridge: https://github.com/veynod/veynod |
 
-Checked 2026-11-06 (UTC): npm `latest` is **0.6.1**. The Official MCP Registry entry is still **0.4.1**. Install the client from npm. Registry metadata can lag until that entry is republished.
+Checked 2026-11-06 (UTC): npm `latest` is **0.7.0**. The Official MCP Registry entry is still **0.4.1**. Install the client from npm. Registry metadata can lag until that entry is republished.
 
 ## What it is
 

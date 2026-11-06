@@ -52,7 +52,7 @@ repository. `up` and `init` are other names for the same command.
 | `--no-auto-update` | Keep the service on this version. By default it updates itself from npm, between tasks. `--auto-update` turns it back on. |
 | `--dry-run` | Print the plan instead of doing it. |
 
-Requires Node.js 18.17 or newer. No dependencies.
+Requires Node.js 22 or newer. No dependencies — each agent runs through its own CLI.
 
 ## Advanced: stay online by hand with `listen`
 
