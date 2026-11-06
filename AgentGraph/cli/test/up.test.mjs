@@ -116,8 +116,8 @@ test("doctor: not connected, then what the computer and the board are missing", 
   const byId = Object.fromEntries(checks.map((item) => [item.id, item]));
   assert.equal(byId["key:box"].ok, true);
   assert.equal(byId.node.ok, true, "agents run through their own CLIs, so Node 22 is enough");
-  const ancient = await doctor({ home, config, nodeVersion: "16.20.0", run: () => "" });
-  assert.equal(ancient.find((item) => item.id === "node").ok, false, "below the CLI's own minimum");
+  const ancient = await doctor({ home, config, nodeVersion: "20.18.0", run: () => "" });
+  assert.equal(ancient.find((item) => item.id === "node").ok, false, "no built-in WebSocket below Node 22");
   assert.equal(byId.reviewer.ok, true, "the Kernel gate and a person review; no review twin");
   assert.match(byId.reviewer.text, /Kernel gate/);
   assert.equal(byId["board:reviewer"].ok, false);
@@ -222,7 +222,9 @@ test("the doctor counts whichever runtime is installed when none was chosen", as
     ["", () => { throw new Error("not found"); }, false, "Claude Code or Codex is not installed or not on PATH."],
   ]) {
     const config = { host: "http://127.0.0.1:9", run_tasks: true, runtime, repos: [], identities: [] };
-    const checks = await doctor({ home, config, nodeVersion: "24.0.0", run, fetchImpl: offline });
+    // Resolved by name on every OS: on Windows the real lookup would search the machine's PATH.
+    const checks = await doctor({ home, config, nodeVersion: "24.0.0", run, fetchImpl: offline,
+      resolve: (name) => ({ command: name, prefix: [] }) });
     const check = checks.find((item) => item.id === "runtime");
     assert.equal(check.ok, ok, runtime);
     assert.equal(check.text, text);

@@ -52,7 +52,7 @@ npx veynod --supervisor                    # ...and looks after the Loop
 npx veynod --client cursor                 # only one client (also claude-code, claude-desktop, print)
 ```
 
-Node.js 18.17 or newer. No runtime dependencies.
+Node.js 22 or newer (the first with a built-in WebSocket). No runtime dependencies.
 
 ## Remote MCP + auth
 

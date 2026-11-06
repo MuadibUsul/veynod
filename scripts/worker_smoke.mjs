@@ -45,8 +45,9 @@ step(`packed ${tarball} and installed it into a fresh directory`);
 assert.match(node([script, "--version"]), new RegExp(version.replace(/\./g, "\\.")));
 step(`the installed CLI answers ${version}`);
 
-const output = node([script, "up", "--dry-run", "--yes", "--no-open", "--run-tasks", "--runtime", "custom",
-  "--exec", "echo hi", "--host", "https://veynod.example"]);
+// CI machines have no MCP client to wire (Claude Code, Cursor, Claude Desktop): print instead.
+const output = node([script, "up", "--dry-run", "--yes", "--no-open", "--client", "print", "--run-tasks",
+  "--runtime", "custom", "--exec", "echo hi", "--host", "https://veynod.example"]);
 const plan = JSON.parse(output.slice(output.indexOf("{")));
 assert.equal(plan.run_tasks, true);
 assert.equal(plan.hub.mode, "runner");

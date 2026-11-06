@@ -14,7 +14,7 @@
 // this process can open it. The key goes straight into the MCP client config
 // (never into the project directory) and is not printed unless --client print.
 //
-// No dependencies: Node 18.17+ (fetch, X25519, HKDF and AES-GCM are built in).
+// No dependencies: Node 22+ (fetch, WebSocket, X25519, HKDF and AES-GCM are built in).
 
 import { execFileSync, spawn } from "node:child_process";
 import {

@@ -125,7 +125,7 @@ MCP server, with this computer's key (Claude Code `--strict-mcp-config`, Codex
 `--ignore-user-config`). The same tools report the computer's models and how
 much of each subscription is left (Codex through its app-server, Claude Code
 through its control requests), so the Loop can route around a full quota.
-Nothing else needs installing, and any Node from 18 works. `--runtime custom --exec CMD` runs any command
+Nothing else needs installing; Node 22 or newer is enough. `--runtime custom --exec CMD` runs any command
 with the prompt in `VEYNOD_PROMPT`. Repositories are cloned from
 `https://github.com/<owner>/<name>.git` with your own git credentials
 (`--git-base` changes the base).

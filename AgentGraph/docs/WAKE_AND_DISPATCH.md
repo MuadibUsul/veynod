@@ -975,6 +975,9 @@ launcher, never a version directly, so updating works the same on every OS:
 - CI's `worker` job packs the CLI, installs it as `npx` does, and updates it to
   a locally packed next version on Linux, macOS and Windows
   (`scripts/worker_smoke.mjs`).
+- The CLI's floor is Node 22 (`engines`, and a required doctor check): the
+  runner's nerve socket uses the built-in WebSocket, which Node 18 and 20 lack.
+  The worker job's Node 18 run found it.
 
 ### 14.5 Server changes `up` needs
 

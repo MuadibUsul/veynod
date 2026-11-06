@@ -121,7 +121,7 @@ export function installSteps(runtime, { platform = process.platform } = {}) {
 /**
  * What runtimes this computer has, without account emails or tokens: each
  * agent's version from its own CLI and, unless `details` is off, the models it
- * offers and the subscription usage it reports (usage.mjs), on any Node.
+ * offers and the subscription usage it reports (usage.mjs), with no OAR.
  */
 export async function inventory({ run = execFileSync, resolve = resolveCommand, details = true,
   reader = readAgent } = {}) {

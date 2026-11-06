@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -66,7 +66,8 @@ test("the real launcher starts the current version, and rolls back one that cann
   const first = launch(launcher);
   assert.equal(first.code, 0);
   assert.equal(first.out.ran, "1.0.0");
-  assert.equal(first.out.launcher, launcher, "the hub knows the launcher started it");
+  // The launcher reports its real path; macOS's temp directory is behind a symlink.
+  assert.equal(first.out.launcher, realpathSync(launcher), "the hub knows the launcher started it");
   assert.deepEqual(first.out.args, ["hub"]);
   confirmRunning("1.0.0", root);
 

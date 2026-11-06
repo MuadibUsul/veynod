@@ -14,12 +14,14 @@ import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, unl
 import { homedir, hostname } from "node:os";
 import { basename, dirname, join } from "node:path";
 
-import { RUNTIME_NAMES, commandWorks } from "./runner.mjs";
+import { RUNTIME_NAMES, commandWorks, resolveCommand } from "./runner.mjs";
 import { pruneVersions } from "./update.mjs";
 
 export const CONFIG_VERSION = 1;
-// The oldest Node the CLI runs on (package.json engines).
-const NODE_MIN = 18;
+// The oldest Node the CLI runs on (package.json engines): the first with a
+// built-in WebSocket, which the runner's nerve socket needs. Node 18 and 20
+// have none (and are past their end of life).
+export const NODE_MIN = 22;
 
 // ------------------------------------------------------------------ files
 
@@ -343,14 +345,14 @@ async function getJson(fetchImpl, url, key) {
 }
 
 // Resolved like the runner does, so a Windows npm shim (claude.cmd) counts.
-const onPath = (run, command) => commandWorks(command, { run }) !== null;
+const onPath = (run, command, resolve) => commandWorks(command, { run, resolve }) !== null;
 
 /**
  * What is missing on this computer and on the board, one line each:
  * {id, ok, required, text, fix}. `up` exits non-zero while a required item is red.
  */
 export async function doctor({ home = defaultHome(), config = loadConfig(home), fetchImpl = fetch,
-  run = execFileSync, nodeVersion = process.versions.node, serviceInstalled } = {}) {
+  run = execFileSync, resolve = resolveCommand, nodeVersion = process.versions.node, serviceInstalled } = {}) {
   const checks = [];
   const add = (id, ok, required, text, fix = null) => checks.push({ id, ok: Boolean(ok), required, text, fix });
   if (!config) {
@@ -388,7 +390,7 @@ export async function doctor({ home = defaultHome(), config = loadConfig(home), 
     major >= NODE_MIN ? null : `Install Node ${NODE_MIN} or newer.`);
   if (config.run_tasks && config.deploy) {
     // A deploy computer: docker and its compose directory, no agent runtime.
-    const docker = onPath(run, "docker");
+    const docker = onPath(run, "docker", resolve);
     add("docker", docker, true, docker ? "docker is installed." : "docker is missing.",
       docker ? null : "Install Docker with the compose plugin (`docker compose version`).");
     const dir = config.deploy.dir;
@@ -401,7 +403,7 @@ export async function doctor({ home = defaultHome(), config = loadConfig(home), 
       "The Kernel gate reviews code built here; a person reviews what no other computer can.");
     // No saved runtime means the hub uses whichever is here.
     const wanted = config.runtime ? [config.runtime] : ["claude", "codex"];
-    const runtime = config.runtime === "custom" ? "custom" : wanted.find((id) => onPath(run, id));
+    const runtime = config.runtime === "custom" ? "custom" : wanted.find((id) => onPath(run, id, resolve));
     const ready = runtime === "custom" ? Boolean(config.exec) : Boolean(runtime);
     const named = wanted.map((id) => RUNTIME_NAMES[id] ?? id).join(" or ");
     add("runtime", ready, true,
@@ -409,9 +411,9 @@ export async function doctor({ home = defaultHome(), config = loadConfig(home), 
       ready ? null : `Install ${named} (the command-line tool, not the desktop app) and sign in; `
         + "run `npx veynod` again to see the commands.");
     if ((config.repos || []).length) {
-      const git = onPath(run, "git");
+      const git = onPath(run, "git", resolve);
       add("git", git, true, git ? "git is installed." : "git is missing.", git ? null : "Install git.");
-      const gh = onPath(run, "gh");
+      const gh = onPath(run, "gh", resolve);
       add("gh", gh, false, gh ? "gh is installed (pull requests)." : "gh is missing: agents cannot open pull requests.",
         gh ? null : "Install the GitHub CLI and run `gh auth login`.");
     }
