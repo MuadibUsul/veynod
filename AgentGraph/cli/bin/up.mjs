@@ -17,7 +17,8 @@ import { basename, dirname, join } from "node:path";
 import { RUNTIME_NAMES, commandWorks } from "./runner.mjs";
 
 export const CONFIG_VERSION = 1;
-const NODE_FOR_OAR = 24;
+// The oldest Node the CLI runs on (package.json engines).
+const NODE_MIN = 18;
 
 // ------------------------------------------------------------------ files
 
@@ -94,11 +95,10 @@ export function stableDir(version, home = defaultHome()) {
  * and returns the copy's veynod.mjs. Nothing to install first: `npx veynod`
  * alone sets up a service that lasts.
  *
- * The whole npx node_modules goes, not only veynod and @botiverse/oar: npm
- * hoists OAR's own dependencies (the ACP SDK, pi, undici, which…) beside it.
- * Without them OAR failed to load in the service, which then ran Codex through
- * its CLI without the computer's key (mcp_pinning false, claims refused). That
- * directory is npx's own for this package: veynod's dependency tree, nothing else.
+ * The whole npx node_modules goes, not only veynod: whatever npm hoisted beside
+ * it is part of its dependency tree (0.6.0 copied only veynod and OAR, and OAR
+ * could not load without its hoisted dependencies). That directory is npx's own
+ * for this package, so it holds veynod's tree and nothing else.
  */
 export function installStableCopy(script, { version, home = defaultHome(), fs = { cpSync, mkdirSync } } = {}) {
   const packageDir = dirname(dirname(script)); // …/node_modules/veynod
@@ -378,10 +378,8 @@ export async function doctor({ home = defaultHome(), config = loadConfig(home), 
     }
   }
   const major = Number(String(nodeVersion).split(".")[0]);
-  add("node", major >= NODE_FOR_OAR, false,
-    major >= NODE_FOR_OAR ? `Node ${nodeVersion}: subscription usage is reported, so the Loop can route around a full quota.`
-      : `Node ${nodeVersion}: tasks run, but subscription usage is not reported (that needs Node ${NODE_FOR_OAR}).`,
-    major >= NODE_FOR_OAR ? null : `Optional: install Node ${NODE_FOR_OAR} or newer so the Loop sees how much quota is left.`);
+  add("node", major >= NODE_MIN, true, `Node ${nodeVersion}.`,
+    major >= NODE_MIN ? null : `Install Node ${NODE_MIN} or newer.`);
   if (config.run_tasks && config.deploy) {
     // A deploy computer: docker and its compose directory, no agent runtime.
     const docker = onPath(run, "docker");

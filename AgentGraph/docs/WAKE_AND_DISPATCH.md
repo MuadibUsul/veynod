@@ -205,9 +205,10 @@ There are three layers, each owning one question:
 > --mcp-config --strict-mcp-config` and `codex exec --ignore-user-config -c
 > mcp_servers.*`, each pinned to the run's key. OAR's Codex session was refused
 > (`refusedSessionOptions.userConfiguration`) and its service copy could not
-> load its dependencies; see PRs #117 and the v2 design. OAR, when installed,
-> only reports models and subscription usage until that moves too. The rest of
-> this section records the earlier design.
+> load its dependencies; see PR #117 and the v2 design. Models and
+> subscription usage are read from the same CLIs (`cli/bin/usage.mjs`: Codex's
+> app-server, Claude Code's control requests), and OAR is no longer a
+> dependency. The rest of this section records the earlier design.
 
 **Earlier.**
 - The desktop sidecar opens one OAR session per runtime and folder and calls

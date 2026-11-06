@@ -11,8 +11,8 @@
 // the scheduler moves it on.
 //
 // Claude Code and Codex run through their own command-line tools (agents.mjs),
-// each run pinned to Veynod with the run's own key; OAR (@botiverse/oar), when
-// installed, only reports models and subscription usage. `--runtime custom
+// each run pinned to Veynod with the run's own key; the same tools report their
+// models and subscription usage (usage.mjs). `--runtime custom
 // --exec CMD` runs any command (tests, other agents). Every wake leaves
 // receipts in ~/.veynod/runner-receipts.jsonl: delivered, accepted, started,
 // then finished or failed.
@@ -23,6 +23,7 @@ import { arch as osArch, homedir, hostname, platform } from "node:os";
 import { join, resolve, sep, win32 } from "node:path";
 
 import { claudeInvocation, codexInvocation } from "./agents.mjs";
+import { readAgent } from "./usage.mjs";
 
 export const RUNNER_HEARTBEAT_MS = 30_000;
 // Leases are at least 60 s and heartbeat at a third of their TTL; renewing every
@@ -37,15 +38,6 @@ const PLACEMENT = /\bplc_[0-9A-Z]{10,}\b/;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // ------------------------------------------------------------------ runtimes
-
-async function oarRuntime(id, importer) {
-  try {
-    const mod = await importer(`@botiverse/oar/runtimes/${id}`);
-    return mod[`${id}Runtime`] ?? null;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * The script an npm `.cmd` shim runs (cmd-shim writes `"%dp0%\node_modules\...\cli.js" %*`),
@@ -126,48 +118,29 @@ export function installSteps(runtime, { platform = process.platform } = {}) {
   return lines;
 }
 
-/** What runtimes this computer has, without account emails or tokens. */
-export async function inventory({ importer = (spec) => import(spec), run = execFileSync,
-  resolve = resolveCommand } = {}) {
+/**
+ * What runtimes this computer has, without account emails or tokens: each
+ * agent's version from its own CLI and, unless `details` is off, the models it
+ * offers and the subscription usage it reports (usage.mjs), on any Node.
+ */
+export async function inventory({ run = execFileSync, resolve = resolveCommand, details = true,
+  reader = readAgent } = {}) {
   const found = [];
   for (const id of RUNTIME_IDS) {
-    const runtime = await oarRuntime(id, importer);
-    if (runtime) {
-      try {
-        const installation = await runtime.installation();
-        if (installation?.kind === "available") {
-          const entry = { id, available: true, via: "oar" };
-          if (installation.version) entry.version = String(installation.version);
-          if (typeof runtime.listModels === "function") {
-            const models = await runtime.listModels(installation).catch(() => null);
-            if (models?.kind === "ok") entry.models = models.models.slice(0, 20).map((item) => item.id);
-          }
-          if (typeof runtime.accountUsage === "function") {
-            const usage = await runtime.accountUsage(installation, { timeoutMs: 10_000 }).catch(() => null);
-            if (usage?.kind === "available") {
-              entry.usage = {
-                ...(usage.plan ? { plan: usage.plan } : {}),
-                windows: usage.windows.slice(0, 4).map((window) => ({
-                  name: window.label,
-                  used_percent: Math.round(window.usedRatio * 1000) / 10,
-                  ...(window.resetsAt ? { resets_at: window.resetsAt } : {}),
-                })),
-              };
-            }
-          }
-          found.push(entry);
-          continue;
-        }
-      } catch {
-        // fall through to the CLI probe
+    const version = commandWorks(id, { run, resolve });
+    if (version === null) {
+      found.push({ id, available: false });
+      continue;
+    }
+    const entry = { id, available: true, via: "cli", version: version.split("\n")[0].slice(0, 32) };
+    if (details) {
+      const extra = await reader(id, { resolve }).catch(() => null);
+      if (extra?.models?.length) entry.models = extra.models.slice(0, 20);
+      if (extra?.usage?.windows?.length) {
+        entry.usage = { ...(extra.usage.plan ? { plan: extra.usage.plan } : {}), windows: extra.usage.windows.slice(0, 4) };
       }
     }
-    const version = commandWorks(id, { run, resolve });
-    if (version !== null) {
-      found.push({ id, available: true, via: "cli", version: version.split("\n")[0].slice(0, 32) });
-    } else {
-      found.push({ id, available: false });
-    }
+    found.push(entry);
   }
   return found;
 }
@@ -619,12 +592,11 @@ export async function createRunner(options, {
   version,
   say = () => {},
   fetchImpl = fetch,
-  importer = (spec) => import(spec),
   spawner,
   leaseEvery = LEASE_KEEP_MS,
   sleepMs = 2_000,
   stateDir = process.env.VEYNOD_STATE_DIR || join(homedir(), ".veynod"),
-  takeInventory = () => inventory({ importer }),
+  takeInventory = () => inventory(),
 } = {}) {
   const slots = Math.max(1, Number(options.slots) || 1);
   const repos = options.repos || [];

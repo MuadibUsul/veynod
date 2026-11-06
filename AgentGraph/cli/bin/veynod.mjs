@@ -1358,7 +1358,7 @@ async function up(options) {
     // Only worth asking when this computer has a coding agent to run tasks with;
     // without one it stays online for messages and assignments, nothing to decide.
     const { inventory, RUNTIME_NAMES } = await import("./runner.mjs");
-    const found = (await inventory({ importer: () => Promise.reject(new Error("CLI probe only")) }))
+    const found = (await inventory({ details: false }))
       .filter((item) => item.available);
     if (found.length) {
       out(`  ${dim(`${found.map((item) => RUNTIME_NAMES[item.id]).join(" and ")} found on this computer.`)}`);

@@ -114,8 +114,9 @@ test("doctor: not connected, then what the computer and the board are missing", 
   server.close();
   const byId = Object.fromEntries(checks.map((item) => [item.id, item]));
   assert.equal(byId["key:box"].ok, true);
-  assert.equal(byId.node.ok, false);
-  assert.equal(byId.node.required, false, "old Node falls back to the runtime's CLI");
+  assert.equal(byId.node.ok, true, "agents run through their own CLIs, so Node 22 is enough");
+  const ancient = await doctor({ home, config, nodeVersion: "16.20.0", run: () => "" });
+  assert.equal(ancient.find((item) => item.id === "node").ok, false, "below the CLI's own minimum");
   assert.equal(byId.reviewer.ok, true, "the Kernel gate and a person review; no review twin");
   assert.match(byId.reviewer.text, /Kernel gate/);
   assert.equal(byId["board:reviewer"].ok, false);

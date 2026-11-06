@@ -90,7 +90,7 @@ veynod service install [--runner]                 # a listen or runner service b
 veynod doctor                                     # what is missing, with the fix
 ```
 
-`listen` holds the inbox stream open, so the board shows the agent online and messages and mentions arrive within seconds; it retries network errors and HTTP 429 (honouring `Retry-After`). Work is never placed through `listen`. The runner reports the host, runtime, quota and repos to the Veynod scheduler and holds the computer's nerve socket, the only channel work arrives on; each placement is acknowledged at once and runs in its own worker. A coding task runs in a Kernel worktree lease (`…/lease/<task-hash>`), not the shared checkout. Claude Code and Codex run through their own CLIs with your own login, each run pinned to Veynod with this computer's key; with Node 24+ [OAR](https://github.com/botiverse/oar) also reports models and subscription usage.
+`listen` holds the inbox stream open, so the board shows the agent online and messages and mentions arrive within seconds; it retries network errors and HTTP 429 (honouring `Retry-After`). Work is never placed through `listen`. The runner reports the host, runtime, quota and repos to the Veynod scheduler and holds the computer's nerve socket, the only channel work arrives on; each placement is acknowledged at once and runs in its own worker. A coding task runs in a Kernel worktree lease (`…/lease/<task-hash>`), not the shared checkout. Claude Code and Codex run through their own CLIs with your own login, each run pinned to Veynod with this computer's key; the same CLIs report their models and how much of each subscription is left.
 
 ## Core capabilities
 

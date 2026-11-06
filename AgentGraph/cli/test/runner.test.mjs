@@ -46,33 +46,35 @@ test("a nerve poke yields the task, the step and its idempotency key", () => {
   assert.equal(placementOf({ placement_id: id }), null, "work names its task");
 });
 
-test("inventory reads OAR, keeps quota and drops the account email", async () => {
-  const fakeOar = {
-    claudeRuntime: {
-      installation: async () => ({ kind: "available", version: "2.1.3" }),
-      listModels: async () => ({ kind: "ok", models: [{ id: "sonnet" }, { id: "opus" }] }),
-      accountUsage: async () => ({ kind: "available", plan: "max", email: "dou@example.com", rateLimited: false,
-        windows: [{ label: "5h", usedRatio: 0.415, resetsAt: "2026-10-29T10:00:00Z" }] }),
-    },
-  };
-  const importer = async (spec) => {
-    if (spec.endsWith("/claude")) return fakeOar;
-    throw new Error("not installed");
+test("inventory asks each agent's own CLI for its models and quota, never an email", async () => {
+  const asked = [];
+  const reader = async (id) => {
+    asked.push(id);
+    return id === "claude"
+      ? { models: ["default", "opus", "sonnet"], email: "dou@example.com",
+        usage: { plan: "max", windows: [{ name: "Current session", used_percent: 41.5, resets_at: "2026-10-29T10:00:00.000Z" }] } }
+      : null;
   };
   const run = (command) => {
-    if (command === "codex") return "codex-cli 0.80.0\n";
+    if (command === "claude") return "2.1.318 (Claude Code)\n";
+    if (command === "codex") return "codex-cli 0.167.0\n";
     throw new Error("missing");
   };
   // commandWorks resolves the binary first and only then asks `run` for its
   // version, so the probe must see the bare name, not a host path.
   const resolve = (name) => ({ command: name, prefix: [] });
-  const found = await inventory({ importer, run, resolve });
+  const found = await inventory({ run, resolve, reader });
   assert.deepEqual(found, [
-    { id: "claude", available: true, via: "oar", version: "2.1.3", models: ["sonnet", "opus"],
-      usage: { plan: "max", windows: [{ name: "5h", used_percent: 41.5, resets_at: "2026-10-29T10:00:00Z" }] } },
-    { id: "codex", available: true, via: "cli", version: "codex-cli 0.80.0" },
+    { id: "claude", available: true, via: "cli", version: "2.1.318 (Claude Code)", models: ["default", "opus", "sonnet"],
+      usage: { plan: "max", windows: [{ name: "Current session", used_percent: 41.5, resets_at: "2026-10-29T10:00:00.000Z" }] } },
+    { id: "codex", available: true, via: "cli", version: "codex-cli 0.167.0" },
   ]);
+  assert.deepEqual(asked, ["claude", "codex"]);
   assert.ok(!JSON.stringify(found).includes("dou@example.com"));
+  // The first question `up` asks only needs the versions: no agent is started.
+  asked.length = 0;
+  await inventory({ run, resolve, reader, details: false });
+  assert.deepEqual(asked, []);
 });
 
 test("each step gets its own prompt", () => {
@@ -507,8 +509,8 @@ test("an npm .cmd shim on Windows runs its script with Node, no shell", () => {
     "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js", "--version"]]);
 });
 
-test("inventory without OAR finds a runtime through its shim", async () => {
-  const found = await inventory({ importer: noOar,
+test("inventory finds a runtime through its shim", async () => {
+  const found = await inventory({ reader: async () => null,
     resolve: (name) => (name === "codex" ? { command: "node", prefix: ["codex.js"] } : null),
     run: (command, args) => `${command} ${args.join(" ")}` });
   assert.deepEqual(found, [{ id: "claude", available: false },

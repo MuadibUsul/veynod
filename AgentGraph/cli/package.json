@@ -13,15 +13,13 @@
     "bin/veynod-messenger.mjs",
     "bin/deploy.mjs",
     "bin/agents.mjs",
+    "bin/usage.mjs",
     "README.md",
     "USAGE.md",
     "LICENSE"
   ],
   "scripts": {
     "test": "node --test test/*.test.mjs"
-  },
-  "optionalDependencies": {
-    "@botiverse/oar": "0.75.0"
   },
   "engines": {
     "node": ">=18.17"
