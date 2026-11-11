@@ -81,6 +81,43 @@ export function readKey(identity) {
   return readFileSync(identity.key_file, "utf8").trim();
 }
 
+// ------------------------------------------------------------------ installation
+
+export function connectionPath(home = defaultHome()) {
+  return join(veynodDir(home), "connection.json");
+}
+
+/**
+ * This installation's own id for a board: made once, kept in
+ * ~/.veynod/connection.json (0600, no key in it) and sent with every sign-in,
+ * so the board rotates this installation's credential instead of minting
+ * another (`cursor-2`). `fresh` starts a new installation; `given` is an id
+ * named on the command line (CI). One id per host: another board is another
+ * connection.
+ */
+export function installationId({ host, home = defaultHome(), fresh = false, given = "",
+  make = () => crypto.randomUUID(), now = () => new Date().toISOString() } = {}) {
+  let state = null;
+  try {
+    state = JSON.parse(readFileSync(connectionPath(home), "utf8"));
+  } catch {
+    state = null;
+  }
+  const kept = state && typeof state === "object" ? state : {};
+  const hosts = kept.hosts && typeof kept.hosts === "object" ? kept.hosts : {};
+  const wanted = String(given || "").trim();
+  const current = hosts[host]?.client_instance_id;
+  if (!wanted && !fresh && typeof current === "string" && current) return current;
+  const id = wanted || make();
+  try {
+    writePrivate(connectionPath(home), `${JSON.stringify({ version: 1,
+      hosts: { ...hosts, [host]: { client_instance_id: id, created_at: now() } } }, null, 2)}\n`);
+  } catch {
+    // A home that cannot be written still connects; the id is just not kept.
+  }
+  return id;
+}
+
 // ------------------------------------------------------------------ stable copy
 
 /**

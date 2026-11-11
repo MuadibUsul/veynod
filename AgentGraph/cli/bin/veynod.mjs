@@ -377,6 +377,7 @@ export function parseArgs(argv) {
     else if (arg === "--yes" || arg === "-y") options.yes = true;
     else if (arg === "--name") options.name = value();
     else if (arg === "--fresh") options.fresh = true;
+    else if (arg === "--client-instance-id") options.clientInstanceId = value();
     else if (arg === "--supervisor") {
       // A supervisor computer also looks after the Loop; it runs board tasks.
       options.supervisor = true;
@@ -446,6 +447,7 @@ ${bold("Options")}
   --host URL              Your Veynod server (default https://veynod.com, or VEYNOD_HOST).
   --no-open               Print the approval link instead of opening a browser.
   --yes                   Ask nothing.   --fresh  New identities.   --dry-run  Show the plan.
+  --client-instance-id ID This installation's id (default: made once, kept in ~/.veynod/connection.json).
   --no-service            Leave starting \`veynod hub\` to your own supervisor.
   --no-auto-update        Keep the service on this version (it updates itself from npm by default).
 
@@ -486,21 +488,34 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * terminal's own agent, the rest come back in `extra`, each with its own key.
  * `legacy` is true when the server predates that and minted only one.
  */
-export async function connect(options, { clients = [], label = hostname(), out = () => {}, identities = [] } = {}) {
+export async function connect(options, { clients = [], label = hostname(), out = () => {}, identities = [],
+  instanceId = options.clientInstanceId || "" } = {}) {
   const { privateKey, publicRaw } = makeKeyPair();
   const body = {
     public_key: publicRaw.toString("base64"),
     client_label: String(label).slice(0, 64),
     clients: clients.map((item) => (item === "print" ? "other" : item)),
   };
+  // Which installation this is: the board then rotates its credential instead
+  // of minting another. A board that does not know the field is asked without it.
+  const named = instanceId ? { ...body, client_instance_id: instanceId } : body;
   let started;
   let legacy = false;
+  const start = async (base) => {
+    try {
+      return await call(options.host, "/v1/auth/cli/sessions", identities.length ? { ...base, identities } : base);
+    } catch (error) {
+      if (!identities.length || error.status !== 422) throw error;
+      legacy = true;
+      return call(options.host, "/v1/auth/cli/sessions", base);
+    }
+  };
   try {
-    started = await call(options.host, "/v1/auth/cli/sessions", identities.length ? { ...body, identities } : body);
+    started = await start(named);
   } catch (error) {
-    if (!identities.length || error.status !== 422) throw error;
-    legacy = true;
-    started = await call(options.host, "/v1/auth/cli/sessions", body);
+    if (named === body || error.status !== 422) throw error;
+    legacy = false;
+    started = await start(body);
   }
   const link = `${options.host}/dashboard/cli/?code=${encodeURIComponent(started.user_code)}`;
   out();
@@ -1352,7 +1367,7 @@ export function computerCapabilities(options) {
 
 /** veynod up: connect this computer, wire its agents, install the hub, run the doctor. */
 async function up(options) {
-  const { doctor, doctorOk, dropRefusedKeys, installStableCopy, loadConfig, pruneStableCopies,
+  const { doctor, doctorOk, dropRefusedKeys, installStableCopy, installationId, loadConfig, pruneStableCopies,
     reuseIdentities, saveConfig, stableDir, storeKey, upPlan, veynodDir, withEarlierChoices } = await import("./up.mjs");
   const { installLauncher, readState } = await import("./update.mjs");
   const out = (line = "") => process.stdout.write(`${line}\n`);
@@ -1428,6 +1443,8 @@ async function up(options) {
     else if (legacy) out(`  In the console, approve it with role ${bold(asked[0].wants_role)}.`);
     const result = await connect(options, { clients: asked[0].role === "computer" ? clients : [],
       label: asked[0].label, out,
+      // The same installation every time; --fresh starts a new one.
+      instanceId: installationId({ host: options.host, fresh: options.fresh, given: options.clientInstanceId }),
       identities: legacy ? [] : asked.map((item) => ({ name: item.label, role_scope: item.wants_role, why: item.why })) });
     const got = [{ wanted: asked[0], agentId: result.approved.agent_signature, key: result.key }];
     for (const item of result.extra) {

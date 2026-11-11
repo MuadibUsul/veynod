@@ -460,3 +460,31 @@ test("a stable stream resets backoff; 401 still leaves the loop", async () => {
     }), /refused token/);
   });
 });
+
+test("the sign-in names the installation, and a board that does not know the field is asked without it", async () => {
+  const { connect } = await import("../bin/veynod.mjs");
+  const bodies = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (String(url).endsWith("/v1/auth/cli/sessions")) {
+      bodies.push(body);
+      if ("client_instance_id" in body) {
+        return new Response(JSON.stringify({ error: { code: "validation_error", message: "extra field" } }),
+          { status: 422, headers: { "Content-Type": "application/json" } });
+      }
+      // Stop the flow here: the session is all this test looks at.
+      return new Response(JSON.stringify({ error: { code: "stop", message: "stop" } }),
+        { status: 500, headers: { "Content-Type": "application/json" } });
+    }
+    return new Response("{}", { status: 500 });
+  };
+  try {
+    await assert.rejects(connect({ host: "https://old.example", open: false }, { instanceId: "inst-0001-abcd" }));
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.equal(bodies.length, 2);
+  assert.equal(bodies[0].client_instance_id, "inst-0001-abcd");
+  assert.equal("client_instance_id" in bodies[1], false);
+});
