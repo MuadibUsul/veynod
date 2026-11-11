@@ -74,6 +74,7 @@ from app.schemas import (
     PeerReviewSubmitRequest,
     PlacementMoveRequest,
     PlacementReportRequest,
+    PlacementStartRequest,
     PlacementWithdrawRequest,
     PolicyListResponse,
     ProposalApplyRequest,
@@ -1584,6 +1585,20 @@ async def report_placement(
     return await scheduler.report(session, principal, placement_id, body.outcome, body.note)
 
 
+@router.post("/runner/placements/{placement_id}/start",
+             summary="The worker asks to start: the placement is checked, then stamped started")
+async def start_placement(
+    body: PlacementStartRequest | None = None,
+    placement_id: str = Path(max_length=40),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import scheduler
+
+    return await scheduler.start(session, principal, placement_id,
+                                 body.lease_epoch if body else None)
+
+
 @router.post("/runner/placements/{placement_id}/move",
              summary="Supervisor: put a task or step on another computer (named or best)")
 async def move_placement(
@@ -1618,6 +1633,18 @@ async def loop_agenda(
     from app.services import scheduler
 
     return await scheduler.loop_agenda(session, principal)
+
+
+@router.get("/runner/metrics",
+            summary="The Loop's three stages over a window: delivered, started, finished")
+async def loop_metrics(
+    hours: int = Query(default=24, ge=1, le=720),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import scheduler
+
+    return await scheduler.loop_metrics(session, principal, hours)
 
 
 @router.post("/runner/schedule",

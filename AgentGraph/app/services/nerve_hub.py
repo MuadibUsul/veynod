@@ -11,7 +11,13 @@ dispatch could sit in a dead subscriber forever. Here:
   the socket and marks the agent offline: the peer is not reading;
 * after the first receipt it waits for ``task.ack.exec`` (worker past
   orientation, pid attached) within 5 s. Timeout kills the worker tree through
-  ``lease.revoked`` and reopens the task;
+  ``lease.revoked`` and reopens the task. A computer that cannot start the
+  worker says so at once (``task.busy.reject`` with the reason), so the hub does
+  not wait the timeout out to learn it;
+* both receipts say a process is up, not that the placement is being worked:
+  the worker then asks the board to start (``scheduler.start``), which checks
+  the placement is still open and records ``exec_started_at``. Three times, kept
+  apart: the computer read it, the worker is ready, the work began;
 * the granted Product lease carries the epoch, so the fence is the same number
   the Kernel uses in spirit: a late holder with an older epoch is refused.
 
@@ -35,12 +41,12 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from contracts.nerve_protocol import (
-    EXEC_ACK_TIMEOUT_S,
     NET_ACK_MAX_S,
     NerveEnvelope,
     NerveError,
     NerveFrameType,
     net_ack_deadline_s,
+    orientation_timeout_ms,
     poke_frame,
     smooth_rtt_ms,
 )
@@ -60,9 +66,16 @@ def _ms() -> int:
     return int(time.monotonic() * 1000)
 
 
+def exec_ack_timeout_s() -> float:
+    """The configured second-receipt budget; the poke's watchdog derives from it."""
+    from app.config import get_settings
+
+    return float(get_settings().nerve_exec_ack_timeout_seconds)
+
+
 def exec_ack_deadline_s(rtt_ms: float) -> float:
     """The second-receipt wait: orientation, plus the worker's own hello round trips."""
-    return EXEC_ACK_TIMEOUT_S + min(NET_ACK_MAX_S, 4 * max(0.0, rtt_ms) / 1000.0)
+    return exec_ack_timeout_s() + min(NET_ACK_MAX_S, 4 * max(0.0, rtt_ms) / 1000.0)
 
 
 @dataclass
@@ -81,6 +94,12 @@ class ActiveSocket:
     #: (from its pings, plus what this hub delivered since the last one).
     slots: int = 1
     active: int = 0
+    #: A lane of its own for supervise rounds (0 on a CLI that has none): a long
+    #: task in the work slot must not stop the Loop from being looked after.
+    supervise_slots: int = 0
+    supervising: int = 0
+    #: The computer is letting its workers finish before it restarts (an update).
+    draining: bool = False
     last_rtt_ms: int = 0
     #: Smoothed first-receipt round trip; sizes this socket's next deadlines.
     rtt_ms: float = 0.0
@@ -167,6 +186,11 @@ class NerveHub:
             sock.active = (int(count) if isinstance(count, int) and count >= 0
                            else int(bool(payload.get("worker_busy", False))))
             sock.worker_busy = sock.active >= sock.slots
+            lane = payload.get("supervise_slots")
+            sock.supervise_slots = lane if isinstance(lane, int) and 0 <= lane <= 8 else 0
+            rounds = payload.get("supervising")
+            sock.supervising = rounds if isinstance(rounds, int) and rounds >= 0 else 0
+            sock.draining = payload.get("draining") is True
             active = payload.get("active_task_key")
             sock.active_task_key = str(active) if active else None
             epoch = payload.get("lease_epoch")
@@ -229,12 +253,26 @@ class NerveHub:
         """
         if sock.closed:
             return False, NerveError.NOT_CONNECTED.value, {}
-        if sock.active >= sock.slots:
+        if sock.draining:
+            return False, NerveError.DRAINING.value, {}
+        # A supervise round runs in its own lane when the computer has one.
+        own_lane = step == "supervise" and sock.supervise_slots > 0
+        if own_lane:
+            if sock.supervising >= sock.supervise_slots:
+                return False, NerveError.BUSY.value, {}
+        elif sock.active >= sock.slots:
             return False, NerveError.BUSY.value, {}
 
+        budget_s = exec_ack_timeout_s()
         frame = poke_frame(
             task_key=task_key, lease_epoch=epoch, placement_id=placement_id,
-            title=title, step=step, **(payload or {}))
+            title=title, step=step, **{
+                **(payload or {}),
+                # One budget for both ends: the messenger's watchdog fires before
+                # this hub stops waiting, so its refusal arrives with the reason.
+                "orientation_timeout_ms": orientation_timeout_ms(budget_s),
+                "exec_ack_timeout_ms": int(budget_s * 1000),
+            })
         frame.frame_id = placement_id or frame.frame_id
         loop = asyncio.get_running_loop()
         net_future: asyncio.Future = loop.create_future()
@@ -244,13 +282,23 @@ class NerveHub:
         self._owner[frame.frame_id] = sock.conn_id
         # The slot is taken from the moment the poke is sent; the next ping
         # says what the computer really runs.
-        sock.active += 1
-        sock.worker_busy = sock.active >= sock.slots
-        sock.active_task_key = frame.frame_id
+        if own_lane:
+            sock.supervising += 1
+        else:
+            sock.active += 1
+            sock.worker_busy = sock.active >= sock.slots
+            sock.active_task_key = frame.frame_id
         delivered = False
 
         started = time.perf_counter()
         net_received = False
+        net_rtt_ms: int | None = None
+
+        def failed() -> dict[str, Any]:
+            # A refusal after the first receipt still measured the delivery.
+            return {"frame_id": frame.frame_id, "net_acked": net_received,
+                    "net_rtt_ms": net_rtt_ms}
+
         try:
             await sock.ws.send_json(frame.to_dict())
             net_ack = await asyncio.wait_for(net_future, timeout=net_ack_deadline_s(sock.rtt_ms))
@@ -266,6 +314,8 @@ class NerveHub:
                 "net_rtt_ms": net_rtt_ms,
                 "exec_startup_ms": int((time.perf_counter() - started) * 1000),
                 "worker_pid": exec_ack.get("worker_pid"),
+                # Whether a prepared worker took it, or one had to start cold.
+                "warm": exec_ack.get("warm") is True,
                 "frame_id": frame.frame_id,
                 "net_ack": net_ack,
             }
@@ -277,32 +327,39 @@ class NerveHub:
             # apart; the flag can.
             stage = (NerveError.EXEC_ACK_TIMEOUT if net_received
                      else NerveError.NET_ACK_TIMEOUT)
-            return False, stage.value, {"net_rtt_ms": sock.last_rtt_ms,
-                                        "frame_id": frame.frame_id}
+            return False, stage.value, failed()
         except RuntimeError as exc:  # busy reject / socket gone
-            return False, str(exc), {"frame_id": frame.frame_id}
+            return False, str(exc), failed()
         except Exception as exc:  # noqa: BLE001 - a send failure is a dispatch failure
             logger.warning("nerve dispatch failed for %s: %s", task_key, exc)
-            return False, f"DISPATCH_ERROR: {exc}"[:200], {"frame_id": frame.frame_id}
+            return False, f"DISPATCH_ERROR: {exc}"[:200], failed()
         finally:
             self._net_acks.pop(frame.frame_id, None)
             self._exec_acks.pop(frame.frame_id, None)
             self._owner.pop(frame.frame_id, None)
             if not delivered:
-                sock.active = max(0, sock.active - 1)
-                sock.worker_busy = sock.active >= sock.slots
+                if own_lane:
+                    sock.supervising = max(0, sock.supervising - 1)
+                else:
+                    sock.active = max(0, sock.active - 1)
+                    sock.worker_busy = sock.active >= sock.slots
             if sock.active_task_key == frame.frame_id:
                 sock.active_task_key = None
 
     async def revoke(self, sock: ActiveSocket, *, task_key: str, epoch: int,
-                     reason: str) -> bool:
-        """Tell the messenger to kill the worker tree for this lease."""
+                     reason: str, placement_id: str | None = None) -> bool:
+        """Tell the messenger to kill the worker tree for this lease.
+
+        ``placement_id`` names the one worker of a step that has no task (a
+        supervise round), which the task key and epoch cannot.
+        """
         sock.active_task_key = None
         sock.active_lease_epoch = None
         try:
             await sock.ws.send_json(NerveEnvelope(
                 type=NerveFrameType.LEASE_REVOKED,
-                payload={"task_key": task_key, "lease_epoch": epoch, "reason": reason},
+                payload={"task_key": task_key, "lease_epoch": epoch, "reason": reason,
+                         **({"placement_id": placement_id} if placement_id else {})},
             ).to_dict())
             return True
         except Exception:  # noqa: BLE001 - a dead socket is already revoked in the DB
@@ -314,6 +371,25 @@ nerve_hub = NerveHub()
 
 
 # ------------------------------------------------------------------ dispatch
+
+
+def dispatchable(task: Any) -> bool:
+    """Whether a task may be dispatched now, judged by what holds it.
+
+    ``AWAITING_*`` is another dispatch in flight. ``ACTIVE_LEASE`` only blocks
+    while a computer really holds the task: once it is READY again, or its lease
+    is gone or expired, that state is a leftover of the previous dispatch. It
+    used to block every later one ("already dispatching"), so a task that came
+    back could never be placed again.
+    """
+    state = task["dispatch_state"]
+    if state == "IDLE":
+        return True
+    if state != "ACTIVE_LEASE":
+        return False
+    held = (task["status"] == "IN_PROGRESS" and task["lease_owner"] is not None
+            and bool(task["lease_live"]))
+    return not held
 
 
 async def deliver_task_poke(
@@ -349,12 +425,13 @@ async def deliver_task_poke(
 
     task = (await session.execute(text(
         "SELECT t.id, t.task_key, t.status::text AS status, t.dispatch_state, t.title, "
-        "t.assignee, t.claimed_by, t.lease_epoch, t.workspace_id "
+        "t.assignee, t.claimed_by, t.lease_epoch, t.workspace_id, t.lease_owner, "
+        "(t.lease_expires_at IS NOT NULL AND t.lease_expires_at > NOW()) AS lease_live "
         "FROM collab_tasks t WHERE t.workspace_id = :ws AND t.task_key = :k FOR UPDATE"),
         {"ws": workspace_id, "k": task_key})).mappings().one_or_none()
     if task is None:
         return {"dispatched": False, "reason": "TASK_NOT_FOUND"}
-    if task["dispatch_state"] not in ("IDLE",):
+    if not dispatchable(task):
         return {"dispatched": False, "reason": "TASK_ALREADY_DISPATCHING"}
     if task["status"] not in ("READY", "TODO", "IN_PROGRESS"):
         return {"dispatched": False, "reason": f"TASK_NOT_CLAIMABLE:{task['status']}"}
@@ -399,7 +476,8 @@ async def deliver_task_poke(
     if not ok:
         await _rollback(session, sock, workspace_id=workspace_id, task_key=task_key,
                         task_id=task["id"], epoch=epoch, frame_id=placement_id,
-                        reason=reason, kick=reason == NerveError.NET_ACK_TIMEOUT.value)
+                        reason=reason, kick=reason == NerveError.NET_ACK_TIMEOUT.value,
+                        net_rtt_ms=facts.get("net_rtt_ms") if facts.get("net_acked") else None)
         return {"dispatched": False, "reason": reason, **facts}
 
     await session.execute(text(
@@ -424,11 +502,12 @@ async def deliver_task_poke(
         "FROM collab_tasks t WHERE t.id = :id"),
         {"ttl": _lease_ttl(), "id": task["id"]})
     await session.execute(text(
-        "UPDATE poke_deliveries SET qos_status = 'EXEC_ACKED', net_ack_at = NOW(), "
-        "exec_ack_at = NOW(), net_rtt_ms = :rtt, exec_startup_ms = :startup "
+        "UPDATE poke_deliveries SET qos_status = 'EXEC_ACKED', "
+        "net_ack_at = COALESCE(net_ack_at, NOW()), "
+        "exec_ack_at = NOW(), net_rtt_ms = :rtt, exec_startup_ms = :startup, warm = :warm "
         "WHERE workspace_id = :ws AND frame_id = :f"),
         {"rtt": facts["net_rtt_ms"], "startup": facts["exec_startup_ms"],
-         "ws": workspace_id, "f": placement_id})
+         "warm": bool(facts.get("warm")), "ws": workspace_id, "f": placement_id})
     if commit:
         await session.commit()
     logger.info(
@@ -468,15 +547,40 @@ async def deliver_step_poke(
     ok, reason, facts = await nerve_hub.dispatch(
         sock, task_key=task_key or "", placement_id=placement_id, title=title or step,
         step=step, epoch=0, payload={"agent_id": agent_id, **(extra or {})})
+    acked = ok or bool(facts.get("net_acked"))
     await session.execute(text(
-        "UPDATE poke_deliveries SET qos_status = :q, detail = :d, net_rtt_ms = :rtt "
+        "UPDATE poke_deliveries SET qos_status = :q, detail = :d, net_rtt_ms = :rtt, "
+        "net_ack_at = CASE WHEN :acked THEN NOW() ELSE net_ack_at END, "
+        "exec_ack_at = CASE WHEN :ok THEN NOW() ELSE exec_ack_at END, "
+        "exec_startup_ms = :startup, warm = :warm "
         "WHERE workspace_id = :ws AND frame_id = :f"),
         {"q": "EXEC_ACKED" if ok else "TIMEOUT_REVOKED", "d": reason[:500],
-         "rtt": facts.get("net_rtt_ms"), "ws": workspace_id, "f": placement_id})
+         "rtt": facts.get("net_rtt_ms") if acked else None, "acked": acked, "ok": ok,
+         "startup": facts.get("exec_startup_ms"), "warm": facts.get("warm") if ok else None,
+         "ws": workspace_id, "f": placement_id})
     await session.commit()
+    if not ok and acked:
+        # The computer read the poke but no worker came up in time: a worker
+        # that comes up late must not start a round the board already moved.
+        await nerve_hub.revoke(sock, task_key=task_key or "", epoch=0, reason=reason,
+                               placement_id=placement_id)
     if not ok and reason == NerveError.NET_ACK_TIMEOUT.value:
         await mark_offline(session, sock, reason)
     return {"dispatched": ok, "reason": reason, **facts}
+
+
+async def record_exec_started(session: AsyncSession, *, workspace_id: Any,
+                              placement_id: str) -> None:
+    """The third time: the placement was checked and work on it began.
+
+    Measured on the board's clock from the moment the poke was written, like
+    the two receipts, so the three can be compared. Recorded once.
+    """
+    await session.execute(text(
+        "UPDATE poke_deliveries SET exec_started_at = NOW(), "
+        "exec_started_ms = GREATEST(0, (EXTRACT(EPOCH FROM (NOW() - at)) * 1000)::int) "
+        "WHERE workspace_id = :ws AND frame_id = :f AND exec_started_at IS NULL"),
+        {"ws": workspace_id, "f": placement_id})
 
 
 async def _rollback(
@@ -490,18 +594,21 @@ async def _rollback(
     frame_id: str,
     reason: str,
     kick: bool,
+    net_rtt_ms: int | None = None,
 ) -> None:
     """Reopen the task only if this dispatch still owns it, and revoke the worker."""
-    await nerve_hub.revoke(sock, task_key=task_key, epoch=epoch, reason=reason)
+    await nerve_hub.revoke(sock, task_key=task_key, epoch=epoch, reason=reason,
+                           placement_id=frame_id)
     await session.execute(text(
         "UPDATE collab_tasks SET dispatch_state = 'IDLE', ack_deadline_at = NULL, "
         "status = CASE WHEN status = 'IN_PROGRESS' THEN 'READY'::task_status ELSE status END, "
         "claimed_by = NULL, lease_owner = NULL, lease_expires_at = NULL, updated_at = NOW() "
         "WHERE id = :id AND lease_epoch = :e"), {"id": task_id, "e": epoch})
     await session.execute(text(
-        "UPDATE poke_deliveries SET qos_status = 'TIMEOUT_REVOKED', detail = :d "
+        "UPDATE poke_deliveries SET qos_status = 'TIMEOUT_REVOKED', detail = :d, "
+        "net_rtt_ms = COALESCE(:rtt, net_rtt_ms) "
         "WHERE workspace_id = :ws AND frame_id = :f"),
-        {"d": reason[:500], "ws": workspace_id, "f": frame_id})
+        {"d": reason[:500], "rtt": net_rtt_ms, "ws": workspace_id, "f": frame_id})
     await session.commit()
     if kick:
         await mark_offline(session, sock, reason)
@@ -636,6 +743,9 @@ __all__ = [
     "NerveEnvelope",
     "deliver_step_poke",
     "deliver_task_poke",
+    "dispatchable",
+    "exec_ack_timeout_s",
+    "record_exec_started",
     "mark_offline",
     "nerve_hub",
     "nerve_reaper_loop",

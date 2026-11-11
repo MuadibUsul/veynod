@@ -2020,7 +2020,7 @@ async def list_hosts(host: str | None = None, include_revoked: bool = False) -> 
 
 
 _LOOP_ACTIONS = ("agenda", "placements", "placement", "report", "move", "withdraw",
-                 "schedule_now", "hosts", "doctor")
+                 "schedule_now", "hosts", "doctor", "metrics")
 
 
 @mcp.tool(name="loop")
@@ -2034,7 +2034,9 @@ async def loop(action: str, placement_id: str | None = None, host_id: str | None
     - agenda: what waits or went wrong now (the list a supervise round gets).
     - placements: placements, filtered by task_key, step (work|review|merge|
       supervise) and open_only; needs_you lists the ones no computer can take.
-    - placement: one placement with its detail (placement_id).
+    - placement: one placement with its detail (placement_id): its stage
+      (offered, delivered, ready, started, finished, failed, skipped) and the
+      three times of its delivery.
     - report: the computer a step was placed on says how it ended (placement_id,
       outcome finished|failed, note). A finish that changes nothing counts as a
       failure after 2 minutes.
@@ -2046,6 +2048,10 @@ async def loop(action: str, placement_id: str | None = None, host_id: str | None
     - schedule_now: run a scheduling pass now (people and commanders).
     - hosts: the computers, as list_hosts.
     - doctor: what the Loop needs and what is missing, each with the fix.
+    - metrics: the last 24 hours in three stages: delivery, worker start and
+      execution start times (p50/p95/p99), why pokes did not land, how many
+      supervise rounds ended finished (the only success), failed or skipped,
+      and the tasks the scheduler stopped with what their rounds failed on.
     agenda, move and withdraw are for people, super admins and supervisor
     computers (SUPER_ADMIN token or the supervisor capability)."""
     from app.services import runners, scheduler
@@ -2081,6 +2087,8 @@ async def loop(action: str, placement_id: str | None = None, host_id: str | None
                 result = await scheduler.schedule_now(session, principal)
             elif action == "doctor":
                 result = await scheduler.doctor(session, principal)
+            elif action == "metrics":
+                result = await scheduler.loop_metrics(session, principal)
             else:
                 result = await runners.list_hosts(session, principal)
         except ApiError as exc:

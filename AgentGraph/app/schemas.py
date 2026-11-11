@@ -1469,6 +1469,11 @@ class PlacementReportRequest(StrictModel):
     note: str | None = Field(default=None, max_length=500)
 
 
+class PlacementStartRequest(StrictModel):
+    # The lease epoch the poke carried; a task that moved past it is not started.
+    lease_epoch: int | None = Field(default=None, ge=0)
+
+
 class PlacementMoveRequest(StrictModel):
     host_id: str | None = Field(default=None, max_length=128)
     note: str | None = Field(default=None, max_length=500)

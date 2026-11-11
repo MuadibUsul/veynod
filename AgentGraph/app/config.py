@@ -147,6 +147,10 @@ class Settings(BaseSettings):
     runner_step_timeout_seconds: int = Field(default=1800, ge=60, le=86_400)
     runner_supervise_every_seconds: int = Field(default=600, ge=60, le=86_400)
     runner_supervise_timeout_seconds: int = Field(default=1200, ge=60, le=86_400)
+    # How long the hub waits for a computer's worker to be up after the computer
+    # read a poke. The poke carries the messenger's watchdog derived from this
+    # (500 ms less), so one setting moves both ends: the two are one budget.
+    nerve_exec_ack_timeout_seconds: float = Field(default=5.0, ge=1.0, le=120.0)
     # Deploy gate v2: how long one deploy run may take, and how often the deploy
     # loop queues scheduled runs and starts waiting ones.
     deploy_run_timeout_seconds: int = Field(default=1800, ge=60, le=86_400)
