@@ -1260,7 +1260,8 @@ def _timings(row: dict[str, Any]) -> dict[str, Any] | None:
         # ack.net: the computer read the poke.
         "delivered_ms": row.get("net_rtt_ms") if row.get("net_ack_at") is not None else None,
         # worker.ready: a worker process is up and can take it.
-        "worker_ready_ms": row.get("exec_startup_ms") if row.get("exec_ack_at") is not None else None,
+        "worker_ready_ms": (row.get("exec_startup_ms")
+                            if row.get("exec_ack_at") is not None else None),
         "warm": row.get("warm"),
         # execution.started: the placement was checked and work on it began.
         "execution_started_ms": row.get("exec_started_ms"),

@@ -26,7 +26,7 @@
 // It never thinks. Nothing here calls a model, so a slow worker cannot block
 // the socket that says this computer is alive.
 //
-// Usage: node veynod-messenger.mjs --host URL --key KEY [--agent ID] [--slots N]
+// Usage: node veynod-messenger.mjs --host URL --key KEY [--agent ID] [--slots N] [--warm N]
 
 import { spawn } from "node:child_process";
 import crypto from "node:crypto";
@@ -586,12 +586,20 @@ if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToP
   const host = args.host || process.env.VEYNOD_HOST || "http://127.0.0.1:8000";
   const key = args.key || process.env.VEYNOD_KEY;
   if (!key) {
-    console.error("usage: veynod-messenger --key KEY [--host URL] [--agent ID] [--slots N]");
+    console.error("usage: veynod-messenger --key KEY [--host URL] [--agent ID] [--slots N] [--warm N]");
     process.exit(2);
+  }
+  // How its workers run (repos, runtime, exec), as the hub passes it to them.
+  let runnerOptions = {};
+  try {
+    runnerOptions = JSON.parse(process.env.VEYNOD_RUNNER_OPTIONS || "{}") || {};
+  } catch {
+    runnerOptions = {};
   }
   const messenger = new Messenger({
     host, key, agentId: args.agent || process.env.VEYNOD_AGENT_ID,
-    runner: args.runner, slots: args.slots, say: (line) => console.error(line),
+    runner: args.runner, slots: args.slots, warm: args.warm, runnerOptions,
+    say: (line) => console.error(line),
   });
   void messenger.start();
   for (const signal of ["SIGINT", "SIGTERM"]) {
