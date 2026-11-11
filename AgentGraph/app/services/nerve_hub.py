@@ -448,7 +448,12 @@ async def deliver_task_poke(
     await session.execute(text(
         "INSERT INTO poke_deliveries (workspace_id, event_seq, recipient, channel, status, "
         "detail, lease_epoch, qos_status, task_key, frame_id) "
-        "VALUES (:ws, 0, :r, 'nerve', 'delivered', 'sent', :e, 'SENT', :k, :f) "
+        # A nerve poke has no event seq. The table's older uniqueness is on
+        # (workspace, event_seq, recipient, channel), so a constant 0 let only the
+        # first poke to a computer leave a row: every later one had no record,
+        # was sent again each second and could not be stamped. A negative number
+        # of its own keeps that index out of the way; the frame index dedupes.
+        "VALUES (:ws, (SELECT -nextval(pg_get_serial_sequence('poke_deliveries', 'id'))), :r, 'nerve', 'delivered', 'sent', :e, 'SENT', :k, :f) "
         # The frame index is partial, so name no target: both its uniqueness and
         # the old event_seq one then apply, and a retried frame stays one row.
         "ON CONFLICT DO NOTHING"),
@@ -540,7 +545,7 @@ async def deliver_step_poke(
     await session.execute(text(
         "INSERT INTO poke_deliveries (workspace_id, event_seq, recipient, channel, status, "
         "detail, lease_epoch, qos_status, task_key, frame_id) "
-        "VALUES (:ws, 0, :r, 'nerve', 'delivered', 'sent', 0, 'SENT', :k, :f) "
+        "VALUES (:ws, (SELECT -nextval(pg_get_serial_sequence('poke_deliveries', 'id'))), :r, 'nerve', 'delivered', 'sent', 0, 'SENT', :k, :f) "
         "ON CONFLICT DO NOTHING"),
         {"ws": workspace_id, "r": f"agent:{agent_id}", "k": task_key, "f": placement_id})
     await session.commit()
