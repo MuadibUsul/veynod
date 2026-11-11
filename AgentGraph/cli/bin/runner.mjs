@@ -16,6 +16,13 @@
 // --exec CMD` runs any command (tests, other agents). Every wake leaves
 // receipts in ~/.veynod/runner-receipts.jsonl: delivered, accepted, started,
 // then finished or failed.
+//
+// Being up is not working. The worker first asks the board to start its
+// placement (`begin`): an open placement is stamped started there and the work
+// goes on; one the board already moved on answers no, and the worker does
+// nothing and says `skipped` with the reason, which is never a success. The
+// process then ends on its own once its channel to the messenger is closed,
+// with no process.exit() cutting off whatever Node still has in flight.
 
 import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from "node:fs";
@@ -685,6 +692,7 @@ export async function createRunner(options, {
         `/v1/runner/placements/${encodeURIComponent(placementId)}/report`, {
           method: "POST", body: { outcome, ...(note ? { note: String(note).slice(0, 500) } : {}) },
         });
+      tellParent({ type: "IPC_REPORTED", placement_id: placementId, outcome });
     } catch (error) {
       if (error.status !== 404) say(`report ${placementId}: ${error.message}`);
     }
@@ -708,7 +716,7 @@ export async function createRunner(options, {
       `/v1/tasks/${encodeURIComponent(taskKey)}/kernel/delivery`);
   }
 
-  async function work({ taskKey, placementId, step, diagramKey, chunkKey }) {
+  async function work({ taskKey, placementId, step, diagramKey, chunkKey, placement: checked = null }) {
     const slot = taskKey ?? placementId;
     let repo = null;
     let scratch = null;
@@ -716,7 +724,9 @@ export async function createRunner(options, {
     let result = { ok: false, reason: "not run" };
     try {
       // A replayed or late poke can name a placement the platform already moved on.
-      const placement = await callApi(fetchImpl, options.host, options.key,
+      // `begin` already asked the board to start it; without that (a direct
+      // call), read the placement here.
+      const placement = checked ?? await callApi(fetchImpl, options.host, options.key,
         `/v1/runner/placements/${encodeURIComponent(placementId)}`);
       if (!OPEN_PLACEMENT.has(placement.status)) {
         receipt({ task_key: taskKey, placement_id: placementId, step, stage: "skipped",
@@ -859,19 +869,66 @@ export async function createRunner(options, {
  * The messenger owns the socket, both receipts and the host record; this
  * process does the work for one placement and reports how it ended.
  */
+/** A message to the messenger, when this process is its worker and the channel is open. */
+function tellParent(message) {
+  try {
+    if (process.send && process.connected) process.send(message);
+  } catch {
+    // the messenger is gone; the board still has the report
+  }
+}
+
+/**
+ * Ask the board to start a placement. {start: true, placement} when it is
+ * still open (the board stamps the moment: execution started), {start: false,
+ * reason} when it moved on or a later dispatch owns the task. A board without
+ * the start call (an older server) is asked for the placement instead.
+ */
+export async function begin(options, placed, poke = {}, { fetchImpl = fetch } = {}) {
+  const path = `/v1/runner/placements/${encodeURIComponent(placed.placementId)}`;
+  try {
+    const answer = await callApi(fetchImpl, options.host, options.key, `${path}/start`, {
+      method: "POST", body: Number.isInteger(poke.lease_epoch) ? { lease_epoch: poke.lease_epoch } : {},
+    });
+    if (answer.start === false) return { start: false, reason: answer.skip_reason || `placement is ${answer.status}` };
+    return { start: true, placement: answer };
+  } catch (error) {
+    if (error.status !== 404 && error.status !== 405) throw error;
+  }
+  const placement = await callApi(fetchImpl, options.host, options.key, path);
+  if (!OPEN_PLACEMENT.has(placement.status)) {
+    return { start: false, reason: `placement is ${placement.status ?? "unknown"}` };
+  }
+  return { start: true, placement };
+}
+
 export async function runPlacement(options, poke, deps = {}) {
   const placed = placementOf(poke);
-  // The second receipt: this process is up and about to work the placement.
-  if (process.send) process.send({ type: "IPC_ORIENTATION_READY", task_key: poke.task_key });
+  // The second receipt: this process is up. It says nothing about the placement.
+  tellParent({ type: "IPC_ORIENTATION_READY", task_key: poke.task_key });
   if (!placed) throw new Error("the poke names no placement");
   if (placed.step === "deploy") {
     // A deploy needs no agent runtime: pull, restart, check, report.
     const { runDeploy } = await import("./deploy.mjs");
     await runDeploy(options, placed.placementId, deps);
-    return;
+    return { outcome: "deployed" };
   }
+  // Is this placement still ours to work? Asked before anything is prepared.
+  const asked = await begin(options, placed, poke, deps);
+  if (!asked.start) {
+    const stateDir = deps.stateDir || process.env.VEYNOD_STATE_DIR || join(homedir(), ".veynod");
+    mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+    appendFileSync(join(stateDir, "runner-receipts.jsonl"), `${JSON.stringify({ at: new Date().toISOString(),
+      task_key: placed.taskKey, placement_id: placed.placementId, step: placed.step, stage: "skipped",
+      reason: asked.reason })}\n`);
+    (deps.say ?? (() => {}))(`${placed.taskKey ?? placed.placementId} (${placed.step}): skipped, ${asked.reason}`);
+    tellParent({ type: "IPC_SKIPPED", placement_id: placed.placementId, reason: asked.reason });
+    return { outcome: "skipped", reason: asked.reason };
+  }
+  tellParent({ type: "IPC_EXECUTION_STARTED", placement_id: placed.placementId });
   const runner = await createRunner(options, deps);
-  await runner.work(placed);
+  await runner.work({ ...placed, placement: asked.placement });
+  return { outcome: "worked" };
 }
 
 /** `runner.mjs --placement ID [--task KEY] [--step STEP] [--agent AGENT]` */
@@ -925,18 +982,57 @@ export function workerRunnerOptions(env = process.env) {
   return out;
 }
 
+/**
+ * End this worker without process.exit(): set the code, close the channel to
+ * the messenger (the one handle that keeps a worker alive) and let Node finish
+ * what it has in flight. Exiting at once, with requests and handles still
+ * closing, is what the libuv assertion on Windows (UV_HANDLE_CLOSING) points at.
+ * The timer is a last resort and holds nothing open.
+ */
+export function finish(code, { proc = process, graceMs = 5_000 } = {}) {
+  proc.exitCode = code;
+  try {
+    if (proc.connected) proc.disconnect();
+  } catch {
+    // already closed
+  }
+  const last = setTimeout(() => proc.exit(code), graceMs);
+  last.unref?.();
+  return last;
+}
+
+/** A standby worker's placement: the messenger sends it over IPC when a poke arrives. */
+export function awaitPlacement(proc = process) {
+  return new Promise((resolvePoke) => {
+    proc.on("message", (message) => {
+      if (message?.type === "IPC_PLACEMENT" && message.payload) resolvePoke(message.payload);
+    });
+    // The messenger went away: nothing will ever come.
+    proc.on("disconnect", () => resolvePoke(null));
+    if (proc.send) proc.send({ type: "IPC_STANDBY_READY", pid: proc.pid });
+  });
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"))) {
-  const poke = workerPoke(process.argv.slice(2));
   const host = process.env.VEYNOD_HOST || "http://127.0.0.1:8000";
   const key = process.env.VEYNOD_AGENT_TOKEN || process.env.VEYNOD_KEY;
   if (!key) {
     process.stderr.write("runner.mjs needs VEYNOD_AGENT_TOKEN\n");
-    process.exit(2);
+    finish(2);
+  } else {
+    const standby = process.argv.includes("--standby");
+    // Prepared ahead: everything is loaded, the placement arrives over IPC.
+    const poke = standby ? await awaitPlacement() : workerPoke(process.argv.slice(2));
+    if (!poke) {
+      finish(0);
+    } else {
+      runPlacement({ ...workerRunnerOptions(), host, key, agent: process.env.VEYNOD_AGENT_ID, slots: 1 }, poke,
+        { say: (line) => process.stderr.write(`${line}\n`) })
+        .then(() => finish(0))
+        .catch((error) => {
+          process.stderr.write(`runner failed: ${error.message}\n`);
+          finish(1);
+        });
+    }
   }
-  runPlacement({ ...workerRunnerOptions(), host, key, agent: process.env.VEYNOD_AGENT_ID, slots: 1 }, poke)
-    .then(() => process.exit(0))
-    .catch((error) => {
-      process.stderr.write(`runner failed: ${error.message}\n`);
-      process.exit(1);
-    });
 }

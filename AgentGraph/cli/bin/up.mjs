@@ -310,7 +310,13 @@ export async function runHub(options, { listen, runComputer, version, say = () =
         // Work arrives only over the nerve socket the messenger holds.
         const messenger = await runComputer({ host, key, agent: identity.agent_id,
           runtime: config.runtime || "", exec: config.exec || "", slots: config.slots || 1,
-          repos: config.repos || [], ...(config.deploy ? { deploy: config.deploy } : {}) },
+          repos: config.repos || [], ...(config.deploy ? { deploy: config.deploy } : {}),
+          // This version's files were removed under the hub: exit, so the
+          // service starts the version that is installed now.
+          onRunnerMissing: () => {
+            tag("this version's files are gone; restarting on the installed one");
+            stop();
+          } },
         { version, say: tag });
         releases.push(() => messenger.stop());
         messengers.push(messenger);
@@ -324,7 +330,9 @@ export async function runHub(options, { listen, runComputer, version, say = () =
     // the way a service stop does: on Windows a process cannot signal itself
     // gracefully, so it calls stop() instead of sending SIGTERM.
     const stopUpdates = onStarted?.({ config, restart: stop,
-      busy: () => messengers.some((messenger) => messenger.running?.size > 0) });
+      busy: () => messengers.some((messenger) => (messenger.workers?.size || messenger.running?.size) > 0),
+      // An update drains first: no new placements, running workers finish.
+      drain: messengers.length ? () => Promise.all(messengers.map((messenger) => messenger.drain())) : null });
     if (typeof stopUpdates === "function") releases.push(stopUpdates);
     const results = await Promise.all(loops);
     return results.some((code) => code) ? 1 : 0;

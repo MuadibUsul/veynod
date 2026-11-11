@@ -1581,8 +1581,8 @@ export async function main(argv = process.argv.slice(2)) {
       const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
       const { startUpdates } = await import("./update.mjs");
       // Under the launcher (the service), the hub keeps itself current.
-      const onStarted = ({ config, busy, restart }) => startUpdates({ version: VERSION, config, say, busy,
-        restart, root: join(hubModule.veynodDir(), "cli") });
+      const onStarted = ({ config, busy, restart, drain }) => startUpdates({ version: VERSION, config, say, busy,
+        restart, drain, root: join(hubModule.veynodDir(), "cli") });
       return await hubModule.runHub(options, { listen: (opts) => listen(opts), runComputer,
         version: VERSION, say, onStarted });
     } catch (error) {
