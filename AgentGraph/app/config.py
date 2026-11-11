@@ -270,6 +270,13 @@ class Settings(BaseSettings):
     # ------------------------------------------------------ growth (v3.34)
     # `npx veynod init` device flow: how long a user code waits for approval.
     cli_session_ttl_seconds: int = Field(default=600, ge=60, le=3_600)
+    # MCP connections (docs/MCP_CONNECTION_LIFECYCLE.md). A credential issued
+    # through the CLI expires after this many days; the expiry slides while it is
+    # in use, so only one nobody uses any more runs out. 0: no expiry.
+    cli_credential_ttl_days: int = Field(default=90, ge=0, le=3_650)
+    # A connection nobody used this long is dormant, then revoked.
+    connection_dormant_days: int = Field(default=60, ge=1, le=3_650)
+    connection_revoke_days: int = Field(default=90, ge=1, le=3_650)
     cli_sessions_per_ip_per_minute: int = Field(default=10, ge=1, le=1_000)
     # Accounts left out of the operator KPIs (the team's own): comma-separated
     # e-mails or @domains, e.g. "me@example.com,@veynod.com".

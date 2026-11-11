@@ -143,6 +143,35 @@ async def list_agent_tokens(
 
 
 @router.get(
+    "/connections",
+    summary="Client installations connected to this workspace, with their credentials",
+)
+async def list_connections(
+    include_inactive: bool = Query(default=False),
+    principal: Principal = Depends(get_human_writer),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import connections
+
+    return await connections.list_connections(session, principal,
+                                              include_inactive=include_inactive)
+
+
+@router.post(
+    "/connections/{connection_id}/revoke",
+    summary="Revoke a connection and every credential of it; audit rows stay",
+)
+async def revoke_connection(
+    connection_id: str,
+    principal: Principal = Depends(_owner),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import connections
+
+    return await connections.revoke_connection(session, principal, connection_id)
+
+
+@router.get(
     "/agent-onboarding",
     summary="Onboarding state of every agent token: steps, first action, last activity",
 )

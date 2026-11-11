@@ -2186,6 +2186,10 @@ class AgentTokenOut(BaseModel):
     issued_by_agent: str | None = None
     depth: int = 1
     parent_token_id: str | None = None
+    # The client installation this credential belongs to, if it has one.
+    connection_id: uuid.UUID | None = None
+    connection_label: str | None = None
+    connection_status: str | None = None
     # Tokens issued below this one by agents (every generation), for the console.
     delegated_active: int = 0
     delegated_total: int = 0
@@ -2990,6 +2994,11 @@ class CliSessionCreateRequest(StrictModel):
     public_key: str = Field(min_length=40, max_length=64,
                             description="The CLI's X25519 public key, base64 (32 bytes)")
     client_label: str | None = Field(default=None, max_length=64)
+    client_instance_id: str | None = Field(
+        default=None, min_length=8, max_length=64, pattern=r"^[A-Za-z0-9._:-]+$",
+        description="This installation's own id (the CLI makes it once and keeps it). "
+                    "Signing in again with the same id rotates the same credential "
+                    "instead of minting another. Older CLIs send none.")
     clients: list[Literal["claude-code", "cursor", "claude-desktop", "other"]] = Field(
         default_factory=list, max_length=4)
     identities: list[CliIdentityRequest] = Field(

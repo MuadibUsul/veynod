@@ -343,6 +343,7 @@ def agent_token_out(token: AgentToken) -> AgentTokenOut:
         issued_by_agent=token.issued_by_agent_id if (token.depth or 1) > 1 else None,
         depth=token.depth or 1,
         parent_token_id=token.parent_token_id,
+        connection_id=getattr(token, "connection_id", None),
     )
 
 

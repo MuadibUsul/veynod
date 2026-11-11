@@ -270,6 +270,10 @@ class AgentToken(Base):
     agent_profile: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     revoke_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     revoked_ancestor: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # The client installation this credential belongs to (MCP connections);
+    # NULL for tokens from before connections and for ones no CLI asked for.
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True)
     expiring_notified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
