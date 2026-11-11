@@ -16,6 +16,8 @@
     "bin/usage.mjs",
     "bin/update.mjs",
     "bin/login.mjs",
+    "bin/clients.mjs",
+    "bin/providers.mjs",
     "README.md",
     "USAGE.md",
     "LICENSE"

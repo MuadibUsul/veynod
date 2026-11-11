@@ -218,6 +218,11 @@ export function withEarlierChoices(options, previous) {
     slots: keep("slots", options.slots, previous.slots || undefined),
     supervisor: keep("supervisor", options.supervisor, previous.supervisor === undefined ? undefined : Boolean(previous.supervisor)),
     autoUpdate: keep("autoUpdate", options.autoUpdate, previous.auto_update === undefined ? undefined : previous.auto_update !== false),
+    // The model goes with the runtime it was chosen for: another runtime starts without it.
+    provider: explicit.has("provider") || runtime !== (previous.runtime || runtime) ? options.provider || ""
+      : options.provider || previous.provider || "",
+    model: explicit.has("model") || explicit.has("provider") || runtime !== (previous.runtime || runtime)
+      ? options.model || "" : options.model || previous.model || "",
     // --repo on a re-run adds a repository; it never drops the ones kept before.
     repos: [...new Set([...(previous.repos || []), ...(options.repos || [])])],
     decided: true,
@@ -347,6 +352,7 @@ export async function runHub(options, { listen, runComputer, version, say = () =
         // Work arrives only over the nerve socket the messenger holds.
         const messenger = await runComputer({ host, key, agent: identity.agent_id,
           runtime: config.runtime || "", exec: config.exec || "", slots: config.slots || 1,
+          provider: config.provider || "", model: config.model || "",
           repos: config.repos || [], ...(config.deploy ? { deploy: config.deploy } : {}),
           // This version's files were removed under the hub: exit, so the
           // service starts the version that is installed now.

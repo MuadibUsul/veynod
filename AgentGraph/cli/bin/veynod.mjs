@@ -31,12 +31,19 @@ import { dirname, isAbsolute, join, posix } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { AGENT_CLIENT_IDS, agentClient, detectAgentClients, wireAgentClient } from "./clients.mjs";
+import { PROVIDER_IDS, provider as providerOf } from "./providers.mjs";
+
 export const VERSION = "0.9.0";
 const SEAL_INFO = Buffer.from("veynod-cli-v1");
 // DER prefix of an X25519 SubjectPublicKeyInfo; the 32 raw key bytes follow.
 const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
 const SERVER_NAME = "veynod";
-const CLIENTS = ["claude-code", "cursor", "claude-desktop", "print"];
+// Claude Code, Cursor and Claude Desktop are wired here; the other coding
+// agents come from clients.mjs (recognised when installed, wired where known).
+const CLIENTS = ["claude-code", "cursor", "claude-desktop", ...AGENT_CLIENT_IDS, "print"];
+// What the board's sign-in knows a client as; any other agent is "other".
+const BOARD_CLIENT_KINDS = new Set(["claude-code", "cursor", "claude-desktop"]);
 
 const color = process.stdout.isTTY && !process.env.NO_COLOR;
 const paint = (code) => (text) => (color ? `\x1b[${code}m${text}\x1b[0m` : String(text));
@@ -130,7 +137,9 @@ function detectClients() {
   if (onPath("claude")) found.push("claude-code");
   if (existsSync(join(homedir(), ".cursor"))) found.push("cursor");
   if (existsSync(dirname(claudeDesktopConfigPath()))) found.push("claude-desktop");
-  return found;
+  // Cursor's command-line agent shares the editor's file: one entry serves both.
+  const others = detectAgentClients({ onPath }).filter((id) => !(id === "cursor-cli" && found.includes("cursor")));
+  return [...found, ...others];
 }
 
 export function selectedClients(requested, detected) {
@@ -354,6 +363,13 @@ export function parseArgs(argv) {
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--runner") options.runner = true;
     else if (arg === "--agent") options.agent = value();
+    else if (arg === "--provider") {
+      options.provider = value();
+      options.explicit.add("provider");
+    } else if (arg === "--model") {
+      options.model = value();
+      options.explicit.add("model");
+    }
     else if (arg === "--runtime") {
       options.runtime = value();
       options.explicit.add("runtime");
@@ -405,6 +421,16 @@ export function parseArgs(argv) {
   if (!["", "claude", "codex", "custom"].includes(options.runtime)) {
     throw new Error(`unknown runtime ${options.runtime} (claude, codex or custom)`);
   }
+  if (options.provider) {
+    const chosen = providerOf(options.provider);
+    if (!chosen) throw new Error(`unknown provider ${options.provider} (${PROVIDER_IDS.join(", ")})`);
+    // A provider runs through the agent that speaks its API.
+    if (!options.runtime) options.runtime = chosen.runtime;
+    else if (options.runtime !== chosen.runtime) {
+      throw new Error(`${chosen.name} runs through ${chosen.runtime === "claude" ? "Claude Code" : "Codex"}; `
+        + `use --runtime ${chosen.runtime} or leave --runtime out`);
+    }
+  }
   if (options.deploy) {
     if (!options.composeDir || !isAbsolute(options.composeDir)) {
       throw new Error("--deploy needs --compose-dir /absolute/path (where the compose file lives)");
@@ -441,6 +467,8 @@ ${bold("Options")}
   --supervisor            Run board tasks and also look after the Loop (one computer is enough).
   --repo owner/name,...   Repositories tasks on this computer may work on.
   --runtime claude|codex|custom  --slots N  --name NAME
+  --provider ID --model NAME     The model the agent runs on: ${PROVIDER_IDS.join(", ")}.
+                                 The provider's key stays in this computer's environment.
   --client claude-code,cursor,claude-desktop,print
                           Which MCP clients to wire (print shows the key and a
                           config to paste). Default: every client found.
@@ -494,7 +522,7 @@ export async function connect(options, { clients = [], label = hostname(), out =
   const body = {
     public_key: publicRaw.toString("base64"),
     client_label: String(label).slice(0, 64),
-    clients: clients.map((item) => (item === "print" ? "other" : item)),
+    clients: [...new Set(clients.map((item) => (BOARD_CLIENT_KINDS.has(item) ? item : "other")))],
   };
   // Which installation this is: the board then rotates its credential instead
   // of minting another. A board that does not know the field is asked without it.
@@ -563,6 +591,17 @@ export function wireClients(clients, mcpUrl, key, out = () => {}) {
       else if (client === "cursor") configured.push(`Cursor (${mergeServer(cursorConfigPath(), cursorEntry(mcpUrl, key))})`);
       else if (client === "claude-desktop") {
         configured.push(`Claude Desktop (${mergeServer(claudeDesktopConfigPath(), claudeDesktopEntry(mcpUrl, key))})`);
+      } else if (agentClient(client)) {
+        const result = wireAgentClient(client, mcpUrl, key);
+        if (result.wired) configured.push(`${agentClient(client).name} (${result.wired})`);
+        else {
+          // Found, but where its MCP servers live is not known here: show the
+          // entry instead of writing a guess into its configuration.
+          out(`  ${yellow("!")} ${agentClient(client).name} is installed; add this server to its MCP settings by hand:`);
+          // The key is not printed here (only --client print shows it).
+          const shown = { url: result.manual.url, headers: { Authorization: "Bearer <agent key: --client print shows it>" } };
+          out(JSON.stringify({ [SERVER_NAME]: shown }, null, 2).split("\n").map((line) => `      ${line}`).join("\n"));
+        }
       } else if (client === "print") {
         out();
         out(`  ${bold("Agent key")} ${dim("(shown once; keep it in your client's secret store)")}`);
@@ -1486,6 +1525,7 @@ async function up(options) {
     }
   }
   saveConfig({ host: options.host, run_tasks: plan.run_tasks, runtime: options.runtime, exec: options.exec,
+    provider: options.provider || "", model: options.model || "",
     supervisor: Boolean(options.supervisor), auto_update: options.autoUpdate !== false,
     slots: options.slots, repos: options.repos, identities: [...identities, ...reused.parked],
     ...(options.deploy ? { deploy: { dir: options.composeDir, file: options.composeFile || "docker-compose.yml",

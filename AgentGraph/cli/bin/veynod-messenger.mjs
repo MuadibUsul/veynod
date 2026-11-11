@@ -554,6 +554,7 @@ export async function runComputer(options, { say = () => {}, version, createRunn
   }
   const make = createRunner ?? (await import("./runner.mjs")).createRunner;
   const runnerOptions = { repos: options.repos || [], runtime: options.runtime || "", exec: options.exec || "",
+    ...(options.provider ? { provider: options.provider } : {}), ...(options.model ? { model: options.model } : {}),
     ...(options.deploy ? { deploy: options.deploy } : {}) };
   // One prepared worker per work slot and one for the supervise lane, unless
   // turned off (VEYNOD_WARM_WORKERS=0, or options.warm === 0).

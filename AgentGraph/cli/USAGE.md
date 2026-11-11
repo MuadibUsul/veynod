@@ -39,7 +39,9 @@ repository. `up` and `init` are other names for the same command.
 
 | Option | Meaning |
 | --- | --- |
-| `--client` | `claude-code`, `cursor`, `claude-desktop` or `print` (comma-separated). Default: every client found. |
+| `--client` | One or more of the coding agents below, or `print` (comma-separated). Default: every agent found on this computer. |
+| `--provider`, `--model` | The model a computer's agent runs tasks on (see Models). |
+| `--client-instance-id` | This installation's id. Default: made once and kept in `~/.veynod/connection.json`, so signing in again rotates the same key instead of minting `cursor-2`. `--fresh` starts a new one. |
 | `--host` | Your Veynod server. Default `https://veynod.com` or `$VEYNOD_HOST`. |
 | `--no-open` | Print the approval link instead of opening a browser. |
 | `--run-tasks` / `--no-run-tasks` | This computer runs board tasks, or only stays online. |
@@ -226,3 +228,63 @@ OTP:
 
 The workflow uses npm's OIDC identity (`id-token: write`) and publishes with
 provenance. Do not create a Bypass 2FA token for this repository.
+
+## Coding agents
+
+`npx veynod` looks for these agents (their command on PATH, or their own
+settings folder) and gives each one it finds Veynod's MCP server.
+
+**Wired automatically** (the file and the shape of an MCP entry are known):
+
+| `--client` | Agent | File |
+| --- | --- | --- |
+| `claude-code` | Claude Code | `claude mcp add` (user scope) |
+| `cursor`, `cursor-cli` | Cursor, Cursor CLI | `~/.cursor/mcp.json` |
+| `claude-desktop` | Claude Desktop | `claude_desktop_config.json` |
+| `codex` | Codex | `~/.codex/config.toml` (`[mcp_servers.veynod]`) |
+| `gemini-cli` | Gemini CLI | `~/.gemini/settings.json` |
+| `opencode` | OpenCode | `~/.config/opencode/opencode.json` |
+| `copilot-cli` | Copilot CLI | `~/.copilot/mcp-config.json` |
+| `vscode` | VS Code | `mcp.json` in the user folder |
+| `crush` | Crush | `~/.config/crush/crush.json` |
+| `kimi-code` | Kimi Code | `~/.kimi/mcp.json` |
+| `droid` | Droid | `~/.factory/mcp.json` |
+
+The previous file is kept beside the new one as `.bak`. A JSON file with
+comments is not rewritten; the entry is shown instead.
+
+**Recognised, wired by hand.** For these the CLI says it found the agent and
+prints the entry to add to its MCP settings; it does not write into a
+configuration whose format it does not know: `mimo-code`, `deveco-code`, `pi`,
+`goose`, `deepseek-harness`, `command-code`, `fx`, `omp`, `omo`, `devin`,
+`hermes`, `mister-morph`, `muse-code`, `empryo`, `minimax-code`, `grok-build`,
+`zcode`, `openhanako`, `atomcode`, `snow-cli`, `qwenpaw`, `alma`.
+
+## Models
+
+A computer that runs board tasks can run them on another model provider:
+
+```bash
+npx veynod --run-tasks --provider deepseek --model deepseek-chat
+```
+
+| `--provider` | Runs through | Key read from (on that computer) |
+| --- | --- | --- |
+| `claude` | Claude Code, its own sign-in | — |
+| `openai` | Codex, its own sign-in | — |
+| `deepseek` | Claude Code | `DEEPSEEK_API_KEY` |
+| `kimi` | Claude Code | `MOONSHOT_API_KEY` |
+| `glm` | Claude Code | `ZAI_API_KEY` |
+| `qwen` | Claude Code | `DASHSCOPE_API_KEY` |
+| `minimax` | Claude Code | `MINIMAX_API_KEY` |
+| `openrouter` | Claude Code | `OPENROUTER_API_KEY` |
+| `aihubmix` | Claude Code | `AIHUBMIX_API_KEY` |
+| `gemini` | Codex | `GEMINI_API_KEY` |
+| `mistral` | Codex | `MISTRAL_API_KEY` |
+| `xai` | Codex | `XAI_API_KEY` |
+| `groq` | Codex | `GROQ_API_KEY` |
+
+The key never reaches Veynod: the runner reads it from the environment when a
+task starts, and a run whose key is missing is not started (the placement
+reports why). `VEYNOD_<PROVIDER>_BASE_URL` on the computer replaces a preset
+endpoint (for example a mainland-China endpoint of the same provider).

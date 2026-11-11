@@ -31,6 +31,7 @@ import { join, resolve, sep, win32 } from "node:path";
 
 import { claudeInvocation, codexInvocation } from "./agents.mjs";
 import { loginEnv, loginRuntimes, signedIn } from "./login.mjs";
+import { providerRun } from "./providers.mjs";
 import { readAgent } from "./usage.mjs";
 
 export const RUNNER_HEARTBEAT_MS = 30_000;
@@ -512,7 +513,7 @@ export function claudeMcpConfig(pin) {
  * becomes the only MCP servers the run sees, with the run's own key.
  */
 export function adapterFor(runtime, { exec = "", spawner = spawnRun, permissionMode = "bypassPermissions",
-  model = "" } = {}) {
+  model = "", provider = "" } = {}) {
   if (runtime === "custom") {
     if (!exec) throw new Error("--runtime custom needs --exec CMD");
     return {
@@ -525,10 +526,19 @@ export function adapterFor(runtime, { exec = "", spawner = spawnRun, permissionM
     id: runtime,
     async run({ cwd, prompt, env, pin, configDir, mcpConfig }) {
       const mounted = mcpConfig || (pin ? claudeMcpConfig(pin) : null);
+      // The model provider chosen for this computer, if any. Its key is read
+      // here, from this computer's environment, and goes nowhere else.
+      const via = provider ? providerRun(provider, { runtime, model }) : { env: {}, args: [] };
+      if (via.missing) {
+        return { ok: false, reason: `${provider} needs ${via.missing} set on this computer` };
+      }
+      env = { ...env, ...via.env };
       if (runtime === "codex") {
         // Bearer tokens travel in environment variables, never on the command line.
         const call = codexInvocation({ prompt, model, mcp: mounted });
-        return spawner(call.command, call.args, { cwd, env: { ...env, ...call.env } });
+        // Codex takes its options before the prompt, which is the last argument.
+        const args = [...call.args.slice(0, -1), ...via.args, call.args.at(-1)];
+        return spawner(call.command, args, { cwd, env: { ...env, ...call.env } });
       }
       let file = null;
       if (mounted) {
@@ -623,6 +633,7 @@ export async function createRunner(options, {
     for (const line of installSteps(null)) say(`  ${line}`);
   }
   const makeAdapter = (runtime) => adapterFor(runtime, { exec: options.exec, model: options.model || "",
+    provider: options.provider || "",
     ...(spawner ? { spawner } : {}), ...(options.permissionMode ? { permissionMode: options.permissionMode } : {}) });
   // A deploy computer drives docker, not an agent runtime.
   let adapter = deploys ? { id: "deploy" } : makeAdapter(picked.runtime || options.runtime || "claude");
@@ -972,7 +983,7 @@ export function workerRunnerOptions(env = process.env) {
   }
   const out = {};
   if (Array.isArray(given.repos)) out.repos = given.repos.map(String);
-  for (const field of ["runtime", "exec", "delivery", "gitBase", "reposDir"]) {
+  for (const field of ["runtime", "exec", "delivery", "gitBase", "reposDir", "provider", "model"]) {
     if (typeof given[field] === "string" && given[field]) out[field] = given[field];
   }
   if (given.deploy && typeof given.deploy === "object") {
