@@ -121,6 +121,10 @@ TOOL_ACTION_HANDLERS = {
         "list_federation_threads", "list_federation_messages", "get_federation_message",
         "send_federation_message", "federation_message_handled",
         "federation_delegation_usage",
+        # simulated arena and resource rights (P6)
+        "arena_get_policy", "arena_join", "arena_leave_queue", "arena_matches", "arena_match",
+        "arena_authorize", "arena_commit", "arena_reveal", "arena_act", "arena_leave",
+        "arena_verify", "arena_obligations", "rr_wallet", "rr_vouchers", "rr_reserve",
     ),
     "loop": (
         "loop_agenda", "list_placements", "get_placement", "report_placement",

@@ -261,6 +261,17 @@ CREATE TABLE IF NOT EXISTS federation_arena_settlements (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- An owner's standing limits for its agents: within them an agent may queue
+-- and authorize a match itself (and plays it); outside them only the owner.
+CREATE TABLE IF NOT EXISTS federation_arena_policies (
+    fid VARCHAR(64) PRIMARY KEY REFERENCES federation_identities(federation_id),
+    agents_may_play BOOLEAN NOT NULL DEFAULT false,
+    max_stake BIGINT NOT NULL DEFAULT 0 CHECK (max_stake >= 0),
+    matches_per_day INTEGER NOT NULL DEFAULT 0 CHECK (matches_per_day BETWEEN 0 AND 200),
+    updated_by TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- ── Delivery obligations and the arena restriction (R3) ──────────────────
 
 CREATE TABLE IF NOT EXISTS federation_arena_obligations (
@@ -326,3 +337,4 @@ REVOKE ALL ON federation_arena_settlements FROM agentgraph_app;
 REVOKE ALL ON federation_arena_obligations FROM agentgraph_app;
 REVOKE ALL ON federation_arena_obligation_history FROM agentgraph_app;
 REVOKE ALL ON federation_arena_restrictions FROM agentgraph_app;
+REVOKE ALL ON federation_arena_policies FROM agentgraph_app;

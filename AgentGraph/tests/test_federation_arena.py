@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import os
 import secrets
 import uuid
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import httpx
 import pytest
@@ -1148,3 +1150,180 @@ async def test_resource_rights_and_arena_over_http(arena_http):
     r = await arena_http.get(f"/v1/federation/arena/matches/{mid}", headers=c["owner"])
     assert r.status_code == 404
     _ = uuid  # keep the import for readers copying the helper
+
+
+async def _http_players(http, tag: str, *, policy: dict | None = None):
+    from tests.test_federation_api import _workspace
+
+    players = []
+    for name in ("a", "b"):
+        ws = await _workspace(http, f"{tag}{name}")
+        r = await http.post("/v1/federation/enable", headers=ws["owner"])
+        ws["fid"] = r.json()["identity"]["federation_id"]
+        r = await http.post(
+            "/v1/federation/rights/specs",
+            headers=ws["owner"],
+            json={
+                "resource_class": "MOCK_DEMO",
+                "model_family": "mock-large",
+                "allowed_use": "demo",
+                "declared_tokens": 5 * M,
+                "measured_source": "mock",
+            },
+        )
+        ws["spec"] = r.json()["spec_id"]
+        if policy is not None:
+            r = await http.put("/v1/federation/arena/policy", headers=ws["owner"], json=policy)
+            assert r.status_code == 200, r.text
+        players.append(ws)
+    return players
+
+
+async def test_agents_play_through_mcp_within_the_owner_policy(arena_http):
+    from tests.test_federation_api import _mcp
+
+    a, b = await _http_players(arena_http, "mcp")
+    stake = 444_000
+    # Without the owner's policy an agent cannot queue.
+    refused = await _mcp(
+        arena_http,
+        a["key"],
+        "federation",
+        {"action": "arena_queue", "args": {"spec_id": a["spec"], "stake": stake}},
+    )
+    assert refused["error"]["details"]["federation_code"] == "FED_E_APPROVAL_NOT_HUMAN", refused
+    # An agent cannot set the policy; the owner can.
+    r = await arena_http.put(
+        "/v1/federation/arena/policy",
+        headers=a["key"],
+        json={"agents_may_play": True, "max_stake": M, "matches_per_day": 5},
+    )
+    assert r.status_code == 403
+    for ws in (a, b):
+        r = await arena_http.put(
+            "/v1/federation/arena/policy",
+            headers=ws["owner"],
+            json={"agents_may_play": True, "max_stake": stake, "matches_per_day": 5},
+        )
+        assert r.json()["agents_may_play"] is True
+    # Above the owner's stake limit: refused.
+    over = await _mcp(
+        arena_http,
+        a["key"],
+        "federation",
+        {"action": "arena_queue", "args": {"spec_id": a["spec"], "stake": stake + 1000}},
+    )
+    assert "above the stake" in json.dumps(over)
+    first = await _mcp(
+        arena_http,
+        a["key"],
+        "federation",
+        {"action": "arena_queue", "args": {"spec_id": a["spec"], "stake": stake}},
+    )
+    second = await _mcp(
+        arena_http,
+        b["key"],
+        "federation",
+        {"action": "arena_queue", "args": {"spec_id": b["spec"], "stake": stake}},
+    )
+    assert first["state"] == "WAITING" and second["state"] == "MATCHED", second
+    match_id = second["match"]["match_id"]
+    contract = second["match"]["contract_hash"]
+    seeds = {}
+    for ws in (a, b):
+        r = await _mcp(
+            arena_http,
+            ws["key"],
+            "federation",
+            {
+                "action": "arena_authorize",
+                "args": {"match_id": match_id, "contract_hash": contract},
+            },
+        )
+        assert "error" not in r, r
+    for ws in (a, b):
+        seeds[ws["fid"]] = secrets.token_hex(32)
+        await _mcp(
+            arena_http,
+            ws["key"],
+            "federation",
+            {
+                "action": "arena_commit",
+                "args": {
+                    "match_id": match_id,
+                    "commitment": engine.seed_commitment(seeds[ws["fid"]]),
+                },
+            },
+        )
+    for ws in (a, b):
+        await _mcp(
+            arena_http,
+            ws["key"],
+            "federation",
+            {"action": "arena_reveal", "args": {"match_id": match_id, "seed": seeds[ws["fid"]]}},
+        )
+    view = (
+        await arena_http.get(f"/v1/federation/arena/matches/{match_id}", headers=a["key"])
+    ).json()
+    assert view["state"] == "PLAYING", view["state"]
+    assert all(s["agent_play"] for s in view["seats"])
+    # An agent concedes for its seat: the match ends and verifies.
+    await _mcp(
+        arena_http,
+        b["key"],
+        "federation",
+        {"action": "arena_leave", "args": {"match_id": match_id}},
+    )
+    verified = await _mcp(
+        arena_http,
+        a["key"],
+        "federation",
+        {"action": "arena_verify", "args": {"match_id": match_id}},
+    )
+    assert verified["valid"] is True, verified
+
+
+async def test_two_bot_processes_play_a_whole_match(arena_http):
+    """The example bot (scripts/arena_bot.py) end to end, twice in parallel."""
+    import sys
+
+    a, b = await _http_players(
+        arena_http,
+        "bot",
+        policy={"agents_may_play": True, "max_stake": M, "matches_per_day": 5},
+    )
+    base = str(arena_http.base_url).rstrip("/")
+    script = Path(__file__).resolve().parent.parent / "scripts" / "arena_bot.py"
+    procs = [
+        await asyncio.create_subprocess_exec(
+            sys.executable,
+            str(script),
+            "--base",
+            base,
+            "--key",
+            ws["key"]["Authorization"].split()[1],
+            "--spec",
+            ws["spec"],
+            "--stake",
+            "600000",
+            "--mode",
+            mode,
+            "--poll",
+            "0.1",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env={
+                **os.environ,
+                "HOME": str(Path(os.environ.get("TMPDIR", "/tmp")) / f"bot-{ws['fid'][-6:]}"),
+            },
+        )
+        for ws, mode in ((a, "cash"), (b, "cash"))
+    ]
+    for ws in (a, b):
+        (Path(os.environ.get("TMPDIR", "/tmp")) / f"bot-{ws['fid'][-6:]}").mkdir(exist_ok=True)
+    outputs = await asyncio.wait_for(asyncio.gather(*(p.communicate() for p in procs)), timeout=600)
+    logs = [out[0].decode() for out in outputs]
+    assert all(p.returncode == 0 for p in procs), logs
+    assert all("verified=True" in log for log in logs), logs
+    matches = (await arena_http.get("/v1/federation/arena/matches", headers=a["key"])).json()
+    assert matches["items"][0]["mode"] == "cash"

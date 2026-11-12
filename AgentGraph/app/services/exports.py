@@ -229,7 +229,7 @@ EPHEMERAL = frozenset({
     "federation_arena_queue", "federation_arena_matches", "federation_arena_actions",
     "federation_arena_history", "federation_arena_settlements",
     "federation_arena_obligations", "federation_arena_obligation_history",
-    "federation_arena_restrictions",
+    "federation_arena_restrictions", "federation_arena_policies",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")

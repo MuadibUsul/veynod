@@ -241,6 +241,114 @@ async def _require_unrestricted(session: AsyncSession, fid: str) -> None:
         )
 
 
+# ── the owner's standing policy for agents ────────────────────────────────
+
+MAX_MATCHES_PER_DAY = 200
+
+
+async def _policy(session: AsyncSession, fid: str) -> dict[str, Any]:
+    row = (
+        (
+            await session.execute(
+                text("SELECT * FROM federation_arena_policies WHERE fid = :f"), {"f": fid}
+            )
+        )
+        .mappings()
+        .first()
+    )
+    if row is None:
+        return {
+            "agents_may_play": False,
+            "max_stake": 0,
+            "matches_per_day": 0,
+            "updated_by": None,
+            "updated_at": None,
+        }
+    out = dict(row)
+    out["updated_at"] = out["updated_at"].isoformat()
+    out.pop("fid", None)
+    return out
+
+
+async def get_policy(workspace_id: str) -> dict[str, Any]:
+    require_enabled()
+    async with async_session_factory() as session:
+        me = await rights.fid_of(session, workspace_id)
+        return {"fid": me, **(await _policy(session, me))}
+
+
+async def set_policy(
+    workspace_id: str,
+    *,
+    agents_may_play: bool,
+    max_stake: int = 0,
+    matches_per_day: int = 0,
+    actor: Actor,
+) -> dict[str, Any]:
+    """The owner sets how far its agents may go on their own: queue, authorize
+    (stake up to max_stake, at most matches_per_day a day) and play."""
+    require_enabled()
+    _person(actor, "sets the arena policy", owner=True)
+    if not isinstance(agents_may_play, bool):
+        raise FederationError("FED_E_PACKAGE_INVALID", "agents_may_play is true or false")
+    for name, value, most in (
+        ("max_stake", max_stake, MAX_STAKE),
+        ("matches_per_day", matches_per_day, MAX_MATCHES_PER_DAY),
+    ):
+        if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= most:
+            raise FederationError("FED_E_PACKAGE_INVALID", f"{name} is 0 to {most}")
+    async with async_session_factory() as session:
+        me = await rights.fid_of(session, workspace_id)
+        await session.execute(
+            text(
+                "INSERT INTO federation_arena_policies (fid, agents_may_play, max_stake, "
+                "matches_per_day, updated_by) VALUES (:f, :p, :s, :d, :by) ON CONFLICT (fid) "
+                "DO UPDATE SET agents_may_play = :p, max_stake = :s, matches_per_day = :d, "
+                "updated_by = :by, updated_at = NOW()"
+            ),
+            {"f": me, "p": agents_may_play, "s": max_stake, "d": matches_per_day, "by": actor.ref},
+        )
+        await session.commit()
+    return await get_policy(workspace_id)
+
+
+async def _require_agent_allowed(
+    session: AsyncSession, fid: str, actor: Actor, *, stake: int, what: str
+) -> None:
+    """A person always may; an agent only inside its owner's standing policy."""
+    if actor.kind == "user":
+        return
+    policy = await _policy(session, fid)
+    if not policy["agents_may_play"]:
+        raise FederationError(
+            "FED_E_APPROVAL_NOT_HUMAN",
+            f"an agent {what} only if its owner allows agents to play (arena policy)",
+        )
+    if stake > policy["max_stake"]:
+        raise FederationError(
+            "FED_E_APPROVAL_NOT_HUMAN",
+            "above the stake the owner allows agents",
+            max_stake=policy["max_stake"],
+        )
+    today = int(
+        await session.scalar(
+            text(
+                "SELECT count(*) FROM federation_arena_matches WHERE created_at > NOW() - "
+                "interval '1 day' AND ((seat0_fid = :f AND seats->0->>'authorized_by' IS NOT "
+                "NULL) OR (seat1_fid = :f AND seats->1->>'authorized_by' IS NOT NULL))"
+            ),
+            {"f": fid},
+        )
+        or 0
+    )
+    if today >= policy["matches_per_day"]:
+        raise FederationError(
+            "FED_E_APPROVAL_NOT_HUMAN",
+            "the owner's daily match limit for agents is reached",
+            matches_per_day=policy["matches_per_day"],
+        )
+
+
 # ── queue and matching ────────────────────────────────────────────────────
 
 
@@ -253,10 +361,10 @@ async def join_queue(
     unit: str | None = None,
     actor: Actor,
 ) -> dict[str, Any]:
-    """A person puts this workspace in the queue; a compatible waiting
-    workspace (same stake and rules, not the same controller) is matched."""
+    """A person (or an agent inside its owner's policy) puts this workspace in
+    the queue; a compatible waiting workspace (same model class, mode, stake
+    and rules, not the same controller) is matched."""
     require_enabled()
-    _person(actor, "joins the arena queue")
     rights.check_unit(unit)
     if not isinstance(stake, int) or isinstance(stake, bool) or not MIN_STAKE <= stake <= MAX_STAKE:
         raise FederationError(
@@ -275,6 +383,7 @@ async def join_queue(
         )
     async with async_session_factory() as session:
         me = await rights.fid_of(session, workspace_id)
+        await _require_agent_allowed(session, me, actor, stake=stake, what="joins the queue")
         await _require_unrestricted(session, me)
         spec = await rights.spec_row(session, spec_id)
         if spec["provider_fid"] != me:
@@ -366,9 +475,10 @@ async def join_queue(
 
 async def leave_queue(workspace_id: str, *, actor: Actor) -> dict[str, Any]:
     require_enabled()
-    _person(actor, "leaves the arena queue")
     async with async_session_factory() as session:
         me = await rights.fid_of(session, workspace_id)
+        if actor.kind != "user" and not (await _policy(session, me))["agents_may_play"]:
+            raise FederationError("FED_E_APPROVAL_NOT_HUMAN", "a person leaves the queue")
         left = await session.scalar(
             text(
                 "UPDATE federation_arena_queue SET state = 'LEFT' WHERE fid = :f AND "
@@ -560,14 +670,21 @@ async def authorize(
     agent_play: bool = False,
     actor: Actor,
 ) -> dict[str, Any]:
-    """The owner authorizes the match contract (by its hash) and the stake is
-    held from its simulated capacity in the same transaction."""
+    """The owner (or an agent inside the owner's standing policy) authorizes
+    the match contract by its hash; the stake is held from simulated capacity
+    in the same transaction. An agent that authorizes also plays."""
     require_enabled()
-    _person(actor, "authorizes a match", owner=True)
+    if actor.kind == "user":
+        _person(actor, "authorizes a match", owner=True)
     async with async_session_factory() as session:
         me = await rights.fid_of(session, workspace_id)
         row = await _match(session, match_id, lock=True)
         seat = _seat_of(row, me)
+        if actor.kind != "user":
+            await _require_agent_allowed(
+                session, me, actor, stake=int(row["stake"]), what="authorizes a match"
+            )
+            agent_play = True
         if row["state"] != "MATCHED":
             raise FederationError(
                 "FED_E_MATCH_STATE", "the match is past authorization", state=row["state"]

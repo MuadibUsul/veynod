@@ -105,6 +105,12 @@ class QueueJoin(_Body):
     unit: str | None = None
 
 
+class ArenaPolicy(_Body):
+    agents_may_play: bool
+    max_stake: int = Field(default=0, strict=True, ge=0)
+    matches_per_day: int = Field(default=0, strict=True, ge=0, le=200)
+
+
 class Authorize(_Body):
     contract_hash: str = Field(min_length=64, max_length=64)
     agent_play: bool = False
@@ -255,6 +261,22 @@ async def rr_waive(
 
 
 # ── arena (R2) ────────────────────────────────────────────────────────────
+
+
+@router.get("/arena/policy", summary="How far this workspace's agents may play on their own")
+async def arena_get_policy(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    _arena()
+    return await _call(arena.get_policy(_workspace_id(principal)))
+
+
+@router.put("/arena/policy", summary="Let agents queue, authorize and play within limits (owner)")
+async def arena_set_policy(
+    body: ArenaPolicy, principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _arena()
+    return await _call(
+        arena.set_policy(_workspace_id(principal), **body.model_dump(), actor=_actor(principal))
+    )
 
 
 @router.post("/arena/queue", summary="Queue for a heads-up match (a person; no economic value)")
