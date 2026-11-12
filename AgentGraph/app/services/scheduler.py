@@ -332,12 +332,13 @@ CODING_AGENT_CAPABILITIES = frozenset({
 
 
 def _capabilities(host: dict[str, Any]) -> set[str]:
-    """Declared capabilities, runtime ids and, with a ready coding agent, the
-    general ones every coding agent has."""
+    """Declared capabilities, runtime ids and, on a computer that runs tasks at
+    all (any ready runtime: a coding agent or the command its owner chose), the
+    general ones. A special capability (``gpu``, ``ios-signing``) must still be
+    declared."""
     have = {item.lower() for item in host["capabilities"] or []} | {
         runtime["id"] for runtime in host["runtimes"] or []}
-    if any(runtime["id"] in ("claude", "codex") and runtime.get("available") is not False
-           for runtime in host["runtimes"] or []):
+    if any(runtime.get("available") is not False for runtime in host["runtimes"] or []):
         have |= CODING_AGENT_CAPABILITIES
     return have
 
@@ -1179,6 +1180,15 @@ async def agenda(session: AsyncSession, workspace_id: Any,
     return items[:40]
 
 
+def _agenda_fingerprint(items: list[dict[str, Any]]) -> str:
+    """What a round is about, without when: the same open problems give the same value."""
+    import hashlib
+
+    keys = sorted(json.dumps({k: v for k, v in item.items() if k not in ("note",)},
+                             sort_keys=True, default=str) for item in items)
+    return hashlib.sha256("\n".join(keys).encode()).hexdigest()[:16]
+
+
 async def _supervise(session: AsyncSession, workspace_id: Any, hosts: list[dict[str, Any]],
                      online: list[dict[str, Any]], now: datetime) -> int:
     """Wake a supervisor computer for a round when something waits, at most every so often."""
@@ -1199,7 +1209,17 @@ async def _supervise(session: AsyncSession, workspace_id: Any, hosts: list[dict[
         if open_round is not None:
             await _end(session, dict(open_round), "withdrawn", "nothing_waits")
         return 0
-    detail = json.dumps({"agenda": items})
+    seen = _agenda_fingerprint(items)
+    finished = (await session.execute(text(
+        "SELECT detail->>'fingerprint' AS fingerprint, created_at FROM runner_placements "
+        "WHERE workspace_id = :ws AND step = 'supervise' AND reported = 'finished' "
+        "ORDER BY created_at DESC LIMIT 1"), {"ws": workspace_id})).mappings().one_or_none()
+    if (finished is not None and finished["fingerprint"] == seen
+            and now - finished["created_at"] < timedelta(
+                seconds=settings.runner_supervise_repeat_seconds)):
+        # The last round saw exactly this and finished: nothing new to look at.
+        return 0
+    detail = json.dumps({"agenda": items, "fingerprint": seen})
     pool = [host for host in online if _supervisor(host)
             and (quota_used(host) or 0) < settings.runner_quota_exhausted_percent]
     if not pool:
@@ -1290,8 +1310,13 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
           else "Connect a computer with `npx veynod --run-tasks`.")
     can_review = (f"{len(reviewers)} computer(s) can review work without a repository. "
                   if reviewers else "")
+    trusting = (mode == "full" and settings.trust_by_default)
     check("reviewer", True, False,
-          can_review + "The Kernel gate reviews code; a person reviews what no other computer can.",
+          can_review + ("Work without a repository is finished on trust; the Kernel gate "
+                        "reviews code; flagged work waits for a look, not for approval."
+                        if trusting else
+                        "The Kernel gate reviews code; a person reviews what no other "
+                        "computer can."),
           None)
     unpinned = sorted(host["agent_id"] or host["host_id"] for host in online
                       if (host.get("capabilities_report") or {}).get("mcp_pinning") is False)
@@ -1316,7 +1341,7 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
     finished = sum(1 for row in recent if row["reported"] == "finished")
     rounds_ok = not recent or finished > 0
     why = recent[0]["reason"] if recent else None
-    check("rounds", rounds_ok, True,
+    check("rounds", rounds_ok, False,
           "No supervisor round has ended yet." if not recent
           else f"{finished} of the last {len(recent)} supervisor round(s) finished."
           + ("" if rounds_ok else f" None ran to the end (last: {why or 'no report'})."),

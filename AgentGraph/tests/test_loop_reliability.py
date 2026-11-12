@@ -636,8 +636,10 @@ def test_a_coding_agent_has_the_general_capabilities_without_declaring_them() ->
 
     bare = {"capabilities": [], "runtimes": [{"id": "codex", "available": True}]}
     assert {"frontend", "backend", "docs", "codex"} <= _capabilities(bare)
-    # A custom command or a runtime that is not ready promises nothing.
-    assert "frontend" not in _capabilities({"capabilities": [], "runtimes": [{"id": "custom"}]})
+    # Any computer that runs tasks has them, a custom command included (found in the
+    # unattended run: the claim was refused on such a computer); one whose runtime
+    # is not ready promises nothing.
+    assert "frontend" in _capabilities({"capabilities": [], "runtimes": [{"id": "custom"}]})
     assert "frontend" not in _capabilities(
         {"capabilities": ["gpu"], "runtimes": [{"id": "claude", "available": False}]})
     assert "gpu" in _capabilities({"capabilities": ["GPU"], "runtimes": []})
@@ -744,8 +746,10 @@ async def test_the_doctor_judges_the_supervisor_by_rounds_that_finished(
         poke = await _round(client, ws, boss)
         await _until(lambda: _ended(client, ws, poke["frame_id"]), timeout=30)
         rounds = await check("rounds")
-        # Online is not enough: a round that never finished turns the doctor red.
-        assert rounds["ok"] is False and rounds["doctor_ok"] is False, rounds
+        # Online is not enough: a round that never finished turns the check red. It
+        # is a warning, not a required check: it reports history, not this setup,
+        # and `npx veynod` must not fail an install over rounds that ran before it.
+        assert rounds["ok"] is False and rounds["required"] is False, rounds
         assert "0 of the last 1" in rounds["text"] and "nerve:" in rounds["text"]
         assert (await check("supervisor"))["text"] == "A supervisor computer is online."
     finally:

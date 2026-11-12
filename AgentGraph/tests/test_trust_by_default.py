@@ -101,6 +101,10 @@ async def test_what_should_be_looked_at_is_flagged_with_the_reason_and_holds_not
     queue = (await client.get("/v1/tasks", headers=ws["owner"],
                               params={"needs_attention": "true"})).json()["items"]
     assert {item["task_key"] for item in queue} == {risky, manual, money}
+    # The owner sees them on the Loop page, with the reasons, beside what blocks work.
+    look = (await client.get("/v1/loop/overview", headers=ws["owner"])).json()["needs_you"]["look"]
+    assert {item["key"] for item in look} == {risky, manual, money}
+    assert next(item for item in look if item["key"] == money)["reasons"] == ["owner_topic: money"]
 
 
 async def test_a_look_clears_the_flag_or_opens_a_follow_up(client) -> None:

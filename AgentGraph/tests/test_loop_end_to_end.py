@@ -73,9 +73,11 @@ async def test_ten_rounds_in_a_row_finish_and_meet_the_start_targets(api_base_ur
             rounds = await _until(ended, timeout=40)
             latest = max(rounds, key=lambda item: item["created_at"])
             assert (latest["status"], latest["stage"]) == ("delivered", "finished"), latest
-            # The next round is due: rounds are a set interval apart.
+            # The next round is due: rounds are a set interval apart, and one is only
+            # started when something new waits (the same agenda is not looked at twice).
             await _sql("UPDATE runner_placements SET created_at = created_at - INTERVAL '1 hour' "
                        "WHERE workspace_id = $1::uuid AND step = 'supervise'", ws["id"])
+            await _task(client, ws, repo=f"acme/unreachable-{index}")
 
         metrics = (await client.get("/v1/runner/metrics", headers=ws["owner"])).json()
         supervise = metrics["supervise"]

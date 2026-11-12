@@ -208,3 +208,26 @@ not wait on each one.
 
 Still open: B4 (a review path without a second machine), C1 (one computer, one
 subscription), C5 (the Loop cannot ship its own fixes).
+
+## G. Verified unattended (2026-11-12)
+
+`tests/test_unattended_board.py` runs the real server and the real CLI hub on
+one computer with a stand-in agent that only claims and hands off. Nobody calls
+the API after the board is set up. Result: all nine tasks DONE in 53 s (plain,
+ANALYST, a `frontend` task, a two-task chain, MANUAL acceptance, a risky one,
+an agent that crashes once, a task stopped three times days ago); flags on
+exactly the MANUAL, the risky and one sampled task; one supervisor round
+started and finished, and no second round on the unchanged agenda.
+
+The run found three more defects, fixed in the same commit:
+
+- the scheduler inferred capabilities for Claude Code and Codex only, so a
+  computer on a custom runtime never got a task naming a capability;
+- the claim check judged capabilities by a narrower rule than the scheduler, so
+  the agent a task was placed on was refused, failed twice and was stopped;
+- an unchanged agenda started a supervisor round every interval, one agent
+  session each (about 144 a day at the default), for nothing new.
+
+Still open: B4 for tasks with a repository on a one-computer board, C1, C5,
+and steps 3–4 of `LOOP_SIMPLE_MODEL.md`. Tasks with a repository were not part
+of the unattended run (no Kernel here).

@@ -146,6 +146,11 @@ class Settings(BaseSettings):
     # and how often the supervisor walks the floor when something waits.
     runner_step_timeout_seconds: int = Field(default=1800, ge=60, le=86_400)
     runner_supervise_every_seconds: int = Field(default=600, ge=60, le=86_400)
+    # A round whose agenda is the same as the last finished round's is not
+    # started again before this long: each round is an agent session that uses
+    # the subscription, and looking again at what it could not change changes
+    # nothing. Something new on the agenda starts a round at once.
+    runner_supervise_repeat_seconds: int = Field(default=6 * 3600, ge=60, le=7 * 86_400)
     runner_supervise_timeout_seconds: int = Field(default=1200, ge=60, le=86_400)
     # A failed placement counts against a task (and against the computer for
     # that task) for this long. Older failures are history: the cause may be

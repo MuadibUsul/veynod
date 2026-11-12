@@ -71,6 +71,8 @@ export type Overview = {
     // Deploy gate v2: failed or rolled-back deploys no one has seen (absent on older servers).
     deploys?: { run_id: string; project: string; target: string; commit: string | null;
       status: "failed" | "rolled_back"; note: string | null; ended_at: string | null }[];
+    // Finished on trust and flagged for a look; nothing waits on them (absent on older servers).
+    look?: { key: string; title: string; since: string | null; reasons: string[] }[];
   };
   today: { approved: number; returned: number; done: number; hours: { approved: number; done: number }[] };
   agents: FlowAgent[];

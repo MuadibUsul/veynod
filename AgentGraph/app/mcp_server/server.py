@@ -1213,6 +1213,12 @@ async def agent_handoff_task(
     REVIEWING/HANDOFF require a structured brief with summary, key_metrics,
     unverified_hypotheses and risk_flag (boolean). Agents must use REVIEWING;
     DONE is human-only, and human_feedback is rejected for non-human callers.
+    Under full automation a hand-off to REVIEWING of work without a repository
+    ends the task (DONE on trust) and releases what depends on it; risk_flag,
+    acceptance_not_met in key_metrics, MANUAL acceptance or an owner topic
+    (brief.owner_topic: money, identity, legal, data_deletion,
+    external_commitment) mark it needs_attention for a person to look at.
+    HANDOFF passes unfinished work on to the next holder.
     Providing artifact_text stores the L2 body as a document and returns
     artifact_uri (doc://...); artifact_text and artifact_uri are mutually
     exclusive. The lease is released. REVIEWING enters the ping-pong circuit

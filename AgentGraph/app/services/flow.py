@@ -291,6 +291,13 @@ async def overview(session: AsyncSession, principal: Principal) -> dict[str, Any
                     for entry in pieces if entry["state"] == "you"],
         # Deploy gate v2: runs that failed or rolled back and no one has seen yet.
         "deploys": await deploys.needs_you(session, ws),
+        # Finished on trust and flagged for a look: nothing waits on these.
+        "look": [{"key": row["task_key"], "title": row["title"], "since": _iso(row["updated_at"]),
+                  "reasons": row["attention_reasons"] or []}
+                 for row in (await session.execute(text(
+                     "SELECT task_key, title, updated_at, attention_reasons FROM collab_tasks "
+                     "WHERE workspace_id = :ws AND needs_attention ORDER BY updated_at "
+                     "LIMIT 50"), {"ws": ws})).mappings().all()],
     }
 
     # The last day, from the event log: approvals, returns, completions.

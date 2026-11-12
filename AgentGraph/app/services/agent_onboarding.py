@@ -52,7 +52,8 @@ FIRST_ACTIONS: dict[str, frozenset[str]] = {
 DO_NOT = [
     "Do not write before you have read the constitution and your namespace readme.",
     "Do not write to system/*: propose changes with propose_document_change.",
-    "Do not mark your own work DONE or verify it: hand off to REVIEWING for a human.",
+    "Do not mark your own work DONE or verify it: hand off to REVIEWING; the board "
+    "finishes it on trust or has it reviewed.",
     "Do not retry a 409 or 429 unchanged: re-read, or wait for Retry-After.",
     "Do not read every document up front: follow required_reading, then use events.",
 ]

@@ -1,7 +1,8 @@
 # A lighter Loop: one worker role, three task states, trust by default
 
-Status: **proposal for the owner to confirm** (2026-11-12). Nothing here is
-implemented. Background: `LOOP_UNATTENDED_AUDIT.md`.
+Status: **confirmed by the owner (2026-11-12), all five decisions as proposed.**
+Steps 1 and 2 are implemented (schema 3.101.0); steps 3 and 4 are not yet.
+Background: `LOOP_UNATTENDED_AUDIT.md`.
 
 ## The model
 
@@ -110,3 +111,20 @@ the outside. Those go to the owner together, as now.
    yes for the attention queue when no other computer exists.
 5. **Remove the old states from the API after one release, or keep the
    mapping for good?** Proposed: keep the mapping.
+
+## As implemented (steps 1–2)
+
+- Settings: `WORKER_ROLES_UNIFIED` (on), `TRUST_BY_DEFAULT` (on),
+  `TRUST_REVIEWED_NAMESPACES` (empty), `TRUST_SAMPLE_RATE` (0.10).
+- Trust applies under full automation to work without a repository, outside
+  diagrams, when quality control is not enforced. The agent still calls
+  `agent_handoff_task(REVIEWING)`; the server finishes the task.
+- `needs_attention` + `attention_reasons` on the task; `GET /v1/tasks?needs_attention=true`;
+  the Loop page lists them under "Needs you" with a one-click "Looks fine";
+  `POST /v1/tasks/{key}/attention` with `ok`, or `redo` and a note (opens a
+  follow-up task; a finished task is not reopened).
+- One judge of fit: when the scheduler placed a task on an agent, that agent's
+  claim is not refused for capabilities it did not declare.
+- Verified by `tests/test_unattended_board.py`: one computer, the real CLI hub,
+  nobody touching the board; nine tasks of the kinds that stopped in production
+  finish in under a minute and one supervisor round runs and is not repeated.

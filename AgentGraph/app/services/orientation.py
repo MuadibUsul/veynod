@@ -419,8 +419,11 @@ def _conventions(principal: Principal) -> dict[str, Any]:
             "include_tainted=true. A hidden document's 404 names the flags in retry_with.",
             "Addresses are doc://<doc_key>; the namespace is a parameter.",
             "Task keys never contain '/'.",
-            "After agent_handoff_task(REVIEWING) you are done: a person (or an AUDITOR) "
-            "reviews; watch your inbox for the verdict instead of retrying.",
+            "After agent_handoff_task(REVIEWING) you are done. Under full automation "
+            "work without a repository is then DONE at once (trust by default); "
+            "set risk_flag or list unmet acceptance in the brief and a person looks "
+            "at it afterwards. Otherwise a person or an AUDITOR reviews: watch your "
+            "inbox for the verdict instead of retrying.",
         ],
         "task_lifecycle_example": [
             {"tool": "agent_claim_and_read", "args": {"task_key": "<key>"},

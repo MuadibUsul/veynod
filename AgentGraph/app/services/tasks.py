@@ -714,9 +714,10 @@ async def claimable_conditions(session: AsyncSession, principal: Principal) -> l
         conditions += [
             (CollabTask.required_role.is_(None))
             | (CollabTask.required_role == ((entry or {}).get("role") or "")),
+            # Placed on me: the scheduler already judged the fit (collab.check_claimable).
             CollabTask.required_capabilities.contained_by(
                 list((entry or {}).get("capabilities") or [])
-            ),
+            ) | (CollabTask.assignee.is_not(None) & CollabTask.assignee.in_(mine)),
         ]
     if not principal.is_commander:
         from app.auth import WORKER_ROLES

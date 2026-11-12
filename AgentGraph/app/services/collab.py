@@ -317,7 +317,13 @@ def apply_new_fields(task: CollabTask, request: Any) -> None:
 
 
 async def check_claimable(session: AsyncSession, principal: Principal, task: CollabTask) -> None:
-    """required_role / required_capabilities against the claimer's directory entry."""
+    """required_role / required_capabilities against the claimer's directory entry.
+
+    One judge of fit: when the scheduler placed the task on this agent (it is
+    the assignee), the scheduler already matched the capabilities, with the
+    ones a computer that runs tasks has without declaring them; the claim does
+    not judge again by a narrower rule. required_role is checked either way.
+    """
     if not (task.required_role or task.required_capabilities) or principal.is_human:
         return
     entry = await _my_entry(session, principal)
@@ -326,6 +332,9 @@ async def check_claimable(session: AsyncSession, principal: Principal, task: Col
     if task.required_role and role != task.required_role:
         raise ApiError(403, "role_mismatch", "this task needs another role",
                        details={"required_role": task.required_role, "your_role": role})
+    if task.assignee and await assignee_matches(session, principal, task,
+                                                principal.agent_signature or ""):
+        return
     missing = sorted(set(task.required_capabilities or []) - capabilities)
     if missing:
         raise ApiError(403, "role_mismatch", "this task needs capabilities you lack",

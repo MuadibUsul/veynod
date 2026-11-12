@@ -126,6 +126,20 @@ const RULE_LABEL: Record<string, string> = {
 
 const RELOAD_ON = /^(HOST_|TASK_|CHUNK_|DIAGRAM_|LOOP_ROUND|PLACEMENT_|AGENT_PRESENCE|DEPLOY_|task\.)/;
 
+// Why a finished task was flagged, in words (the reason codes come from the server).
+function lookReason(reason: string | undefined, t: (text: string) => string): string {
+  if (!reason) return "";
+  const code = reason.split(":")[0];
+  const words: Record<string, string> = {
+    risk_flag: "the agent flagged a risk",
+    acceptance_not_met: "not every acceptance item was met",
+    manual_acceptance: "its author asked for a person's look",
+    owner_topic: "it touches money, identity, legal matters, data or a commitment",
+    sampled: "a routine sample",
+  };
+  return words[code] ? t(words[code]) : reason;
+}
+
 type Need = { key: string; tone: "red" | "amber" | "violet" | "cyan"; title: string; detail?: string;
   action?: { label: string; run?: () => void; href?: string } };
 
@@ -228,6 +242,21 @@ export function LoopView({
     onEvent,
   });
 
+  // A flagged task the person looked at and found fine. A redo (with a note) is
+  // made from the task itself: it opens a follow-up task.
+  const looksFine = async (key: string) => {
+    try {
+      await request(`/v1/tasks/${encodeURIComponent(key)}/attention`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision: "ok" }),
+      });
+      notify(t("Marked as looked at"));
+      void load();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   // --- what needs a person, each with the one thing to do about it.
   const needs: Need[] = [];
   const deploy = overview?.needs_you.deploy ?? [];
@@ -259,6 +288,23 @@ export function LoopView({
         : item.asked_by ? t("{who} waits for your answer", { who: item.asked_by }) : t("A task waits for your answer"),
       detail: `${item.title} · ${waited(item.since, t)}`,
       action: { label: review ? t("Review") : t("Answer it"), run: () => onOpenTask(item.key) },
+    });
+  }
+  // Finished on trust and flagged: a look, not an approval. Nothing waits on them.
+  const look = overview?.needs_you.look ?? [];
+  for (const item of look.slice(0, 3)) {
+    needs.push({
+      key: `look-${item.key}`, tone: "cyan",
+      title: t("Finished, worth a look: {title}", { title: item.title }),
+      detail: [lookReason(item.reasons[0], t), waited(item.since, t)].filter(Boolean).join(" · "),
+      action: { label: t("Looks fine"), run: () => void looksFine(item.key) },
+    });
+  }
+  if (look.length > 3) {
+    needs.push({
+      key: "look-more", tone: "cyan",
+      title: t("{n} more finished tasks are worth a look", { n: look.length - 3 }),
+      action: { label: t("Open them"), run: onOpenTasks },
     });
   }
   if (waitingReview > 0) {
