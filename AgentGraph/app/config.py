@@ -332,6 +332,20 @@ class Settings(BaseSettings):
     federation_arena_dispute_minutes: int = Field(default=10, ge=0, le=10080)
     federation_arena_obligation_days: int = Field(default=7, ge=1, le=90)
     federation_arena_voucher_days: int = Field(default=30, ge=1, le=365)
+    # Model classes (family + generation) an operator maintains. A resource
+    # spec names one; the arena only matches workspaces staking the same class,
+    # and a voucher only runs on its own class. Comma-separated in the env.
+    federation_model_classes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: [
+            "mock-small",
+            "mock-large",
+            "claude-opus-5",
+            "claude-sonnet-5",
+            "claude-haiku-5",
+            "gpt-5",
+            "gemini-3",
+        ]
+    )
 
     # ---------------------------------------------------- outbound actions
     outbound_dispatch_interval_seconds: int = Field(default=5, ge=1, le=300)
@@ -465,7 +479,11 @@ class Settings(BaseSettings):
     mcp_allowed_origins: list[str] = Field(default_factory=list)
 
     @field_validator(
-        "cors_origins", "outbound_allowed_hosts", "federation_peer_hosts", mode="before"
+        "cors_origins",
+        "outbound_allowed_hosts",
+        "federation_peer_hosts",
+        "federation_model_classes",
+        mode="before",
     )
     @classmethod
     def _split_origins(cls, value: object) -> object:

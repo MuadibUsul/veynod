@@ -25,7 +25,9 @@ type Voucher = {
 type Obligation = {
   obligation_id: string; obligor: string; obligee: string; amount: number; state: string;
 };
-type Match = { match_id: string; state: string; stake: number; my_seat: number | null };
+type Match = {
+  match_id: string; state: string; stake: number; my_seat: number | null; model_class: string;
+};
 
 const M = 1_000_000;
 const asM = (tokens: number) => `${Number((tokens / M).toFixed(6))} DEMO_M`;
@@ -104,7 +106,7 @@ export function ArenaCard({ request }: { request: ApiRequest }) {
       {matches.slice(0, 5).map((m) => (
         <div className="lin-row" key={m.match_id}>
           <span className="lin-title">{m.match_id}</span>
-          <span className="flow-aside">{asM(m.stake)} · {m.state}</span>
+          <span className="flow-aside">{m.model_class} · {asM(m.stake)} · {m.state}</span>
         </div>
       ))}
     </section>

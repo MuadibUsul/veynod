@@ -31,6 +31,17 @@ owner 声明本工作区能提供什么：`resource_class`、`model_family`、`a
 
 撤销 spec：不能再发券或质押；已发出的券照常有效到期，不静默作废。
 
+### 2.1 模型类别（只与同类对局）
+
+owner 2026-11-12 决定：**只有押同一模型类别的工作区才能对局**，赢家拿到的就是自己押出去的那种算力，不做跨模型换算。
+
+- 类别是“家族 + 代”（例如 `claude-sonnet-5`），由运营人员维护在 `FEDERATION_MODEL_CLASSES`（逗号分隔）。资源声明的 `model_family` 必须在这个列表里，否则 `FED_E_PACKAGE_INVALID`（返回允许的列表）。
+- 匹配时只配同类别、同质押、同规则；类别写进牌局合同哈希和结果证明。
+- 券只能在自己的类别上用：预留时，委派条款必须带 `model_policy = {mode: exact, model_class: 券的类别}`，否则 `FED_E_MODEL_CLASS_MISMATCH`。
+- 违约补偿必须用所欠的同一类别，否则 `FED_E_MODEL_CLASS_MISMATCH`。
+- **还没做**：交付时核对“实际用的模型”。这需要 CLI worker 在计量回执里上报模型标识；在那之前，类别只在条款层面约束，执行方实际用了什么模型无法核验。
+- 新版本模型上线时，换用需要双方同意（写进条款），系统不会自动替换。
+
 ## 3. 账本
 
 账户：`demo_mint`（唯一可为负）、`cap:<spec>`、`voucher:<voucher>`、`resv:<reservation>`、`used:<spec>`、`stake:<match>:<seat>`。每笔交易借贷为 0（提交时检查），除 `demo_mint` 外任何账户不得为负（提交时检查，作为并发超发的最后防线），只能追加。`GET /v1/admin/federation/rights/ledger/check` 检查全账。
@@ -65,7 +76,7 @@ MATCHED → OWNER_AUTHORIZED → DEMO_RESERVED → COMMITTED → PLAYING → RES
 旁路：ABORTED（准备阶段离开、运营作废）、TIMED_OUT（准备超时）、DISPUTED（结算前争议）、RECONCILING（结算时托管额不符，什么都不动）
 ```
 
-1. **匹配**：人把工作区放进队列（`spec_id`、`stake`，0.1–10 DEMO_M）。同额、同规则、不是同一控制人（`integrity.related`）、对方没有被限制 → 生成牌局；主机此时生成种子并公开 `server_commit`。每个工作区同时只能排一个队。
+1. **匹配**：人把工作区放进队列（`spec_id`、`stake`，0.1–10 DEMO_M）。同模型类别、同额、同规则、不是同一控制人（`integrity.related`）、对方没有被限制 → 生成牌局；主机此时生成种子并公开 `server_commit`。每个工作区同时只能排一个队。
 2. **授权**：每方 owner 提交 `contract_hash`（双方、spec、质押、单位、规则哈希、主机承诺、超时规则、最大手数、准备截止时间、结算方式、`economic_value: none`），同一事务内把质押从 `cap` 移到 `stake`。可选 `agent_play: true` 允许本工作区 agent 出牌。双方都授权 → `DEMO_RESERVED`。
 3. **承诺/揭示**：双方先提交 `sha256(seed)`，都提交后再揭示 seed；不匹配 → `FED_E_ARENA_ILLEGAL`。都揭示后发第一手 → `PLAYING`。准备阶段超过 `federation_arena_setup_minutes` → `TIMED_OUT`，退回质押并写明在等哪一方。
 4. **出牌**：`act(seq, action)`。`seq` 必须等于当前 `action_seq`；同一 seq 重发同一动作 → 原样返回（`replayed: true`），不重复执行；同一 seq 不同动作或错的 seq → `FED_E_ARENA_STALE`；非法动作 → `FED_E_ARENA_ILLEGAL`，状态不变。每方只看到自己的底牌，看不到对方底牌和未发的公共牌。完整动作日志存在 `federation_arena_actions`。
@@ -109,7 +120,7 @@ PENDING → DUE（有请求未被接受）→ DELIVERING（已接受，在做）
 | GET | `/v1/admin/federation/rights/ledger/check`、`/arena/matches`、`/arena/integrity` | 运营 |
 | POST | `/v1/admin/federation/arena/matches/{id}/resolve`、`/arena/obligations/{id}/decide` | 运营 |
 
-错误码：`FED_E_RR_DISABLED`、`FED_E_ARENA_DISABLED`（404）；`FED_E_RESOURCE_UNKNOWN`、`FED_E_VOUCHER_UNKNOWN`、`FED_E_MATCH_UNKNOWN`、`FED_E_OBLIGATION_UNKNOWN`（404）；`FED_E_RESOURCE_NOT_ESCROWABLE`、`FED_E_UNIT_MISMATCH`、`FED_E_RESERVATION_INVALID`、`FED_E_ARENA_ILLEGAL`（422）；`FED_E_CAPACITY_EXCEEDED`、`FED_E_VOUCHER_STATE`、`FED_E_MATCH_STATE`、`FED_E_ARENA_STALE`、`FED_E_OBLIGATION_STATE`（409）；`FED_E_ARENA_RESTRICTED`、`FED_E_ARENA_LINKED`（403）。看不到的对象一律 404，不泄露存在性。
+错误码：`FED_E_RR_DISABLED`、`FED_E_ARENA_DISABLED`（404）；`FED_E_RESOURCE_UNKNOWN`、`FED_E_VOUCHER_UNKNOWN`、`FED_E_MATCH_UNKNOWN`、`FED_E_OBLIGATION_UNKNOWN`（404）；`FED_E_RESOURCE_NOT_ESCROWABLE`、`FED_E_UNIT_MISMATCH`、`FED_E_RESERVATION_INVALID`、`FED_E_ARENA_ILLEGAL`（422）；`FED_E_MODEL_CLASS_MISMATCH`（422）；`FED_E_CAPACITY_EXCEEDED`、`FED_E_VOUCHER_STATE`、`FED_E_MATCH_STATE`、`FED_E_ARENA_STALE`、`FED_E_OBLIGATION_STATE`（409）；`FED_E_ARENA_RESTRICTED`、`FED_E_ARENA_LINKED`（403）。看不到的对象一律 404，不泄露存在性。
 
 ## 9. 后台步骤
 

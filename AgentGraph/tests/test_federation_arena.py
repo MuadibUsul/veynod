@@ -70,11 +70,11 @@ async def _code(awaitable) -> str:
     return err.value.code
 
 
-async def _mock_spec(ws, tokens: int = 10 * M) -> dict:
+async def _mock_spec(ws, tokens: int = 10 * M, model_class: str = "mock-small") -> dict:
     return await rights.declare_spec(
         ws["id"],
         resource_class="MOCK_DEMO",
-        model_family="mock-model",
+        model_family=model_class,
         allowed_use="arena and demo delegations only",
         declared_tokens=tokens,
         measured_source="mock",
@@ -130,7 +130,7 @@ async def test_units_classes_and_capacity_are_kept_apart(client, admin_headers, 
     sub = await rights.declare_spec(
         a["id"],
         resource_class="SELF_REPORTED_SUBSCRIPTION",
-        model_family="consumer-plan",
+        model_family="claude-sonnet-5",
         allowed_use="shown only",
         declared_tokens=5 * M,
         measured_source="self_reported",
@@ -216,7 +216,7 @@ async def test_units_classes_and_capacity_are_kept_apart(client, admin_headers, 
             rights.declare_spec(
                 a["id"],
                 resource_class="MOCK_DEMO",
-                model_family="m",
+                model_family="mock-small",
                 allowed_use="use key sk-ant-abcdefghijklmnopqrstu",
                 declared_tokens=M,
                 measured_source="mock",
@@ -232,12 +232,12 @@ async def test_units_classes_and_capacity_are_kept_apart(client, admin_headers, 
     assert w["redeemable"] is False and "no economic value" in w["notice"]
 
 
-async def _bridge_job(req, prov, amount: int) -> str:
+async def _bridge_job(req, prov, amount: int, model_class: str | None = "mock-small") -> str:
+    terms = _terms(budget_cap={"amount": amount, "unit": "model_tokens"})
+    if model_class is not None:
+        terms["model_policy"] = {"mode": "exact", "model_class": model_class}
     sent = await delegations.offer(
-        req["id"],
-        peer_workspace=prov["fid"],
-        terms=_terms(budget_cap={"amount": amount, "unit": "model_tokens"}),
-        actor=req["owner"],
+        req["id"], peer_workspace=prov["fid"], terms=terms, actor=req["owner"]
     )
     return sent["delegation"]["federation_job_id"]
 
@@ -354,8 +354,24 @@ async def test_a_reservation_runs_on_the_bridge_and_is_metered(client, admin_hea
         )
         == "FED_E_RESERVATION_INVALID"
     )
+    # The delegation must pin the voucher's model class: none, or another, is refused.
+    for other_class in (None, "mock-large"):
+        unpinned = await _bridge_job(b, a, M, model_class=other_class)
+        assert (
+            await _code(
+                rights.reserve(
+                    b["id"],
+                    voucher_id=vid,
+                    federation_job_id=unpinned,
+                    amount=M,
+                    idempotency_key=f"pin-{other_class}",
+                    actor=b["owner"],
+                )
+            )
+            == "FED_E_MODEL_CLASS_MISMATCH"
+        )
     job = await _bridge_job(b, a, M)
-    await rights.reserve(
+    pinned = await rights.reserve(
         b["id"],
         voucher_id=vid,
         federation_job_id=job,
@@ -363,6 +379,13 @@ async def test_a_reservation_runs_on_the_bridge_and_is_metered(client, admin_hea
         idempotency_key="run-1-key",
         actor=b["agent"],
     )
+    assert pinned["model_class"] == "mock-small"
+    assert pinned["model_policy"] == {"mode": "exact", "model_class": "mock-small"}
+    # The provider sees the same pinned class in the frozen terms.
+    assert (await delegations.get(a["id"], job))["delegation"]["terms"]["model_policy"] == {
+        "mode": "exact",
+        "model_class": "mock-small",
+    }
     assert await rights.settle_reservations() == 0  # still open
     await delegations.act(
         a["id"], job, "accept", actor=a["owner"], create_local_task=Tasks().create
@@ -805,7 +828,15 @@ async def test_an_unfulfilled_obligation_restricts_only_new_matches(
     )
     assert sent["delegation"]["state"] == "OFFERED"
 
-    # 3. Equivalent compensation restores eligibility, automatically.
+    # 3. Compensation must be in the class that is owed.
+    other_class = await _mock_spec(lo, M, model_class="mock-large")
+    assert (
+        await _code(
+            arena.compensate(lo["id"], ob_id, spec_id=other_class["spec_id"], actor=lo["owner"])
+        )
+        == "FED_E_MODEL_CLASS_MISMATCH"
+    )
+    # Equivalent compensation in the same class restores eligibility, automatically.
     ob = await arena.compensate(lo["id"], ob_id, spec_id=lo_spec["spec_id"], actor=lo["owner"])
     assert ob["state"] == "REMEDIATED" and ob["restriction"]["state"] == "LIFTED"
     back = await arena.join_queue(
@@ -831,6 +862,32 @@ async def test_an_unused_voucher_is_not_the_obligors_fault(client, admin_headers
     await arena.obligations_advance()
     ob = (await arena.list_obligations(lo["id"]))["owed_by_me"][0]
     assert ob["state"] == "RESOLVED" and "not the obligor's fault" in ob["history"][-1]["note"]
+
+
+# ── same model class only ─────────────────────────────────────────────────
+
+
+async def test_only_the_same_model_class_is_matched(client, admin_headers, arena_on):
+    """Owner decision 2026-11-12: like-for-like stakes, no cross-model conversion."""
+    assert (
+        await _code(_mock_spec(await _ws(client, admin_headers, "mcx"), model_class="some-model-9"))
+        == "FED_E_PACKAGE_INVALID"
+    )
+    a, b, c = [await _ws(client, admin_headers, f"mc{x}") for x in "abc"]
+    sa = await _mock_spec(a, model_class="mock-small")
+    sb = await _mock_spec(b, model_class="mock-large")
+    sc = await _mock_spec(c, model_class="mock-small")
+    stake = 314_159  # unique to this test
+    first = await arena.join_queue(a["id"], spec_id=sa["spec_id"], stake=stake, actor=a["person"])
+    other = await arena.join_queue(b["id"], spec_id=sb["spec_id"], stake=stake, actor=b["person"])
+    assert first["state"] == "WAITING" and other["state"] == "WAITING"  # different classes
+    same = await arena.join_queue(c["id"], spec_id=sc["spec_id"], stake=stake, actor=c["person"])
+    assert same["state"] == "MATCHED"
+    match = same["match"]
+    assert {s["fid"] for s in match["seats"]} == {a["fid"], c["fid"]}
+    assert match["model_class"] == "mock-small"
+    await arena.leave_queue(b["id"], actor=b["person"])
+    await arena.leave(c["id"], match["match_id"], actor=c["person"])
 
 
 # ── HTTP ──────────────────────────────────────────────────────────────────
@@ -883,7 +940,7 @@ async def test_resource_rights_and_arena_over_http(arena_http):
             headers=ws["owner"],
             json={
                 "resource_class": "MOCK_DEMO",
-                "model_family": "mock",
+                "model_family": "mock-small",
                 "allowed_use": "demo",
                 "declared_tokens": 3 * M,
                 "measured_source": "mock",

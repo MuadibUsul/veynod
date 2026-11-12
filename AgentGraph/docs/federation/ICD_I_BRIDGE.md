@@ -30,6 +30,7 @@
 | `result_contract` | 结果格式说明（例如“一份 Markdown 报告 + 文件清单与 SHA-256”） |
 | `cancellation_policy` | `drain` / `hard_cancel`，按委派选择【愿景 §5.3 TBD：owner 定下统一政策之前两者都可选，控制台默认 `drain`】。`drain`：申请取消后，已完成的部分仍可交付；`hard_cancel`：申请取消后执行方不得再交付，只能确认取消 |
 | `external_side_effects` | 布尔值；为 `true` 时 B 必须由本侧人批准才能接单 |
+| `model_policy`（可选） | `{"mode": "exact", "model_class": "<家族-代>"}`：执行方必须用这个模型类别。目前只有 `exact`。不带这个字段时，条款和验收 hash 与加入它之前完全一样；旧版本的对端会以 `FED_E_TERMS_INVALID` 拒绝带它的委派（安全失败）。用模拟资源权益的券发出的委派必须带它（`ICD_P6_RESOURCE_RIGHTS_ARENA.md` §4） |
 
 **BRIDGE-INV-1 无 delegate 无副作用**：A→B 方向的连接上，A 的 `outbound_scopes` 和 B 的 `inbound_scopes` 都必须含 `delegate`（I-GRANT GRANT-INV-3）。否则 B 在写入任何数据之前返回 `FED_E_SCOPE_DENIED`，不建本地任务（F-002）。
 
@@ -97,8 +98,10 @@
 acceptance_hash = SHA-256( JCS({objective, acceptance_criteria, input_summary,
                                 data_classification, allowed_use, deadline,
                                 budget_cap, result_contract, cancellation_policy,
-                                external_side_effects}) )
+                                external_side_effects[, model_policy]}) )
 ```
+
+`model_policy` 只在条款里出现时才参与计算。
 
 - B 在 `delegate.accept` 里回传它计算的 `acceptance_hash`；A 必须核对与自己算的一致，否则这次接单无效。
 - 之后任何字段的修改都走 `delegate.amend`：携带新对象和新 hash，**双方的人**都确认后才生效，旧 hash 留在历史里。agent 不能单方面改验收标准。

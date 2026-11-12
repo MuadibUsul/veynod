@@ -110,6 +110,21 @@ def check_unit(unit: Any) -> None:
         )
 
 
+def model_classes() -> list[str]:
+    """The operator's list of model classes (family + generation)."""
+    return list(get_settings().federation_model_classes)
+
+
+def require_model_class(value: Any) -> str:
+    if not isinstance(value, str) or value not in model_classes():
+        raise FederationError(
+            "FED_E_PACKAGE_INVALID",
+            "model_family is one of the operator's model classes",
+            allowed=model_classes(),
+        )
+    return value
+
+
 async def fid_of(session: AsyncSession, workspace_id: str) -> str:
     from app.services.federation import grants
 
@@ -228,6 +243,7 @@ def _spec_out(row: dict[str, Any], capacity: int | None = None) -> dict[str, Any
         "escrowable": row["escrowable"],
         "unit": row["unit"],
         "model_family": row["model_family"],
+        "model_class": row["model_family"],
         "allowed_use": row["allowed_use"],
         "license_basis_ref": row["license_basis_ref"],
         "measured_source": row["measured_source"],
@@ -319,8 +335,8 @@ async def declare_spec(
         raise FederationError("FED_E_PACKAGE_INVALID", "a spec lasts 1 to 365 days")
     from app.services.federation import delegations
 
+    model_family = require_model_class(model_family)
     for name, value in (
-        ("model_family", model_family),
         ("allowed_use", allowed_use),
         ("license_basis_ref", license_basis_ref),
         ("revocation_policy", revocation_policy),
@@ -616,9 +632,15 @@ async def _voucher_view(session: AsyncSession, row: dict[str, Any]) -> dict[str,
     available = await balance(session, voucher_account(row["voucher_id"]))
     reserved = sum(int(r["amount"]) for r in reservations if r["state"] == "RESERVED")
     consumed = sum(int(r["consumed"]) for r in reservations)
+    model_class = await session.scalar(
+        text("SELECT model_family FROM federation_rr_specs WHERE spec_id = :s"),
+        {"s": row["spec_id"]},
+    )
     return {
         "voucher_id": row["voucher_id"],
         "spec_id": row["spec_id"],
+        "model_class": model_class,
+        "model_policy": {"mode": "exact", "model_class": model_class},
         "issuer": row["issuer_fid"],
         "beneficiary": row["beneficiary_fid"],
         "origin": row["origin"],
@@ -856,6 +878,20 @@ async def reserve(
                 "FED_E_RESERVATION_INVALID",
                 "the delegation needs an enforced model_tokens budget_cap equal to the reservation",
                 needed={"amount": amount, "unit": "model_tokens", "mode": "enforce"},
+            )
+        # The voucher runs only on its own model class: same class in, same class out.
+        model_class = await session.scalar(
+            text("SELECT model_family FROM federation_rr_specs WHERE spec_id = :s"),
+            {"s": row["spec_id"]},
+        )
+        policy = (job["terms"] or {}).get("model_policy")
+        wanted = {"mode": "exact", "model_class": model_class}
+        if policy != wanted:
+            raise FederationError(
+                "FED_E_MODEL_CLASS_MISMATCH",
+                "the delegation must pin this voucher's model class (model_policy exact)",
+                needed=wanted,
+                got=policy,
             )
         await lock(session, voucher_account(voucher_id))
         row = await _voucher_row(session, voucher_id, lock_row=True)

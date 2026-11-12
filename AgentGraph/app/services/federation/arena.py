@@ -89,6 +89,7 @@ def _contract(row: dict[str, Any]) -> dict[str, Any]:
         "match_id": row["match_id"],
         "seats": [row["seat0_fid"], row["seat1_fid"]],
         "specs": [row["seat0_spec"], row["seat1_spec"]],
+        "model_class": row["model_class"],
         "stake": int(row["stake"]),
         "unit": rights.UNIT,
         "rules_hash": row["rules_hash"],
@@ -247,10 +248,11 @@ async def join_queue(
                 await session.execute(
                     text(
                         "SELECT * FROM federation_arena_queue WHERE state = 'WAITING' AND "
-                        "stake = :s AND rules_hash = :h AND fid <> :f ORDER BY created_at "
-                        "LIMIT 50"
+                        "stake = :s AND rules_hash = :h AND model_class = :c AND fid <> :f "
+                        "ORDER BY created_at LIMIT 50"
                     ),
-                    {"s": stake, "h": rules_hash, "f": me},
+                    # Same model class only: like-for-like stakes, no conversion.
+                    {"s": stake, "h": rules_hash, "c": spec["model_family"], "f": me},
                 )
             )
             .mappings()
@@ -267,13 +269,14 @@ async def join_queue(
         entry_id = rights.new_id("faq")
         await session.execute(
             text(
-                "INSERT INTO federation_arena_queue (entry_id, fid, spec_id, stake, rules_hash, "
-                "state, created_by) VALUES (:e, :f, :s, :k, :h, :st, :by)"
+                "INSERT INTO federation_arena_queue (entry_id, fid, spec_id, model_class, stake, "
+                "rules_hash, state, created_by) VALUES (:e, :f, :s, :c, :k, :h, :st, :by)"
             ),
             {
                 "e": entry_id,
                 "f": me,
                 "s": spec_id,
+                "c": spec["model_family"],
                 "k": stake,
                 "h": rules_hash,
                 "st": "MATCHED" if partner else "WAITING",
@@ -285,6 +288,7 @@ async def join_queue(
             match_id = await _create_match(
                 session,
                 seats=[(partner["fid"], partner["spec_id"]), (me, spec_id)],
+                model_class=spec["model_family"],
                 stake=stake,
                 rules=rules,
                 actor=actor.ref,
@@ -325,6 +329,7 @@ async def _create_match(
     session: AsyncSession,
     *,
     seats: list[tuple[str, str]],
+    model_class: str,
     stake: int,
     rules: dict[str, Any],
     actor: str,
@@ -338,6 +343,7 @@ async def _create_match(
         "seat1_fid": seats[1][0],
         "seat0_spec": seats[0][1],
         "seat1_spec": seats[1][1],
+        "model_class": model_class,
         "stake": stake,
         "rules": rules,
         "rules_hash": engine.rules_hash(rules),
@@ -347,8 +353,8 @@ async def _create_match(
     await session.execute(
         text(
             "INSERT INTO federation_arena_matches (match_id, seat0_fid, seat1_fid, seat0_spec, "
-            "seat1_spec, stake, rules, rules_hash, contract_hash, state, seats, server_seed, "
-            "server_commit, setup_deadline) VALUES (:m, :a, :b, :sa, :sb, :k, "
+            "seat1_spec, model_class, stake, rules, rules_hash, contract_hash, state, seats, "
+            "server_seed, server_commit, setup_deadline) VALUES (:m, :a, :b, :sa, :sb, :mc, :k, "
             "CAST(:r AS jsonb), :rh, :ch, 'MATCHED', CAST(:seats AS jsonb), :ss, :sc, :sd)"
         ),
         {
@@ -357,6 +363,7 @@ async def _create_match(
             "b": row["seat1_fid"],
             "sa": row["seat0_spec"],
             "sb": row["seat1_spec"],
+            "mc": model_class,
             "k": stake,
             "r": json.dumps(rules),
             "rh": row["rules_hash"],
@@ -412,6 +419,7 @@ async def _view(session: AsyncSession, row: dict[str, Any], seat: int | None) ->
         "version": row["version"],
         "my_seat": seat,
         "seats": seats,
+        "model_class": row["model_class"],
         "stake": int(row["stake"]),
         "stake_m": rights.as_m(row["stake"]),
         "unit": row["unit"],
@@ -734,6 +742,7 @@ def _proof_payload(row: dict[str, Any], log: list[dict[str, Any]]) -> dict[str, 
         "contract_hash": row["contract_hash"],
         "rules_hash": row["rules_hash"],
         "seats": fids,
+        "model_class": row["model_class"],
         "stake": int(row["stake"]),
         "unit": rights.UNIT,
         "server_commit": row["server_commit"],
@@ -983,7 +992,8 @@ async def _settle(session: AsyncSession, row: dict[str, Any], actor: str) -> Non
         origin_ref=row["match_id"],
         usage_scope=(
             f"Arena match {row['match_id']}: delegate work to {fids[loser]} through the "
-            "federation bridge, up to this amount of simulated capacity"
+            f"federation bridge on model class {row['model_class']} only, up to this amount "
+            "of simulated capacity"
         ),
         expires_at=_now() + timedelta(days=get_settings().federation_arena_voucher_days),
         source_account=rights.stake(row["match_id"], loser),
@@ -1540,6 +1550,20 @@ async def compensate(
         if spec["provider_fid"] != me:
             raise FederationError("FED_E_RESOURCE_UNKNOWN", "compensate from a spec of yours")
         rights.require_escrowable(spec)
+        owed_class = await session.scalar(
+            text(
+                "SELECT s.model_family FROM federation_rr_vouchers v JOIN federation_rr_specs s "
+                "ON s.spec_id = v.spec_id WHERE v.voucher_id = :v"
+            ),
+            {"v": ob["voucher_id"]},
+        )
+        if spec["model_family"] != owed_class:
+            raise FederationError(
+                "FED_E_MODEL_CLASS_MISMATCH",
+                "compensate in the model class that is owed",
+                needed=owed_class,
+                got=spec["model_family"],
+            )
         await rights.lock(session, rights.cap(spec_id))
         left = await rights.balance(session, rights.cap(spec_id))
         if left < amount:

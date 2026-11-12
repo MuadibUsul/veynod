@@ -149,13 +149,41 @@ def _text(terms: dict[str, Any], key: str, limit: int) -> str:
     return value.strip()
 
 
+# Optional fields: absent, the terms (and their acceptance hash) are exactly
+# what they were before the field existed.
+OPTIONAL_TERM_FIELDS = ("model_policy",)
+# model_policy (ICD_I_BRIDGE §2.1): which model class the provider must run.
+# Only "exact" for now; the class is a family + generation name.
+MODEL_POLICY_MODES = ("exact",)
+_MODEL_CLASS = re.compile(r"^[a-z0-9][a-z0-9.-]{0,62}[a-z0-9]$")
+
+
+def _validate_model_policy(policy: Any) -> dict[str, Any]:
+    if (
+        isinstance(policy, dict)
+        and set(policy) == {"mode", "model_class"}
+        and policy["mode"] in MODEL_POLICY_MODES
+        and isinstance(policy["model_class"], str)
+        and _MODEL_CLASS.match(policy["model_class"])
+    ):
+        return {"mode": policy["mode"], "model_class": policy["model_class"]}
+    raise FederationError(
+        "FED_E_TERMS_INVALID",
+        "model_policy is {mode: exact, model_class: <family-generation>}",
+        allowed_modes=list(MODEL_POLICY_MODES),
+    )
+
+
 def validate_terms(terms: Any) -> dict[str, Any]:
     """The frozen delegation object (ICD_I_BRIDGE §2), normalised."""
-    if not isinstance(terms, dict) or set(terms) != set(TERM_FIELDS):
+    if not isinstance(terms, dict) or not set(TERM_FIELDS) <= set(terms) <= set(TERM_FIELDS) | set(
+        OPTIONAL_TERM_FIELDS
+    ):
         raise FederationError(
             "FED_E_TERMS_INVALID",
             "terms must have exactly the documented fields",
             expected=list(TERM_FIELDS),
+            optional=list(OPTIONAL_TERM_FIELDS),
         )
     criteria = terms["acceptance_criteria"]
     if (
@@ -193,6 +221,8 @@ def validate_terms(terms: Any) -> dict[str, Any]:
         "cancellation_policy": terms["cancellation_policy"],
         "external_side_effects": terms["external_side_effects"],
     }
+    if "model_policy" in terms:
+        normal["model_policy"] = _validate_model_policy(terms["model_policy"])
     scrub(normal)
     return normal
 
@@ -283,7 +313,9 @@ async def _require_budget_left(platform: AsyncSession, row: dict[str, Any]) -> N
 
 def acceptance_hash(terms: dict[str, Any]) -> str:
     """ICD_I_BRIDGE §7: SHA-256 of the JCS of the frozen terms."""
-    return sha256_hex({key: terms[key] for key in TERM_FIELDS})
+    return sha256_hex(
+        {key: terms[key] for key in (*TERM_FIELDS, *OPTIONAL_TERM_FIELDS) if key in terms}
+    )
 
 
 def validate_result(result: Any) -> dict[str, Any]:

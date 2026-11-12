@@ -201,6 +201,7 @@
 | P13 | 限制范围 | 只禁止开新牌局 | 不影响正常工作，否则无法还 | `arena._require_unrestricted` |
 | P14 | 恢复方式 | 被验收的交付、等值 DEMO_M 补偿、券放弃/到期、运营结案；自动解除 | 补交即恢复 | `arena.obligations_advance`、`compensate`、`decide` |
 | P15 | agent 能做什么 | owner 授权 `agent_play` 后可承诺、揭示、出牌；授权合同、质押只能 owner | 人对质押负责 | `arena.authorize`、`_may_play` |
+| P16 | 模型类别 | 只与同类对局；默认类别 mock-small、mock-large、claude-opus-5、claude-sonnet-5、claude-haiku-5、gpt-5、gemini-3；交付时核对实际模型要等 worker 上报 | owner 2026-11-12 决定：同类同质，不做跨模型换算 | `config.federation_model_classes`、`rights.require_model_class` |
 
 ## O. 后续各单（做到时补充）
 

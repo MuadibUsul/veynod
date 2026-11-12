@@ -178,6 +178,8 @@ CREATE TABLE IF NOT EXISTS federation_arena_queue (
     entry_id VARCHAR(40) PRIMARY KEY CHECK (entry_id ~ '^faq_[a-z2-7]{26}$'),
     fid VARCHAR(64) NOT NULL REFERENCES federation_identities(federation_id),
     spec_id VARCHAR(40) NOT NULL REFERENCES federation_rr_specs(spec_id),
+    -- Only workspaces staking the same model class are matched (owner 2026-11-12).
+    model_class VARCHAR(64) NOT NULL,
     stake BIGINT NOT NULL CHECK (stake > 0),
     rules_hash VARCHAR(64) NOT NULL,
     state VARCHAR(8) NOT NULL DEFAULT 'WAITING' CHECK (state IN ('WAITING', 'MATCHED', 'LEFT')),
@@ -195,6 +197,7 @@ CREATE TABLE IF NOT EXISTS federation_arena_matches (
     seat1_fid VARCHAR(64) NOT NULL REFERENCES federation_identities(federation_id),
     seat0_spec VARCHAR(40) NOT NULL REFERENCES federation_rr_specs(spec_id),
     seat1_spec VARCHAR(40) NOT NULL REFERENCES federation_rr_specs(spec_id),
+    model_class VARCHAR(64) NOT NULL,
     stake BIGINT NOT NULL CHECK (stake > 0),
     unit VARCHAR(8) NOT NULL DEFAULT 'DEMO_M' CHECK (unit = 'DEMO_M'),
     rules JSONB NOT NULL,
