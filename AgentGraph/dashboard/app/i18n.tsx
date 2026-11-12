@@ -1893,6 +1893,13 @@ const ZH: Record<string, string> = {
   "{dismissed} dismissed · {resolved} resolved in all": "驳回 {dismissed} 条 · 共结案 {resolved} 条",
   // Federation P5-1: market
   "Market (simulated)": "交易（模拟）",
+  "Arena (simulated)": "牌局（模拟）",
+  "No economic value; not redeemable or exchangeable": "没有经济价值，不能兑现，也不能兑换",
+  "Simulated capacity": "模拟容量",
+  "{n} held in vouchers": "券中持有 {n}",
+  "New arena matches are paused until an obligation is delivered or resolved": "有一项义务未交付或未结案，暂停开新牌局",
+  "Voucher from {who}": "来自 {who} 的券",
+  "Owed to {who}": "欠 {who}",
   "SIM demonstration credits, not money": "SIM 是演示积分，不是钱",
   "Credits": "积分",
   "{n} held in escrow": "托管中 {n}",

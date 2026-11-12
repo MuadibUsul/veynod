@@ -222,6 +222,14 @@ EPHEMERAL = frozenset({
     # Simulated market (v3.98): deployment-wide, keyed by federation ids.
     "federation_offers", "federation_contracts", "federation_contract_history",
     "federation_ledger_txns", "federation_ledger_entries", "federation_settlements",
+    # Simulated resource rights and the arena (v3.99): deployment-wide, keyed by
+    # federation ids; DEMO_M has no economic value.
+    "federation_rr_specs", "federation_rr_txns", "federation_rr_entries",
+    "federation_rr_vouchers", "federation_rr_reservations",
+    "federation_arena_queue", "federation_arena_matches", "federation_arena_actions",
+    "federation_arena_history", "federation_arena_settlements",
+    "federation_arena_obligations", "federation_arena_obligation_history",
+    "federation_arena_restrictions",
 })
 # Archive groups a caller may leave out with ``include``; objects always ship.
 GROUPS = ("documents", "versions", "doc_edges", "grants", "events", "audit_log")
