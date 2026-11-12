@@ -17063,7 +17063,7 @@
       "code": "connection_revoked",
       "http": 409,
       "retryable": false,
-      "rule": "This installation was revoked: run `npx veynod --fresh` to connect it again."
+      "rule": "This installation was revoked: run `npx veynod --fresh` to connect again."
      },
      {
       "action": "decide_with_safe_default_and_continue",

@@ -279,7 +279,7 @@ REGISTRY: dict[str, ErrorSpec] = {
     "cli_session_expired": _spec(410, ABANDON, "Run `npx veynod` again for a new code."),
     "cli_session_consumed": _spec(410, ABANDON, "The key was collected once; start a new setup."),
     "connection_revoked": _spec(
-        409, ABANDON, "This installation was revoked: run `npx veynod --fresh` to connect it again."),
+        409, ABANDON, "This installation was revoked: run `npx veynod --fresh` to connect again."),
     "cli_code_unavailable": _spec(503, RETRY_BACKOFF, "Back off and retry."),
     "invalid_device_code": _spec(404, ABANDON, "Start a new setup with `npx veynod`."),
     "merge_without_deliverable": _spec(
