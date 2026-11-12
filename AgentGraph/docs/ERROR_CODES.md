@@ -223,6 +223,7 @@ do not edit by hand. Every error body is
 | `circuit_not_open` | 409 | `abandon` | `abandon_and_release_local_state` | The domain's circuit is already closed. |
 | `claim_already_refuted` | 409 | `abandon` | `abandon_and_release_local_state` | The claim was refuted; report a new commit. |
 | `cli_session_decided` | 409 | `abandon` | `abandon_and_release_local_state` | Run `npx veynod` again for a new code. |
+| `connection_revoked` | 409 | `abandon` | `abandon_and_release_local_state` | This installation was revoked: run `npx veynod --fresh` to connect it again. |
 | `decide_with_safe_default` | 409 | `abandon` | `decide_with_safe_default_and_continue` | Automation is on: choose the safest default, note it on the task and continue; ask the owner only about details.owner_topics. |
 | `document_archived` | 409 | `abandon` | `abandon_and_release_local_state` | Give up, or ask for restore_document. |
 | `escape_closed` | 409 | `abandon` | `abandon_and_release_local_state` | The escape is already FIXED or WAIVED. |
