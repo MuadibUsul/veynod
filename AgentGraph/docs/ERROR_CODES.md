@@ -241,6 +241,7 @@ do not edit by hand. Every error body is
 | `login_unavailable` | 409 | `abandon` | `abandon_and_release_local_state` | Update veynod on that computer, or sign the agent in on it directly. |
 | `no_submission` | 409 | `abandon` | `abandon_and_release_local_state` | Run the sandbox after a submission is accepted. |
 | `not_queue_head` | 409 | `abandon` | `abandon_and_release_local_state` | Only the queue head is checked; wait for this chunk's turn. |
+| `nothing_to_look_at` | 409 | `abandon` | `abandon_and_release_local_state` | The task is not flagged for a look; nothing to decide. |
 | `nothing_to_probe` | 409 | `abandon` | `abandon_and_release_local_state` | Write and index documents first. |
 | `oauth_request_decided` | 409 | `abandon` | `abandon_and_release_local_state` | Start the connection again from your client. |
 | `placement_not_movable` | 409 | `abandon` | `abandon_and_release_local_state` | Read the placement again; it ended or its task moved past this step. |

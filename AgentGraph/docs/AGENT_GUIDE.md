@@ -508,6 +508,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `circuit_not_open` | 409 | `abandon` |
 | `claim_already_refuted` | 409 | `abandon` |
 | `cli_session_decided` | 409 | `abandon` |
+| `connection_revoked` | 409 | `abandon` |
 | `decide_with_safe_default` | 409 | `abandon` |
 | `document_archived` | 409 | `abandon` |
 | `escape_closed` | 409 | `abandon` |
@@ -525,6 +526,7 @@ Every write is stamped with the token, the chain from the workspace root token a
 | `login_unavailable` | 409 | `abandon` |
 | `no_submission` | 409 | `abandon` |
 | `not_queue_head` | 409 | `abandon` |
+| `nothing_to_look_at` | 409 | `abandon` |
 | `nothing_to_probe` | 409 | `abandon` |
 | `oauth_request_decided` | 409 | `abandon` |
 | `placement_not_movable` | 409 | `abandon` |

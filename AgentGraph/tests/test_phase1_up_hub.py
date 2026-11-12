@@ -121,23 +121,18 @@ async def _until(client, ws: dict, key: str, wanted: str) -> str:
     return status
 
 
-async def _person_reviews(client, ws: dict, key: str) -> None:
-    """With one computer the review is the person's: it says so, then they approve."""
-    overview = (await client.get("/v1/loop/overview", headers=ws["owner"])).json()
-    waiting = {item["key"]: item for item in overview["needs_you"]["waiting"]}
-    for _ in range(20):
-        if key in waiting:
-            break
-        await asyncio.sleep(0.5)
-        overview = (await client.get("/v1/loop/overview", headers=ws["owner"])).json()
-        waiting = {item["key"]: item for item in overview["needs_you"]["waiting"]}
-    assert waiting[key]["why"] == "review", overview["needs_you"]
-    approved = await client.post(f"/v1/tasks/{key}/review", headers=ws["owner"],
-                                 json={"decision": "approve"})
-    assert approved.status_code == 200, approved.text
+async def _finished_on_trust(client, ws: dict, key: str) -> None:
+    """Under full automation the hub's hand-off ends the task: no review is
+    queued for a person, even with one computer (docs/LOOP_SIMPLE_MODEL.md)."""
+    row = await _task_row(client, ws, key)
+    assert row["status"] == "DONE", row
+    assert row["reviewed_by"] is None, "nobody had to approve it"
+    placements = (await client.get("/v1/runner/placements", headers=ws["owner"],
+                                   params={"task_key": key})).json()["items"]
+    assert [item for item in placements if item["step"] == "review"] == [], placements
 
 
-async def test_one_hub_builds_over_its_nerve_socket_and_the_person_reviews(client, api_base_url):
+async def test_one_hub_builds_over_its_nerve_socket_and_the_task_is_done(client, api_base_url):
     ws = await _workspace(client, "full")
     agent = await _agent(client, ws, f"box-{uuid.uuid4().hex[:6]}", "EXECUTOR")
     with tempfile.TemporaryDirectory() as tmp:
@@ -171,11 +166,10 @@ async def test_one_hub_builds_over_its_nerve_socket_and_the_person_reviews(clien
             assert "another hub" in second.stdout + second.stderr
 
             key = await _task(client, ws, repo=None)
-            status = await _until(client, ws, key, "REVIEWING")
-            assert status == "REVIEWING", (status, hub.stderr.read() if hub.poll() is not None
-                                           else "hub running")
-            await _person_reviews(client, ws, key)
-            assert await _until(client, ws, key, "DONE") == "DONE"
+            status = await _until(client, ws, key, "DONE")
+            assert status == "DONE", (status, hub.stderr.read() if hub.poll() is not None
+                                      else "hub running")
+            await _finished_on_trust(client, ws, key)
 
             after = subprocess.run(["node", str(CLI), "doctor"], env=env, capture_output=True,
                                    text=True, timeout=60)
@@ -254,9 +248,8 @@ async def test_veynod_up_connects_one_identity_then_the_loop_runs(client, api_ba
             assert up.returncode == 0, output
 
             key = await _task(client, ws, repo=None)
-            assert await _until(client, ws, key, "REVIEWING") == "REVIEWING", output
-            await _person_reviews(client, ws, key)
-            assert await _until(client, ws, key, "DONE") == "DONE"
+            assert await _until(client, ws, key, "DONE") == "DONE", output
+            await _finished_on_trust(client, ws, key)
         finally:
             if up.returncode is None:
                 up.kill()
