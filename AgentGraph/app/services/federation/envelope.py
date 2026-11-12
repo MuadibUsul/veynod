@@ -42,6 +42,7 @@ PUBLIC_TYPES = frozenset(
         "identity.revocation",
         "skill.release",
         "fulfillment.proof",
+        "arena.result",
     }
 )
 KNOWN_TYPES = PUBLIC_TYPES | frozenset(

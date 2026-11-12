@@ -39,6 +39,8 @@ from app.api.code_page import router as code_page_router
 from app.api.code_routes import router as code_router
 from app.api.deploy_routes import router as deploy_router
 from app.api.event_admin_routes import router as event_admin_router
+from app.api.federation_arena_routes import admin_router as federation_arena_admin_router
+from app.api.federation_arena_routes import router as federation_arena_router
 from app.api.federation_routes import admin_router as federation_admin_router
 from app.api.federation_routes import router as federation_router
 from app.api.human_routes import router as human_router
@@ -387,6 +389,8 @@ app.include_router(project_router)
 app.include_router(deploy_router)
 app.include_router(federation_router)
 app.include_router(federation_admin_router)
+app.include_router(federation_arena_router)
+app.include_router(federation_arena_admin_router)
 app.include_router(auth_router)
 app.include_router(human_router)
 app.include_router(org_router)

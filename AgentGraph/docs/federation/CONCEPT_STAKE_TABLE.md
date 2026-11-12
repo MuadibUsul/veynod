@@ -3,6 +3,7 @@
 > 状态：**概念稿，未立项，没有任何代码**。owner 2026-11-11 提出想法，本文是展开和可行性分析。
 > 相关：`ICD_P5_MARKET.md`（报价/合同/托管）、`ICD_I_BRIDGE.md` §8（用量计量）、`ICD_P4_REPUTATION.md`、`ICD_I_GOVERNANCE.md`、`OWNER_DECISIONS.md`。
 > 文末第 10 节是需要 owner 拍板的事项；第 8 节的两条风险在拍板之前不应动工真实额度版本。
+> **更新（2026-11-12）**：无经济价值的 R0–R3 原型已按任务 `fed-resource-rights-poker-arena-sim-v1` 实现，见 `ICD_P6_RESOURCE_RIGHTS_ARENA.md`、`ADR_RESOURCE_RIGHTS.md`、`RESOURCE_RIGHTS_GAP.md`。本文的真实额度版本仍在 owner + 法律门禁之外。
 
 ## 0. 一句话
 

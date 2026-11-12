@@ -717,6 +717,10 @@ async def delivery_loop() -> None:
                 from app.services.federation import market
 
                 await market.advance()
+                from app.services.federation import arena, rights
+
+                await rights.advance()  # no-op unless resource rights are on
+                await arena.advance()  # no-op unless the arena is on
         except asyncio.CancelledError:
             raise
         except Exception:  # noqa: BLE001 - the loop must survive one bad pass
