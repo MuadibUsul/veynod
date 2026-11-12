@@ -613,3 +613,140 @@ async def test_the_stopped_tasks_come_with_what_their_rounds_failed_on(client) -
     assert len(stopped) == 1, metrics["stopped"]
     assert stopped[0]["role"] == "EXECUTOR" and stopped[0]["repo"] == REPO
     assert [item["reason"] for item in stopped[0]["rounds"]] == ["not_claimed"] * 3
+
+
+# ------------------------------------------------------------------ no dead ends
+
+
+def test_a_repository_is_matched_by_what_it_is_not_how_it_was_typed() -> None:
+    from app.services.scheduler import same_repo
+
+    assert same_repo("MuadibUsul/veynod", "muadibusul/Veynod")
+    assert same_repo("https://github.com/MuadibUsul/veynod.git", "MuadibUsul/veynod")
+    # A bare name is the repository of that name on the computer.
+    assert same_repo("smoke", "smoke/smoke")
+    assert same_repo("veynod", "MuadibUsul/veynod")
+    assert not same_repo("acme/veynod", "MuadibUsul/veynod")
+    assert not same_repo("site", "acme/website")
+    assert not same_repo("", "acme/site")
+
+
+def test_a_coding_agent_has_the_general_capabilities_without_declaring_them() -> None:
+    from app.services.scheduler import _capabilities
+
+    bare = {"capabilities": [], "runtimes": [{"id": "codex", "available": True}]}
+    assert {"frontend", "backend", "docs", "codex"} <= _capabilities(bare)
+    # A custom command or a runtime that is not ready promises nothing.
+    assert "frontend" not in _capabilities({"capabilities": [], "runtimes": [{"id": "custom"}]})
+    assert "frontend" not in _capabilities(
+        {"capabilities": ["gpu"], "runtimes": [{"id": "claude", "available": False}]})
+    assert "gpu" in _capabilities({"capabilities": ["GPU"], "runtimes": []})
+
+
+async def test_an_analyst_or_frontend_task_finds_the_one_computer_there_is(client) -> None:
+    """With one EXECUTOR computer, ANALYST tasks and tasks that name a general
+    capability waited forever. Under full automation the computer takes them."""
+    from tests.test_scheduler import _host
+
+    ws = await _workspace(client, "full")
+    host = await _host(client, ws, f"only-{uuid.uuid4().hex[:4]}", slots=3)
+    research = f"an-{uuid.uuid4().hex[:8]}"
+    made = await client.post("/v1/tasks", headers=ws["owner"], json={
+        "task_key": research, "title": "Compare three vendors", "assigned_role": "ANALYST",
+        "namespace": "default"})
+    assert made.status_code == 201, made.text
+    frontend = f"fe-{uuid.uuid4().hex[:8]}"
+    made = await client.post("/v1/tasks", headers=ws["owner"], json={
+        "task_key": frontend, "title": "Mobile shell", "assigned_role": "EXECUTOR",
+        "namespace": "default", "required_capabilities": ["frontend"]})
+    assert made.status_code == 201, made.text
+    # A role its author made a hard requirement is kept.
+    strict = f"st-{uuid.uuid4().hex[:8]}"
+    made = await client.post("/v1/tasks", headers=ws["owner"], json={
+        "task_key": strict, "title": "Analyst only", "assigned_role": "ANALYST",
+        "required_role": "ANALYST", "namespace": "default"})
+    assert made.status_code == 201, made.text
+
+    await _schedule(client, ws)
+    for key in (research, frontend):
+        row = await _task_row(client, ws, key)
+        assert row["assignee"] == host["assignee"], (key, row["assignee"])
+    placements = await _placements(client, ws, task_key=strict)
+    assert [(item["status"], item["reason"]) for item in placements] == [
+        ("unplaced", "no_host_for_role")]
+
+    # The computer it was placed on may claim it; another EXECUTOR may not.
+    claimed = await client.post(f"/v1/tasks/{research}/claim", headers=host["headers"], json={})
+    assert claimed.status_code == 200, claimed.text
+    other = await _host(client, ws, f"other-{uuid.uuid4().hex[:4]}")
+    refused = await client.post(f"/v1/tasks/{strict}/claim", headers=other["headers"], json={})
+    assert refused.status_code == 403, refused.text
+
+
+async def test_a_stopped_task_is_tried_again_once_its_failures_are_old(client) -> None:
+    """HANDOFF after three failed rounds used to be the end. Old failures no
+    longer count, so the task returns to the board; fresh ones keep it stopped."""
+    from tests.test_scheduler import _host
+
+    ws = await _workspace(client, "full")
+    host = await _host(client, ws, f"again-{uuid.uuid4().hex[:4]}", slots=4)
+
+    async def stopped(age: str) -> str:
+        key = await _task(client, ws)
+        task_id = (await _fetch("SELECT id FROM collab_tasks WHERE task_key = $1", key))[0]["id"]
+        for _ in range(3):
+            await _sql(
+                "INSERT INTO runner_placements (workspace_id, task_id, task_key, host_id, "
+                "agent_id, mode, status, step, reason, created_at, ended_at) VALUES ($1::uuid, $2, "
+                f"$3, $4, $5, 'assign', 'failed', 'work', 'not_claimed', NOW() - INTERVAL '{age}', "
+                f"NOW() - INTERVAL '{age}')",
+                ws["id"], task_id, key, host["host_id"], host["agent_id"])
+        await _sql("UPDATE collab_tasks SET status = 'HANDOFF' WHERE task_key = $1", key)
+        return key
+
+    old = await stopped("3 days")
+    fresh = await stopped("1 hour")
+    # Handed off by an agent on purpose: never reopened by the scheduler.
+    handed = await stopped("3 days")
+    await _sql("UPDATE collab_tasks SET handed_off_by = 'someone' WHERE task_key = $1", handed)
+
+    result = await _schedule(client, ws)
+    assert result["resumed"] >= 1, result
+    row = await _task_row(client, ws, old)
+    assert row["status"] in ("READY", "IN_PROGRESS") and row["assignee"] == host["assignee"], row
+    assert (await _task_row(client, ws, fresh))["status"] == "HANDOFF"
+    assert (await _task_row(client, ws, handed))["status"] == "HANDOFF"
+    events = await _fetch(
+        "SELECT payload->>'task_key' AS key FROM timeline_streams WHERE workspace_id = $1::uuid "
+        "AND event_type = 'TASK_SCHEDULER_RESUMED'", ws["id"])
+    assert [row["key"] for row in events] == [old]
+    # The old failures do not count against the computer either: it was offered again.
+    offered = [item for item in await _placements(client, ws, task_key=old)
+               if item["status"] in ("offered", "claimed")]
+    assert offered and offered[0]["host_id"] == host["host_id"]
+
+
+async def test_the_doctor_judges_the_supervisor_by_rounds_that_finished(
+        api_base_url, client) -> None:
+    ws = await _workspace(client, "full")
+    boss = await _computer(api_base_url, client, ws, f"doc-{uuid.uuid4().hex[:4]}",
+                           role="AUDITOR", capabilities=["supervisor"])
+    boss.policy = lambda poke: [("task.ack.net", {"received_at_ms": 0})]
+    await _stuck_task(client, ws)
+
+    async def check(name: str) -> dict:
+        report = (await client.get("/v1/runner/doctor", headers=ws["owner"])).json()
+        return {**next(item for item in report["checks"] if item["id"] == name),
+                "doctor_ok": report["ok"]}
+
+    try:
+        assert (await check("rounds"))["ok"] is True  # nothing ended yet
+        poke = await _round(client, ws, boss)
+        await _until(lambda: _ended(client, ws, poke["frame_id"]), timeout=30)
+        rounds = await check("rounds")
+        # Online is not enough: a round that never finished turns the doctor red.
+        assert rounds["ok"] is False and rounds["doctor_ok"] is False, rounds
+        assert "0 of the last 1" in rounds["text"] and "nerve:" in rounds["text"]
+        assert (await check("supervisor"))["text"] == "A supervisor computer is online."
+    finally:
+        await boss.close()

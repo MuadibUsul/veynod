@@ -203,6 +203,21 @@ def _check_epoch(task: CollabTask, expected: int | None) -> None:
         raise LeaseConflict("collab_task", task_out(task).model_dump(mode="json"))
 
 
+async def _ensure_role(session: AsyncSession, principal: Principal, task: CollabTask) -> None:
+    """The role check of a claim or hand-off, with the one placement exception.
+
+    The scheduler may give an ANALYST task to an EXECUTOR computer (see
+    ``scheduler._fits``). That computer's agent is then the task's assignee, and
+    is let through here; anyone else still needs the task's role.
+    """
+    if (task.assigned_role == "ANALYST" and principal.role.value == "EXECUTOR"
+            and get_settings().runner_executor_takes_analyst and task.assignee
+            and await collab.assignee_matches(
+                session, principal, task, effective_agent(principal, None))):
+        return
+    ensure_task_role(principal, task.assigned_role)
+
+
 def _check_assignee(task: CollabTask, principal: Principal, agent: str) -> None:
     if not task.assignee:
         return
@@ -698,7 +713,7 @@ async def claim_task(
     batch = request.session_batch_id or uuid.uuid4()
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
     ensure_namespace(principal, task.namespace, write=True)
-    ensure_task_role(principal, task.assigned_role)
+    await _ensure_role(session, principal, task)
     # One execution owner: a task with a live Agent Run belongs to that Run.
     # The scheduler already skips such tasks, but a manual claim used to take
     # them anyway and both sides then delivered the same work.
@@ -1028,7 +1043,7 @@ async def handoff_task(
     batch = request.session_batch_id or uuid.uuid4()
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
     ensure_namespace(principal, task.namespace, write=True)
-    ensure_task_role(principal, task.assigned_role)
+    await _ensure_role(session, principal, task)
     now = await db_now(session)
     # A holder whose lease ended learns that first, whatever the task became.
     lease_service.check_fencing(task, request.fencing_token)
@@ -1467,7 +1482,7 @@ async def escalate_task(
     batch = request.session_batch_id or uuid.uuid4()
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
     ensure_namespace(principal, task.namespace, write=True)
-    ensure_task_role(principal, task.assigned_role)
+    await _ensure_role(session, principal, task)
     _check_version(task, request.expected_version)
     lease_service.check_fencing(task, request.fencing_token)
     if task.status in (TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED):

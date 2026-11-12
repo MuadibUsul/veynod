@@ -323,21 +323,70 @@ async def _reconcile(session: AsyncSession, workspace_id: Any,
     return counts
 
 
+# What a computer with a coding agent can do without having said so. Tasks
+# name capabilities such as "frontend"; computers almost never declare any, so
+# such tasks had no computer although any coding agent could take them.
+CODING_AGENT_CAPABILITIES = frozenset({
+    "software-engineering", "coding", "code", "backend", "frontend", "fullstack", "tests",
+    "testing", "docs", "documentation", "research", "writing", "analysis"})
+
+
+def _capabilities(host: dict[str, Any]) -> set[str]:
+    """Declared capabilities, runtime ids and, with a ready coding agent, the
+    general ones every coding agent has."""
+    have = {item.lower() for item in host["capabilities"] or []} | {
+        runtime["id"] for runtime in host["runtimes"] or []}
+    if any(runtime["id"] in ("claude", "codex") and runtime.get("available") is not False
+           for runtime in host["runtimes"] or []):
+        have |= CODING_AGENT_CAPABILITIES
+    return have
+
+
+def same_repo(wanted: str, offered: str) -> bool:
+    """Whether a task's repository is the one a computer serves.
+
+    Exact, ignoring case, a trailing ``.git`` and a host prefix. A bare name
+    (``smoke``) matches ``owner/smoke``: tasks written by hand often leave the
+    owner out, and such a task waited forever as "no computer reaches it".
+    """
+    def clean(value: str) -> str:
+        value = value.strip().lower().removesuffix(".git").rstrip("/")
+        for prefix in ("https://github.com/", "http://github.com/", "git@github.com:",
+                       "github.com/"):
+            value = value.removeprefix(prefix)
+        return value
+
+    left, right = clean(wanted), clean(offered)
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    return "/" not in left and right.rsplit("/", 1)[-1] == left
+
+
+def _stands_in(host_role: str | None, wanted: str, task: CollabTask) -> bool:
+    """An EXECUTOR computer may take an ANALYST task (the setting says whether).
+
+    Only when the task names its role as ``assigned_role``: ``required_role`` is
+    a hard requirement its author set on purpose and is kept.
+    """
+    return (settings.runner_executor_takes_analyst and wanted == "ANALYST"
+            and host_role == "EXECUTOR" and not task.required_role)
+
+
 def _fits(task: CollabTask, host: dict[str, Any]) -> list[str]:
     """The filters a host fails for a task, in UNPLACED order."""
     misses = []
     role = task.required_role or task.assigned_role
-    if role and host["role_scope"] != role:
+    if role and host["role_scope"] != role and not _stands_in(host["role_scope"], role, task):
         misses.append("no_host_for_role")
     namespaces = list(host["allowed_namespaces"] or [])
     if "*" not in namespaces and task.namespace not in namespaces:
         misses.append("no_host_for_namespace")
     needed = {item.lower() for item in (task.required_capabilities or [])}
-    have = {item.lower() for item in host["capabilities"] or []} | {
-        runtime["id"] for runtime in host["runtimes"] or []}
-    if needed - have:
+    if needed - _capabilities(host):
         misses.append("no_host_with_capabilities")
-    if task.repo and task.repo.lower() not in {repo.lower() for repo in host["repos"] or []}:
+    if task.repo and not any(same_repo(task.repo, repo) for repo in host["repos"] or []):
         misses.append("no_host_for_repo")
     if quota_used(host) is None:
         misses.append("no_host_with_runtime")
@@ -423,11 +472,16 @@ async def _load(session: AsyncSession, workspace_id: Any,
 async def _work_failures(session: AsyncSession, task: CollabTask) -> tuple[dict[str, int], int]:
     """Hosts to avoid for this task (failed twice, or moved off by the supervisor)
     and the failed rounds so far. A supervisor's move does not count as a round."""
+    # Only what failed lately counts (runner_failure_window_hours): an old
+    # failure may have had a cause that is gone, and counting it forever kept a
+    # task stopped for good.
     rows = (await session.execute(text(
         "SELECT host_id, status, count(*) FROM runner_placements WHERE task_id = :t "
         "AND step = 'work' AND host_id IS NOT NULL AND (status = 'failed' "
-        "OR (status = 'moved' AND reason = 'supervisor_moved')) GROUP BY host_id, status"),
-        {"t": task.id})).all()
+        "OR (status = 'moved' AND reason = 'supervisor_moved')) "
+        "AND COALESCE(ended_at, created_at) > NOW() - make_interval(hours => :w) "
+        "GROUP BY host_id, status"),
+        {"t": task.id, "w": settings.runner_failure_window_hours})).all()
     failures: dict[str, int] = {}
     rounds = 0
     for host_id, status, count in rows:
@@ -599,6 +653,7 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
 
     online = _online(hosts, now)
     load = await _load(session, workspace_id, hosts)
+    resumed = await _resume_stopped(session, workspace_id, now) if mode == "full" else 0
 
     # ADR-017: a task with an active Agent Run is executed by the Runtime
     # through the Kernel. It must never also be offered to a runner host.
@@ -698,8 +753,55 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
     # across a receipt wait per placement.
     delivered = await dispatch_offered(workspace_id)
     return {"mode": workspace_mode, "hosts": len(online), "placed": placed,
-            "suggested": suggested, "nerve": delivered,
+            "suggested": suggested, "nerve": delivered, "resumed": resumed,
             "unplaced": unplaced, "stopped": gave_up, **counts, **steps, "rounds": rounds}
+
+
+async def _resume_stopped(session: AsyncSession, workspace_id: Any, now: datetime) -> int:
+    """Put tasks the scheduler stopped back on the board once their failures are old.
+
+    A task goes to HANDOFF after ``MAX_ROUNDS`` failed rounds. That used to be
+    the end: the scheduler only places READY tasks, and nothing moved a stopped
+    one back. A stopped task (HANDOFF with no hand-off by anyone, nobody
+    holding it, and at least ``MAX_ROUNDS`` failed work placements in its
+    history) returns to READY when fewer than ``MAX_ROUNDS`` of them fall
+    inside the failure window, so it is tried again about once per window
+    instead of never. A task an agent or a person handed off is not touched.
+    """
+    rows = (await session.execute(text(
+        "SELECT t.id FROM collab_tasks t WHERE t.workspace_id = :ws AND t.status = 'HANDOFF' "
+        "AND t.handed_off_by IS NULL AND t.claimed_by IS NULL AND t.assignee IS NULL "
+        "AND t.active_run_id IS NULL AND (t.kind IS NULL OR t.kind = 'work') "
+        "AND (SELECT count(*) FROM runner_placements p WHERE p.task_id = t.id "
+        "     AND p.step = 'work' AND p.status = 'failed') >= :rounds "
+        "AND (SELECT count(*) FROM runner_placements p WHERE p.task_id = t.id "
+        "     AND p.step = 'work' AND p.status = 'failed' "
+        "     AND COALESCE(p.ended_at, p.created_at) > NOW() - make_interval(hours => :w)) "
+        "    < :rounds LIMIT 50"),
+        {"ws": workspace_id, "rounds": MAX_ROUNDS,
+         "w": settings.runner_failure_window_hours})).scalars().all()
+    resumed = 0
+    for task_id in rows:
+        task = await session.get(CollabTask, task_id, with_for_update=True)
+        if task is None or task.status != TaskStatus.HANDOFF:
+            continue
+        before = task_snapshot(task)
+        task.status = TaskStatus.READY
+        task.version += 1
+        task.updated_at = now
+        await session.flush()
+        await record_audit(session, workspace_id=workspace_id, session_batch_id=uuid.uuid4(),
+                           agent_signature="scheduler", target_table="collab_tasks",
+                           target_record_id=task.id, operation="UPDATE", before=before,
+                           after=task_snapshot(task))
+        await append_event(
+            session, workspace_id=workspace_id, agent="scheduler",
+            event_type="TASK_SCHEDULER_RESUMED",
+            payload={"task_key": task.task_key,
+                     "note": "its failed rounds are older than the failure window; trying again"},
+            namespace=task.namespace)
+        resumed += 1
+    return resumed
 
 
 async def run_all_locked() -> int | None:
@@ -1201,16 +1303,46 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
           "On each of them run `npx veynod@latest` (0.7.0 or newer): Claude Code and Codex then "
           "start every session with the computer's own key (Node 22 or newer).")
     check("supervisor", bool(supervisors), False,
-          "A supervisor computer looks after the Loop." if supervisors
+          "A supervisor computer is online." if supervisors
           else "No supervisor computer: stuck work is listed for you instead.",
           "Optional: `npx veynod --supervisor` on one computer.")
+    # Being online is not looking after the Loop: judge by how rounds ended.
+    recent = (await session.execute(text(
+        "SELECT status, reported, reason FROM runner_placements WHERE workspace_id = :ws "
+        "AND step = 'supervise' AND host_id IS NOT NULL AND ended_at IS NOT NULL "
+        "ORDER BY created_at DESC LIMIT 5"), {"ws": workspace_id})).mappings().all()
+    finished = sum(1 for row in recent if row["reported"] == "finished")
+    rounds_ok = not recent or finished > 0
+    why = recent[0]["reason"] if recent else None
+    check("rounds", rounds_ok, True,
+          "No supervisor round has ended yet." if not recent
+          else f"{finished} of the last {len(recent)} supervisor round(s) finished."
+          + ("" if rounds_ok else f" None ran to the end (last: {why or 'no report'})."),
+          "Rounds are offered but do not finish: update the supervisor computer "
+          "(`npx veynod@latest`), then read `loop(action=\"metrics\")` for the reason.")
+    # Work that could run but does not move.
+    stale = (await session.execute(text(
+        "SELECT count(*) FROM collab_tasks t WHERE t.workspace_id = :ws AND t.status = 'READY' "
+        "AND t.assignee IS NULL AND t.claimed_by IS NULL AND (t.kind IS NULL OR t.kind = 'work') "
+        "AND t.updated_at < NOW() - INTERVAL '6 hours'"), {"ws": workspace_id})).scalar_one()
+    stopped = (await session.execute(text(
+        "SELECT count(*) FROM collab_tasks t WHERE t.workspace_id = :ws AND t.status = 'HANDOFF' "
+        "AND t.handed_off_by IS NULL AND (SELECT count(*) FROM runner_placements p "
+        "WHERE p.task_id = t.id AND p.step = 'work' AND p.status = 'failed') >= :rounds"),
+        {"ws": workspace_id, "rounds": MAX_ROUNDS})).scalar_one()
+    check("progress", not stale and not stopped, False,
+          "No task has waited long and none is stopped." if not stale and not stopped
+          else f"{stale} READY task(s) have waited over 6 hours; {stopped} task(s) are "
+               "stopped after failed rounds (they are tried again once those are a day old).",
+          "Open the Loop page (Needs you) for the tasks with no computer; "
+          "`loop(action=\"metrics\")` lists the stopped ones with what failed.")
     waiting = (await session.execute(select(CollabTask).where(
         CollabTask.workspace_id == workspace_id, CollabTask.status == TaskStatus.READY,
         CollabTask.assignee.is_(None), CollabTask.claimed_by.is_(None),
         (CollabTask.kind.is_(None)) | (CollabTask.kind == "work")).limit(500))).scalars().all()
-    reach = {repo.lower() for host in builders for repo in host["repos"] or []}
+    reach = [repo for host in builders for repo in host["repos"] or []]
     uncovered = sorted({task.repo for task in waiting
-                        if task.repo and task.repo.lower() not in reach})
+                        if task.repo and not any(same_repo(task.repo, repo) for repo in reach)})
     check("repos", not uncovered, False,
           "Every waiting task's repository is on an online computer." if not uncovered
           else f"No online computer works on {', '.join(uncovered[:5])}.",

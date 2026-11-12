@@ -194,3 +194,17 @@ owner (constitution, automation rules). Several waiting tasks are of this kind
 by their own title (`ser-p00-02` "人决定", `ser-p00-05` "人签约"). An unattended
 Loop should finish everything around them and present those decisions together,
 not wait on each one.
+
+## F. Changed after this audit (same branch)
+
+| Finding | Change |
+| --- | --- |
+| B1 HANDOFF is a dead end | A task the scheduler stopped returns to READY once fewer than three of its failed rounds fall inside the failure window (`TASK_SCHEDULER_RESUMED`). A task an agent or a person handed off is not touched. |
+| B2 failures counted forever | Only failures of the last `RUNNER_FAILURE_WINDOW_HOURS` (24) count, against the task and against the computer. A stopped task is therefore tried again about once a day. |
+| A3 doctor judges by presence | New required check `rounds` (red when none of the last five ended rounds finished) and check `progress` (READY tasks waiting over six hours, stopped tasks). The supervisor line now says "online", not "looks after the Loop". |
+| B3 role | Under full automation an EXECUTOR computer may be given an ANALYST task (`RUNNER_EXECUTOR_TAKES_ANALYST`, on). `required_role` stays a hard requirement. Only the computer it was placed on may claim it. |
+| B3 capabilities | A computer with Claude Code or Codex ready has the general capabilities (frontend, backend, docs, research, ...) without declaring them. |
+| B3 repository names | `smoke` matches `smoke/smoke`; case, `.git` and a GitHub prefix are ignored. |
+
+Still open: B4 (a review path without a second machine), C1 (one computer, one
+subscription), C5 (the Loop cannot ship its own fixes).

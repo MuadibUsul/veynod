@@ -147,6 +147,15 @@ class Settings(BaseSettings):
     runner_step_timeout_seconds: int = Field(default=1800, ge=60, le=86_400)
     runner_supervise_every_seconds: int = Field(default=600, ge=60, le=86_400)
     runner_supervise_timeout_seconds: int = Field(default=1200, ge=60, le=86_400)
+    # A failed placement counts against a task (and against the computer for
+    # that task) for this long. Older failures are history: the cause may be
+    # gone (a new CLI, a server release, a computer back online), so a task the
+    # scheduler stopped is put back and tried again after this window.
+    runner_failure_window_hours: int = Field(default=24, ge=1, le=24 * 90)
+    # Under full automation a computer whose token is EXECUTOR may be given an
+    # ANALYST task (research and writing): with no analyst computer such tasks
+    # waited forever. Reviews still never go to whoever built the work.
+    runner_executor_takes_analyst: bool = True
     # How long the hub waits for a computer's worker to be up after the computer
     # read a poke. The poke carries the messenger's watchdog derived from this
     # (500 ms less), so one setting moves both ends: the two are one budget.
