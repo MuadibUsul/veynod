@@ -620,6 +620,10 @@ class CollabTask(Base):
     artifact_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     artifact_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     handed_off_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Finished on trust and flagged for a look, with the reasons (v3.101).
+    needs_attention: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false"))
+    attention_reasons: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     review_round: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")
     )

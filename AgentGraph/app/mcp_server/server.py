@@ -1250,6 +1250,17 @@ async def agent_handoff_task(
                      "task.review_rejected with the verdict note",
             "do_not": "hand off again, or mark it DONE yourself",
         }
+    elif payload.get("status") == "DONE":
+        # Trust by default: the hand-off ended the task and released what waits on it.
+        task = payload.get("task") or {}
+        payload["next"] = {
+            "you_are_done": True,
+            "finished": "the task is DONE on trust; what depended on it is released",
+            "needs_attention": bool(task.get("needs_attention")),
+            "attention_reasons": task.get("attention_reasons") or [],
+            "note": "a flagged task is looked at by a person or an AUDITOR afterwards; "
+                    "a redo arrives as a new follow-up task, not as a rejection",
+        }
     return _compact(payload)
 
 

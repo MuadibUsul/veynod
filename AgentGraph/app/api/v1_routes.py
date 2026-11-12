@@ -100,6 +100,7 @@ from app.schemas import (
     SubtasksRequest,
     SuperAdminTokenIssueRequest,
     TaskActionResponse,
+    TaskAttentionRequest,
     TaskClaimRequest,
     TaskContextResponse,
     TaskCreateRequest,
@@ -448,6 +449,8 @@ async def list_tasks(
                                  description="Comma-separated task keys or ids"),
     diagram_key: str | None = Query(default=None, max_length=64,
                                     description="the chunk tasks of this diagram"),
+    needs_attention: bool | None = Query(
+        default=None, description="true: finished on trust and flagged for a look"),
     detail: Literal["summary", "standard", "full"] = Query(
         default="full", description="summary: short task cards (the MCP default)"),
     principal: Principal = Depends(get_principal),
@@ -467,6 +470,7 @@ async def list_tasks(
         claimable_by_me=claimable_by_me,
         task_keys=[item.strip() for item in (task_key or "").split(",") if item.strip()],
         diagram_key=diagram_key,
+        needs_attention=needs_attention,
     )
     if detail == "full":
         return result
@@ -603,6 +607,20 @@ async def list_leases(
     return await lease_service.list_leases(
         session, principal, holder=holder, state=state, cursor=cursor, limit=limit
     )
+
+
+@router.post(
+    "/tasks/{task_key}/attention",
+    summary="A person or an AUDITOR looked at work finished on trust: ok, or redo with a note",
+)
+async def resolve_task_attention(
+    task_key: str,
+    body: TaskAttentionRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await services.resolve_attention(session, principal, task_key,
+                                            decision=body.decision, note=body.note)
 
 
 @router.post(

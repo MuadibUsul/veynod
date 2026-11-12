@@ -365,13 +365,15 @@ def same_repo(wanted: str, offered: str) -> bool:
 
 
 def _stands_in(host_role: str | None, wanted: str, task: CollabTask) -> bool:
-    """An EXECUTOR computer may take an ANALYST task (the setting says whether).
+    """One worker role: an EXECUTOR and an ANALYST computer take each other's tasks.
 
     Only when the task names its role as ``assigned_role``: ``required_role`` is
     a hard requirement its author set on purpose and is kept.
     """
-    return (settings.runner_executor_takes_analyst and wanted == "ANALYST"
-            and host_role == "EXECUTOR" and not task.required_role)
+    from app.auth import WORKER_ROLES
+
+    return (settings.worker_roles_unified and wanted in WORKER_ROLES
+            and host_role in WORKER_ROLES and not task.required_role)
 
 
 def _fits(task: CollabTask, host: dict[str, Any]) -> list[str]:

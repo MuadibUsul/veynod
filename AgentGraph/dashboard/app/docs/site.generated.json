@@ -12335,6 +12335,13 @@
          "type": "string | null"
         },
         {
+         "description": "true: finished on trust and flagged for a look",
+         "in": "query",
+         "name": "needs_attention",
+         "required": false,
+         "type": "boolean | null"
+        },
+        {
          "description": "summary: short task cards (the MCP default)",
          "in": "query",
          "name": "detail",
@@ -12701,6 +12708,39 @@
         "422"
        ],
        "summary": "Cancel a task's Agent Run"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "decision",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "note",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "task_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tasks/{task_key}/attention",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A person or an AUDITOR looked at work finished on trust: ok, or redo with a note"
       },
       {
        "body": [],

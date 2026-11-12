@@ -152,10 +152,18 @@ class Settings(BaseSettings):
     # gone (a new CLI, a server release, a computer back online), so a task the
     # scheduler stopped is put back and tried again after this window.
     runner_failure_window_hours: int = Field(default=24, ge=1, le=24 * 90)
-    # Under full automation a computer whose token is EXECUTOR may be given an
-    # ANALYST task (research and writing): with no analyst computer such tasks
-    # waited forever. Reviews still never go to whoever built the work.
-    runner_executor_takes_analyst: bool = True
+    # One worker role (docs/LOOP_SIMPLE_MODEL.md): an EXECUTOR and an ANALYST
+    # take each other's tasks. A task's `required_role` stays a hard requirement,
+    # and reviews still never go to whoever built the work.
+    worker_roles_unified: bool = True
+    # Trust by default: under full automation an agent's hand-off ends the task
+    # (DONE) and releases what depends on it. A task that should still be looked
+    # at carries `needs_attention` with the reasons. Namespaces listed here keep
+    # the review step. Tasks with a repository keep the Kernel gate either way.
+    trust_by_default: bool = True
+    trust_reviewed_namespaces: list[str] = Field(default_factory=list)
+    # The share of trusted hand-offs flagged for a look, so quality is measured.
+    trust_sample_rate: float = Field(default=0.10, ge=0, le=1)
     # How long the hub waits for a computer's worker to be up after the computer
     # read a poke. The poke carries the messenger's watchdog derived from this
     # (500 ms less), so one setting moves both ends: the two are one budget.

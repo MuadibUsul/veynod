@@ -1059,6 +1059,10 @@ class TaskSummary(BaseModel):
     awaiting_deploy: bool | None = Field(
         default=None, description="true: approved, waiting in HANDOFF for a verified deploy "
                                   "before DONE (not sent back)")
+    needs_attention: bool = Field(
+        default=False, description="finished on trust and flagged for a look by a person or "
+                                   "an AUDITOR; attention_reasons says why. Holds nothing back")
+    attention_reasons: list[str] | None = None
     ping_pong_count: int
     retry_count: int = Field(
         default=0, description="Alias of ping_pong_count (spec §4.2 retry_count)")
@@ -1467,6 +1471,11 @@ class RunnerHeartbeatRequest(StrictModel):
 class PlacementReportRequest(StrictModel):
     outcome: Literal["finished", "failed"]
     note: str | None = Field(default=None, max_length=500)
+
+
+class TaskAttentionRequest(StrictModel):
+    decision: Literal["ok", "redo"]
+    note: str | None = Field(default=None, max_length=2_000)
 
 
 class PlacementStartRequest(StrictModel):

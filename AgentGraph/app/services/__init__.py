@@ -95,6 +95,7 @@ from app.services.tasks import (
     reassign_task,
     release_task,
     renew_task,
+    resolve_attention,
     review_task,
 )
 from app.services.timeline import append_event, list_timeline
@@ -171,6 +172,7 @@ __all__ = [
     "rotate_agent_token",
     "reassign_task",
     "release_task",
+    "resolve_attention",
     "renew_task",
     "replace_slot",
     "review_task",

@@ -203,19 +203,105 @@ def _check_epoch(task: CollabTask, expected: int | None) -> None:
         raise LeaseConflict("collab_task", task_out(task).model_dump(mode="json"))
 
 
-async def _ensure_role(session: AsyncSession, principal: Principal, task: CollabTask) -> None:
-    """The role check of a claim or hand-off, with the one placement exception.
+async def _trusted_handoff(session: AsyncSession, principal: Principal, task: CollabTask,
+                           next_status: str, brief: dict[str, Any] | None) -> list[str] | None:
+    """Whether an agent's hand-off to review ends the task, and why to look at it.
 
-    The scheduler may give an ANALYST task to an EXECUTOR computer (see
-    ``scheduler._fits``). That computer's agent is then the task's assignee, and
-    is let through here; anyone else still needs the task's role.
+    None: the usual path (the task goes where the caller asked). A list: the task
+    is DONE now; a non-empty list is the reasons a person or an AUDITOR should
+    still look (``needs_attention``), which holds nothing back.
+
+    Applies under full automation to an agent handing work to REVIEWING, outside
+    the namespaces kept reviewed. Tasks with a repository and diagram chunks keep
+    their gate (Kernel verification, merge queue), and a workspace under
+    enforced quality control keeps its tiers.
     """
-    if (task.assigned_role == "ANALYST" and principal.role.value == "EXECUTOR"
-            and get_settings().runner_executor_takes_analyst and task.assignee
-            and await collab.assignee_matches(
-                session, principal, task, effective_agent(principal, None))):
-        return
-    ensure_task_role(principal, task.assigned_role)
+    if (not settings.trust_by_default or next_status != "REVIEWING" or principal.is_human
+            or task.repo or (task.kind or "work") != "work" or quality.enforced()
+            or task.namespace in settings.trust_reviewed_namespaces
+            or (task.input_context or {}).get("diagram")):
+        return None
+    if await automation.mode_for_task(session, principal.workspace.id, task.task_key) != "full":
+        return None
+    brief = brief or {}
+    reasons: list[str] = []
+    if brief.get("risk_flag"):
+        reasons.append("risk_flag: the agent flagged a risk")
+    metrics = brief.get("key_metrics") if isinstance(brief.get("key_metrics"), dict) else {}
+    unmet = brief.get("acceptance_not_met") or metrics.get("acceptance_not_met") \
+        or metrics.get("acceptance_not_done")
+    if unmet:
+        reasons.append(f"acceptance_not_met: {unmet}"[:300])
+    manual = [str(item.get("id") or "") for item in (task.acceptance or [])
+              if isinstance(item, dict) and item.get("kind") == "MANUAL"]
+    if manual:
+        # The author asked for a person's eyes on these items.
+        reasons.append(f"manual_acceptance: {', '.join(manual)}"[:300])
+    topic = brief.get("owner_topic")
+    if topic in automation.OWNER_TOPICS:
+        reasons.append(f"owner_topic: {topic}")
+    if not reasons and quality._sampled(task.id, settings.trust_sample_rate):
+        reasons.append("sampled: a routine look, nothing was flagged")
+    return reasons
+
+
+async def resolve_attention(session: AsyncSession, principal: Principal, task_key: str, *,
+                            decision: str, note: str | None = None) -> dict[str, Any]:
+    """A person or an AUDITOR looked at a task that was finished on trust.
+
+    ``ok`` clears the flag. ``redo`` clears it too and opens a follow-up task
+    with the note, because a finished task is not reopened: what it delivered
+    stays on record and the fix is new work. Whoever built the task may not
+    judge it.
+    """
+    if decision not in ("ok", "redo"):
+        raise ApiError(422, "validation_error", "decision is ok or redo",
+                       details={"field": "decision"})
+    if not (principal.is_human or principal.role.value in ("AUDITOR", "SUPER_ADMIN")
+            or principal.is_commander):
+        raise Forbidden("a person or an AUDITOR looks at work finished on trust")
+    task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
+    ensure_namespace(principal, task.namespace)
+    agent = effective_agent(principal, None)
+    if not principal.is_human and agent in (task.handed_off_by, task.claimed_by):
+        raise Forbidden("whoever built the work does not judge it")
+    if not task.needs_attention:
+        raise ApiError(409, "nothing_to_look_at", "this task is not flagged for a look",
+                       details={"task_key": task.task_key, "status": task.status.value})
+    if decision == "redo" and not (note or "").strip():
+        raise ApiError(422, "validation_error", "redo needs a note saying what to fix",
+                       details={"field": "note"})
+    reasons = list(task.attention_reasons or [])
+    task.needs_attention = False
+    task.reviewed_by = agent
+    task.version += 1
+    task.updated_at = utcnow()
+    follow_up = None
+    if decision == "redo":
+        suffix = uuid.uuid4().hex[:6]
+        follow_up = CollabTask(
+            workspace_id=task.workspace_id, task_key=f"{task.task_key[:110]}-fix-{suffix}",
+            title=f"Fix: {task.title}"[:256], project=task.project, repo=task.repo,
+            description=(f"Follow-up to `{task.task_key}`, which was finished on trust and "
+                         f"did not hold up.\n\nWhat to fix: {note.strip()}\n\n"
+                         f"What it delivered: {task.artifact_uri or 'see its hand-off brief'}"),
+            status=TaskStatus.READY, priority=task.priority + 1,
+            assigned_role=task.assigned_role, namespace=task.namespace,
+            acceptance=task.acceptance or [], created_by=agent,
+            input_context={"follow_up_of": task.task_key},
+        )
+        session.add(follow_up)
+    await session.flush()
+    await append_event(
+        session, workspace_id=principal.workspace.id, agent=agent,
+        event_type="TASK_ATTENTION_RESOLVED",
+        payload={"task_key": task.task_key, "decision": decision, "note": (note or "")[:500],
+                 "reasons": reasons, "follow_up": follow_up.task_key if follow_up else None,
+                 "targets": [f"agent:{task.handed_off_by}"] if task.handed_off_by else []},
+        namespace=task.namespace)
+    await session.commit()
+    return {"task_key": task.task_key, "decision": decision, "needs_attention": False,
+            "follow_up": follow_up.task_key if follow_up else None}
 
 
 def _check_assignee(task: CollabTask, principal: Principal, agent: str) -> None:
@@ -559,6 +645,7 @@ async def list_tasks(
     claimable_by_me: bool = False,
     task_keys: list[str] | None = None,
     diagram_key: str | None = None,
+    needs_attention: bool | None = None,
 ) -> TaskListResponse:
     require_permission(principal, "task:read")
     query = select(CollabTask).where(
@@ -580,6 +667,9 @@ async def list_tasks(
         query = query.where(CollabTask.parent_task_id == parent_task.id)
     if kind:
         query = query.where(CollabTask.kind == kind)
+    if needs_attention is not None:
+        # Finished on trust and flagged for a look (or, with false, not flagged).
+        query = query.where(CollabTask.needs_attention.is_(needs_attention))
     if diagram_key:
         # A diagram's chunk tasks, however many times a chunk was dispatched.
         query = query.where(CollabTask.input_context["diagram"]["key"].astext == diagram_key)
@@ -629,8 +719,14 @@ async def claimable_conditions(session: AsyncSession, principal: Principal) -> l
             ),
         ]
     if not principal.is_commander:
+        from app.auth import WORKER_ROLES
+
+        mine_roles = ([*WORKER_ROLES] if settings.worker_roles_unified
+                      and principal.role.value in WORKER_ROLES else [principal.role.value])
         conditions.append(CollabTask.assigned_role.is_(None)
-                          | (CollabTask.assigned_role == principal.role.value))
+                          | (CollabTask.assigned_role == principal.role.value)
+                          | (CollabTask.assigned_role.in_(mine_roles)
+                             & CollabTask.required_role.is_(None)))
     if principal.auth_kind is AuthKind.AGENT:
         writes = (principal.write_namespaces if principal.write_namespaces is not None
                   else principal.allowed_namespaces)
@@ -713,7 +809,7 @@ async def claim_task(
     batch = request.session_batch_id or uuid.uuid4()
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
     ensure_namespace(principal, task.namespace, write=True)
-    await _ensure_role(session, principal, task)
+    ensure_task_role(principal, task.assigned_role, task.required_role)
     # One execution owner: a task with a live Agent Run belongs to that Run.
     # The scheduler already skips such tasks, but a manual claim used to take
     # them anyway and both sides then delivered the same work.
@@ -1043,7 +1139,7 @@ async def handoff_task(
     batch = request.session_batch_id or uuid.uuid4()
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
     ensure_namespace(principal, task.namespace, write=True)
-    await _ensure_role(session, principal, task)
+    ensure_task_role(principal, task.assigned_role, task.required_role)
     now = await db_now(session)
     # A holder whose lease ended learns that first, whatever the task became.
     lease_service.check_fencing(task, request.fencing_token)
@@ -1140,8 +1236,13 @@ async def handoff_task(
         auto_release = await quality.check_auto_release(session, principal, task)
     if request.human_feedback is not None and not principal.is_human:
         raise Forbidden("human_feedback is reserved for human reviewers")
+    # Trust by default: this hand-off ends the task instead of queueing a review.
+    trusted = await _trusted_handoff(session, principal, task, request.next_status, brief)
     before = task_snapshot(task)
-    task.status = TaskStatus(request.next_status)
+    task.status = TaskStatus.DONE if trusted is not None else TaskStatus(request.next_status)
+    if trusted is not None:
+        task.needs_attention = bool(trusted)
+        task.attention_reasons = trusted or None
     task.handoff_brief = brief
     task.artifact_uri = artifact_uri
     task.artifact_version = artifact_version
@@ -1175,13 +1276,17 @@ async def handoff_task(
             "version": task.version,
             "summary": brief.get("summary") if brief else None,
             "artifact_uri": artifact_uri,
+            **({"trusted": True, "needs_attention": task.needs_attention,
+                "attention_reasons": task.attention_reasons or []}
+               if trusted is not None else {}),
         },
         namespace=task.namespace,
     )
     if task.status is TaskStatus.DONE:
         await _release_dependents(session, task, principal)
-        await quality.released(session, principal.workspace.id, task,
-                               path="AUTO" if auto_release else "HUMAN", info=auto_release)
+        if trusted is None:
+            await quality.released(session, principal.workspace.id, task,
+                                   path="AUTO" if auto_release else "HUMAN", info=auto_release)
 
     next_task: CollabTask | None = None
     if request.create_next is not None:
@@ -1482,7 +1587,7 @@ async def escalate_task(
     batch = request.session_batch_id or uuid.uuid4()
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
     ensure_namespace(principal, task.namespace, write=True)
-    await _ensure_role(session, principal, task)
+    ensure_task_role(principal, task.assigned_role, task.required_role)
     _check_version(task, request.expected_version)
     lease_service.check_fencing(task, request.fencing_token)
     if task.status in (TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED):
