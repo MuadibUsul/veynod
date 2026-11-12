@@ -890,6 +890,133 @@ async def test_only_the_same_model_class_is_matched(client, admin_headers, arena
     await arena.leave(c["id"], match["match_id"], actor=c["person"])
 
 
+# ── cash tables: chips are tokens ─────────────────────────────────────────
+
+
+async def _turn(a, b, mid):
+    view = await arena.get_match(a["id"], mid)
+    ws = a if view["game"]["hand"]["to_act"] == 0 else b
+    return ws, await arena.get_match(ws["id"], mid)
+
+
+async def test_a_cash_table_settles_by_final_chips(client, admin_headers, arena_on):
+    """Chips are tokens (stake / starting stack each); a seat stands up
+    between hands; only what the loser's stack lost changes hands."""
+    a, b = await _ws(client, admin_headers, "csa"), await _ws(client, admin_headers, "csb")
+    sa, sb = await _mock_spec(a, 5 * M), await _mock_spec(b, 5 * M)
+    stake = 2 * M  # 1000 chips: 2000 tokens a chip
+    assert (
+        await _code(
+            arena.join_queue(
+                a["id"], spec_id=sa["spec_id"], stake=2 * M + 1, mode="cash", actor=a["person"]
+            )
+        )
+        == "FED_E_PACKAGE_INVALID"  # not a whole number of tokens per chip
+    )
+    # An sng seat never meets a cash seat.
+    await arena.join_queue(
+        a["id"], spec_id=sa["spec_id"], stake=stake, mode="cash", actor=a["person"]
+    )
+    c = await _ws(client, admin_headers, "csc")
+    sc = await _mock_spec(c, 5 * M)
+    assert (await arena.join_queue(c["id"], spec_id=sc["spec_id"], stake=stake, actor=c["person"]))[
+        "state"
+    ] == "WAITING"
+    await arena.leave_queue(c["id"], actor=c["person"])
+    joined = await arena.join_queue(
+        b["id"], spec_id=sb["spec_id"], stake=stake, mode="cash", actor=b["person"]
+    )
+    match = joined["match"]
+    mid = match["match_id"]
+    assert match["mode"] == "cash" and match["tokens_per_chip"] == 2000
+    await _ready(a, b, mid, match["contract_hash"], agent_play=True)
+
+    # Hand 1: the button raises to 100 and the big blind folds: +10 chips.
+    ws, view = await _turn(a, b, mid)
+    winner_ws = ws
+    await arena.act(
+        ws["id"],
+        mid,
+        seq=view["action_seq"],
+        action={"type": "raise", "amount": 100},
+        actor=ws["owner"],
+    )
+    ws, view = await _turn(a, b, mid)
+    await arena.act(
+        ws["id"], mid, seq=view["action_seq"], action={"type": "fold"}, actor=ws["owner"]
+    )
+    # Hand 2: the loser's agent stands up; the hand still has to finish.
+    loser_ws = b if winner_ws is a else a
+    standing = await arena.leave(loser_ws["id"], mid, actor=loser_ws["agent"])
+    assert standing["state"] == "PLAYING" and standing["game"]["standing"] is not None
+    ws, view = await _turn(a, b, mid)
+    await arena.act(
+        ws["id"], mid, seq=view["action_seq"], action={"type": "fold"}, actor=ws["owner"]
+    )
+    final = await arena.get_match(a["id"], mid)
+    assert final["state"] == "RESULT_VERIFIED"
+    proof = final["result"]["proof"]
+    assert proof["reason"] == "stood_up" and proof["mode"] == "cash"
+    stacks = proof["final_stacks"]
+    assert sum(stacks) == 2000 and stacks != [1000, 1000]
+    loser_seat = 0 if stacks[0] < stacks[1] else 1
+    lost_chips = 1000 - stacks[loser_seat]
+    assert proof["settles_tokens"] == lost_chips * 2000
+    assert (await arena.verify(mid))["valid"]
+    await arena.settle_due()
+    fids = [a["fid"], b["fid"]]
+    w = a if fids[1 - loser_seat] == a["fid"] else b
+    lo = b if w is a else a
+    w_spec, lo_spec = (sa, sb) if w is a else (sb, sa)
+    # The winner has its stake back and a voucher for exactly the chips it won.
+    assert await _unreserved(w_spec["spec_id"]) == 5 * M
+    assert await _unreserved(lo_spec["spec_id"]) == 5 * M - lost_chips * 2000
+    held = [v for v in (await rights.list_vouchers(w["id"]))["held"] if v["origin"] == "arena"]
+    assert len(held) == 1 and held[0]["face_amount"] == lost_chips * 2000
+    owed = (await arena.list_obligations(lo["id"]))["owed_by_me"][0]
+    assert owed["amount"] == lost_chips * 2000
+    assert (await rights.is_balanced())["ok"]
+
+
+async def test_an_even_cash_table_changes_nothing(client, admin_headers, arena_on):
+    a, b = await _ws(client, admin_headers, "cea"), await _ws(client, admin_headers, "ceb")
+    sa, sb = await _mock_spec(a), await _mock_spec(b)
+    stake = 3 * M
+    await arena.join_queue(
+        a["id"], spec_id=sa["spec_id"], stake=stake, mode="cash", actor=a["person"]
+    )
+    match = (
+        await arena.join_queue(
+            b["id"], spec_id=sb["spec_id"], stake=stake, mode="cash", actor=b["person"]
+        )
+    )["match"]
+    mid = match["match_id"]
+    await _ready(a, b, mid, match["contract_hash"])
+    # Stand up at once and check the hand down: stacks stay even.
+    await arena.leave(a["id"], mid, actor=a["person"])
+    for _ in range(10):
+        view = await arena.get_match(a["id"], mid)
+        if view["state"] != "PLAYING":
+            break
+        ws, view = await _turn(a, b, mid)
+        legal = {x["type"] for x in view["game"]["hand"]["legal"]}
+        await arena.act(
+            ws["id"],
+            mid,
+            seq=view["action_seq"],
+            action={"type": "check" if "check" in legal else "call"},
+            actor=ws["owner"],
+        )
+    final = await arena.get_match(a["id"], mid)
+    proof = final["result"]["proof"]
+    if proof["final_stacks"] == [1000, 1000]:
+        assert proof["settles_tokens"] == 0 and proof["winner_seat"] is None
+        await arena.settle_due()
+        assert await _unreserved(sa["spec_id"]) == 10 * M
+        assert await _unreserved(sb["spec_id"]) == 10 * M
+    assert (await rights.is_balanced())["ok"]
+
+
 # ── HTTP ──────────────────────────────────────────────────────────────────
 
 

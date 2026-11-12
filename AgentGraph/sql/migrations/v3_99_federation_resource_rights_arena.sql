@@ -180,6 +180,8 @@ CREATE TABLE IF NOT EXISTS federation_arena_queue (
     spec_id VARCHAR(40) NOT NULL REFERENCES federation_rr_specs(spec_id),
     -- Only workspaces staking the same model class are matched (owner 2026-11-12).
     model_class VARCHAR(64) NOT NULL,
+    -- sng: winner takes the stake; cash: chips are tokens, settled by final stacks.
+    mode VARCHAR(8) NOT NULL DEFAULT 'sng' CHECK (mode IN ('sng', 'cash')),
     stake BIGINT NOT NULL CHECK (stake > 0),
     rules_hash VARCHAR(64) NOT NULL,
     state VARCHAR(8) NOT NULL DEFAULT 'WAITING' CHECK (state IN ('WAITING', 'MATCHED', 'LEFT')),
@@ -198,6 +200,7 @@ CREATE TABLE IF NOT EXISTS federation_arena_matches (
     seat0_spec VARCHAR(40) NOT NULL REFERENCES federation_rr_specs(spec_id),
     seat1_spec VARCHAR(40) NOT NULL REFERENCES federation_rr_specs(spec_id),
     model_class VARCHAR(64) NOT NULL,
+    mode VARCHAR(8) NOT NULL DEFAULT 'sng' CHECK (mode IN ('sng', 'cash')),
     stake BIGINT NOT NULL CHECK (stake > 0),
     unit VARCHAR(8) NOT NULL DEFAULT 'DEMO_M' CHECK (unit = 'DEMO_M'),
     rules JSONB NOT NULL,

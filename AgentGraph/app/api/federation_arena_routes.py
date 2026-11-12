@@ -97,6 +97,11 @@ class Reserve(_Body):
 class QueueJoin(_Body):
     spec_id: str = Field(pattern=_SPEC)
     stake: int = Field(strict=True, gt=0, description="Tokens of simulated capacity.")
+    mode: Literal["sng", "cash"] = Field(
+        default="sng",
+        description="sng: winner takes the stake. cash: chips are tokens, settled by final "
+        "stacks; stand up between hands with /leave.",
+    )
     unit: str | None = None
 
 
@@ -341,7 +346,10 @@ async def arena_act(
     )
 
 
-@router.post("/arena/matches/{match_id}/leave", summary="Abort before play, concede in play")
+@router.post(
+    "/arena/matches/{match_id}/leave",
+    summary="Abort before play; in play concede (sng) or stand up after this hand (cash)",
+)
 async def arena_leave(
     match_id: str = Path(pattern=_MATCH), principal: Principal = Depends(get_principal)
 ) -> dict[str, Any]:

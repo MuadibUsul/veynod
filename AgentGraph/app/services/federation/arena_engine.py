@@ -165,6 +165,7 @@ def new_match(rules: dict[str, Any], seed: str) -> dict[str, Any]:
         "finished": False,
         "winner": None,  # 0, 1, or None for a draw
         "reason": None,
+        "standing": None,  # cash tables: the seat that asked to leave after this hand
     }
     _start_hand(rules, seed, state)
     return state
@@ -443,6 +444,10 @@ def _next(rules: dict[str, Any], seed: str, state: dict[str, Any]) -> None:
     if stacks[0] == 0 or stacks[1] == 0:
         _finish(state, winner=0 if stacks[1] == 0 else 1, reason="bust")
         return
+    if state.get("standing") is not None:
+        # A cash table ends between hands when a seat stands up; chips settle as they are.
+        _finish(state, winner=_leader(stacks), reason="stood_up")
+        return
     if state["hand_no"] >= rules["max_hands"]:
         if stacks[0] == stacks[1]:
             _finish(state, winner=None, reason="hand_limit_draw")
@@ -465,6 +470,21 @@ def _finish(state: dict[str, Any], *, winner: int | None, reason: str) -> None:
     state["reason"] = reason
 
 
+def _leader(stacks: list[int]) -> int | None:
+    if stacks[0] == stacks[1]:
+        return None
+    return 0 if stacks[0] > stacks[1] else 1
+
+
+def stand_up(state: dict[str, Any], seat: int) -> dict[str, Any]:
+    """Cash tables: leave after the hand in progress. Nothing else changes now;
+    the match ends when that hand ends (whoever is to act)."""
+    state = copy.deepcopy(state)
+    if not state["finished"] and state.get("standing") is None:
+        state["standing"] = seat
+    return state
+
+
 def concede(state: dict[str, Any], seat: int) -> dict[str, Any]:
     state = copy.deepcopy(state)
     if not state["finished"]:
@@ -480,6 +500,8 @@ def replay(rules: dict[str, Any], seed: str, log: list[dict[str, Any]]) -> dict[
         action = entry["action"]
         if action.get("type") == "concede":
             state = concede(state, entry["seat"])
+        elif action.get("type") == "stand_up":
+            state = stand_up(state, entry["seat"])
         else:
             state = apply(rules, seed, state, entry["seat"], action)
     return state
@@ -495,6 +517,7 @@ def seat_view(state: dict[str, Any], seat: int | None) -> dict[str, Any]:
         "finished": state["finished"],
         "winner": state["winner"],
         "reason": state["reason"],
+        "standing": state.get("standing"),
         "timeouts": state["timeouts"],
         "hands_played": len(state["hands"]),
         "last_hand": state["hands"][-1] if state["hands"] else None,
