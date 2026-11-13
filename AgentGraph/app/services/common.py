@@ -150,6 +150,7 @@ def task_summary(task: CollabTask) -> TaskSummary:
         and brief["approval"].get("awaiting_deploy") else None,
         needs_attention=bool(getattr(task, "needs_attention", False)),
         attention_reasons=getattr(task, "attention_reasons", None),
+        check_results=getattr(task, "check_results", None),
         ping_pong_count=task.ping_pong_count,
         retry_count=task.ping_pong_count,
         max_retries=task.max_retries,

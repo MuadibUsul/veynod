@@ -624,6 +624,8 @@ class CollabTask(Base):
     needs_attention: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default=text("false"))
     attention_reasons: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    # Results of the AUTO acceptance checks (v3.102).
+    check_results: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
     review_round: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")
     )

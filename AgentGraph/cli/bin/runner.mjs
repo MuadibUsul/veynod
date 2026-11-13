@@ -331,6 +331,49 @@ export function publicLease(lease, taskKey) {
   };
 }
 
+/**
+ * The task's command checks (AUTO acceptance items whose check is a command),
+ * run in the work directory after the agent's turn. Exit 0 passes. Each runs
+ * with a shell, like `--exec`, with its own timeout; the output's tail is the
+ * detail. Work that came from another workspace runs none.
+ */
+export async function runCommandChecks(task, cwd, { spawner = spawn, env = process.env } = {}) {
+  if (!task || task.input_context?.federation) return [];
+  const checks = (task.acceptance || []).filter((item) => item?.kind === "AUTO"
+    && item.check?.type === "command" && item.check.run);
+  const results = [];
+  for (const item of checks) {
+    results.push(await new Promise((resolveCheck) => {
+      let tail = "";
+      const keep = (chunk) => { tail = (tail + String(chunk)).slice(-400); };
+      let child;
+      try {
+        child = spawner(item.check.run, [], { cwd, env, shell: true, windowsHide: true,
+          stdio: ["ignore", "pipe", "pipe"] });
+      } catch (error) {
+        resolveCheck({ id: item.id, passed: false, detail: `could not start: ${error.message}` });
+        return;
+      }
+      const timer = setTimeout(() => {
+        try { child.kill("SIGKILL"); } catch {}
+        resolveCheck({ id: item.id, passed: false, detail: `timed out after ${item.check.timeout_s || 300} s` });
+      }, (item.check.timeout_s || 300) * 1000);
+      child.stdout?.on("data", keep);
+      child.stderr?.on("data", keep);
+      child.on("error", (error) => {
+        clearTimeout(timer);
+        resolveCheck({ id: item.id, passed: false, detail: error.message });
+      });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        resolveCheck({ id: item.id, passed: code === 0,
+          detail: code === 0 ? "exit 0" : `exit ${code}: ${tail.trim()}`.slice(0, 900) });
+      });
+    }));
+  }
+  return results;
+}
+
 /** Poll until the gate is no longer pending, or the wait elapses. */
 /**
  * The only cwd a kernel coding task may use: a worktree_pool lease directory
@@ -841,6 +884,17 @@ export async function createRunner(options, {
               || submitted?.already_submitted) {
             result = { ok: true, reason: gate?.merge_sha ? `merge_coordinator ${gate.merge_sha}` : "submitted_to_kernel_gate" };
           }
+        }
+      }
+      if (step === "work" && taskKey && result.ok && !skipAgent) {
+        // The task's command checks, judged here, where the work is.
+        const checks = await runCommandChecks(task, cwd, { env: { ...process.env, ...env } });
+        if (checks.length) {
+          receipt({ task_key: taskKey, placement_id: placementId, step, stage: "checks",
+            passed: checks.filter((item) => item.passed).length, failed: checks.filter((item) => !item.passed).length });
+          await callApi(fetchImpl, options.host, options.key,
+            `/v1/tasks/${encodeURIComponent(taskKey)}/checks`, { method: "POST", body: { results: checks } })
+            .catch((error) => say(`checks ${taskKey}: ${error.message}`));
         }
       }
       receipt({ task_key: taskKey, placement_id: placementId, step, stage: result.ok ? "finished" : "failed", reason: result.reason, cwd });

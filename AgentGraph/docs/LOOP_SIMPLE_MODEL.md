@@ -1,7 +1,7 @@
 # A lighter Loop: one worker role, three task states, trust by default
 
 Status: **confirmed by the owner (2026-11-12), all five decisions as proposed.**
-Steps 1 and 2 are implemented (schema 3.101.0); steps 3 and 4 are not yet.
+Steps 1, 2 and 4 are implemented (schema 3.102.0); step 3 is not yet.
 Background: `LOOP_UNATTENDED_AUDIT.md`.
 
 ## The model
@@ -128,3 +128,29 @@ the outside. Those go to the owner together, as now.
 - Verified by `tests/test_unattended_board.py`: one computer, the real CLI hub,
   nobody touching the board; nine tasks of the kinds that stopped in production
   finish in under a minute and one supervisor round runs and is not repeated.
+
+## As implemented (step 4)
+
+An `AUTO` acceptance item takes a `check`:
+
+```json
+{"id": "plan", "text": "the plan is written", "kind": "AUTO",
+ "check": {"type": "document_exists", "doc_key": "plans/q4", "contains": "Friday"}}
+{"id": "ci", "text": "CI is green", "kind": "AUTO", "check": {"type": "gate", "gate": "CI"}}
+{"id": "tests", "text": "the tests pass", "kind": "AUTO",
+ "check": {"type": "command", "run": "pytest -q", "timeout_s": 300}}
+```
+
+- `document_exists` and `gate` are judged by the server when the agent hands
+  off. `command` is run by the runner on the computer that did the work, in its
+  work directory, after the agent's turn, and reported with
+  `POST /v1/tasks/{key}/checks` (only that computer's agent or a person may).
+- Results are on the task (`check_results`) and in `acceptance_state`
+  (PASS / FAIL). A failed check flags the task (`check_failed: <id>: <why>`);
+  under trust it is DONE all the same, and the flag holds nothing back.
+- A task that came in through federation runs no command on this workspace's
+  computers.
+- Not built: an `http` check. The server fetching a URL a task names is a
+  server-side request risk and needs an allowlist first.
+- Verified in `tests/test_unattended_board.py` (a command check that passes on
+  the computer, a document check that fails and flags its task).

@@ -130,6 +130,14 @@ async def _run(client: httpx.AsyncClient, base_url: str) -> None:
         "risky": await _task(client, ws, "Migrate the settings [risky]"),
         "flaky": await _task(client, ws, "Rename the field [flaky]"),
     }
+    # Judged by the platform, not a person: a command the computer runs, and a
+    # document the stand-in agent never writes.
+    tasks["checked"] = await _task(client, ws, "Fix the parser", acceptance=[
+        {"id": "tests", "text": "the tests pass", "kind": "AUTO",
+         "check": {"type": "command", "run": f'"{sys.executable}" -c "print(1)"'}}])
+    tasks["missing_doc"] = await _task(client, ws, "Write the plan document", acceptance=[
+        {"id": "plan", "text": "the plan is written", "kind": "AUTO",
+         "check": {"type": "document_exists", "doc_key": "plans/never-written"}}])
     tasks["first"] = await _task(client, ws, "Collect the requirements")
     tasks["second"] = await _task(client, ws, "Write the plan", depends_on=[tasks["first"]],
                                   status="TODO")
@@ -201,7 +209,14 @@ async def _run(client: httpx.AsyncClient, base_url: str) -> None:
             params={"task_key": ",".join(tasks.values())})).json()["items"]}
     flagged = {label for label, key in tasks.items() if rows[key]["needs_attention"]}
     # Exactly what should be looked at is flagged (plus whatever the 10% sample drew).
-    assert {"manual", "risky"} <= flagged, flagged
+    assert {"manual", "risky", "missing_doc"} <= flagged, flagged
+    assert "checked" not in flagged or rows[tasks["checked"]]["attention_reasons"][0].startswith(
+        "sampled"), rows[tasks["checked"]]
+    # The command check ran on the computer and its result reached the board.
+    assert rows[tasks["checked"]]["check_results"] == [
+        {"id": "tests", "type": "command", "passed": True, "detail": "exit 0"}]
+    assert rows[tasks["missing_doc"]]["attention_reasons"] == [
+        "check_failed: plan: document plans/never-written was not written"]
     assert all(rows[key]["reviewed_by"] is None for key in tasks.values()), "nobody approved"
     # The one task no computer here may take is still waiting, and says why.
     waiting = (await client.get("/v1/runner/placements", headers=ws["owner"],

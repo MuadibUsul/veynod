@@ -101,6 +101,7 @@ from app.schemas import (
     SuperAdminTokenIssueRequest,
     TaskActionResponse,
     TaskAttentionRequest,
+    TaskCheckResultsRequest,
     TaskClaimRequest,
     TaskContextResponse,
     TaskCreateRequest,
@@ -607,6 +608,19 @@ async def list_leases(
     return await lease_service.list_leases(
         session, principal, holder=holder, state=state, cursor=cursor, limit=limit
     )
+
+
+@router.post(
+    "/tasks/{task_key}/checks",
+    summary="The computer that did the work reports its command checks (AUTO acceptance)",
+)
+async def report_task_checks(
+    task_key: str,
+    body: TaskCheckResultsRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await services.record_check_results(session, principal, task_key, body.results)
 
 
 @router.post(

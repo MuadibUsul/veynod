@@ -240,9 +240,106 @@ async def _trusted_handoff(session: AsyncSession, principal: Principal, task: Co
     topic = brief.get("owner_topic")
     if topic in automation.OWNER_TOPICS:
         reasons.append(f"owner_topic: {topic}")
+    for result in task.check_results or []:
+        if result.get("passed") is False:
+            reasons.append(f"check_failed: {result['id']}: {result.get('detail') or ''}"[:300])
     if not reasons and quality._sampled(task.id, settings.trust_sample_rate):
         reasons.append("sampled: a routine look, nothing was flagged")
     return reasons
+
+
+async def _run_server_checks(session: AsyncSession, task: CollabTask) -> list[dict[str, Any]]:
+    """Run the AUTO checks the server can judge; a command check is left pending.
+
+    Results: {id, type, passed: true|false|null, detail}. A task that came in
+    through federation runs no command on this workspace's computers.
+    """
+    from app.services import quality
+
+    results: list[dict[str, Any]] = []
+    gates: dict[str, dict[str, Any]] | None = None
+    for item in task.acceptance or []:
+        check = item.get("check") if isinstance(item, dict) else None
+        if item.get("kind") != "AUTO" or not isinstance(check, dict):
+            continue
+        kind = check.get("type")
+        result: dict[str, Any] = {"id": str(item.get("id")), "type": kind, "passed": None,
+                                  "detail": None}
+        if kind == "document_exists":
+            key = str(check.get("doc_key") or "")
+            row = (await session.execute(text(
+                "SELECT content FROM shared_documents WHERE workspace_id = :ws "
+                "AND (doc_key = :k OR doc_key = :scoped) AND archived_at IS NULL "
+                "ORDER BY version DESC LIMIT 1"),
+                {"ws": task.workspace_id, "k": key,
+                 "scoped": f"{task.namespace}/{key}"})).mappings().one_or_none()
+            wanted = check.get("contains")
+            if row is None:
+                result.update(passed=False, detail=f"document {key} was not written")
+            elif wanted and wanted not in (row["content"] or ""):
+                result.update(passed=False, detail=f"document {key} does not contain {wanted!r}")
+            else:
+                result.update(passed=True, detail=f"document {key} is there")
+        elif kind == "gate":
+            if gates is None:
+                gates = await quality.gate_status(session, task.workspace_id, task=task)
+            entry = gates.get(str(check.get("gate")))
+            if entry is None:
+                result.update(passed=False, detail=f"no {check.get('gate')} result was reported")
+            else:
+                result.update(passed=entry["status"] == "PASS",
+                              detail=f"{check.get('gate')} {entry['status']}")
+        elif kind == "command":
+            if (task.input_context or {}).get("federation"):
+                result.update(passed=False,
+                              detail="work from another workspace runs no command here")
+            else:
+                result["detail"] = "waits for the computer that did the work"
+        results.append(result)
+    return results
+
+
+async def record_check_results(session: AsyncSession, principal: Principal, task_key: str,
+                               results: list[Any]) -> dict[str, Any]:
+    """The computer that did the work reports its command checks.
+
+    Only that computer's agent (the assignee or the last holder) or a person
+    reports them. A failed check flags the task for a look, finished or not.
+    """
+    task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
+    ensure_namespace(principal, task.namespace)
+    agent = effective_agent(principal, None)
+    if not principal.is_human and agent not in (task.handed_off_by, task.claimed_by) and not (
+            task.assignee and await collab.assignee_matches(session, principal, task, agent)):
+        raise Forbidden("the computer that did the work reports its checks")
+    current = {str(entry.get("id")): dict(entry) for entry in task.check_results or []}
+    commands = {str(item.get("id")) for item in task.acceptance or []
+                if isinstance(item, dict) and (item.get("check") or {}).get("type") == "command"}
+    failed: list[str] = []
+    for result in results:
+        if result.id not in commands:
+            raise ApiError(422, "validation_error",
+                           f"{result.id} is not a command check of this task",
+                           details={"field": "results", "command_checks": sorted(commands)})
+        detail = result.detail or ("exit 0" if result.passed else "")
+        current[result.id] = {"id": result.id, "type": "command", "passed": result.passed,
+                              "detail": detail[:500]}
+        if not result.passed:
+            failed.append(f"check_failed: {result.id}: {result.detail or 'command failed'}"[:300])
+    task.check_results = list(current.values())
+    if failed:
+        task.needs_attention = True
+        task.attention_reasons = [*(task.attention_reasons or []), *failed]
+    task.version += 1
+    task.updated_at = utcnow()
+    await append_event(
+        session, workspace_id=principal.workspace.id, agent=agent,
+        event_type="TASK_CHECKS_REPORTED",
+        payload={"task_key": task.task_key, "results": task.check_results,
+                 "failed": len(failed)}, namespace=task.namespace)
+    await session.commit()
+    return {"task_key": task.task_key, "check_results": task.check_results,
+            "needs_attention": task.needs_attention}
 
 
 async def resolve_attention(session: AsyncSession, principal: Principal, task_key: str, *,
@@ -545,7 +642,8 @@ async def _create_task_core(
         updated_at=utcnow(),
     )
     collab.apply_new_fields(task, request)
-    task.acceptance = [item.model_dump() for item in getattr(request, "acceptance", None) or []]
+    task.acceptance = [item.model_dump(exclude_none=True)
+                       for item in getattr(request, "acceptance", None) or []]
     if parent is not None:
         task.parent_task_id = parent.id
         task.parent_task_key = parent.task_key
@@ -786,13 +884,16 @@ async def acceptance_state(session: AsyncSession, task: CollabTask) -> list[dict
             if isinstance(item, dict) and item.get("item_id"):
                 latest[str(item["item_id"])] = str(item.get("result"))
     done = task.status is TaskStatus.DONE
+    checked = {str(entry.get("id")): entry.get("passed") for entry in task.check_results or []}
     out: list[dict[str, Any]] = []
     for item in task.acceptance or []:
         if not isinstance(item, dict):
             continue
         item_id = str(item.get("id") or item.get("item_id") or "")
-        out.append({"id": item_id,
-                    "status": latest.get(item_id) or ("PASS" if done else "PENDING")})
+        # A check's own result says it; a person's verdict (audit) still wins.
+        by_check = {True: "PASS", False: "FAIL"}.get(checked.get(item_id))
+        out.append({"id": item_id, "status": latest.get(item_id) or by_check
+                    or ("PASS" if done else "PENDING")})
     return out
 
 
@@ -1237,6 +1338,10 @@ async def handoff_task(
         auto_release = await quality.check_auto_release(session, principal, task)
     if request.human_feedback is not None and not principal.is_human:
         raise Forbidden("human_feedback is reserved for human reviewers")
+    # The AUTO acceptance checks the server can run, recorded on the task; command
+    # checks stay pending until the computer that did the work reports them.
+    if request.next_status in ("REVIEWING", "DONE") and not principal.is_human:
+        task.check_results = await _run_server_checks(session, task) or None
     # Trust by default: this hand-off ends the task instead of queueing a review.
     trusted = await _trusted_handoff(session, principal, task, request.next_status, brief)
     before = task_snapshot(task)

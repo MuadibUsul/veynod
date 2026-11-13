@@ -12766,6 +12766,33 @@
        "body": [
         {
          "description": "",
+         "name": "results",
+         "required": true,
+         "type": "CheckResult[]"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "task_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/tasks/{task_key}/checks",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "The computer that did the work reports its command checks (AUTO acceptance)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
          "name": "lease_seconds",
          "required": false,
          "type": "integer | null"

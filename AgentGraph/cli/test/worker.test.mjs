@@ -165,3 +165,25 @@ test("a standby worker whose messenger goes away ends on its own", async () => {
   worker.child.disconnect();
   assert.deepEqual(await worker.ended, { code: 0, signal: null });
 });
+
+test("a task's command checks run in the work directory and say how they ended", async () => {
+  const { runCommandChecks } = await import("../bin/runner.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "veynod-checks-"));
+  const node = JSON.stringify(process.execPath);
+  const task = { acceptance: [
+    { id: "here", kind: "AUTO", check: { type: "command", run: `${node} -e "require('fs').accessSync('marker')"` } },
+    { id: "fails", kind: "AUTO", check: { type: "command", run: `${node} -e "console.error('2 failed'); process.exit(3)"` } },
+    { id: "slow", kind: "AUTO", check: { type: "command", run: `${node} -e "setTimeout(() => {}, 5000)"`, timeout_s: 1 } },
+    { id: "person", kind: "MANUAL", text: "a person reads it" },
+    { id: "doc", kind: "AUTO", check: { type: "document_exists", doc_key: "x" } },
+  ] };
+  const { writeFileSync } = await import("node:fs");
+  writeFileSync(join(dir, "marker"), "");
+  const results = await runCommandChecks(task, dir);
+  assert.deepEqual(results.map((item) => [item.id, item.passed]), [["here", true], ["fails", false], ["slow", false]]);
+  assert.match(results[1].detail, /^exit 3: 2 failed/);
+  assert.match(results[2].detail, /timed out after 1 s/);
+  // Work from another workspace runs no command here.
+  assert.deepEqual(await runCommandChecks({ ...task, input_context: { federation: { job: "x" } } }, dir), []);
+  assert.deepEqual(await runCommandChecks(null, dir), []);
+});

@@ -212,3 +212,78 @@ async def test_a_routine_sample_is_flagged_as_such(client) -> None:
     assert (await _row(client, ws, sampled))["attention_reasons"] == [
         "sampled: a routine look, nothing was flagged"]
     assert (await _row(client, ws, plain))["needs_attention"] is False
+
+
+# ------------------------------------------------------------------ acceptance checks
+
+
+async def test_an_auto_check_judges_the_item_instead_of_a_person(client) -> None:
+    ws = await _workspace(client, "full")
+    worker = await _agent(client, ws)
+    written = f"notes-{uuid.uuid4().hex[:6]}"
+    put = await client.put(f"/v1/documents/{written}", headers=worker["headers"], json={
+        "namespace": "default", "content": "# Plan\nship on Friday", "expected_version": 0})
+    assert put.status_code in (200, 201), put.text
+    good = await _task(client, ws, acceptance=[
+        {"id": "plan", "text": "the plan is written", "kind": "AUTO",
+         "check": {"type": "document_exists", "doc_key": written, "contains": "Friday"}}])
+    bad = await _task(client, ws, acceptance=[
+        {"id": "plan", "text": "the plan is written", "kind": "AUTO",
+         "check": {"type": "document_exists", "doc_key": "never-written"}},
+        {"id": "ci", "text": "CI is green", "kind": "AUTO",
+         "check": {"type": "gate", "gate": "CI"}}])
+    await _work(client, worker, good)
+    await _work(client, worker, bad)
+
+    row = await _row(client, ws, good)
+    assert (row["status"], row["needs_attention"]) == ("DONE", False)
+    assert row["check_results"] == [{"id": "plan", "type": "document_exists", "passed": True,
+                                     "detail": f"document {written} is there"}]
+    assert row["acceptance_state"] == [{"id": "plan", "status": "PASS"}]
+    row = await _row(client, ws, bad)
+    # Finished on trust, and flagged with what failed: nothing waits for a person.
+    assert (row["status"], row["needs_attention"]) == ("DONE", True)
+    assert row["attention_reasons"] == [
+        "check_failed: plan: document never-written was not written",
+        "check_failed: ci: no CI result was reported"]
+    assert [item["status"] for item in row["acceptance_state"]] == ["FAIL", "FAIL"]
+
+
+async def test_a_command_check_is_reported_by_the_computer_that_did_the_work(client) -> None:
+    ws = await _workspace(client, "full")
+    worker = await _agent(client, ws)
+    other = await _agent(client, ws)
+    key = await _task(client, ws, acceptance=[
+        {"id": "tests", "text": "the tests pass", "kind": "AUTO",
+         "check": {"type": "command", "run": "pytest -q"}}])
+    await _work(client, worker, key)
+    row = await _row(client, ws, key)
+    assert row["check_results"] == [{"id": "tests", "type": "command", "passed": None,
+                                     "detail": "waits for the computer that did the work"}]
+    assert row["needs_attention"] is False and row["acceptance_state"][0]["status"] == "PASS"
+
+    refused = await client.post(f"/v1/tasks/{key}/checks", headers=other["headers"],
+                                json={"results": [{"id": "tests", "passed": True}]})
+    assert refused.status_code == 403, refused.text
+    unknown = await client.post(f"/v1/tasks/{key}/checks", headers=worker["headers"],
+                                json={"results": [{"id": "nope", "passed": True}]})
+    assert unknown.status_code == 422, unknown.text
+    failed = await client.post(f"/v1/tasks/{key}/checks", headers=worker["headers"], json={
+        "results": [{"id": "tests", "passed": False, "detail": "exit 1: 2 failed"}]})
+    assert failed.status_code == 200, failed.text
+    row = await _row(client, ws, key)
+    assert (row["status"], row["needs_attention"]) == ("DONE", True)
+    assert row["attention_reasons"] == ["check_failed: tests: exit 1: 2 failed"]
+    assert row["acceptance_state"] == [{"id": "tests", "status": "FAIL"}]
+
+
+async def test_a_check_belongs_to_an_auto_item_and_says_what_it_needs(client) -> None:
+    ws = await _workspace(client, "full")
+    for acceptance in (
+        [{"id": "a", "text": "x", "kind": "MANUAL", "check": {"type": "gate", "gate": "CI"}}],
+        [{"id": "a", "text": "x", "kind": "AUTO", "check": {"type": "command"}}],
+        [{"id": "a", "text": "x", "kind": "AUTO", "check": {"type": "http", "url": "https://x"}}],
+    ):
+        made = await client.post("/v1/tasks", headers=ws["owner"], json={
+            "title": "bad check", "namespace": "default", "acceptance": acceptance})
+        assert made.status_code == 422, (acceptance, made.text)
