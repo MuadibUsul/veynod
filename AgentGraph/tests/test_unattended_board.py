@@ -181,7 +181,10 @@ async def _run(client: httpx.AsyncClient, base_url: str) -> None:
             statuses: dict[str, str] = {}
             rounds: list[dict] = []
             all_done_at = None
-            for _ in range(360):
+            # About a minute alone. After a full suite the test database holds thousands
+            # of workspaces whose scheduling passes share one lock, so allow far longer;
+            # the loop ends as soon as the board is done.
+            for _ in range(1200):
                 rows = (await client.get("/v1/tasks", headers=ws["owner"], params={
                     "task_key": ",".join(tasks.values()), "detail": "summary"})).json()["items"]
                 statuses = {row["task_key"]: row["status"] for row in rows}
