@@ -1,7 +1,9 @@
 # A lighter Loop: one worker role, three task states, trust by default
 
 Status: **confirmed by the owner (2026-11-12), all five decisions as proposed.**
-Steps 1, 2 and 4 are implemented (schema 3.102.0); step 3 is not yet.
+Steps 1, 2 and 4 are implemented (schema 3.102.0). Of step 3, the behaviour
+is implemented (no state is a dead end any more); the renaming of states in the
+API and the console is not, see "Step 3" below.
 Background: `LOOP_UNATTENDED_AUDIT.md`.
 
 ## The model
@@ -168,3 +170,22 @@ left to the runner's revision turn and to people.
 
 Verified with stamped Kernel evidence (`tests/test_trust_by_default.py`); not
 yet against a running Kernel.
+
+## Step 3: what was done, and what was left out on purpose
+
+Every state that used to stop work for good now moves on its own under full
+automation:
+
+| State | What happens now |
+| --- | --- |
+| `HANDOFF` from an agent ("the next holder carries on") | back to `READY` with its continuation (`TASK_REOPENED_FROM_HANDOFF`); a parent with subtasks and work waiting for a deploy are left alone |
+| `HANDOFF` from the scheduler (three failed rounds) | back to `READY` once those failures are older than a day (`TASK_SCHEDULER_RESUMED`) |
+| `REVIEWING`, no repository | `DONE` at the hand-off, flagged when something should be looked at |
+| `REVIEWING`, with a repository | `DONE` once the Kernel merged the change with a passed gate |
+| `TODO` (dependencies) | `READY` when the last dependency is done (as before) |
+
+Left out: renaming the states themselves (merging them into fields in the API,
+the MCP tools and the console). With the behaviour above, the old names no
+longer stop anything; renaming them touches every client and about 60 tests
+for no change in what the Loop does, and decision 5 keeps the old names
+readable for good anyway. It can be done later as a clean-up.

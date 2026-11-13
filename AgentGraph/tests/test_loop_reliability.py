@@ -708,20 +708,26 @@ async def test_a_stopped_task_is_tried_again_once_its_failures_are_old(client) -
 
     old = await stopped("3 days")
     fresh = await stopped("1 hour")
-    # Handed off by an agent on purpose: never reopened by the scheduler.
-    handed = await stopped("3 days")
-    await _sql("UPDATE collab_tasks SET handed_off_by = 'someone' WHERE task_key = $1", handed)
+    # A task with subtasks is not one piece of work: it is never reopened.
+    parent = await stopped("3 days")
+    child = await _task(client, ws)
+    await _sql("UPDATE collab_tasks SET parent_task_id = (SELECT id FROM collab_tasks "
+               "WHERE task_key = $1), status = 'DONE' WHERE task_key = $2", parent, child)
+    await _sql("UPDATE collab_tasks SET handed_off_by = 'someone' WHERE task_key = $1", parent)
 
     result = await _schedule(client, ws)
     assert result["resumed"] >= 1, result
     row = await _task_row(client, ws, old)
     assert row["status"] in ("READY", "IN_PROGRESS") and row["assignee"] == host["assignee"], row
     assert (await _task_row(client, ws, fresh))["status"] == "HANDOFF"
-    assert (await _task_row(client, ws, handed))["status"] == "HANDOFF"
+    assert (await _task_row(client, ws, parent))["status"] == "HANDOFF"
     events = await _fetch(
         "SELECT payload->>'task_key' AS key FROM timeline_streams WHERE workspace_id = $1::uuid "
         "AND event_type = 'TASK_SCHEDULER_RESUMED'", ws["id"])
     assert [row["key"] for row in events] == [old]
+    # The scheduler's stop is its own, not an agent's hand-off.
+    stop = await _fetch("SELECT handed_off_by FROM collab_tasks WHERE task_key = $1", fresh)
+    assert stop[0]["handed_off_by"] is None
     # The old failures do not count against the computer either: it was offered again.
     offered = [item for item in await _placements(client, ws, task_key=old)
                if item["status"] in ("offered", "claimed")]
@@ -754,3 +760,33 @@ async def test_the_doctor_judges_the_supervisor_by_rounds_that_finished(
         assert (await check("supervisor"))["text"] == "A supervisor computer is online."
     finally:
         await boss.close()
+
+
+async def test_work_an_agent_handed_on_goes_back_on_the_board(client) -> None:
+    """HANDOFF from an agent means "the next holder carries on". The scheduler
+    placed only READY tasks, so unattended it waited for ever."""
+    from tests.test_scheduler import _host
+
+    ws = await _workspace(client, "full")
+    host = await _host(client, ws, f"relay-{uuid.uuid4().hex[:4]}", slots=2)
+    key = await _task(client, ws, repo=None)
+    await _schedule(client, ws)
+    claimed = await client.post(f"/v1/tasks/{key}/claim", headers=host["headers"], json={})
+    assert claimed.status_code == 200, claimed.text
+    passed = await client.post(f"/v1/tasks/{key}/handoff", headers=host["headers"], json={
+        "next_status": "HANDOFF", "fencing_token": claimed.json()["task"]["fencing_token"],
+        "brief": {"summary": "half done: the parser is written, the tests are not",
+                  "key_metrics": {}, "unverified_hypotheses": [], "risk_flag": False}})
+    assert passed.status_code == 200 and passed.json()["status"] == "HANDOFF", passed.text
+
+    result = await _schedule(client, ws)
+    assert result["resumed"] >= 1, result
+    row = await _task_row(client, ws, key)
+    # Back on the board and placed again; the brief and the hand-off author stay.
+    assert row["status"] in ("READY", "IN_PROGRESS"), row
+    assert row["handoff_summary"].startswith("half done"), row
+    events = await _fetch(
+        "SELECT payload->>'task_key' AS key FROM timeline_streams WHERE workspace_id = $1::uuid "
+        "AND event_type = 'TASK_REOPENED_FROM_HANDOFF'", ws["id"])
+    assert [item["key"] for item in events] == [key]
+

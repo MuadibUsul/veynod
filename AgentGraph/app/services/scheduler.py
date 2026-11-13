@@ -657,6 +657,7 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
     online = _online(hosts, now)
     load = await _load(session, workspace_id, hosts)
     resumed = await _resume_stopped(session, workspace_id, now) if mode == "full" else 0
+    resumed += await _reopen_handed_on(session, workspace_id, now) if mode == "full" else 0
 
     # ADR-017: a task with an active Agent Run is executed by the Runtime
     # through the Kernel. It must never also be offered to a runner host.
@@ -682,6 +683,9 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
         if rounds >= MAX_ROUNDS and mode == "full":
             before = task_snapshot(task)
             task.status = TaskStatus.HANDOFF
+            # Stopped by the scheduler, not handed on by an agent: it is tried
+            # again once its failures are old (_resume_stopped), not at once.
+            task.handed_off_by = None
             task.version += 1
             task.updated_at = now
             await session.flush()
@@ -812,6 +816,49 @@ async def _resume_stopped(session: AsyncSession, workspace_id: Any, now: datetim
             namespace=task.namespace)
         resumed += 1
     return resumed
+
+
+async def _reopen_handed_on(session: AsyncSession, workspace_id: Any, now: datetime) -> int:
+    """Put work an agent handed on back on the board (full automation).
+
+    HANDOFF from an agent means "I stopped; the next holder carries on", with a
+    continuation pack. The scheduler only places READY tasks, so unattended
+    such a task waited for ever. It becomes READY again; whoever claims it
+    reads the continuation first. Left alone: a parent with subtasks (an epic
+    is not one piece of work), work waiting for a deploy, and a task the
+    scheduler itself stopped (handed_off_by is cleared then).
+    """
+    rows = (await session.execute(text(
+        "SELECT t.id FROM collab_tasks t WHERE t.workspace_id = :ws AND t.status = 'HANDOFF' "
+        "AND t.handed_off_by IS NOT NULL AND t.claimed_by IS NULL "
+        "AND t.active_run_id IS NULL AND (t.kind IS NULL OR t.kind = 'work') "
+        "AND COALESCE(t.handoff_brief->'approval'->>'awaiting_deploy', 'false') <> 'true' "
+        "AND NOT EXISTS (SELECT 1 FROM collab_tasks c WHERE c.parent_task_id = t.id) "
+        "LIMIT 50"), {"ws": workspace_id})).scalars().all()
+    reopened = 0
+    for task_id in rows:
+        task = await session.get(CollabTask, task_id, with_for_update=True)
+        if task is None or task.status != TaskStatus.HANDOFF:
+            continue
+        before = task_snapshot(task)
+        task.status = TaskStatus.READY
+        # The computer it was placed on handed it on: any computer may carry on.
+        task.assignee = None
+        task.version += 1
+        task.updated_at = now
+        await session.flush()
+        await record_audit(session, workspace_id=workspace_id, session_batch_id=uuid.uuid4(),
+                           agent_signature="scheduler", target_table="collab_tasks",
+                           target_record_id=task.id, operation="UPDATE", before=before,
+                           after=task_snapshot(task))
+        await append_event(
+            session, workspace_id=workspace_id, agent="scheduler",
+            event_type="TASK_REOPENED_FROM_HANDOFF",
+            payload={"task_key": task.task_key, "handed_off_by": task.handed_off_by,
+                     "continuation": task.continuation},
+            namespace=task.namespace)
+        reopened += 1
+    return reopened
 
 
 async def run_all_locked() -> int | None:

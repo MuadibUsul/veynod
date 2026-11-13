@@ -72,6 +72,15 @@ if "[flaky]" in row["title"] and not os.path.exists(marker):
     open(marker, "w").close()
     sys.exit(1)  # the agent crashed; the runner tries again
 claimed = call("POST", f"/v1/tasks/{task}/claim", {})
+relayed = os.path.join(log, f"relayed-{task}")
+if "[relay]" in row["title"] and not os.path.exists(relayed):
+    # Out of time: hand the work on with what is done, for the next holder.
+    open(relayed, "w").close()
+    call("POST", f"/v1/tasks/{task}/handoff", {
+        "next_status": "HANDOFF", "lease_epoch": claimed["task"]["lease_epoch"],
+        "brief": {"summary": "half done", "key_metrics": {}, "unverified_hypotheses": [],
+                  "risk_flag": False}})
+    sys.exit(0)
 call("POST", f"/v1/tasks/{task}/handoff", {
     "next_status": "REVIEWING", "lease_epoch": claimed["task"]["lease_epoch"],
     "brief": {"summary": "done", "key_metrics": {}, "unverified_hypotheses": [],
@@ -129,6 +138,7 @@ async def _run(client: httpx.AsyncClient, base_url: str) -> None:
             {"id": "tone", "text": "the owner likes the tone", "kind": "MANUAL"}]),
         "risky": await _task(client, ws, "Migrate the settings [risky]"),
         "flaky": await _task(client, ws, "Rename the field [flaky]"),
+        "relay": await _task(client, ws, "Port the importer [relay]"),
     }
     # Judged by the platform, not a person: a command the computer runs, and a
     # document the stand-in agent never writes.
@@ -204,6 +214,8 @@ async def _run(client: httpx.AsyncClient, base_url: str) -> None:
     assert len(finished_rounds) <= 3, [(item["created_at"], item["reported"]) for item in rounds]
     # The flaky agent failed once and was run again inside the same placement.
     assert [step["task"] for step in steps].count(tasks["flaky"]) == 2, steps
+    # Handed on halfway by one run, finished by the next.
+    assert [step["task"] for step in steps].count(tasks["relay"]) == 2, steps
 
     rows = {row["task_key"]: row for row in (await client.get("/v1/tasks", headers=ws["owner"],
             params={"task_key": ",".join(tasks.values())})).json()["items"]}
