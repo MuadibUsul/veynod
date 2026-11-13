@@ -299,6 +299,75 @@ async def _run_server_checks(session: AsyncSession, task: CollabTask) -> list[di
     return results
 
 
+async def finish_merged_on_trust(workspace_id: Any) -> int:
+    """Under full automation, finish code tasks whose change the Kernel merged.
+
+    A task with a repository is not finished at its hand-off: the Kernel's
+    verification gate and merge coordinator judge it. Nothing moved the board
+    task on after a merge, so on a one-computer board every code task waited
+    in REVIEWING for a person. Here a merged change with a passed gate is
+    finished on trust, like a hand-off without a repository: DONE, its
+    dependents released, flagged when the brief flagged a risk. A gate that
+    failed or escalated is left to the runner's revision turn and to people.
+    """
+    from app.database import async_session_factory
+    from app.services.kernel_delivery import refresh_delivery
+
+    if not settings.trust_by_default:
+        return 0
+    finished = 0
+    async with async_session_factory() as session:
+        candidates = (await session.execute(
+            select(CollabTask).where(
+                CollabTask.workspace_id == workspace_id,
+                CollabTask.status == TaskStatus.REVIEWING,
+                CollabTask.repo.is_not(None),
+                CollabTask.correlation["kernel_delivery"]["mode"].astext == "kernel",
+            ).limit(50))).scalars().all()
+        for task in candidates:
+            if task.namespace in settings.trust_reviewed_namespaces:
+                continue
+            if await automation.mode_for_task(session, workspace_id, task.task_key) != "full":
+                continue
+            try:
+                delivery = await refresh_delivery(session, task)
+            except Exception:  # noqa: BLE001 - an unreachable Kernel waits for the next pass
+                logger.warning("kernel delivery refresh failed for %s", task.task_key,
+                               exc_info=True)
+                continue
+            if not (delivery.get("merged") and delivery.get("gate") in ("pass", None)
+                    and not delivery.get("needs_human")):
+                continue
+            task = await session.get(CollabTask, task.id, with_for_update=True)
+            if task is None or task.status is not TaskStatus.REVIEWING:
+                continue
+            brief = task.handoff_brief if isinstance(task.handoff_brief, dict) else {}
+            reasons = (["risk_flag: the agent flagged a risk"] if brief.get("risk_flag") else [])
+            reasons += [f"check_failed: {item['id']}: {item.get('detail') or ''}"[:300]
+                        for item in task.check_results or [] if item.get("passed") is False]
+            before = task_snapshot(task)
+            task.status = TaskStatus.DONE
+            task.needs_attention = bool(reasons)
+            task.attention_reasons = reasons or None
+            task.version += 1
+            task.updated_at = utcnow()
+            await session.flush()
+            await record_audit(session, workspace_id=workspace_id,
+                               session_batch_id=uuid.uuid4(), agent_signature="scheduler",
+                               target_table="collab_tasks", target_record_id=task.id,
+                               operation="UPDATE", before=before, after=task_snapshot(task))
+            await append_event(
+                session, workspace_id=workspace_id, agent="scheduler",
+                event_type="TASK_MERGED_ON_TRUST",
+                payload={"task_key": task.task_key, "merge_sha": delivery.get("merge_sha"),
+                         "needs_attention": task.needs_attention, "attention_reasons": reasons},
+                namespace=task.namespace)
+            await _release_dependents(session, task, None)
+            await session.commit()
+            finished += 1
+    return finished
+
+
 async def record_check_results(session: AsyncSession, principal: Principal, task_key: str,
                                results: list[Any]) -> dict[str, Any]:
     """The computer that did the work reports its command checks.
@@ -1148,8 +1217,10 @@ async def release_task(
 
 
 async def _release_dependents(
-    session: AsyncSession, completed: CollabTask, principal: Principal
+    session: AsyncSession, completed: CollabTask, principal: Principal | None
 ) -> None:
+    """Free the tasks that waited on ``completed``. ``principal`` None is the
+    platform itself (the scheduler finishing merged work): no namespace limit."""
     await collab.on_done(session, completed)
     dependent_ids = (
         await session.execute(
@@ -1174,7 +1245,8 @@ async def _release_dependents(
         if dependent is None or dependent.status is not TaskStatus.TODO:
             continue
         if (
-            not principal.is_commander
+            principal is not None
+            and not principal.is_commander
             and "*" not in principal.allowed_namespaces
             and dependent.namespace not in principal.allowed_namespaces
         ):

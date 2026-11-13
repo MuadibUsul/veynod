@@ -287,3 +287,48 @@ async def test_a_check_belongs_to_an_auto_item_and_says_what_it_needs(client) ->
         made = await client.post("/v1/tasks", headers=ws["owner"], json={
             "title": "bad check", "namespace": "default", "acceptance": acceptance})
         assert made.status_code == 422, (acceptance, made.text)
+
+
+# ------------------------------------------------------------------ code tasks
+
+
+async def test_a_code_task_the_kernel_merged_is_finished_without_a_person(client) -> None:
+    """A task with a repository is judged by the Kernel gate, not at its hand-off.
+    Nothing moved it on after a merge, so it waited in REVIEWING for a person."""
+    import json as jsonlib
+
+    from tests.test_scheduler import _host, _schedule, _sql
+
+    ws = await _workspace(client, "full")
+    worker = await _agent(client, ws)
+    # The scheduler looks after workspaces that have a computer.
+    await _host(client, ws, f"pc-{uuid.uuid4().hex[:4]}", repos=["acme/other"])
+    merged = await _task(client, ws, repo="acme/site")
+    after = await _task(client, ws, depends_on=[merged], status="TODO")
+    failed = await _task(client, ws, repo="acme/site")
+    for key in (merged, failed):
+        assert (await _work(client, worker, key))["status"] == "REVIEWING"
+
+    def evidence(gate: str, is_merged: bool) -> str:
+        return jsonlib.dumps({"kernel_delivery": {
+            "mode": "kernel", "kernel_task_id": f"kt-{uuid.uuid4().hex[:6]}", "gate": gate,
+            "merged": is_merged, "merge_sha": "abc1234" if is_merged else None,
+            "status": "merged" if is_merged else "gate_failed", "needs_human": False}})
+
+    # What the Kernel's evidence says once the gate ran (it is not running here).
+    await _sql("UPDATE collab_tasks SET correlation = CAST($2 AS jsonb) WHERE task_key = $1",
+               merged, evidence("pass", True))
+    await _sql("UPDATE collab_tasks SET correlation = CAST($2 AS jsonb) WHERE task_key = $1",
+               failed, evidence("fail", False))
+    result = await _schedule(client, ws)
+    assert result["merged"] == 1, result
+
+    row = await _row(client, ws, merged)
+    assert (row["status"], row["needs_attention"], row["reviewed_by"]) == ("DONE", False, None)
+    assert (await _row(client, ws, after))["status"] == "READY"
+    # A gate that failed is not finished on trust: the revision turn and people own it.
+    assert (await _row(client, ws, failed))["status"] == "REVIEWING"
+    events = await _fetch(
+        "SELECT payload->>'merge_sha' AS sha FROM timeline_streams WHERE workspace_id = $1::uuid "
+        "AND event_type = 'TASK_MERGED_ON_TRUST'", ws["id"])
+    assert [row["sha"] for row in events] == ["abc1234"]

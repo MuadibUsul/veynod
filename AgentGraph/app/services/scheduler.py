@@ -752,11 +752,18 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
     rounds = await _supervise(session, workspace_id, hosts, online, now) \
         if workspace_mode == "full" else 0
     await session.commit()
+    # Code tasks the Kernel merged are finished on trust (their own transaction:
+    # reading the Kernel's evidence commits).
+    merged = 0
+    if workspace_mode == "full":
+        from app.services.tasks import finish_merged_on_trust
+
+        merged = await finish_merged_on_trust(workspace_id)
     # Delivery is a separate step: the pass must not hold its transaction open
     # across a receipt wait per placement.
     delivered = await dispatch_offered(workspace_id)
     return {"mode": workspace_mode, "hosts": len(online), "placed": placed,
-            "suggested": suggested, "nerve": delivered, "resumed": resumed,
+            "suggested": suggested, "nerve": delivered, "resumed": resumed, "merged": merged,
             "unplaced": unplaced, "stopped": gave_up, **counts, **steps, "rounds": rounds}
 
 

@@ -154,3 +154,17 @@ An `AUTO` acceptance item takes a `check`:
   server-side request risk and needs an allowlist first.
 - Verified in `tests/test_unattended_board.py` (a command check that passes on
   the computer, a document check that fails and flags its task).
+
+## Code tasks (tasks with a repository)
+
+They are not finished at their hand-off: the Kernel's verification gate and
+merge coordinator judge them. Before this, nothing moved the board task on
+after a merge, so on a one-computer board every code task waited in REVIEWING
+for a person. Now each scheduling pass under full automation reads the Kernel's
+evidence for code tasks in review: a merged change with a passed gate is
+finished on trust (`TASK_MERGED_ON_TRUST`), its dependents released, flagged
+when the brief flagged a risk or a check failed. A failed or escalated gate is
+left to the runner's revision turn and to people.
+
+Verified with stamped Kernel evidence (`tests/test_trust_by_default.py`); not
+yet against a running Kernel.
