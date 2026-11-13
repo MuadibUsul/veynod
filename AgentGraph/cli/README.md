@@ -49,7 +49,7 @@ When Claude Code or Codex is installed it asks once whether this computer may al
 ```bash
 npx veynod --run-tasks --repo owner/name   # this computer also runs board tasks
 npx veynod --supervisor                    # ...and looks after the Loop
-npx veynod --client cursor                 # only one client (also claude-code, claude-desktop, print)
+npx veynod --client cursor                 # only one client (codex, gemini-cli, opencode, ...: see USAGE.md)
 ```
 
 Node.js 22 or newer (the first with a built-in WebSocket). No runtime dependencies.

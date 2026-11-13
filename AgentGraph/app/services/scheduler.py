@@ -21,12 +21,20 @@ Every reaper cycle, for each workspace that has runner hosts:
    the owner can act on; the Loop page shows it under "Needs you".
 5. After three failed rounds a task stays in HANDOFF instead of being placed
    again; nobody is pinged (full-automation spec A-04).
+
+A placement has three stages, each with its own record, and none stands in for
+the next: the offer was *delivered* (the computer read the poke, its worker
+process came up), the work *started* (the worker asked ``start`` and the
+placement was still open) and it *finished* (the runner's report). A supervise
+round counts as done only when its report says finished; a worker that arrives
+after its placement moved on is ``skipped``, with the reason, never a success.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import math
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -82,6 +90,12 @@ UNPLACED = {
 }
 # Reasons that wait on their own; the rest need the owner.
 SELF_RESOLVING = {"hosts_busy"}
+# Placements a computer may still start working on.
+STARTABLE = ("offered", "claimed")
+# How a supervise round ended, as a timeline fact. LOOP_ROUND itself only says a
+# round was offered to a computer; these say what became of it.
+ROUND_OUTCOMES = {"delivered": "LOOP_ROUND_FINISHED", "failed": "LOOP_ROUND_FAILED",
+                  "moved": "LOOP_ROUND_MOVED"}
 
 
 def _now() -> datetime:
@@ -144,7 +158,19 @@ async def _end(session: AsyncSession, placement: dict[str, Any], status: str,
         "THEN NULL ELSE NOW() END WHERE placement_id = :id"),
         {"status": status, "reason": reason, "note": note and note[:500],
          "id": placement["placement_id"]})
+    was_open = placement.get("status") in OPEN
     placement["status"] = status
+    outcome = ROUND_OUTCOMES.get(status) if placement.get("step") == "supervise" else None
+    if outcome and was_open and placement.get("host_id") and placement.get("workspace_id"):
+        # A round that was offered to a computer says how it ended: finished only
+        # on the runner's own report, otherwise failed or moved with the reason.
+        await append_event(
+            session, workspace_id=placement["workspace_id"], agent="scheduler",
+            event_type=outcome,
+            payload={"placement_id": placement["placement_id"], "host_id": placement["host_id"],
+                     "reason": reason, "note": note and note[:500],
+                     "started": placement.get("started_at") is not None,
+                     "idempotency_key": f"{placement['placement_id']}:{status}"})
 
 
 async def _unassign(session: AsyncSession, task: CollabTask, actor: str) -> None:
@@ -270,6 +296,12 @@ async def _reconcile(session: AsyncSession, workspace_id: Any,
             # (not its fault), anything else is a failed start.
             problem = ("host_busy" if (placement.get("report_note") or "") == "no_free_slot"
                        else "reported_failed")
+        if problem is None and status == "claimed" and placement.get("reported") == "failed":
+            # The computer took it and then said the run failed (the agent would not
+            # start, the worker died). The task is still IN_PROGRESS under that
+            # computer's lease: waiting for the lease to run out left it stuck for a
+            # quarter of an hour with nobody working on it. Release it now.
+            problem = "reported_failed"
         if problem is None and status == "offered" and now - placement["created_at"] > timedelta(
                 seconds=settings.runner_claim_timeout_seconds):
             problem = "not_claimed"
@@ -278,7 +310,8 @@ async def _reconcile(session: AsyncSession, workspace_id: Any,
             # Not taking it, or failing to start it, counts against the host; an
             # outage or a busy host does not.
             counted = problem in COUNTED_AGAINST_HOST
-            await _end(session, placement, "failed" if counted else "moved", problem)
+            await _end(session, placement, "failed" if counted else "moved", problem,
+                       placement.get("report_note") if problem == "reported_failed" else None)
             counts["failed" if counted else "moved"] += 1
             await append_event(
                 session, workspace_id=workspace_id, agent="scheduler",
@@ -290,21 +323,73 @@ async def _reconcile(session: AsyncSession, workspace_id: Any,
     return counts
 
 
+# What a computer with a coding agent can do without having said so. Tasks
+# name capabilities such as "frontend"; computers almost never declare any, so
+# such tasks had no computer although any coding agent could take them.
+CODING_AGENT_CAPABILITIES = frozenset({
+    "software-engineering", "coding", "code", "backend", "frontend", "fullstack", "tests",
+    "testing", "docs", "documentation", "research", "writing", "analysis"})
+
+
+def _capabilities(host: dict[str, Any]) -> set[str]:
+    """Declared capabilities, runtime ids and, on a computer that runs tasks at
+    all (any ready runtime: a coding agent or the command its owner chose), the
+    general ones. A special capability (``gpu``, ``ios-signing``) must still be
+    declared."""
+    have = {item.lower() for item in host["capabilities"] or []} | {
+        runtime["id"] for runtime in host["runtimes"] or []}
+    if any(runtime.get("available") is not False for runtime in host["runtimes"] or []):
+        have |= CODING_AGENT_CAPABILITIES
+    return have
+
+
+def same_repo(wanted: str, offered: str) -> bool:
+    """Whether a task's repository is the one a computer serves.
+
+    Exact, ignoring case, a trailing ``.git`` and a host prefix. A bare name
+    (``smoke``) matches ``owner/smoke``: tasks written by hand often leave the
+    owner out, and such a task waited forever as "no computer reaches it".
+    """
+    def clean(value: str) -> str:
+        value = value.strip().lower().removesuffix(".git").rstrip("/")
+        for prefix in ("https://github.com/", "http://github.com/", "git@github.com:",
+                       "github.com/"):
+            value = value.removeprefix(prefix)
+        return value
+
+    left, right = clean(wanted), clean(offered)
+    if not left or not right:
+        return False
+    if left == right:
+        return True
+    return "/" not in left and right.rsplit("/", 1)[-1] == left
+
+
+def _stands_in(host_role: str | None, wanted: str, task: CollabTask) -> bool:
+    """One worker role: an EXECUTOR and an ANALYST computer take each other's tasks.
+
+    Only when the task names its role as ``assigned_role``: ``required_role`` is
+    a hard requirement its author set on purpose and is kept.
+    """
+    from app.auth import WORKER_ROLES
+
+    return (settings.worker_roles_unified and wanted in WORKER_ROLES
+            and host_role in WORKER_ROLES and not task.required_role)
+
+
 def _fits(task: CollabTask, host: dict[str, Any]) -> list[str]:
     """The filters a host fails for a task, in UNPLACED order."""
     misses = []
     role = task.required_role or task.assigned_role
-    if role and host["role_scope"] != role:
+    if role and host["role_scope"] != role and not _stands_in(host["role_scope"], role, task):
         misses.append("no_host_for_role")
     namespaces = list(host["allowed_namespaces"] or [])
     if "*" not in namespaces and task.namespace not in namespaces:
         misses.append("no_host_for_namespace")
     needed = {item.lower() for item in (task.required_capabilities or [])}
-    have = {item.lower() for item in host["capabilities"] or []} | {
-        runtime["id"] for runtime in host["runtimes"] or []}
-    if needed - have:
+    if needed - _capabilities(host):
         misses.append("no_host_with_capabilities")
-    if task.repo and task.repo.lower() not in {repo.lower() for repo in host["repos"] or []}:
+    if task.repo and not any(same_repo(task.repo, repo) for repo in host["repos"] or []):
         misses.append("no_host_for_repo")
     if quota_used(host) is None:
         misses.append("no_host_with_runtime")
@@ -368,11 +453,17 @@ def _online(hosts: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
 
 async def _load(session: AsyncSession, workspace_id: Any,
                 hosts: list[dict[str, Any]]) -> dict[str, int]:
-    """Busy slots per host: open offers and claims, or what the host says it runs."""
+    """Busy slots per host: open offers and claims, or what the host says it runs.
+
+    A supervise round is not counted: it runs in a lane of its own, so looking
+    after the Loop never takes the slot a task needs (and a long task never
+    stops the rounds). A computer whose CLI has no such lane still lists the
+    round among what it runs, which the second loop below counts.
+    """
     load = {host["host_id"]: 0 for host in hosts}
     for host_id, active in (await session.execute(text(
             "SELECT host_id, count(*) FROM runner_placements WHERE workspace_id = :ws "
-            "AND status IN ('offered', 'claimed') GROUP BY host_id"),
+            "AND status IN ('offered', 'claimed') AND step <> 'supervise' GROUP BY host_id"),
             {"ws": workspace_id})).all():
         if host_id in load:
             load[host_id] = active
@@ -384,11 +475,16 @@ async def _load(session: AsyncSession, workspace_id: Any,
 async def _work_failures(session: AsyncSession, task: CollabTask) -> tuple[dict[str, int], int]:
     """Hosts to avoid for this task (failed twice, or moved off by the supervisor)
     and the failed rounds so far. A supervisor's move does not count as a round."""
+    # Only what failed lately counts (runner_failure_window_hours): an old
+    # failure may have had a cause that is gone, and counting it forever kept a
+    # task stopped for good.
     rows = (await session.execute(text(
         "SELECT host_id, status, count(*) FROM runner_placements WHERE task_id = :t "
         "AND step = 'work' AND host_id IS NOT NULL AND (status = 'failed' "
-        "OR (status = 'moved' AND reason = 'supervisor_moved')) GROUP BY host_id, status"),
-        {"t": task.id})).all()
+        "OR (status = 'moved' AND reason = 'supervisor_moved')) "
+        "AND COALESCE(ended_at, created_at) > NOW() - make_interval(hours => :w) "
+        "GROUP BY host_id, status"),
+        {"t": task.id, "w": settings.runner_failure_window_hours})).all()
     failures: dict[str, int] = {}
     rounds = 0
     for host_id, status, count in rows:
@@ -479,9 +575,10 @@ async def dispatch_offered(workspace_id: Any | None = None, limit: int = 50) -> 
             {"ws": str(workspace_id) if workspace_id else None, "limit": limit})).mappings().all()
         for row in rows:
             placement = dict(row)
-            if (placement["placement_id"] in _DISPATCHING
-                    or nerve_hub.nerve_hub.get(placement["workspace_id"],
-                                               placement["agent_id"]) is None):
+            sock = nerve_hub.nerve_hub.get(placement["workspace_id"], placement["agent_id"])
+            # Not connected right now, or finishing its work before it restarts on
+            # a new version: the offer waits for the next call.
+            if placement["placement_id"] in _DISPATCHING or sock is None or sock.draining:
                 counts["skipped"] += 1
                 continue
             _DISPATCHING.add(placement["placement_id"])
@@ -559,6 +656,8 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
 
     online = _online(hosts, now)
     load = await _load(session, workspace_id, hosts)
+    resumed = await _resume_stopped(session, workspace_id, now) if mode == "full" else 0
+    resumed += await _reopen_handed_on(session, workspace_id, now) if mode == "full" else 0
 
     # ADR-017: a task with an active Agent Run is executed by the Runtime
     # through the Kernel. It must never also be offered to a runner host.
@@ -584,6 +683,9 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
         if rounds >= MAX_ROUNDS and mode == "full":
             before = task_snapshot(task)
             task.status = TaskStatus.HANDOFF
+            # Stopped by the scheduler, not handed on by an agent: it is tried
+            # again once its failures are old (_resume_stopped), not at once.
+            task.handed_off_by = None
             task.version += 1
             task.updated_at = now
             await session.flush()
@@ -654,12 +756,109 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
     rounds = await _supervise(session, workspace_id, hosts, online, now) \
         if workspace_mode == "full" else 0
     await session.commit()
+    # Code tasks the Kernel merged are finished on trust (their own transaction:
+    # reading the Kernel's evidence commits).
+    merged = 0
+    if workspace_mode == "full":
+        from app.services.tasks import finish_merged_on_trust
+
+        merged = await finish_merged_on_trust(workspace_id)
     # Delivery is a separate step: the pass must not hold its transaction open
     # across a receipt wait per placement.
     delivered = await dispatch_offered(workspace_id)
     return {"mode": workspace_mode, "hosts": len(online), "placed": placed,
-            "suggested": suggested, "nerve": delivered,
+            "suggested": suggested, "nerve": delivered, "resumed": resumed, "merged": merged,
             "unplaced": unplaced, "stopped": gave_up, **counts, **steps, "rounds": rounds}
+
+
+async def _resume_stopped(session: AsyncSession, workspace_id: Any, now: datetime) -> int:
+    """Put tasks the scheduler stopped back on the board once their failures are old.
+
+    A task goes to HANDOFF after ``MAX_ROUNDS`` failed rounds. That used to be
+    the end: the scheduler only places READY tasks, and nothing moved a stopped
+    one back. A stopped task (HANDOFF with no hand-off by anyone, nobody
+    holding it, and at least ``MAX_ROUNDS`` failed work placements in its
+    history) returns to READY when fewer than ``MAX_ROUNDS`` of them fall
+    inside the failure window, so it is tried again about once per window
+    instead of never. A task an agent or a person handed off is not touched.
+    """
+    rows = (await session.execute(text(
+        "SELECT t.id FROM collab_tasks t WHERE t.workspace_id = :ws AND t.status = 'HANDOFF' "
+        "AND t.handed_off_by IS NULL AND t.claimed_by IS NULL AND t.assignee IS NULL "
+        "AND t.active_run_id IS NULL AND (t.kind IS NULL OR t.kind = 'work') "
+        "AND (SELECT count(*) FROM runner_placements p WHERE p.task_id = t.id "
+        "     AND p.step = 'work' AND p.status = 'failed') >= :rounds "
+        "AND (SELECT count(*) FROM runner_placements p WHERE p.task_id = t.id "
+        "     AND p.step = 'work' AND p.status = 'failed' "
+        "     AND COALESCE(p.ended_at, p.created_at) > NOW() - make_interval(hours => :w)) "
+        "    < :rounds LIMIT 50"),
+        {"ws": workspace_id, "rounds": MAX_ROUNDS,
+         "w": settings.runner_failure_window_hours})).scalars().all()
+    resumed = 0
+    for task_id in rows:
+        task = await session.get(CollabTask, task_id, with_for_update=True)
+        if task is None or task.status != TaskStatus.HANDOFF:
+            continue
+        before = task_snapshot(task)
+        task.status = TaskStatus.READY
+        task.version += 1
+        task.updated_at = now
+        await session.flush()
+        await record_audit(session, workspace_id=workspace_id, session_batch_id=uuid.uuid4(),
+                           agent_signature="scheduler", target_table="collab_tasks",
+                           target_record_id=task.id, operation="UPDATE", before=before,
+                           after=task_snapshot(task))
+        await append_event(
+            session, workspace_id=workspace_id, agent="scheduler",
+            event_type="TASK_SCHEDULER_RESUMED",
+            payload={"task_key": task.task_key,
+                     "note": "its failed rounds are older than the failure window; trying again"},
+            namespace=task.namespace)
+        resumed += 1
+    return resumed
+
+
+async def _reopen_handed_on(session: AsyncSession, workspace_id: Any, now: datetime) -> int:
+    """Put work an agent handed on back on the board (full automation).
+
+    HANDOFF from an agent means "I stopped; the next holder carries on", with a
+    continuation pack. The scheduler only places READY tasks, so unattended
+    such a task waited for ever. It becomes READY again; whoever claims it
+    reads the continuation first. Left alone: a parent with subtasks (an epic
+    is not one piece of work), work waiting for a deploy, and a task the
+    scheduler itself stopped (handed_off_by is cleared then).
+    """
+    rows = (await session.execute(text(
+        "SELECT t.id FROM collab_tasks t WHERE t.workspace_id = :ws AND t.status = 'HANDOFF' "
+        "AND t.handed_off_by IS NOT NULL AND t.claimed_by IS NULL "
+        "AND t.active_run_id IS NULL AND (t.kind IS NULL OR t.kind = 'work') "
+        "AND COALESCE(t.handoff_brief->'approval'->>'awaiting_deploy', 'false') <> 'true' "
+        "AND NOT EXISTS (SELECT 1 FROM collab_tasks c WHERE c.parent_task_id = t.id) "
+        "LIMIT 50"), {"ws": workspace_id})).scalars().all()
+    reopened = 0
+    for task_id in rows:
+        task = await session.get(CollabTask, task_id, with_for_update=True)
+        if task is None or task.status != TaskStatus.HANDOFF:
+            continue
+        before = task_snapshot(task)
+        task.status = TaskStatus.READY
+        # The computer it was placed on handed it on: any computer may carry on.
+        task.assignee = None
+        task.version += 1
+        task.updated_at = now
+        await session.flush()
+        await record_audit(session, workspace_id=workspace_id, session_batch_id=uuid.uuid4(),
+                           agent_signature="scheduler", target_table="collab_tasks",
+                           target_record_id=task.id, operation="UPDATE", before=before,
+                           after=task_snapshot(task))
+        await append_event(
+            session, workspace_id=workspace_id, agent="scheduler",
+            event_type="TASK_REOPENED_FROM_HANDOFF",
+            payload={"task_key": task.task_key, "handed_off_by": task.handed_off_by,
+                     "continuation": task.continuation},
+            namespace=task.namespace)
+        reopened += 1
+    return reopened
 
 
 async def run_all_locked() -> int | None:
@@ -1035,6 +1234,15 @@ async def agenda(session: AsyncSession, workspace_id: Any,
     return items[:40]
 
 
+def _agenda_fingerprint(items: list[dict[str, Any]]) -> str:
+    """What a round is about, without when: the same open problems give the same value."""
+    import hashlib
+
+    keys = sorted(json.dumps({k: v for k, v in item.items() if k not in ("note",)},
+                             sort_keys=True, default=str) for item in items)
+    return hashlib.sha256("\n".join(keys).encode()).hexdigest()[:16]
+
+
 async def _supervise(session: AsyncSession, workspace_id: Any, hosts: list[dict[str, Any]],
                      online: list[dict[str, Any]], now: datetime) -> int:
     """Wake a supervisor computer for a round when something waits, at most every so often."""
@@ -1055,7 +1263,17 @@ async def _supervise(session: AsyncSession, workspace_id: Any, hosts: list[dict[
         if open_round is not None:
             await _end(session, dict(open_round), "withdrawn", "nothing_waits")
         return 0
-    detail = json.dumps({"agenda": items})
+    seen = _agenda_fingerprint(items)
+    finished = (await session.execute(text(
+        "SELECT detail->>'fingerprint' AS fingerprint, created_at FROM runner_placements "
+        "WHERE workspace_id = :ws AND step = 'supervise' AND reported = 'finished' "
+        "ORDER BY created_at DESC LIMIT 1"), {"ws": workspace_id})).mappings().one_or_none()
+    if (finished is not None and finished["fingerprint"] == seen
+            and now - finished["created_at"] < timedelta(
+                seconds=settings.runner_supervise_repeat_seconds)):
+        # The last round saw exactly this and finished: nothing new to look at.
+        return 0
+    detail = json.dumps({"agenda": items, "fingerprint": seen})
     pool = [host for host in online if _supervisor(host)
             and (quota_used(host) or 0) < settings.runner_quota_exhausted_percent]
     if not pool:
@@ -1146,8 +1364,13 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
           else "Connect a computer with `npx veynod --run-tasks`.")
     can_review = (f"{len(reviewers)} computer(s) can review work without a repository. "
                   if reviewers else "")
+    trusting = (mode == "full" and settings.trust_by_default)
     check("reviewer", True, False,
-          can_review + "The Kernel gate reviews code; a person reviews what no other computer can.",
+          can_review + ("Work without a repository is finished on trust; the Kernel gate "
+                        "reviews code; flagged work waits for a look, not for approval."
+                        if trusting else
+                        "The Kernel gate reviews code; a person reviews what no other "
+                        "computer can."),
           None)
     unpinned = sorted(host["agent_id"] or host["host_id"] for host in online
                       if (host.get("capabilities_report") or {}).get("mcp_pinning") is False)
@@ -1161,16 +1384,46 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
           "On each of them run `npx veynod@latest` (0.7.0 or newer): Claude Code and Codex then "
           "start every session with the computer's own key (Node 22 or newer).")
     check("supervisor", bool(supervisors), False,
-          "A supervisor computer looks after the Loop." if supervisors
+          "A supervisor computer is online." if supervisors
           else "No supervisor computer: stuck work is listed for you instead.",
           "Optional: `npx veynod --supervisor` on one computer.")
+    # Being online is not looking after the Loop: judge by how rounds ended.
+    recent = (await session.execute(text(
+        "SELECT status, reported, reason FROM runner_placements WHERE workspace_id = :ws "
+        "AND step = 'supervise' AND host_id IS NOT NULL AND ended_at IS NOT NULL "
+        "ORDER BY created_at DESC LIMIT 5"), {"ws": workspace_id})).mappings().all()
+    finished = sum(1 for row in recent if row["reported"] == "finished")
+    rounds_ok = not recent or finished > 0
+    why = recent[0]["reason"] if recent else None
+    check("rounds", rounds_ok, False,
+          "No supervisor round has ended yet." if not recent
+          else f"{finished} of the last {len(recent)} supervisor round(s) finished."
+          + ("" if rounds_ok else f" None ran to the end (last: {why or 'no report'})."),
+          "Rounds are offered but do not finish: update the supervisor computer "
+          "(`npx veynod@latest`), then read `loop(action=\"metrics\")` for the reason.")
+    # Work that could run but does not move.
+    stale = (await session.execute(text(
+        "SELECT count(*) FROM collab_tasks t WHERE t.workspace_id = :ws AND t.status = 'READY' "
+        "AND t.assignee IS NULL AND t.claimed_by IS NULL AND (t.kind IS NULL OR t.kind = 'work') "
+        "AND t.updated_at < NOW() - INTERVAL '6 hours'"), {"ws": workspace_id})).scalar_one()
+    stopped = (await session.execute(text(
+        "SELECT count(*) FROM collab_tasks t WHERE t.workspace_id = :ws AND t.status = 'HANDOFF' "
+        "AND t.handed_off_by IS NULL AND (SELECT count(*) FROM runner_placements p "
+        "WHERE p.task_id = t.id AND p.step = 'work' AND p.status = 'failed') >= :rounds"),
+        {"ws": workspace_id, "rounds": MAX_ROUNDS})).scalar_one()
+    check("progress", not stale and not stopped, False,
+          "No task has waited long and none is stopped." if not stale and not stopped
+          else f"{stale} READY task(s) have waited over 6 hours; {stopped} task(s) are "
+               "stopped after failed rounds (they are tried again once those are a day old).",
+          "Open the Loop page (Needs you) for the tasks with no computer; "
+          "`loop(action=\"metrics\")` lists the stopped ones with what failed.")
     waiting = (await session.execute(select(CollabTask).where(
         CollabTask.workspace_id == workspace_id, CollabTask.status == TaskStatus.READY,
         CollabTask.assignee.is_(None), CollabTask.claimed_by.is_(None),
         (CollabTask.kind.is_(None)) | (CollabTask.kind == "work")).limit(500))).scalars().all()
-    reach = {repo.lower() for host in builders for repo in host["repos"] or []}
+    reach = [repo for host in builders for repo in host["repos"] or []]
     uncovered = sorted({task.repo for task in waiting
-                        if task.repo and task.repo.lower() not in reach})
+                        if task.repo and not any(same_repo(task.repo, repo) for repo in reach)})
     check("repos", not uncovered, False,
           "Every waiting task's repository is on an online computer." if not uncovered
           else f"No online computer works on {', '.join(uncovered[:5])}.",
@@ -1190,6 +1443,46 @@ async def doctor(session: AsyncSession, principal: Principal) -> dict[str, Any]:
 # ------------------------------------------------------------------ reading
 
 
+def _stage(row: dict[str, Any]) -> str:
+    """How far a placement that was offered to a computer got, in one word.
+
+    offered -> delivered (the computer read the poke) -> ready (its worker
+    process is up) -> started (the placement was checked and work began) ->
+    finished | failed. ``skipped``: a worker arrived after the placement had
+    moved on and did nothing. ``not_delivered``: the poke never became a worker.
+    """
+    if row.get("reported") in ("finished", "failed", "skipped"):
+        return row["reported"]
+    if row.get("started_at") is not None:
+        return "started"
+    if row.get("exec_ack_at") is not None:
+        return "ready"
+    if row.get("qos_status") == "TIMEOUT_REVOKED":
+        return "not_delivered"
+    if row.get("net_ack_at") is not None:
+        return "delivered"
+    return "offered" if row.get("host_id") else "waiting"
+
+
+def _timings(row: dict[str, Any]) -> dict[str, Any] | None:
+    """The three times of a delivery, each from the moment the poke was written."""
+    if row.get("poke_at") is None:
+        return None
+    return {
+        "sent_at": row["poke_at"].isoformat(),
+        # ack.net: the computer read the poke.
+        "delivered_ms": row.get("net_rtt_ms") if row.get("net_ack_at") is not None else None,
+        # worker.ready: a worker process is up and can take it.
+        "worker_ready_ms": (row.get("exec_startup_ms")
+                            if row.get("exec_ack_at") is not None else None),
+        "warm": row.get("warm"),
+        # execution.started: the placement was checked and work on it began.
+        "execution_started_ms": row.get("exec_started_ms"),
+        "delivery": row.get("qos_status"),
+        "delivery_note": row.get("poke_detail"),
+    }
+
+
 def _placement_out(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "placement_id": row["placement_id"],
@@ -1202,30 +1495,43 @@ def _placement_out(row: dict[str, Any]) -> dict[str, Any]:
         "chunk_key": row.get("chunk_key"),
         "status": row["status"],
         "reported": row.get("reported"),
+        "report_note": row.get("report_note"),
+        "stage": _stage(row),
+        "timings": _timings(row),
         "reason": row["reason"],
         "note": row["note"],
         "needs_you": row["status"] == "unplaced" and row["reason"] not in SELF_RESOLVING,
         "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+        "started_at": row["started_at"].isoformat() if row.get("started_at") else None,
         "ended_at": row["ended_at"].isoformat() if row["ended_at"] else None,
     }
+
+
+# A placement with the receipts of its poke (the frame id is the placement id).
+_PLACEMENT_SQL = (
+    "SELECT p.*, d.at AS poke_at, d.qos_status, d.detail AS poke_detail, d.net_ack_at, "
+    "d.exec_ack_at, d.net_rtt_ms, d.exec_startup_ms, d.exec_started_ms, d.warm "
+    "FROM runner_placements p LEFT JOIN poke_deliveries d "
+    "ON d.workspace_id = p.workspace_id AND d.frame_id = p.placement_id "
+)
 
 
 async def placements(session: AsyncSession, principal: Principal, *,
                      task_key: str | None = None, open_only: bool = False,
                      step: str | None = None, limit: int = 100) -> dict[str, Any]:
-    clauses = ["workspace_id = :ws"]
+    clauses = ["p.workspace_id = :ws"]
     params: dict[str, Any] = {"ws": principal.workspace.id, "limit": limit}
     if step:
-        clauses.append("step = :step")
+        clauses.append("p.step = :step")
         params["step"] = step
     if task_key:
-        clauses.append("task_key = :key")
+        clauses.append("p.task_key = :key")
         params["key"] = task_key
     if open_only:
-        clauses.append("status IN ('suggested', 'offered', 'claimed', 'unplaced')")
+        clauses.append("p.status IN ('suggested', 'offered', 'claimed', 'unplaced')")
     rows = (await session.execute(text(
-        f"SELECT * FROM runner_placements WHERE {' AND '.join(clauses)} "
-        "ORDER BY created_at DESC LIMIT :limit"), params)).mappings().all()
+        f"{_PLACEMENT_SQL} WHERE {' AND '.join(clauses)} "
+        "ORDER BY p.created_at DESC LIMIT :limit"), params)).mappings().all()
     items = [_placement_out(dict(row)) for row in rows]
     return {"items": items, "needs_you": [item for item in items if item["needs_you"]]}
 
@@ -1241,8 +1547,12 @@ async def schedule_now(session: AsyncSession, principal: Principal) -> dict[str,
 async def _own_placement(session: AsyncSession, principal: Principal,
                          placement_id: str) -> dict[str, Any]:
     row = (await session.execute(text(
-        "SELECT p.*, h.token_id FROM runner_placements p LEFT JOIN runner_hosts h "
-        "ON h.host_id = p.host_id WHERE p.workspace_id = :ws AND p.placement_id = :id"),
+        "SELECT p.*, h.token_id, d.at AS poke_at, d.qos_status, d.detail AS poke_detail, "
+        "d.net_ack_at, d.exec_ack_at, d.net_rtt_ms, d.exec_startup_ms, d.exec_started_ms, "
+        "d.warm FROM runner_placements p LEFT JOIN runner_hosts h ON h.host_id = p.host_id "
+        "LEFT JOIN poke_deliveries d ON d.workspace_id = p.workspace_id "
+        "AND d.frame_id = p.placement_id "
+        "WHERE p.workspace_id = :ws AND p.placement_id = :id"),
         {"ws": principal.workspace.id, "id": placement_id})).mappings().one_or_none()
     if row is None:
         raise NotFound("placement")
@@ -1276,9 +1586,214 @@ async def report(session: AsyncSession, principal: Principal, placement_id: str,
         "updated_at = NOW() WHERE placement_id = :id"),
         {"o": outcome, "n": (note or None) and note[:500], "id": placement_id})
     await session.commit()
-    return _placement_out(dict((await session.execute(text(
-        "SELECT * FROM runner_placements WHERE placement_id = :id"),
-        {"id": placement_id})).mappings().one()))
+    return _placement_out(await _own_placement(session, principal, placement_id))
+
+
+async def start(session: AsyncSession, principal: Principal, placement_id: str,
+                lease_epoch: int | None = None) -> dict[str, Any]:
+    """The worker asks to start: is this placement still its to work?
+
+    Both receipts of a poke only say a process is up. This is the check that
+    turns "ready" into "started": while the placement is still open it is
+    stamped ``started_at`` (the third time of the delivery) and the worker goes
+    on; otherwise the answer is ``start: false`` with the reason and the
+    placement records ``skipped`` (unless it already carries a report). A worker
+    that came up late, after the board moved the round to another computer or a
+    newer dispatch took the task, therefore does nothing and is never counted as
+    a round that ran.
+    """
+    row = await _own_placement(session, principal, placement_id)
+    why = None
+    if row["status"] not in STARTABLE:
+        why = f"placement is {row['status']}" + (f" ({row['reason']})" if row["reason"] else "")
+    elif row["step"] == "work" and row["task_id"] and lease_epoch is not None:
+        # The poke carried the lease epoch its dispatch wrote. A higher one on the
+        # task means a later dispatch (or another holder) owns it now.
+        current = (await session.execute(text(
+            "SELECT lease_epoch FROM collab_tasks WHERE id = :t"),
+            {"t": row["task_id"]})).scalar_one_or_none()
+        if current is not None and int(current) > int(lease_epoch):
+            why = f"stale lease epoch {lease_epoch} (the task is at {current})"
+    if why is not None:
+        await session.execute(text(
+            "UPDATE runner_placements SET reported = 'skipped', reported_at = NOW(), "
+            "report_note = :n, updated_at = NOW() "
+            "WHERE placement_id = :id AND reported IS NULL"),
+            {"n": why[:500], "id": placement_id})
+        if row["step"] == "supervise" and row["reported"] is None:
+            await append_event(
+                session, workspace_id=principal.workspace.id,
+                agent=principal.agent_signature or "runner", event_type="LOOP_ROUND_SKIPPED",
+                payload={"placement_id": placement_id, "host_id": row["host_id"],
+                         "reason": why[:500], "idempotency_key": f"{placement_id}:skipped"})
+        await session.commit()
+        out = _placement_out(await _own_placement(session, principal, placement_id))
+        return {**out, "start": False, "skip_reason": why}
+    from app.services import nerve_hub
+
+    await session.execute(text(
+        "UPDATE runner_placements SET started_at = COALESCE(started_at, NOW()), "
+        "updated_at = NOW() WHERE placement_id = :id"), {"id": placement_id})
+    await nerve_hub.record_exec_started(session, workspace_id=principal.workspace.id,
+                                        placement_id=placement_id)
+    await session.commit()
+    row = await _own_placement(session, principal, placement_id)
+    return {**_placement_out(row), "start": True, "detail": row.get("detail") or {}}
+
+
+async def worker_exited(workspace_id: Any, agent_id: str, placement_id: str, *,
+                        code: Any = None, signal: Any = None,
+                        reason: str | None = None) -> bool:
+    """A computer says the worker process of a placement ended.
+
+    A worker reports how its step ended before it exits. One that ends without a
+    report (it crashed, was killed, or the process died on its way out) left the
+    placement open and, for work, the task under a lease nobody uses. That is a
+    failure with a reason, recorded now, so the next pass releases the task
+    instead of the lease's expiry doing it a quarter of an hour later. True when
+    the placement was marked.
+    """
+    note = (reason or f"the worker exited without a report (code={code}, signal={signal})")[:500]
+    async with async_session_factory() as session:
+        marked = (await session.execute(text(
+            "UPDATE runner_placements SET reported = 'failed', reported_at = NOW(), "
+            "report_note = :n, updated_at = NOW() WHERE workspace_id = :ws "
+            "AND placement_id = :id AND agent_id = :agent AND reported IS NULL "
+            "AND status IN ('offered', 'claimed') RETURNING placement_id"),
+            {"n": note, "ws": workspace_id, "id": placement_id,
+             "agent": agent_id})).scalar_one_or_none()
+        await session.commit()
+    if marked:
+        logger.info("placement %s: %s", placement_id, note)
+    return marked is not None
+
+
+def _percentiles(values: list[int]) -> dict[str, Any]:
+    """count, p50, p95, p99 and max of a list of milliseconds (nearest rank)."""
+    if not values:
+        return {"count": 0, "p50": None, "p95": None, "p99": None, "max": None}
+    ordered = sorted(values)
+
+    def rank(q: float) -> int:
+        return ordered[min(len(ordered), max(1, math.ceil(q * len(ordered)))) - 1]
+
+    return {"count": len(ordered), "p50": rank(0.50), "p95": rank(0.95), "p99": rank(0.99),
+            "max": ordered[-1]}
+
+
+#: What the second-level targets are, so a reader can compare without the spec.
+TARGETS_MS = {"delivered_p95": 1000, "execution_started_p95": 2000,
+              "execution_started_p99": 5000}
+
+
+async def loop_metrics(session: AsyncSession, principal: Principal,
+                       hours: int = 24) -> dict[str, Any]:
+    """How the Loop's three stages did over the last ``hours``.
+
+    Delivery, worker start and execution start are separate numbers, and the
+    time the model takes for the whole task is not among them. A supervise round
+    succeeds only when its placement reports finished; skipped rounds are their
+    own count. ``stopped`` lists the tasks the scheduler gave up on with what
+    their rounds failed on, to check one by one before putting any back.
+    """
+    workspace_id = principal.workspace.id
+    hours = max(1, min(int(hours), 24 * 30))
+    since = _now() - timedelta(hours=hours)
+    rows = [dict(row) for row in (await session.execute(text(
+        f"{_PLACEMENT_SQL} WHERE p.workspace_id = :ws AND p.created_at >= :since "
+        "AND p.host_id IS NOT NULL ORDER BY p.created_at DESC LIMIT 5000"),
+        {"ws": workspace_id, "since": since})).mappings().all()]
+    sent = [row for row in rows if row.get("poke_at") is not None]
+    delivered = [row["net_rtt_ms"] for row in sent
+                 if row.get("net_ack_at") is not None and row.get("net_rtt_ms") is not None]
+    ready = [row["exec_startup_ms"] for row in sent
+             if row.get("exec_ack_at") is not None and row.get("exec_startup_ms") is not None]
+    started = [row for row in sent if row.get("exec_started_ms") is not None]
+    warm = [row["exec_started_ms"] for row in started if row.get("warm") is True]
+    refused: dict[str, int] = {}
+    for row in sent:
+        if row.get("qos_status") == "TIMEOUT_REVOKED":
+            # Group by what went wrong, not by the free text after it.
+            reason = str(row.get("poke_detail") or "unknown")
+            key = reason.split(":")[1].strip() if reason.startswith("AGENT_REJECTED:") \
+                else reason.split(":")[0]
+            refused[key[:60]] = refused.get(key[:60], 0) + 1
+    timings = {
+        "delivered_ms": _percentiles(delivered),
+        "worker_ready_ms": _percentiles(ready),
+        "execution_started_ms": _percentiles([row["exec_started_ms"] for row in started]),
+        "execution_started_warm_ms": _percentiles(warm),
+    }
+    meets = {
+        "delivered_p95": (timings["delivered_ms"]["p95"] is not None
+                          and timings["delivered_ms"]["p95"] <= TARGETS_MS["delivered_p95"]),
+        "execution_started_p95": (
+            timings["execution_started_warm_ms"]["p95"] is not None
+            and timings["execution_started_warm_ms"]["p95"] <= TARGETS_MS["execution_started_p95"]),
+        "execution_started_p99": (
+            timings["execution_started_warm_ms"]["p99"] is not None
+            and timings["execution_started_warm_ms"]["p99"] <= TARGETS_MS["execution_started_p99"]),
+    }
+    by_step: dict[str, dict[str, int]] = {}
+    for row in rows:
+        entry = by_step.setdefault(row["step"], {})
+        stage = _stage(row) if row["status"] not in OPEN else "open"
+        entry[stage] = entry.get(stage, 0) + 1
+    rounds = [row for row in rows if row["step"] == "supervise"]
+    ended = [row for row in rounds if row["status"] not in OPEN]
+    finished = [row for row in ended if row.get("reported") == "finished"]
+    # Newest first: how many rounds in a row ended finished.
+    streak = 0
+    for row in ended:
+        if row.get("reported") != "finished":
+            break
+        streak += 1
+    supervise = {
+        "offered": len(rounds),
+        "open": len(rounds) - len(ended),
+        "finished": len(finished),
+        "failed": sum(1 for row in ended if row.get("reported") == "failed"),
+        "skipped": sum(1 for row in ended if row.get("reported") == "skipped"),
+        "not_delivered": sum(1 for row in ended if row.get("reported") is None
+                             and row.get("qos_status") == "TIMEOUT_REVOKED"),
+        "moved": sum(1 for row in ended if row["status"] == "moved"),
+        "finished_rate": round(len(finished) / len(ended), 4) if ended else None,
+        "finished_in_a_row": streak,
+    }
+    stopped = []
+    for row in (await session.execute(text(
+            "SELECT t.task_key, t.title, t.assigned_role, t.required_role, t.repo, "
+            "t.required_capabilities, t.updated_at FROM collab_tasks t "
+            "WHERE t.workspace_id = :ws AND t.status = 'HANDOFF' "
+            "AND (SELECT count(*) FROM runner_placements p WHERE p.task_id = t.id "
+            "AND p.step = 'work' AND p.status = 'failed') >= :rounds "
+            "ORDER BY t.updated_at DESC LIMIT 100"),
+            {"ws": workspace_id, "rounds": MAX_ROUNDS})).mappings():
+        history = (await session.execute(text(
+            "SELECT status, reason, note, host_id, ended_at FROM runner_placements "
+            "WHERE workspace_id = :ws AND task_key = :k AND step = 'work' "
+            "AND status IN ('failed', 'moved') ORDER BY created_at DESC LIMIT 6"),
+            {"ws": workspace_id, "k": row["task_key"]})).mappings().all()
+        stopped.append({
+            "task_key": row["task_key"], "title": row["title"],
+            "role": row["required_role"] or row["assigned_role"], "repo": row["repo"],
+            "required_capabilities": list(row["required_capabilities"] or []),
+            "rounds": [{"status": item["status"], "reason": item["reason"], "note": item["note"],
+                        "host_id": item["host_id"],
+                        "ended_at": item["ended_at"].isoformat() if item["ended_at"] else None}
+                       for item in history],
+        })
+    return {
+        "window_hours": hours, "since": since.isoformat(),
+        "pokes": {"sent": len(sent), "delivered": len(delivered), "worker_ready": len(ready),
+                  "execution_started": len(started),
+                  "not_delivered": sum(refused.values()),
+                  "worker_start_failure_rate": (round(sum(refused.values()) / len(sent), 4)
+                                                if sent else None)},
+        "timings": timings, "targets_ms": TARGETS_MS, "meets_targets": meets,
+        "not_delivered_reasons": dict(sorted(refused.items(), key=lambda item: -item[1])),
+        "by_step": by_step, "supervise": supervise, "stopped": stopped,
+    }
 
 
 # ------------------------------------------------------------------ steering

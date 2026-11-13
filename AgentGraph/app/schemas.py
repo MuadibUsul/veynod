@@ -150,12 +150,45 @@ def _check_mentions(values: list[str]) -> list[str]:
     return values
 
 
+class AcceptanceCheck(StrictModel):
+    """What the platform runs for an AUTO item instead of asking a person.
+
+    document_exists: ``doc_key`` was written (in the task's namespace unless the
+    key names one), and contains ``contains`` when given. gate: the task's
+    quality gate ``gate`` passed (CI, TESTS or ACCEPTANCE, as reported by
+    record_gate_result). command: the computer that did the work runs ``run``
+    in the work directory after the agent's turn; exit 0 passes.
+    """
+
+    type: Literal["document_exists", "gate", "command"]
+    doc_key: str | None = Field(default=None, max_length=256)
+    contains: str | None = Field(default=None, max_length=500)
+    gate: Literal["CI", "TESTS", "ACCEPTANCE"] | None = None
+    run: str | None = Field(default=None, max_length=2_000)
+    timeout_s: int = Field(default=300, ge=1, le=3_600)
+
+    @model_validator(mode="after")
+    def _complete(self) -> AcceptanceCheck:
+        needed = {"document_exists": "doc_key", "gate": "gate", "command": "run"}[self.type]
+        if not getattr(self, needed):
+            raise ValueError(f"a {self.type} check needs {needed}")
+        return self
+
+
 class AcceptanceItem(StrictModel):
     """One acceptance item (quality control 1.0 §3.1)."""
 
     id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
     text: str = Field(min_length=1, max_length=2_000)
     kind: Literal["AUTO", "MANUAL"] = "MANUAL"
+    check: AcceptanceCheck | None = Field(
+        default=None, description="AUTO items only: what the platform runs to judge it")
+
+    @model_validator(mode="after")
+    def _check_is_auto(self) -> AcceptanceItem:
+        if self.check is not None and self.kind != "AUTO":
+            raise ValueError("only an AUTO item has a check; a MANUAL item is a person's look")
+        return self
 
 
 def _task_key_without_slash(value: str | None) -> str | None:
@@ -1059,6 +1092,13 @@ class TaskSummary(BaseModel):
     awaiting_deploy: bool | None = Field(
         default=None, description="true: approved, waiting in HANDOFF for a verified deploy "
                                   "before DONE (not sent back)")
+    needs_attention: bool = Field(
+        default=False, description="finished on trust and flagged for a look by a person or "
+                                   "an AUDITOR; attention_reasons says why. Holds nothing back")
+    attention_reasons: list[str] | None = None
+    check_results: list[dict[str, Any]] | None = Field(
+        default=None, description="results of the AUTO acceptance checks: id, type, "
+                                  "passed (true, false or null while pending), detail")
     ping_pong_count: int
     retry_count: int = Field(
         default=0, description="Alias of ping_pong_count (spec §4.2 retry_count)")
@@ -1467,6 +1507,26 @@ class RunnerHeartbeatRequest(StrictModel):
 class PlacementReportRequest(StrictModel):
     outcome: Literal["finished", "failed"]
     note: str | None = Field(default=None, max_length=500)
+
+
+class TaskAttentionRequest(StrictModel):
+    decision: Literal["ok", "redo"]
+    note: str | None = Field(default=None, max_length=2_000)
+
+
+class CheckResult(StrictModel):
+    id: str = Field(min_length=1, max_length=64)
+    passed: bool
+    detail: str | None = Field(default=None, max_length=1_000)
+
+
+class TaskCheckResultsRequest(StrictModel):
+    results: list[CheckResult] = Field(min_length=1, max_length=50)
+
+
+class PlacementStartRequest(StrictModel):
+    # The lease epoch the poke carried; a task that moved past it is not started.
+    lease_epoch: int | None = Field(default=None, ge=0)
 
 
 class PlacementMoveRequest(StrictModel):
@@ -2181,6 +2241,10 @@ class AgentTokenOut(BaseModel):
     issued_by_agent: str | None = None
     depth: int = 1
     parent_token_id: str | None = None
+    # The client installation this credential belongs to, if it has one.
+    connection_id: uuid.UUID | None = None
+    connection_label: str | None = None
+    connection_status: str | None = None
     # Tokens issued below this one by agents (every generation), for the console.
     delegated_active: int = 0
     delegated_total: int = 0
@@ -2985,6 +3049,11 @@ class CliSessionCreateRequest(StrictModel):
     public_key: str = Field(min_length=40, max_length=64,
                             description="The CLI's X25519 public key, base64 (32 bytes)")
     client_label: str | None = Field(default=None, max_length=64)
+    client_instance_id: str | None = Field(
+        default=None, min_length=8, max_length=64, pattern=r"^[A-Za-z0-9._:-]+$",
+        description="This installation's own id (the CLI makes it once and keeps it). "
+                    "Signing in again with the same id rotates the same credential "
+                    "instead of minting another. Older CLIs send none.")
     clients: list[Literal["claude-code", "cursor", "claude-desktop", "other"]] = Field(
         default_factory=list, max_length=4)
     identities: list[CliIdentityRequest] = Field(

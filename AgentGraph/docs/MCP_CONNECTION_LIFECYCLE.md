@@ -1,7 +1,7 @@
 # MCP Connection Lifecycle
 
-**Status:** Proposed  
-**Date:** 2026-10-25  
+**Status:** Rollout steps 1–3 implemented (schema 3.100.0, CLI 0.9.0), not yet released; steps 4 (console) and 5 (OAuth) are open  
+**Date:** 2026-10-25, implementation notes 2026-11-11  
 **Scope:** `npx veynod init`, MCP clients, agent-token lifecycle, console Agents page
 
 ## 1. Problem
@@ -312,3 +312,37 @@ visibility; step 5 covers claude.ai-style connectors.
   name alone.
 - Legacy adoption: only when the signature is unowned; never steal a token
   already linked to another connection.
+
+## 15. As implemented (2026-11-11)
+
+Steps 1–3 of §13 are in the code. What differs from the text above, and why:
+
+- **Migration** is `v3_100_mcp_connections.sql` (3.38 was taken).
+- **The expiry slides while the credential is in use.** §6.4 extends the TTL only
+  on a reconnect. A computer that runs tasks never signs in again, so its key
+  would have stopped after 90 days of daily use. The reaper moves the expiry
+  forward for a CLI credential that was used in the last week and is in the
+  second half of its life; one nobody uses still runs out. "Used" is the
+  agent's directory entry, the computer's runner heartbeat or the connection's
+  last sign-in (`agent_tokens.last_seen_at` is not written today).
+- **Settings**, with §14's values as defaults, so the owner can change them
+  without a release: `CLI_CREDENTIAL_TTL_DAYS=90` (0 turns expiry off),
+  `CONNECTION_DORMANT_DAYS=60`, `CONNECTION_REVOKE_DAYS=90`. §14 was not
+  confirmed by the owner before implementation; these are the proposal's own
+  defaults.
+- **Every credential the CLI issues expires**, with or without an installation
+  id; only the ones with an id belong to a connection.
+- **One state file for all boards**: `~/.veynod/connection.json` holds one id per
+  host (`{"hosts": {"https://veynod.com": {"client_instance_id": …}}}`), so the
+  same machine on two boards is two connections.
+- **Several identities in one sign-in** (`veynod up` asks for the computer and
+  its extras) share the connection; each is matched by its `agent_signature`.
+- **A revoked connection issues nothing more**: signing in with its id answers
+  409 `connection_revoked`; `npx veynod --fresh` starts a new one.
+- **Not done**: `veynod disconnect`, `POST …/connections/{id}/rotate`, the
+  console's connection grouping (step 4) and OAuth refresh tokens (step 5).
+  `purge_stale_delegated()` still hard-deletes long-expired tokens that agents
+  delegated (depth 2 and deeper); CLI and console credentials are never deleted.
+
+Tests: `tests/test_mcp_connections.py`, `cli/test/up.test.mjs`,
+`cli/test/veynod.test.mjs`.

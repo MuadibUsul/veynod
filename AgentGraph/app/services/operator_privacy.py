@@ -30,7 +30,9 @@ from app.errors import ApiError, Forbidden
 # Workspace sub-resources the operator may reach on a private workspace:
 # counts, usage, quotas and the index queue. Everything else is content.
 CONTROL_PLANE_SUFFIXES = frozenset(
-    {"", "/stats", "/usage", "/budget", "/index-status", "/metrics", "/reindex"}
+    {"", "/stats", "/usage", "/budget", "/index-status", "/metrics", "/reindex",
+     # how many client installations, by status; never which
+     "/connections"}
 )
 _WORKSPACE_PATH = re.compile(
     r"^/v1/admin/workspaces/([0-9a-fA-F-]{36})(/.*)?$"

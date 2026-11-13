@@ -29,8 +29,10 @@ type Alert = {
 };
 
 type Unplaced = { placement_id: string; task_key: string | null; reason: string; note: string };
+type Timings = { delivered_ms: number | null; worker_ready_ms: number | null;
+  execution_started_ms: number | null; warm: boolean | null; delivery_note: string | null };
 type Round = { status: string; reason: string | null; note: string | null; created_at: string;
-  ended_at: string | null };
+  ended_at: string | null; stage?: string; report_note?: string | null; timings?: Timings | null };
 
 // Why no runner can take a task, in the owner's words.
 const UNPLACED_LABEL: Record<string, string> = {
@@ -61,6 +63,46 @@ const ROUND_LABEL: Record<string, string> = {
   moved: "Last supervisor round was cut short",
   withdrawn: "Last supervisor round found nothing",
 };
+// How far the round really got. A round is done only when its computer
+// reported finished: delivered, a worker being up and the work having begun are
+// three separate facts, and none of them is shown as a finished round.
+const ROUND_STAGE: Record<string, string> = {
+  offered: "Round offered, not delivered yet",
+  delivered: "Round delivered, no worker yet",
+  ready: "Worker ready, round not started",
+  started: "Supervisor round running",
+  finished: "Last supervisor round finished",
+  failed: "Last supervisor round failed",
+  skipped: "Last supervisor round was skipped",
+  not_delivered: "Last supervisor round did not reach the computer",
+};
+const ROUND_LAMP: Record<string, string> = {
+  finished: "green", started: "green", failed: "red", skipped: "red", not_delivered: "red",
+  offered: "amber", delivered: "amber", ready: "amber",
+};
+
+const ROUND_ENDED = new Set(["finished", "failed", "skipped", "not_delivered"]);
+
+/** The stage says it while the round is open, and afterwards when it is a final one. */
+function stageOf(round: Round): string | null {
+  const open = round.status === "offered" || round.status === "claimed";
+  return round.stage && (open || ROUND_ENDED.has(round.stage)) ? round.stage : null;
+}
+
+function roundLabel(round: Round): string {
+  const stage = stageOf(round);
+  // An ended round that never reported is told by how it ended (cut short, found nothing).
+  return stage ? ROUND_STAGE[stage] ?? stage : ROUND_LABEL[round.status] ?? round.status;
+}
+
+function roundLamp(round: Round): string {
+  const stage = stageOf(round);
+  if (stage) return ROUND_LAMP[stage] ?? "";
+  return round.status === "delivered" ? "green" : round.status === "withdrawn" ? "" : "red";
+}
+
+const ms = (value: number | null | undefined) => (value === null || value === undefined
+  ? "—" : value < 1000 ? `${value} ms` : `${(value / 1000).toFixed(1)} s`);
 
 const MODE_LABEL: Record<string, string> = {
   manual: "Ask me every step",
@@ -83,6 +125,20 @@ const RULE_LABEL: Record<string, string> = {
 };
 
 const RELOAD_ON = /^(HOST_|TASK_|CHUNK_|DIAGRAM_|LOOP_ROUND|PLACEMENT_|AGENT_PRESENCE|DEPLOY_|task\.)/;
+
+// Why a finished task was flagged, in words (the reason codes come from the server).
+function lookReason(reason: string | undefined, t: (text: string) => string): string {
+  if (!reason) return "";
+  const code = reason.split(":")[0];
+  const words: Record<string, string> = {
+    risk_flag: "the agent flagged a risk",
+    acceptance_not_met: "not every acceptance item was met",
+    manual_acceptance: "its author asked for a person's look",
+    owner_topic: "it touches money, identity, legal matters, data or a commitment",
+    sampled: "a routine sample",
+  };
+  return words[code] ? t(words[code]) : reason;
+}
 
 type Need = { key: string; tone: "red" | "amber" | "violet" | "cyan"; title: string; detail?: string;
   action?: { label: string; run?: () => void; href?: string } };
@@ -186,6 +242,21 @@ export function LoopView({
     onEvent,
   });
 
+  // A flagged task the person looked at and found fine. A redo (with a note) is
+  // made from the task itself: it opens a follow-up task.
+  const looksFine = async (key: string) => {
+    try {
+      await request(`/v1/tasks/${encodeURIComponent(key)}/attention`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision: "ok" }),
+      });
+      notify(t("Marked as looked at"));
+      void load();
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error));
+    }
+  };
+
   // --- what needs a person, each with the one thing to do about it.
   const needs: Need[] = [];
   const deploy = overview?.needs_you.deploy ?? [];
@@ -217,6 +288,23 @@ export function LoopView({
         : item.asked_by ? t("{who} waits for your answer", { who: item.asked_by }) : t("A task waits for your answer"),
       detail: `${item.title} · ${waited(item.since, t)}`,
       action: { label: review ? t("Review") : t("Answer it"), run: () => onOpenTask(item.key) },
+    });
+  }
+  // Finished on trust and flagged: a look, not an approval. Nothing waits on them.
+  const look = overview?.needs_you.look ?? [];
+  for (const item of look.slice(0, 3)) {
+    needs.push({
+      key: `look-${item.key}`, tone: "cyan",
+      title: t("Finished, worth a look: {title}", { title: item.title }),
+      detail: [lookReason(item.reasons[0], t), waited(item.since, t)].filter(Boolean).join(" · "),
+      action: { label: t("Looks fine"), run: () => void looksFine(item.key) },
+    });
+  }
+  if (look.length > 3) {
+    needs.push({
+      key: "look-more", tone: "cyan",
+      title: t("{n} more finished tasks are worth a look", { n: look.length - 3 }),
+      action: { label: t("Open them"), run: onOpenTasks },
     });
   }
   if (waitingReview > 0) {
@@ -311,12 +399,23 @@ export function LoopView({
             </div>
           )}
           <div className="lin-row">
-            <i className={`lamp ${round ? (round.status === "failed" ? "red" : "green") : noSupervisor ? "amber" : ""}`} />
+            <i className={`lamp ${round ? roundLamp(round) : noSupervisor ? "amber" : ""}`} />
             <span className="lin-label">{t("Supervisor")}</span>
             <span className="need-text">
-              <b>{round ? t(ROUND_LABEL[round.status] ?? round.status) : t("No round yet")}</b>
+              <b>{round ? t(roundLabel(round)) : t("No round yet")}</b>
               {round ? <small>{relativeTime(round.ended_at ?? round.created_at)}</small>
                 : noSupervisor ? <small>{t("No supervisor computer")}</small> : null}
+              {round?.timings && (
+                <small title={round.timings.delivery_note ?? undefined}>
+                  {t("Poke delivered")} {ms(round.timings.delivered_ms)}
+                  {" · "}{t("Worker ready")} {ms(round.timings.worker_ready_ms)}
+                  {" · "}{t("Work began")} {ms(round.timings.execution_started_ms)}
+                </small>
+              )}
+              {round && (round.stage === "failed" || round.stage === "skipped"
+                || round.stage === "not_delivered" || round.status === "moved") && (
+                <small>{round.report_note ?? round.note ?? round.timings?.delivery_note ?? round.reason}</small>
+              )}
             </span>
           </div>
           {today && (

@@ -74,6 +74,7 @@ from app.schemas import (
     PeerReviewSubmitRequest,
     PlacementMoveRequest,
     PlacementReportRequest,
+    PlacementStartRequest,
     PlacementWithdrawRequest,
     PolicyListResponse,
     ProposalApplyRequest,
@@ -99,6 +100,8 @@ from app.schemas import (
     SubtasksRequest,
     SuperAdminTokenIssueRequest,
     TaskActionResponse,
+    TaskAttentionRequest,
+    TaskCheckResultsRequest,
     TaskClaimRequest,
     TaskContextResponse,
     TaskCreateRequest,
@@ -447,6 +450,8 @@ async def list_tasks(
                                  description="Comma-separated task keys or ids"),
     diagram_key: str | None = Query(default=None, max_length=64,
                                     description="the chunk tasks of this diagram"),
+    needs_attention: bool | None = Query(
+        default=None, description="true: finished on trust and flagged for a look"),
     detail: Literal["summary", "standard", "full"] = Query(
         default="full", description="summary: short task cards (the MCP default)"),
     principal: Principal = Depends(get_principal),
@@ -466,6 +471,7 @@ async def list_tasks(
         claimable_by_me=claimable_by_me,
         task_keys=[item.strip() for item in (task_key or "").split(",") if item.strip()],
         diagram_key=diagram_key,
+        needs_attention=needs_attention,
     )
     if detail == "full":
         return result
@@ -602,6 +608,33 @@ async def list_leases(
     return await lease_service.list_leases(
         session, principal, holder=holder, state=state, cursor=cursor, limit=limit
     )
+
+
+@router.post(
+    "/tasks/{task_key}/checks",
+    summary="The computer that did the work reports its command checks (AUTO acceptance)",
+)
+async def report_task_checks(
+    task_key: str,
+    body: TaskCheckResultsRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await services.record_check_results(session, principal, task_key, body.results)
+
+
+@router.post(
+    "/tasks/{task_key}/attention",
+    summary="A person or an AUDITOR looked at work finished on trust: ok, or redo with a note",
+)
+async def resolve_task_attention(
+    task_key: str,
+    body: TaskAttentionRequest,
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    return await services.resolve_attention(session, principal, task_key,
+                                            decision=body.decision, note=body.note)
 
 
 @router.post(
@@ -1584,6 +1617,20 @@ async def report_placement(
     return await scheduler.report(session, principal, placement_id, body.outcome, body.note)
 
 
+@router.post("/runner/placements/{placement_id}/start",
+             summary="The worker asks to start: the placement is checked, then stamped started")
+async def start_placement(
+    body: PlacementStartRequest | None = None,
+    placement_id: str = Path(max_length=40),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import scheduler
+
+    return await scheduler.start(session, principal, placement_id,
+                                 body.lease_epoch if body else None)
+
+
 @router.post("/runner/placements/{placement_id}/move",
              summary="Supervisor: put a task or step on another computer (named or best)")
 async def move_placement(
@@ -1618,6 +1665,18 @@ async def loop_agenda(
     from app.services import scheduler
 
     return await scheduler.loop_agenda(session, principal)
+
+
+@router.get("/runner/metrics",
+            summary="The Loop's three stages over a window: delivered, started, finished")
+async def loop_metrics(
+    hours: int = Query(default=24, ge=1, le=720),
+    principal: Principal = Depends(get_principal),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import scheduler
+
+    return await scheduler.loop_metrics(session, principal, hours)
 
 
 @router.post("/runner/schedule",

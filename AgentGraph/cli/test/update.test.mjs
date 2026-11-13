@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { runHub } from "../bin/up.mjs";
-import { checkForUpdate, confirmRunning, installLauncher, newer, npmInstall, pickVersion, readState, startUpdates,
-  writeState } from "../bin/update.mjs";
+import { checkForUpdate, confirmRunning, healthy, installLauncher, liveVersions, markRunning, newer, npmInstall,
+  pickVersion, pruneVersions, readState, startUpdates, writeState } from "../bin/update.mjs";
 
 const scratch = () => mkdtempSync(join(tmpdir(), "veynod-update-"));
 
@@ -115,7 +115,9 @@ test("an update check installs a newer version beside this one and points the la
   confirmRunning("1.0.0", root);
   const installed = [];
   const install = async (version, where) => { installed.push([version, where]); };
-  const base = { version: "1.0.0", root, launched: join(root, "veynod.mjs"), install };
+  const checked = [];
+  const check = async (version) => { checked.push(version); return true; };
+  const base = { version: "1.0.0", root, launched: join(root, "veynod.mjs"), install, check };
 
   assert.equal((await checkForUpdate({ ...base, config: { auto_update: false }, fetchImpl: registry("2.0.0") })).text,
     "auto-update is off");
@@ -230,4 +232,67 @@ test("the hub tells its updater whether any task is running", async () => {
   assert.equal(await done, 0);
   assert.equal(stopped, true, "the updater stops with the hub");
   assert.ok(!existsSync(join(home, ".veynod", "hub-dou-pc.lock")));
+});
+
+test("a version that installs but does not start never replaces the hub that works", async () => {
+  const root = scratch();
+  installLauncher("1.0.0", root);
+  confirmRunning("1.0.0", root);
+  // The real check: the new version's own CLI must print its version.
+  fakeVersion(root, "1.1.0", { starts: false });
+  assert.equal(await healthy("1.1.0", root), false);
+  const result = await checkForUpdate({ version: "1.0.0", root, launched: join(root, "veynod.mjs"),
+    install: async () => {}, fetchImpl: registry("1.1.0") });
+  assert.equal(result.installed, undefined);
+  assert.equal(result.text, "1.1.0 was installed but did not start; staying on 1.0.0");
+  const state = readState(root);
+  assert.equal(state.current, "1.0.0", "the launcher still starts the version that works");
+  assert.equal(state.rolled_back, "1.1.0", "and that version is not tried again");
+  assert.ok(!existsSync(join(root, "1.1.0")));
+
+  const bin = join(root, "1.2.0", "node_modules", "veynod", "bin");
+  mkdirSync(bin, { recursive: true });
+  writeFileSync(join(bin, "veynod.mjs"), 'console.log("1.2.0");\n');
+  assert.equal(await healthy("1.2.0", root), true);
+});
+
+test("an update drains the hub before it restarts: no placement is cut short", async () => {
+  const root = scratch();
+  installLauncher("1.0.0", root);
+  const order = [];
+  let release;
+  const drain = () => { order.push("drain"); return new Promise((resolve) => { release = resolve; }); };
+  const stop = startUpdates({ version: "1.0.0", root, launched: "launcher",
+    check: async () => ({ installed: "1.1.0", text: "installed 1.1.0" }),
+    busy: () => true, drain, restart: () => order.push("restart"), say: () => {} });
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  // A worker is still running: the hub has stopped taking work but has not exited.
+  assert.deepEqual(order, ["drain"]);
+  release();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(order, ["drain", "restart"]);
+  stop();
+});
+
+test("a version a hub still runs keeps its files, whatever is current", () => {
+  const root = scratch();
+  for (const version of ["1.0.0", "1.1.0", "1.2.0"]) fakeVersion(root, version);
+  // An old hub (pid 4242) is still alive on 1.0.0; another marker is of a dead process.
+  markRunning("1.0.0", root, 4242);
+  markRunning("1.1.0", root, 4343);
+  const alive = (pid) => pid === 4242;
+  assert.deepEqual([...liveVersions(root, { alive })], ["1.0.0"]);
+  assert.ok(!existsSync(join(root, ".running", "4343")), "a dead hub's marker is cleared");
+
+  assert.deepEqual(pruneVersions(root, ["1.2.0"], { alive }), ["1.1.0"]);
+  assert.ok(existsSync(join(root, "1.0.0", "node_modules", "veynod", "bin", "veynod.mjs")),
+    "the old hub can still start its runner");
+  // Once that hub has ended, its version goes.
+  assert.deepEqual(pruneVersions(root, ["1.2.0"], { alive: () => false }), ["1.0.0"]);
+
+  // A hub removes its own marker on the way out.
+  const unmark = markRunning("1.2.0", root, 999999);
+  assert.ok(existsSync(join(root, ".running", "999999")));
+  unmark();
+  assert.ok(!existsSync(join(root, ".running", "999999")));
 });

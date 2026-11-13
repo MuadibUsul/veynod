@@ -184,8 +184,8 @@ async def test_automation_keeps_technical_questions_from_the_owner(loop):
     assert declined == 2
 
 
-async def _reject_until_limit(client: httpx.AsyncClient, ws: dict) -> dict:
-    key = await _claimed_task(client, ws, max_retries=1)
+async def _reject_until_limit(client: httpx.AsyncClient, ws: dict, **extra) -> dict:
+    key = await _claimed_task(client, ws, max_retries=1, **extra)
     handed = await client.post(f"/v1/tasks/{key}/handoff", headers=ws["agent"], json={
         "next_status": "REVIEWING", "brief": BRIEF})
     assert handed.status_code == 200, handed.text
@@ -202,7 +202,9 @@ async def test_full_automation_hands_on_instead_of_escalating(loop):
 
     ws = await _workspace(loop)
     await _mode(loop, ws, "full")
-    full = await _reject_until_limit(loop, ws)
+    # A task with a repository keeps its review under full automation (work
+    # without one is finished on trust at the hand-off, so nothing is rejected).
+    full = await _reject_until_limit(loop, ws, repo="acme/site")
     assert full["review"]["task"]["status"] == "HANDOFF"
     assert full["review"]["escalated"] is False
     warnings = {item["code"] for item in full["handoff"].get("warnings", [])}

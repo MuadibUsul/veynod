@@ -810,8 +810,16 @@ def ensure_not_human_locked(
         raise HumanSovereigntyLocked(resource, note)
 
 
-def ensure_task_role(principal: Principal, assigned_role: str | None) -> None:
+#: Roles that do the work. One worker role: they take each other's tasks.
+WORKER_ROLES = frozenset({"EXECUTOR", "ANALYST"})
+
+
+def ensure_task_role(principal: Principal, assigned_role: str | None,
+                     required_role: str | None = None) -> None:
     if principal.is_commander:
+        return
+    if (assigned_role in WORKER_ROLES and principal.role.value in WORKER_ROLES
+            and not required_role and get_settings().worker_roles_unified):
         return
     if assigned_role and assigned_role != principal.role.value:
         raise Forbidden(

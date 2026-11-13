@@ -203,6 +203,273 @@ def _check_epoch(task: CollabTask, expected: int | None) -> None:
         raise LeaseConflict("collab_task", task_out(task).model_dump(mode="json"))
 
 
+async def _trusted_handoff(session: AsyncSession, principal: Principal, task: CollabTask,
+                           next_status: str, brief: dict[str, Any] | None) -> list[str] | None:
+    """Whether an agent's hand-off to review ends the task, and why to look at it.
+
+    None: the usual path (the task goes where the caller asked). A list: the task
+    is DONE now; a non-empty list is the reasons a person or an AUDITOR should
+    still look (``needs_attention``), which holds nothing back.
+
+    Applies under full automation to an agent handing work to REVIEWING, outside
+    the namespaces kept reviewed. Tasks with a repository and diagram chunks keep
+    their gate (Kernel verification, merge queue), and a workspace under
+    enforced quality control keeps its tiers.
+    """
+    if (not settings.trust_by_default or next_status != "REVIEWING" or principal.is_human
+            or task.repo or (task.kind or "work") != "work" or quality.enforced()
+            or task.namespace in settings.trust_reviewed_namespaces
+            or (task.input_context or {}).get("diagram")):
+        return None
+    if await automation.mode_for_task(session, principal.workspace.id, task.task_key) != "full":
+        return None
+    brief = brief or {}
+    reasons: list[str] = []
+    if brief.get("risk_flag"):
+        reasons.append("risk_flag: the agent flagged a risk")
+    metrics = brief.get("key_metrics") if isinstance(brief.get("key_metrics"), dict) else {}
+    unmet = brief.get("acceptance_not_met") or metrics.get("acceptance_not_met") \
+        or metrics.get("acceptance_not_done")
+    if unmet:
+        reasons.append(f"acceptance_not_met: {unmet}"[:300])
+    manual = [str(item.get("id") or "") for item in (task.acceptance or [])
+              if isinstance(item, dict) and item.get("kind") == "MANUAL"]
+    if manual:
+        # The author asked for a person's eyes on these items.
+        reasons.append(f"manual_acceptance: {', '.join(manual)}"[:300])
+    topic = brief.get("owner_topic")
+    if topic in automation.OWNER_TOPICS:
+        reasons.append(f"owner_topic: {topic}")
+    for result in task.check_results or []:
+        if result.get("passed") is False:
+            reasons.append(f"check_failed: {result['id']}: {result.get('detail') or ''}"[:300])
+    if not reasons and quality._sampled(task.id, settings.trust_sample_rate):
+        reasons.append("sampled: a routine look, nothing was flagged")
+    return reasons
+
+
+async def _run_server_checks(session: AsyncSession, task: CollabTask) -> list[dict[str, Any]]:
+    """Run the AUTO checks the server can judge; a command check is left pending.
+
+    Results: {id, type, passed: true|false|null, detail}. A task that came in
+    through federation runs no command on this workspace's computers.
+    """
+    from app.services import quality
+
+    results: list[dict[str, Any]] = []
+    gates: dict[str, dict[str, Any]] | None = None
+    for item in task.acceptance or []:
+        check = item.get("check") if isinstance(item, dict) else None
+        if item.get("kind") != "AUTO" or not isinstance(check, dict):
+            continue
+        kind = check.get("type")
+        result: dict[str, Any] = {"id": str(item.get("id")), "type": kind, "passed": None,
+                                  "detail": None}
+        if kind == "document_exists":
+            key = str(check.get("doc_key") or "")
+            row = (await session.execute(text(
+                "SELECT content FROM shared_documents WHERE workspace_id = :ws "
+                "AND (doc_key = :k OR doc_key = :scoped) AND archived_at IS NULL "
+                "ORDER BY version DESC LIMIT 1"),
+                {"ws": task.workspace_id, "k": key,
+                 "scoped": f"{task.namespace}/{key}"})).mappings().one_or_none()
+            wanted = check.get("contains")
+            if row is None:
+                result.update(passed=False, detail=f"document {key} was not written")
+            elif wanted and wanted not in (row["content"] or ""):
+                result.update(passed=False, detail=f"document {key} does not contain {wanted!r}")
+            else:
+                result.update(passed=True, detail=f"document {key} is there")
+        elif kind == "gate":
+            if gates is None:
+                gates = await quality.gate_status(session, task.workspace_id, task=task)
+            entry = gates.get(str(check.get("gate")))
+            if entry is None:
+                result.update(passed=False, detail=f"no {check.get('gate')} result was reported")
+            else:
+                result.update(passed=entry["status"] == "PASS",
+                              detail=f"{check.get('gate')} {entry['status']}")
+        elif kind == "command":
+            if (task.input_context or {}).get("federation"):
+                result.update(passed=False,
+                              detail="work from another workspace runs no command here")
+            else:
+                result["detail"] = "waits for the computer that did the work"
+        results.append(result)
+    return results
+
+
+async def finish_merged_on_trust(workspace_id: Any) -> int:
+    """Under full automation, finish code tasks whose change the Kernel merged.
+
+    A task with a repository is not finished at its hand-off: the Kernel's
+    verification gate and merge coordinator judge it. Nothing moved the board
+    task on after a merge, so on a one-computer board every code task waited
+    in REVIEWING for a person. Here a merged change with a passed gate is
+    finished on trust, like a hand-off without a repository: DONE, its
+    dependents released, flagged when the brief flagged a risk. A gate that
+    failed or escalated is left to the runner's revision turn and to people.
+    """
+    from app.database import async_session_factory
+    from app.services.kernel_delivery import refresh_delivery
+
+    if not settings.trust_by_default:
+        return 0
+    finished = 0
+    async with async_session_factory() as session:
+        candidates = (await session.execute(
+            select(CollabTask).where(
+                CollabTask.workspace_id == workspace_id,
+                CollabTask.status == TaskStatus.REVIEWING,
+                CollabTask.repo.is_not(None),
+                CollabTask.correlation["kernel_delivery"]["mode"].astext == "kernel",
+            ).limit(50))).scalars().all()
+        for task in candidates:
+            if task.namespace in settings.trust_reviewed_namespaces:
+                continue
+            if await automation.mode_for_task(session, workspace_id, task.task_key) != "full":
+                continue
+            try:
+                delivery = await refresh_delivery(session, task)
+            except Exception:  # noqa: BLE001 - an unreachable Kernel waits for the next pass
+                logger.warning("kernel delivery refresh failed for %s", task.task_key,
+                               exc_info=True)
+                continue
+            if not (delivery.get("merged") and delivery.get("gate") in ("pass", None)
+                    and not delivery.get("needs_human")):
+                continue
+            task = await session.get(CollabTask, task.id, with_for_update=True)
+            if task is None or task.status is not TaskStatus.REVIEWING:
+                continue
+            brief = task.handoff_brief if isinstance(task.handoff_brief, dict) else {}
+            reasons = (["risk_flag: the agent flagged a risk"] if brief.get("risk_flag") else [])
+            reasons += [f"check_failed: {item['id']}: {item.get('detail') or ''}"[:300]
+                        for item in task.check_results or [] if item.get("passed") is False]
+            before = task_snapshot(task)
+            task.status = TaskStatus.DONE
+            task.needs_attention = bool(reasons)
+            task.attention_reasons = reasons or None
+            task.version += 1
+            task.updated_at = utcnow()
+            await session.flush()
+            await record_audit(session, workspace_id=workspace_id,
+                               session_batch_id=uuid.uuid4(), agent_signature="scheduler",
+                               target_table="collab_tasks", target_record_id=task.id,
+                               operation="UPDATE", before=before, after=task_snapshot(task))
+            await append_event(
+                session, workspace_id=workspace_id, agent="scheduler",
+                event_type="TASK_MERGED_ON_TRUST",
+                payload={"task_key": task.task_key, "merge_sha": delivery.get("merge_sha"),
+                         "needs_attention": task.needs_attention, "attention_reasons": reasons},
+                namespace=task.namespace)
+            await _release_dependents(session, task, None)
+            await session.commit()
+            finished += 1
+    return finished
+
+
+async def record_check_results(session: AsyncSession, principal: Principal, task_key: str,
+                               results: list[Any]) -> dict[str, Any]:
+    """The computer that did the work reports its command checks.
+
+    Only that computer's agent (the assignee or the last holder) or a person
+    reports them. A failed check flags the task for a look, finished or not.
+    """
+    task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
+    ensure_namespace(principal, task.namespace)
+    agent = effective_agent(principal, None)
+    if not principal.is_human and agent not in (task.handed_off_by, task.claimed_by) and not (
+            task.assignee and await collab.assignee_matches(session, principal, task, agent)):
+        raise Forbidden("the computer that did the work reports its checks")
+    current = {str(entry.get("id")): dict(entry) for entry in task.check_results or []}
+    commands = {str(item.get("id")) for item in task.acceptance or []
+                if isinstance(item, dict) and (item.get("check") or {}).get("type") == "command"}
+    failed: list[str] = []
+    for result in results:
+        if result.id not in commands:
+            raise ApiError(422, "validation_error",
+                           f"{result.id} is not a command check of this task",
+                           details={"field": "results", "command_checks": sorted(commands)})
+        detail = result.detail or ("exit 0" if result.passed else "")
+        current[result.id] = {"id": result.id, "type": "command", "passed": result.passed,
+                              "detail": detail[:500]}
+        if not result.passed:
+            failed.append(f"check_failed: {result.id}: {result.detail or 'command failed'}"[:300])
+    task.check_results = list(current.values())
+    if failed:
+        task.needs_attention = True
+        task.attention_reasons = [*(task.attention_reasons or []), *failed]
+    task.version += 1
+    task.updated_at = utcnow()
+    await append_event(
+        session, workspace_id=principal.workspace.id, agent=agent,
+        event_type="TASK_CHECKS_REPORTED",
+        payload={"task_key": task.task_key, "results": task.check_results,
+                 "failed": len(failed)}, namespace=task.namespace)
+    await session.commit()
+    return {"task_key": task.task_key, "check_results": task.check_results,
+            "needs_attention": task.needs_attention}
+
+
+async def resolve_attention(session: AsyncSession, principal: Principal, task_key: str, *,
+                            decision: str, note: str | None = None) -> dict[str, Any]:
+    """A person or an AUDITOR looked at a task that was finished on trust.
+
+    ``ok`` clears the flag. ``redo`` clears it too and opens a follow-up task
+    with the note, because a finished task is not reopened: what it delivered
+    stays on record and the fix is new work. Whoever built the task may not
+    judge it.
+    """
+    if decision not in ("ok", "redo"):
+        raise ApiError(422, "validation_error", "decision is ok or redo",
+                       details={"field": "decision"})
+    if not (principal.is_human or principal.role.value in ("AUDITOR", "SUPER_ADMIN")
+            or principal.is_commander):
+        raise Forbidden("a person or an AUDITOR looks at work finished on trust")
+    task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
+    ensure_namespace(principal, task.namespace)
+    agent = effective_agent(principal, None)
+    if not principal.is_human and agent in (task.handed_off_by, task.claimed_by):
+        raise Forbidden("whoever built the work does not judge it")
+    if not task.needs_attention:
+        raise ApiError(409, "nothing_to_look_at", "this task is not flagged for a look",
+                       details={"task_key": task.task_key, "status": task.status.value})
+    if decision == "redo" and not (note or "").strip():
+        raise ApiError(422, "validation_error", "redo needs a note saying what to fix",
+                       details={"field": "note"})
+    reasons = list(task.attention_reasons or [])
+    task.needs_attention = False
+    task.reviewed_by = agent
+    task.version += 1
+    task.updated_at = utcnow()
+    follow_up = None
+    if decision == "redo":
+        suffix = uuid.uuid4().hex[:6]
+        follow_up = CollabTask(
+            workspace_id=task.workspace_id, task_key=f"{task.task_key[:110]}-fix-{suffix}",
+            title=f"Fix: {task.title}"[:256], project=task.project, repo=task.repo,
+            description=(f"Follow-up to `{task.task_key}`, which was finished on trust and "
+                         f"did not hold up.\n\nWhat to fix: {note.strip()}\n\n"
+                         f"What it delivered: {task.artifact_uri or 'see its hand-off brief'}"),
+            status=TaskStatus.READY, priority=task.priority + 1,
+            assigned_role=task.assigned_role, namespace=task.namespace,
+            acceptance=task.acceptance or [], created_by=agent,
+            input_context={"follow_up_of": task.task_key},
+        )
+        session.add(follow_up)
+    await session.flush()
+    await append_event(
+        session, workspace_id=principal.workspace.id, agent=agent,
+        event_type="TASK_ATTENTION_RESOLVED",
+        payload={"task_key": task.task_key, "decision": decision, "note": (note or "")[:500],
+                 "reasons": reasons, "follow_up": follow_up.task_key if follow_up else None,
+                 "targets": [f"agent:{task.handed_off_by}"] if task.handed_off_by else []},
+        namespace=task.namespace)
+    await session.commit()
+    return {"task_key": task.task_key, "decision": decision, "needs_attention": False,
+            "follow_up": follow_up.task_key if follow_up else None}
+
+
 def _check_assignee(task: CollabTask, principal: Principal, agent: str) -> None:
     if not task.assignee:
         return
@@ -444,7 +711,8 @@ async def _create_task_core(
         updated_at=utcnow(),
     )
     collab.apply_new_fields(task, request)
-    task.acceptance = [item.model_dump() for item in getattr(request, "acceptance", None) or []]
+    task.acceptance = [item.model_dump(exclude_none=True)
+                       for item in getattr(request, "acceptance", None) or []]
     if parent is not None:
         task.parent_task_id = parent.id
         task.parent_task_key = parent.task_key
@@ -544,6 +812,7 @@ async def list_tasks(
     claimable_by_me: bool = False,
     task_keys: list[str] | None = None,
     diagram_key: str | None = None,
+    needs_attention: bool | None = None,
 ) -> TaskListResponse:
     require_permission(principal, "task:read")
     query = select(CollabTask).where(
@@ -565,6 +834,9 @@ async def list_tasks(
         query = query.where(CollabTask.parent_task_id == parent_task.id)
     if kind:
         query = query.where(CollabTask.kind == kind)
+    if needs_attention is not None:
+        # Finished on trust and flagged for a look (or, with false, not flagged).
+        query = query.where(CollabTask.needs_attention.is_(needs_attention))
     if diagram_key:
         # A diagram's chunk tasks, however many times a chunk was dispatched.
         query = query.where(CollabTask.input_context["diagram"]["key"].astext == diagram_key)
@@ -609,13 +881,20 @@ async def claimable_conditions(session: AsyncSession, principal: Principal) -> l
         conditions += [
             (CollabTask.required_role.is_(None))
             | (CollabTask.required_role == ((entry or {}).get("role") or "")),
+            # Placed on me: the scheduler already judged the fit (collab.check_claimable).
             CollabTask.required_capabilities.contained_by(
                 list((entry or {}).get("capabilities") or [])
-            ),
+            ) | (CollabTask.assignee.is_not(None) & CollabTask.assignee.in_(mine)),
         ]
     if not principal.is_commander:
+        from app.auth import WORKER_ROLES
+
+        mine_roles = ([*WORKER_ROLES] if settings.worker_roles_unified
+                      and principal.role.value in WORKER_ROLES else [principal.role.value])
         conditions.append(CollabTask.assigned_role.is_(None)
-                          | (CollabTask.assigned_role == principal.role.value))
+                          | (CollabTask.assigned_role == principal.role.value)
+                          | (CollabTask.assigned_role.in_(mine_roles)
+                             & CollabTask.required_role.is_(None)))
     if principal.auth_kind is AuthKind.AGENT:
         writes = (principal.write_namespaces if principal.write_namespaces is not None
                   else principal.allowed_namespaces)
@@ -674,13 +953,16 @@ async def acceptance_state(session: AsyncSession, task: CollabTask) -> list[dict
             if isinstance(item, dict) and item.get("item_id"):
                 latest[str(item["item_id"])] = str(item.get("result"))
     done = task.status is TaskStatus.DONE
+    checked = {str(entry.get("id")): entry.get("passed") for entry in task.check_results or []}
     out: list[dict[str, Any]] = []
     for item in task.acceptance or []:
         if not isinstance(item, dict):
             continue
         item_id = str(item.get("id") or item.get("item_id") or "")
-        out.append({"id": item_id,
-                    "status": latest.get(item_id) or ("PASS" if done else "PENDING")})
+        # A check's own result says it; a person's verdict (audit) still wins.
+        by_check = {True: "PASS", False: "FAIL"}.get(checked.get(item_id))
+        out.append({"id": item_id, "status": latest.get(item_id) or by_check
+                    or ("PASS" if done else "PENDING")})
     return out
 
 
@@ -698,7 +980,7 @@ async def claim_task(
     batch = request.session_batch_id or uuid.uuid4()
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
     ensure_namespace(principal, task.namespace, write=True)
-    ensure_task_role(principal, task.assigned_role)
+    ensure_task_role(principal, task.assigned_role, task.required_role)
     # One execution owner: a task with a live Agent Run belongs to that Run.
     # The scheduler already skips such tasks, but a manual claim used to take
     # them anyway and both sides then delivered the same work.
@@ -935,8 +1217,10 @@ async def release_task(
 
 
 async def _release_dependents(
-    session: AsyncSession, completed: CollabTask, principal: Principal
+    session: AsyncSession, completed: CollabTask, principal: Principal | None
 ) -> None:
+    """Free the tasks that waited on ``completed``. ``principal`` None is the
+    platform itself (the scheduler finishing merged work): no namespace limit."""
     await collab.on_done(session, completed)
     dependent_ids = (
         await session.execute(
@@ -961,7 +1245,8 @@ async def _release_dependents(
         if dependent is None or dependent.status is not TaskStatus.TODO:
             continue
         if (
-            not principal.is_commander
+            principal is not None
+            and not principal.is_commander
             and "*" not in principal.allowed_namespaces
             and dependent.namespace not in principal.allowed_namespaces
         ):
@@ -1028,7 +1313,7 @@ async def handoff_task(
     batch = request.session_batch_id or uuid.uuid4()
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
     ensure_namespace(principal, task.namespace, write=True)
-    ensure_task_role(principal, task.assigned_role)
+    ensure_task_role(principal, task.assigned_role, task.required_role)
     now = await db_now(session)
     # A holder whose lease ended learns that first, whatever the task became.
     lease_service.check_fencing(task, request.fencing_token)
@@ -1125,8 +1410,17 @@ async def handoff_task(
         auto_release = await quality.check_auto_release(session, principal, task)
     if request.human_feedback is not None and not principal.is_human:
         raise Forbidden("human_feedback is reserved for human reviewers")
+    # The AUTO acceptance checks the server can run, recorded on the task; command
+    # checks stay pending until the computer that did the work reports them.
+    if request.next_status in ("REVIEWING", "DONE") and not principal.is_human:
+        task.check_results = await _run_server_checks(session, task) or None
+    # Trust by default: this hand-off ends the task instead of queueing a review.
+    trusted = await _trusted_handoff(session, principal, task, request.next_status, brief)
     before = task_snapshot(task)
-    task.status = TaskStatus(request.next_status)
+    task.status = TaskStatus.DONE if trusted is not None else TaskStatus(request.next_status)
+    if trusted is not None:
+        task.needs_attention = bool(trusted)
+        task.attention_reasons = trusted or None
     task.handoff_brief = brief
     task.artifact_uri = artifact_uri
     task.artifact_version = artifact_version
@@ -1160,13 +1454,17 @@ async def handoff_task(
             "version": task.version,
             "summary": brief.get("summary") if brief else None,
             "artifact_uri": artifact_uri,
+            **({"trusted": True, "needs_attention": task.needs_attention,
+                "attention_reasons": task.attention_reasons or []}
+               if trusted is not None else {}),
         },
         namespace=task.namespace,
     )
     if task.status is TaskStatus.DONE:
         await _release_dependents(session, task, principal)
-        await quality.released(session, principal.workspace.id, task,
-                               path="AUTO" if auto_release else "HUMAN", info=auto_release)
+        if trusted is None:
+            await quality.released(session, principal.workspace.id, task,
+                                   path="AUTO" if auto_release else "HUMAN", info=auto_release)
 
     next_task: CollabTask | None = None
     if request.create_next is not None:
@@ -1467,7 +1765,7 @@ async def escalate_task(
     batch = request.session_batch_id or uuid.uuid4()
     task = await _get_task(session, principal.workspace.id, task_key, for_update=True)
     ensure_namespace(principal, task.namespace, write=True)
-    ensure_task_role(principal, task.assigned_role)
+    ensure_task_role(principal, task.assigned_role, task.required_role)
     _check_version(task, request.expected_version)
     lease_service.check_fencing(task, request.fencing_token)
     if task.status in (TaskStatus.DONE, TaskStatus.FAILED, TaskStatus.CANCELLED):

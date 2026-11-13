@@ -146,7 +146,33 @@ class Settings(BaseSettings):
     # and how often the supervisor walks the floor when something waits.
     runner_step_timeout_seconds: int = Field(default=1800, ge=60, le=86_400)
     runner_supervise_every_seconds: int = Field(default=600, ge=60, le=86_400)
+    # A round whose agenda is the same as the last finished round's is not
+    # started again before this long: each round is an agent session that uses
+    # the subscription, and looking again at what it could not change changes
+    # nothing. Something new on the agenda starts a round at once.
+    runner_supervise_repeat_seconds: int = Field(default=6 * 3600, ge=60, le=7 * 86_400)
     runner_supervise_timeout_seconds: int = Field(default=1200, ge=60, le=86_400)
+    # A failed placement counts against a task (and against the computer for
+    # that task) for this long. Older failures are history: the cause may be
+    # gone (a new CLI, a server release, a computer back online), so a task the
+    # scheduler stopped is put back and tried again after this window.
+    runner_failure_window_hours: int = Field(default=24, ge=1, le=24 * 90)
+    # One worker role (docs/LOOP_SIMPLE_MODEL.md): an EXECUTOR and an ANALYST
+    # take each other's tasks. A task's `required_role` stays a hard requirement,
+    # and reviews still never go to whoever built the work.
+    worker_roles_unified: bool = True
+    # Trust by default: under full automation an agent's hand-off ends the task
+    # (DONE) and releases what depends on it. A task that should still be looked
+    # at carries `needs_attention` with the reasons. Namespaces listed here keep
+    # the review step. Tasks with a repository keep the Kernel gate either way.
+    trust_by_default: bool = True
+    trust_reviewed_namespaces: list[str] = Field(default_factory=list)
+    # The share of trusted hand-offs flagged for a look, so quality is measured.
+    trust_sample_rate: float = Field(default=0.10, ge=0, le=1)
+    # How long the hub waits for a computer's worker to be up after the computer
+    # read a poke. The poke carries the messenger's watchdog derived from this
+    # (500 ms less), so one setting moves both ends: the two are one budget.
+    nerve_exec_ack_timeout_seconds: float = Field(default=5.0, ge=1.0, le=120.0)
     # Deploy gate v2: how long one deploy run may take, and how often the deploy
     # loop queues scheduled runs and starts waiting ones.
     deploy_run_timeout_seconds: int = Field(default=1800, ge=60, le=86_400)
@@ -266,6 +292,13 @@ class Settings(BaseSettings):
     # ------------------------------------------------------ growth (v3.34)
     # `npx veynod init` device flow: how long a user code waits for approval.
     cli_session_ttl_seconds: int = Field(default=600, ge=60, le=3_600)
+    # MCP connections (docs/MCP_CONNECTION_LIFECYCLE.md). A credential issued
+    # through the CLI expires after this many days; the expiry slides while it is
+    # in use, so only one nobody uses any more runs out. 0: no expiry.
+    cli_credential_ttl_days: int = Field(default=90, ge=0, le=3_650)
+    # A connection nobody used this long is dormant, then revoked.
+    connection_dormant_days: int = Field(default=60, ge=1, le=3_650)
+    connection_revoke_days: int = Field(default=90, ge=1, le=3_650)
     cli_sessions_per_ip_per_minute: int = Field(default=10, ge=1, le=1_000)
     # Accounts left out of the operator KPIs (the team's own): comma-separated
     # e-mails or @domains, e.g. "me@example.com,@veynod.com".
