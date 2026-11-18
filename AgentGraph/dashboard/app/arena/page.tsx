@@ -235,6 +235,25 @@ const CSS = `
 .va-banner { border-radius:16px; padding:18px 20px; margin-bottom:24px; display:flex; justify-content:space-between; gap:16px;
   align-items:center; flex-wrap:wrap; background:linear-gradient(110deg,#5b3df0 0%,#19c3a6 100%); }
 .va-banner h1 { margin:0; font-size:24px; } .va-banner p { margin:4px 0 0; opacity:.9; }
+.va-star { background:none; border:0; color:#fff; font-size:22px; cursor:pointer; line-height:1; }
+.va-star[aria-pressed=true] { color: var(--gold); }
+.va-strip { display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 14px; background:#0d1a33; font-size:13px; }
+.va-dots { display:flex; gap:3px; } .va-dots i { width:12px; height:12px; border-radius:50%; background:#ffffff22; display:inline-block; }
+.va-dots i.on { background: var(--accent); }
+.va-tabs { display:flex; gap:16px; margin-bottom:8px; border-bottom:1px solid var(--line); }
+.va-tabs button { background:none; border:0; color:var(--dim); padding:6px 0; font-weight:700; cursor:pointer; }
+.va-tabs button.on { color:var(--ink); border-bottom:2px solid var(--accent2); }
+.va-badges { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+.va-badge { width:52px; height:52px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center;
+  font-size:24px; background:radial-gradient(circle,#2b3b66,#16213a); border:3px solid var(--gold); }
+.va-progress { display:flex; gap:12px; align-items:center; } .va-progress .va-timer { flex:1; }
+.va-icon { background:none; border:0; color:var(--ink); font-size:18px; cursor:pointer; position:relative; padding:4px 6px; }
+.va-dot { position:absolute; top:2px; right:2px; width:8px; height:8px; border-radius:50%; background:var(--red); }
+.va-btn.accent { background:#ff7a2f; border-color:#ff7a2f; color:#1b0d00; }
+.va-btn.light { background:#fff; color:#3b2bb0; border-color:#fff; }
+.va-modal { position:fixed; inset:0; background:#0009; display:flex; align-items:center; justify-content:center; z-index:30; padding:16px; }
+.va-modal select, .va-modal input { min-width: 0; }
+textarea { background:#0d1424; color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:7px 10px; font:inherit; }
 .va-toast { position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#1f2a46; border:1px solid var(--line);
   padding:10px 16px; border-radius:10px; z-index:20; max-width:90vw; }
 .va input:not([type=range]):not([type=checkbox]), .va select { background:#0d1424; color:var(--ink); border:1px solid var(--line);
@@ -260,7 +279,12 @@ export default function ArenaPage() {
   const [token, setToken] = useState("");
   const [ready, setReady] = useState(false);
   const [off, setOff] = useState<string | null>(null);
-  const [view, setView] = useState<"lobby" | "mine" | "board" | "rules">("lobby");
+  const [view, setView] = useState<
+    "home" | "lobby" | "missions" | "board" | "rewards" | "rules" | "operator"
+  >("home");
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [adminToken, setAdminToken] = useState("");
+  const [declaring, setDeclaring] = useState(false);
   const [lobby, setLobby] = useState<Lobby | null>(null);
   const [specs, setSpecs] = useState<Spec[]>([]);
   const [matches, setMatches] = useState<Match[]>([]);
@@ -291,6 +315,9 @@ export default function ArenaPage() {
     }
     setBase(b);
     setToken(tk);
+    try {
+      setAdminToken(sessionStorage.getItem(TOKEN_KEY) || storeGet(TOKEN_KEY) || "");
+    } catch { /* no storage */ }
     setReady(true);
   }, []);
 
@@ -338,12 +365,14 @@ export default function ArenaPage() {
 
   const loadSide = useCallback(async () => {
     try {
-      const [r, b, o] = await Promise.all([
+      const [r, b, o, st] = await Promise.all([
         api<Record_>("/v1/federation/arena/record"),
         api<Board>("/v1/federation/arena/leaderboard?limit=20"),
         api<{ owed_by_me: Obligation[] }>("/v1/federation/arena/obligations"),
+        api<Stats>("/v1/federation/arena/stats"),
       ]);
       setRecord(r);
+      setStats(st);
       setBoard(b);
       setOwed(o.owed_by_me ?? []);
     } catch { /* the lobby call reports errors */ }
@@ -454,19 +483,32 @@ export default function ArenaPage() {
         <span>Veynod Arena</span><small>{t("SIMULATED")}</small>
       </a>
       <nav className="va-nav">
-        {([["lobby", "Lobby"], ["mine", "My games"], ["board", "Leaderboard"],
-          ["rules", "How it works"]] as const).map(([key, label]) => (
+        {([["home", "Dashboard"], ["lobby", "Poker lobby"], ["missions", "Missions"],
+          ["board", "Community"], ["rewards", "My rewards"],
+          ...(adminToken ? [["operator", "Operator"]] : [])] as [typeof view, string][])
+          .map(([key, label]) => (
           <button key={key} type="button" className={view === key && !openId ? "on" : ""}
             onClick={() => { setOpenId(null); setView(key); }}>
-            {t(label)}{key === "mine" && live.length > 0 ? ` (${live.length})` : ""}
+            {t(label)}{key === "home" && live.length > 0 ? ` (${live.length})` : ""}
           </button>
         ))}
       </nav>
+      <button type="button" className="va-icon va-hide-sm" title={t("How it works")}
+        onClick={() => { setOpenId(null); setView("rules"); }}>?</button>
+      <button type="button" className="va-icon" title={t("Notifications")}
+        onClick={() => { setOpenId(null); setView(owed.some((o) => ["OVERDUE_REVIEW", "RESTRICTED"]
+          .includes(o.state)) ? "rewards" : "home"); }}>
+        🔔{(live.filter((m) => (m.game?.hand?.legal?.length ?? 0) > 0 || (m.state === "MATCHED"
+          && !m.seats[m.my_seat]?.authorized)).length + owed.filter((o) => ["OVERDUE_REVIEW",
+          "RESTRICTED"].includes(o.state)).length) > 0 && <i className="va-dot" />}
+      </button>
       {spec && (
         <span className="va-pill va-hide-sm" title={t("Unreserved simulated capacity")}>
           <i className="va-chip" />{asM(spec.unreserved_tokens ?? 0)} DEMO_M
         </span>
       )}
+      <button type="button" className="va-btn accent" onClick={() => setDeclaring(true)}>
+        {t("Declare capacity")}</button>
       <LanguageToggle />
       <a className="va-dim va-hide-sm" href="/dashboard/">{t("Console")}</a>
     </header>
@@ -500,16 +542,33 @@ export default function ArenaPage() {
           onBack={() => { setOpenId(null); setReplay(null); }}
           onCall={call} onCommit={commit} onVerify={verify} />
       ) : (
+        <>
+          {view === "home" && lobby && (
+            <HomeView lobby={lobby} stats={stats} board={board} live={live} t={t} busy={busy}
+              modelClass={modelClass} setModelClass={setModelClass} spec={spec} onJoin={join}
+              onLeaveQueue={() => void call("/v1/federation/arena/queue", undefined, "DELETE")}
+              onLobby={() => setView("lobby")} onOpen={(id) => { setOpenId(id); setReplay(null); }}
+              onMissions={() => setView("missions")}
+              onTournaments={() => { setView("lobby"); window.setTimeout(() => document
+                .getElementById("tournaments")?.scrollIntoView({ behavior: "smooth" }), 50); }}
+              onInvite={() => { void navigator.clipboard?.writeText(window.location.href)
+                .catch(() => undefined); setToast(t("Link copied: send it to a friend")); }} />
+          )}
+          {view === "missions" && <MissionsView stats={stats} t={t} />}
+          {view === "rewards" && (
+            <RewardsView t={t} api={api} busy={busy} setBusy={setBusy} onToast={setToast}
+              record={record} />
+          )}
+          {view === "operator" && adminToken && (
+            <OperatorView t={t} base={base} adminToken={adminToken} onToast={setToast} />
+          )}
+          {["lobby", "board", "rules"].includes(view) && (
         <div className="va-main">
           <div>
             {view === "lobby" && lobby && (
               <LobbyView lobby={lobby} t={t} busy={busy} modelClass={modelClass}
                 setModelClass={setModelClass} spec={spec} onJoin={join}
                 onLeaveQueue={() => void call("/v1/federation/arena/queue", undefined, "DELETE")} />
-            )}
-            {view === "mine" && (
-              <MineView t={t} live={live} record={record} owed={owed}
-                onOpen={(id) => { setOpenId(id); setReplay(null); }} />
             )}
             {view === "board" && <BoardView t={t} board={board} />}
             {view === "rules" && lobby && <RulesView t={t} lobby={lobby} />}
@@ -520,19 +579,9 @@ export default function ArenaPage() {
               {live.length === 0 && !lobby?.queued && (
                 <p className="va-dim">{t("You are not at any table.")}</p>
               )}
-              {lobby?.queued && (
-                <div className="va-row">
-                  <span>{t("Waiting for players")} · {lobby.queued.mode === "cash"
-                    ? t("Cash table") : t("Tournament")} · {lobby.queued.seats === 6
-                    ? t("6-max") : t("Heads-up")} · {asM(lobby.queued.stake)}</span>
-                  <button type="button" className="va-btn" disabled={busy}
-                    onClick={() => void call("/v1/federation/arena/queue", undefined, "DELETE")}>
-                    {t("Cancel")}</button>
-                </div>
-              )}
               {live.map((m) => (
                 <div className="va-row" key={m.match_id}>
-                  <span>{m.mode === "cash" ? t("Cash table") : t("Tournament")} · {asM(m.stake)}
+                  <span>{m.mode === "cash" ? t("Ring game") : t("Tournament")} · {asM(m.stake)}
                     {" "}<span className="va-dim">{t(STATE[m.state] ?? m.state)}</span></span>
                   <button type="button" className="va-btn primary"
                     onClick={() => { setOpenId(m.match_id); setReplay(null); }}>
@@ -540,35 +589,20 @@ export default function ArenaPage() {
                 </div>
               ))}
             </div>
-            {record && (
-              <div className="va-panel">
-                <h3>{t("My record")}</h3>
-                <div className="va-stats">
-                  <div><b>{record.played}</b><span className="va-dim">{t("Played")}</span></div>
-                  <div><b>{record.won}</b><span className="va-dim">{t("Won")}</span></div>
-                  <div><b>{record.lost}</b><span className="va-dim">{t("Lost")}</span></div>
-                  <div><b className={record.net >= 0 ? "va-pos" : "va-neg"}>
-                    {record.net >= 0 ? "+" : ""}{asM(record.net)}</b>
-                    <span className="va-dim">DEMO_M</span></div>
-                </div>
-              </div>
-            )}
-            {board && board.items.length > 0 && (
-              <div className="va-panel">
-                <h3>{t("Top players")}</h3>
-                {board.items.slice(0, 5).map((row, i) => (
-                  <div className="va-row" key={row.fid}>
-                    <span>{i + 1}. {row.handle ?? short(row.fid)}</span>
-                    <span className={row.net >= 0 ? "va-pos" : "va-neg"}>
-                      {row.net >= 0 ? "+" : ""}{asM(row.net)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
             {lobby && <PolicyPanel t={t} initial={lobby.policy} busy={busy}
               onSave={(p) => void call("/v1/federation/arena/policy", p, "PUT")} />}
           </aside>
         </div>
+          )}
+        </>
+      )}
+      {declaring && lobby && (
+        <DeclareDialog t={t} classes={lobby.model_classes} busy={busy}
+          onClose={() => setDeclaring(false)}
+          onDeclare={(cls, tokens) => { void call("/v1/federation/rights/specs", {
+            resource_class: "MOCK_DEMO", model_family: cls, allowed_use: "arena stakes",
+            declared_tokens: tokens, measured_source: "mock" }).then((ok) => {
+            if (ok) { setDeclaring(false); setModelClass(cls); } }); }} />
       )}
       {toast && <div className="va-toast" role="status">{toast}</div>}
     </div>
@@ -576,6 +610,554 @@ export default function ArenaPage() {
 }
 
 type T = (source: string, vars?: Record<string, string | number>) => string;
+
+type Stats = {
+  stats: { hands_played: number; hands_won: number; showdowns: number; tables_finished: number;
+    cash_finished: number; sng_finished: number; six_max: number; net: number };
+  missions: { key: string; label: string; n: number; progress: number; target: number;
+    percent: number }[];
+  achievements: { key: string; label: string; unlocked: boolean }[];
+  recent_hands: { match_id: string; mode: string; hand: number; ended: string; chips: number;
+    board: string[] }[];
+  sessions: { match_id: string; mode: string; table_size: number; model_class: string;
+    net: number; hands: number; at: string }[];
+};
+type VoucherFull = {
+  voucher_id: string; issuer: string; origin: string; face_amount: number;
+  available_amount: number; reserved_amount: number; consumed_amount: number; status: string;
+  model_class: string; expires_at: string;
+  reservations: { reservation_id: string; federation_job_id: string; amount: number;
+    state: string; consumed: number; delegation_outcome: string | null }[];
+};
+type ObligationFull = {
+  obligation_id: string; obligor: string; obligee: string; amount: number; state: string;
+  facts: { fact: string; amount: number; excused?: boolean }[]; obligor_statement: string | null;
+  restriction: { state: string } | null; match_id: string;
+};
+
+const BADGE: Record<string, string> = {
+  first_hand: "🂡", first_pot: "🪙", showdown: "👁", cash_regular: "🎲",
+  tournament_player: "🏆", full_ring: "⬢", in_profit: "📈", hundred_hands: "💯",
+};
+const FAV_KEY = "veynod-arena-favorites";
+
+function favorites(): string[] {
+  try { return JSON.parse(window.localStorage.getItem(FAV_KEY) || "[]"); } catch { return []; }
+}
+function toggleFavorite(key: string): string[] {
+  const now = favorites();
+  const next = now.includes(key) ? now.filter((k) => k !== key) : [...now, key];
+  try { window.localStorage.setItem(FAV_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  return next;
+}
+
+function Star({ on, onClick, t }: { on: boolean; onClick: () => void; t: T }) {
+  return (
+    <button type="button" className="va-star" aria-pressed={on}
+      aria-label={on ? t("Remove from favorites") : t("Add to favorites")} onClick={onClick}>
+      {on ? "★" : "☆"}
+    </button>
+  );
+}
+
+function HomeView({ lobby, stats, board, live, t, busy, modelClass, setModelClass, spec, onJoin,
+  onLeaveQueue, onLobby, onOpen, onMissions, onTournaments, onInvite }: {
+  lobby: Lobby; stats: Stats | null; board: Board | null; live: Match[]; t: T; busy: boolean;
+  modelClass: string; setModelClass: (c: string) => void; spec: Spec | undefined;
+  onJoin: (mode: string, stake: number, seats: number) => void; onLeaveQueue: () => void;
+  onLobby: () => void; onOpen: (id: string) => void; onMissions: () => void;
+  onTournaments: () => void; onInvite: () => void;
+}) {
+  const [fav, setFav] = useState<string[]>([]);
+  const [tab, setTab] = useState<"hands" | "pnl">("hands");
+  useEffect(() => { setFav(favorites()); }, []);
+  const cash6 = lobby.cash.filter((x) => x.seats === 6);
+  const key = (x: LobbyTable) => `${x.mode}:${x.seats}:${x.stake}`;
+  const featured = [...lobby.cash].sort((a, b) => {
+    const score = (x: LobbyTable) => (fav.includes(key(x)) ? 100 : 0)
+      + ((x.open_tables?.[modelClass] ?? []).length ? 10 : 0) + (x.waiting[modelClass] ? 5 : 0)
+      + (x.seats === 6 ? 1 : 0);
+    return score(b) - score(a);
+  }).slice(0, 3);
+  const tours = [...lobby.tournaments].sort((a, b) => (b.waiting[modelClass] ?? 0)
+    - (a.waiting[modelClass] ?? 0) || b.seats - a.seats).slice(0, 3);
+  const quick = () => {
+    const open = cash6.find((x) => (x.open_tables?.[modelClass] ?? []).length);
+    const waiting = lobby.cash.find((x) => x.waiting[modelClass]);
+    const pick = open ?? waiting ?? cash6[1] ?? lobby.cash[0];
+    onJoin("cash", pick.stake, pick.seats);
+  };
+  const mission = stats?.missions.find((m) => m.progress < m.target) ?? stats?.missions[0];
+  const queued = lobby.queued;
+  return (
+    <div className="va-main">
+      <div>
+        <div className="va-banner">
+          <div>
+            <h1>{t("Veynod Arena: no-limit hold'em for people and agents")}</h1>
+            <p>{t("Chips settle as tokens of the same model class, delivered as work. Simulated now: no economic value.")}</p>
+          </div>
+          <button type="button" className="va-btn" onClick={onLobby}>{t("Open the poker lobby")}</button>
+        </div>
+        <div className="va-h">
+          <h2>{t("Model class")}</h2>
+          <div className="va-classes">
+            {lobby.model_classes.map((c) => (
+              <button key={c} type="button" className={c === modelClass ? "on" : ""}
+                onClick={() => setModelClass(c)}>{c}</button>
+            ))}
+          </div>
+        </div>
+        <div className="va-h">
+          <h2>{t("Ring games")}</h2>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button type="button" className="va-btn accent" disabled={busy || !spec || Boolean(queued)
+              || lobby.restricted} onClick={quick}>{t("Quick play")}</button>
+            <button type="button" className="va-btn" onClick={onLobby}>{t("All ring games")}</button>
+          </div>
+        </div>
+        <div className="va-grid">
+          {featured.map((table) => {
+            const open = table.open_tables?.[modelClass] ?? [];
+            const best = open.length ? open.reduce((a, b) => (a.players >= b.players ? a : b)) : null;
+            const waiting = table.waiting[modelClass] ?? 0;
+            const here = queued && queued.mode === "cash" && queued.stake === table.stake
+              && queued.seats === table.seats && queued.model_class === modelClass;
+            return (
+              <div className="va-card" key={key(table)}>
+                <div className="va-card-head">
+                  <div><div className="k">NL HOLD&apos;EM · {table.seats === 6 ? t("6-max") : t("Heads-up")}</div>
+                    <div className="n">{t(CASH_NAMES[lobby.cash.filter((x) => x.seats === table.seats)
+                      .indexOf(table)] ?? "Table")}</div></div>
+                  <Star on={fav.includes(key(table))} t={t}
+                    onClick={() => setFav(toggleFavorite(key(table)))} />
+                </div>
+                <div className="va-card-body">
+                  <div className="va-big"><i className="va-chip" />{table.blinds[0]} – {table.blinds[1]}</div>
+                  <div className="va-sub">{t("Buy-in {n} DEMO_M", { n: asM(table.stake) })} · {t("1 chip = {n} tokens", { n: table.tokens_per_chip ?? 0 })}</div>
+                  <div className="va-sub">{best ? t("{f} seats free", { f: best.free })
+                    : waiting ? t("{n} waiting: you sit down at once", { n: waiting })
+                      : t("{n} seats free", { n: table.seats })}</div>
+                  {here ? <button type="button" className="va-btn warn" disabled={busy}
+                    onClick={onLeaveQueue}>{t("Waiting… cancel")}</button>
+                    : <button type="button" className="va-btn light" disabled={busy || !spec
+                      || Boolean(queued) || lobby.restricted}
+                    onClick={() => onJoin("cash", table.stake, table.seats)}>{t("Play now")}</button>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="va-h">
+          <h2>{t("Tournaments")}</h2>
+          <button type="button" className="va-btn" onClick={onTournaments}>{t("All tournaments")}</button>
+        </div>
+        <div className="va-grid">
+          {tours.map((table) => {
+            const waiting = table.waiting[modelClass] ?? 0;
+            const here = queued && queued.mode === "sng" && queued.stake === table.stake
+              && queued.seats === table.seats && queued.model_class === modelClass;
+            return (
+              <div className="va-card" key={key(table)}>
+                <div className="va-card-head t">
+                  <div><div className="k">NL HOLD&apos;EM · {table.seats === 6 ? t("6-max") : t("Heads-up")}</div>
+                    <div className="n">{t(SNG_NAMES[lobby.tournaments.filter((x) => x.seats === table.seats)
+                      .indexOf(table)] ?? "Tournament")}</div></div>
+                  <Star on={fav.includes(key(table))} t={t}
+                    onClick={() => setFav(toggleFavorite(key(table)))} />
+                </div>
+                <div className="va-strip">
+                  <span className="va-dots">{Array.from({ length: table.seats }, (_, i) => (
+                    <i key={i} className={i < waiting ? "on" : ""} />))}</span>
+                  <b>{t("Prize pool {n}", { n: `${asM(table.prize_pool ?? 0)} DEMO_M` })}</b>
+                </div>
+                <div className="va-card-body">
+                  <div style={{ fontSize: 34 }}>🏆</div>
+                  <div className="va-big">{t("Buy-in {n} DEMO_M", { n: asM(table.stake) })}</div>
+                  <div className="va-sub">{t("Starts when {m} have registered · {n} so far",
+                    { m: table.seats, n: waiting })}</div>
+                  {here ? <button type="button" className="va-btn warn" disabled={busy}
+                    onClick={onLeaveQueue}>{t("Waiting… cancel")}</button>
+                    : <button type="button" className="va-btn light" disabled={busy || !spec
+                      || Boolean(queued) || lobby.restricted}
+                    onClick={() => onJoin("sng", table.stake, table.seats)}>{t("Register")}</button>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="va-h">
+          <h2>{t("Leaderboard")}</h2>
+          <button type="button" className="va-btn" onClick={onInvite}>{t("Invite friends")}</button>
+        </div>
+        <div className="va-panel">
+          {!board?.items.length && <p className="va-dim">{t("No finished matches yet.")}</p>}
+          {board?.items.slice(0, 8).map((row, i) => (
+            <div className="va-row" key={row.fid}>
+              <span>{i + 1}. {row.handle ?? short(row.fid)}</span>
+              <span className="va-dim">{t("{w} won · {l} lost", { w: row.won, l: row.lost })}</span>
+              <span className={row.net >= 0 ? "va-pos" : "va-neg"}>{row.net >= 0 ? "+" : ""}{asM(row.net)}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <aside className="va-side">
+        {mission && (
+          <div className="va-panel">
+            <h3>{t("Active mission")}</h3>
+            <p>{t(mission.label, { n: mission.target })}</p>
+            <div className="va-progress"><span className="va-big" style={{ fontSize: 20 }}>
+              {Math.round((mission.progress / mission.target) * 100)}%</span>
+              <div className="va-timer" style={{ height: 10 }}><i style={{
+                width: `${Math.round((mission.progress / mission.target) * 100)}%` }} /></div></div>
+          </div>
+        )}
+        <div className="va-panel">
+          <h3>{t("My poker games and tournaments")}</h3>
+          {live.length === 0 && !queued && (
+            <p className="va-dim">{t("You are not playing any game.")}{" "}
+              <a href="#" onClick={(event) => { event.preventDefault(); onLobby(); }}>{t("View the poker lobby")}</a></p>
+          )}
+          {queued && (
+            <div className="va-row"><span>{t("Waiting for players")} · {queued.mode === "cash"
+              ? t("Ring game") : t("Tournament")} · {asM(queued.stake)}</span>
+              <button type="button" className="va-btn" disabled={busy} onClick={onLeaveQueue}>{t("Cancel")}</button></div>
+          )}
+          {live.map((m) => (
+            <div className="va-row" key={m.match_id}>
+              <span>{m.mode === "cash" ? t("Ring game") : t("Tournament")} · {m.table_size === 6
+                ? t("6-max") : t("Heads-up")} · {asM(m.stake)}</span>
+              <button type="button" className="va-btn primary" onClick={() => onOpen(m.match_id)}>{t("Open table")}</button>
+            </div>
+          ))}
+        </div>
+        <div className="va-panel">
+          <h3>{t("Ring game activity")}</h3>
+          <div className="va-tabs">
+            <button type="button" className={tab === "hands" ? "on" : ""} onClick={() => setTab("hands")}>{t("Ring game hands")}</button>
+            <button type="button" className={tab === "pnl" ? "on" : ""} onClick={() => setTab("pnl")}>{t("Ring game profit/loss")}</button>
+          </div>
+          {tab === "hands" && (stats?.recent_hands.filter((h) => h.mode === "cash").length
+            ? stats.recent_hands.filter((h) => h.mode === "cash").slice(0, 8).map((h) => (
+              <div className="va-row" key={`${h.match_id}-${h.hand}`}>
+                <span>#{h.hand} · {t(STREET[h.ended] ?? h.ended)}</span>
+                <span className={h.chips > 0 ? "va-pos" : h.chips < 0 ? "va-neg" : "va-dim"}>
+                  {h.chips > 0 ? "+" : ""}{h.chips} {t("chips")}</span>
+              </div>))
+            : <p className="va-dim">{t("No recent hands.")}{" "}
+              <a href="#" onClick={(event) => { event.preventDefault(); quick(); }}>{t("Start playing now!")}</a></p>)}
+          {tab === "pnl" && (stats?.sessions.filter((x) => x.mode === "cash").length
+            ? stats.sessions.filter((x) => x.mode === "cash").slice(0, 8).map((x) => (
+              <div className="va-row" key={x.match_id}>
+                <span>{x.model_class} · {t("{n} hands", { n: x.hands })}</span>
+                <span className={x.net > 0 ? "va-pos" : x.net < 0 ? "va-neg" : "va-dim"}>
+                  {x.net > 0 ? "+" : ""}{asM(x.net)}</span>
+              </div>))
+            : <p className="va-dim">{t("No finished ring games yet.")}</p>)}
+        </div>
+        <div className="va-panel">
+          <h3>{t("Latest achievements")}</h3>
+          <div className="va-badges">
+            {(stats?.achievements ?? []).filter((a) => a.unlocked).slice(0, 5).map((a) => (
+              <span key={a.key} className="va-badge" title={t(a.label)}>{BADGE[a.key] ?? "★"}</span>
+            ))}
+            {!stats?.achievements.some((a) => a.unlocked) && <p className="va-dim">{t("Play a hand to earn your first.")}</p>}
+          </div>
+          <a href="#" onClick={(event) => { event.preventDefault(); onMissions(); }}>{t("View all")}</a>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function MissionsView({ stats, t }: { stats: Stats | null; t: T }) {
+  return (
+    <div className="va-main" style={{ gridTemplateColumns: "1fr" }}>
+      <div>
+        <div className="va-h"><h2>{t("Missions")}</h2></div>
+        <div className="va-grid">
+          {stats?.missions.map((m) => (
+            <div className="va-panel" key={m.key}>
+              <h3>{t(m.label, { n: m.target })}</h3>
+              <p className="va-dim">{m.progress} / {m.target}</p>
+              <div className="va-timer" style={{ height: 10 }}><i style={{
+                width: `${Math.min(100, Math.round((m.progress / m.target) * 100))}%` }} /></div>
+            </div>
+          ))}
+        </div>
+        <div className="va-h"><h2>{t("Achievements")}</h2></div>
+        <div className="va-grid">
+          {stats?.achievements.map((a) => (
+            <div className="va-panel" key={a.key} style={{ opacity: a.unlocked ? 1 : 0.45,
+              display: "flex", gap: 12, alignItems: "center" }}>
+              <span className="va-badge">{BADGE[a.key] ?? "★"}</span>
+              <div><b>{t(a.label)}</b><div className="va-dim">{a.unlocked ? t("Unlocked") : t("Locked")}</div></div>
+            </div>
+          ))}
+        </div>
+        {stats && (
+          <div className="va-panel">
+            <h3>{t("My numbers")}</h3>
+            <div className="va-stats">
+              <div><b>{stats.stats.hands_played}</b><span className="va-dim">{t("Hands")}</span></div>
+              <div><b>{stats.stats.hands_won}</b><span className="va-dim">{t("Pots won")}</span></div>
+              <div><b>{stats.stats.showdowns}</b><span className="va-dim">{t("Showdowns")}</span></div>
+              <div><b>{stats.stats.tables_finished}</b><span className="va-dim">{t("Tables")}</span></div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function RewardsView({ t, api, busy, setBusy, onToast, record }: {
+  t: T; api: <R>(path: string, init?: RequestInit) => Promise<R>; busy: boolean;
+  setBusy: (b: boolean) => void; onToast: (s: string) => void; record: Record_ | null;
+}) {
+  const [held, setHeld] = useState<VoucherFull[]>([]);
+  const [owedBy, setOwedBy] = useState<ObligationFull[]>([]);
+  const [owedTo, setOwedTo] = useState<ObligationFull[]>([]);
+  const [using, setUsing] = useState<string | null>(null);
+  const [form, setForm] = useState({ objective: "", criteria: "", amount: 0, hours: 72 });
+  const [needsLink, setNeedsLink] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    try {
+      const [v, o] = await Promise.all([
+        api<{ held: VoucherFull[] }>("/v1/federation/rights/vouchers"),
+        api<{ owed_by_me: ObligationFull[]; owed_to_me: ObligationFull[] }>("/v1/federation/arena/obligations"),
+      ]);
+      setHeld(v.held ?? []);
+      setOwedBy(o.owed_by_me ?? []);
+      setOwedTo(o.owed_to_me ?? []);
+    } catch (error) { onToast((error as Error).message); }
+  }, [api, onToast]);
+  useEffect(() => { void load(); }, [load]);
+  async function use(v: VoucherFull) {
+    setBusy(true);
+    setNeedsLink(null);
+    try {
+      await api(`/v1/federation/rights/vouchers/${v.voucher_id}/use`, { method: "POST", body: JSON.stringify({
+        objective: form.objective, amount: form.amount, deadline_hours: form.hours,
+        acceptance_criteria: form.criteria.split("\n").map((x) => x.trim()).filter(Boolean),
+      }) });
+      onToast(t("Task sent: the loser's agents now work on it"));
+      setUsing(null);
+      await load();
+    } catch (error) {
+      const e = error as Error & { code?: string };
+      if ((e.message || "").toLowerCase().includes("connection")) setNeedsLink(v.issuer);
+      onToast(e.message);
+    } finally { setBusy(false); }
+  }
+  async function connect(peer: string) {
+    setBusy(true);
+    try {
+      await api("/v1/federation/connections", { method: "POST", body: JSON.stringify({
+        peer_workspace: peer, outbound_scopes: ["delegate", "chat"], inbound_scopes: ["chat"],
+        reason: "Use an arena voucher: delegate the work it pays for",
+      }) });
+      onToast(t("Connection requested: the other side approves it in their console"));
+    } catch (error) { onToast((error as Error).message); } finally { setBusy(false); }
+  }
+  const active = held.filter((v) => v.status === "ACTIVE");
+  return (
+    <div className="va-main">
+      <div>
+        <div className="va-h"><h2>{t("My rewards")}</h2>
+          <span className="va-dim">{t("Winnings are vouchers: the loser's agents do your tasks in the same model class, up to the amount.")}</span></div>
+        {!active.length && <div className="va-panel"><p className="va-dim">{t("No vouchers yet. Win at a table to earn one.")}</p></div>}
+        {active.map((v) => (
+          <div className="va-panel" key={v.voucher_id} style={{ marginBottom: 12 }}>
+            <div className="va-row"><b>{t("Voucher from {who}", { who: short(v.issuer) })} · {v.model_class}</b>
+              <span>{asM(v.available_amount)} / {asM(v.face_amount)} DEMO_M</span></div>
+            <div className="va-row va-dim"><span>{t("In use {a} · used {b}", { a: asM(v.reserved_amount), b: asM(v.consumed_amount) })}</span>
+              <span>{t("Until {d}", { d: new Date(v.expires_at).toLocaleDateString() })}</span></div>
+            {v.reservations.map((r) => (
+              <div className="va-row va-dim" key={r.reservation_id}><span>{r.federation_job_id}</span>
+                <span>{asM(r.amount)} · {r.state}{r.delegation_outcome ? ` · ${r.delegation_outcome}` : ""}</span></div>
+            ))}
+            {using === v.voucher_id ? (
+              <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                <input placeholder={t("What should they do?")} value={form.objective}
+                  onChange={(event) => setForm({ ...form, objective: event.target.value })} />
+                <textarea rows={3} placeholder={t("Acceptance criteria, one per line")} value={form.criteria}
+                  onChange={(event) => setForm({ ...form, criteria: event.target.value })} />
+                <label className="va-row">{t("Spend {n} DEMO_M", { n: asM(form.amount) })}
+                  <input type="range" min={1000} max={v.available_amount} step={1000} value={form.amount}
+                    onChange={(event) => setForm({ ...form, amount: Number(event.target.value) })} /></label>
+                <label className="va-row">{t("Deadline (hours)")}
+                  <input style={{ width: 80 }} value={form.hours} inputMode="numeric"
+                    onChange={(event) => setForm({ ...form, hours: Number(event.target.value) || 1 })} /></label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button type="button" className="va-btn primary" disabled={busy || form.objective.length < 5
+                    || !form.criteria.trim() || form.amount < 1} onClick={() => void use(v)}>{t("Send the task")}</button>
+                  <button type="button" className="va-btn" onClick={() => setUsing(null)}>{t("Cancel")}</button>
+                </div>
+                {needsLink === v.issuer && (
+                  <div className="va-row"><span>{t("You need a connection that lets you delegate to them.")}</span>
+                    <button type="button" className="va-btn" disabled={busy} onClick={() => void connect(v.issuer)}>{t("Request a connection")}</button></div>
+                )}
+              </div>
+            ) : (
+              <button type="button" className="va-btn primary" style={{ marginTop: 8 }} disabled={busy}
+                onClick={() => { setUsing(v.voucher_id); setForm({ objective: "", criteria: "",
+                  amount: Math.min(v.available_amount, 1_000_000), hours: 72 }); }}>{t("Use: send a task")}</button>
+            )}
+          </div>
+        ))}
+        <div className="va-h"><h2>{t("Work I owe")}</h2>
+          <a className="va-dim" href="/dashboard/">{t("Open delegated work in the console")}</a></div>
+        <div className="va-panel">
+          {!owedBy.length && <p className="va-dim">{t("You owe no work.")}</p>}
+          {owedBy.map((o) => (
+            <div className="va-row" key={o.obligation_id}><span>{t("Owed to {who}", { who: short(o.obligee) })} · {asM(o.amount)} DEMO_M</span>
+              <span className={["OVERDUE_REVIEW", "RESTRICTED"].includes(o.state) ? "va-neg" : "va-dim"}>{o.state}</span></div>
+          ))}
+        </div>
+        <div className="va-h"><h2>{t("Work owed to me")}</h2></div>
+        <div className="va-panel">
+          {!owedTo.length && <p className="va-dim">{t("Nobody owes you work.")}</p>}
+          {owedTo.map((o) => (
+            <div className="va-row" key={o.obligation_id}><span>{short(o.obligor)} · {asM(o.amount)} DEMO_M</span>
+              <span className="va-dim">{o.state}</span></div>
+          ))}
+        </div>
+      </div>
+      <aside className="va-side">
+        {record && (
+          <div className="va-panel">
+            <h3>{t("Recent results")}</h3>
+            {!record.recent.length && <p className="va-dim">{t("No finished matches yet.")}</p>}
+            {record.recent.slice(0, 10).map((r) => (
+              <div className="va-row" key={r.match_id}>
+                <span>{r.mode === "cash" ? t("Ring game") : t("Tournament")} · {r.players > 2
+                  ? t("{n} players", { n: r.players }) : t("vs {who}", { who: short(r.opponent) })}</span>
+                <span className={r.net > 0 ? "va-pos" : r.net < 0 ? "va-neg" : "va-dim"}>{r.net > 0 ? "+" : ""}{asM(r.net)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </aside>
+    </div>
+  );
+}
+
+function OperatorView({ t, base, adminToken, onToast }: {
+  t: T; base: string; adminToken: string; onToast: (s: string) => void;
+}) {
+  const [items, setItems] = useState<ObligationFull[]>([]);
+  const [disputed, setDisputed] = useState<Match[]>([]);
+  const [note, setNote] = useState("");
+  const admin = useCallback(async <R,>(path: string, init?: RequestInit): Promise<R> => {
+    const headers = new Headers(init?.headers);
+    headers.set("Authorization", `Bearer ${adminToken}`);
+    if (init?.body) headers.set("Content-Type", "application/json");
+    const response = await fetch(`${normalizeBase(base)}${path}`, { ...init, headers });
+    if (!response.ok) {
+      let message = `HTTP ${response.status}`;
+      try { message = (await response.json())?.error?.message ?? message; } catch { /* keep */ }
+      throw new Error(message);
+    }
+    return (await response.json()) as R;
+  }, [base, adminToken]);
+  const load = useCallback(async () => {
+    try {
+      const [o, d] = await Promise.all([
+        admin<{ items: ObligationFull[] }>("/v1/admin/federation/arena/obligations"),
+        admin<{ items: Match[] }>("/v1/admin/federation/arena/matches?state=DISPUTED"),
+      ]);
+      setItems(o.items ?? []);
+      setDisputed(d.items ?? []);
+    } catch (error) { onToast((error as Error).message); }
+  }, [admin, onToast]);
+  useEffect(() => { void load(); }, [load]);
+  async function act(path: string, body: unknown) {
+    try {
+      await admin(path, { method: "POST", body: JSON.stringify(body) });
+      await load();
+    } catch (error) { onToast((error as Error).message); }
+  }
+  const ok = note.trim().length >= 5;
+  return (
+    <div className="va-main" style={{ gridTemplateColumns: "1fr" }}>
+      <div>
+        <div className="va-h"><h2>{t("Operator")}</h2>
+          <input style={{ minWidth: 320 }} placeholder={t("Decision note (required, 5+ characters)")}
+            value={note} onChange={(event) => setNote(event.target.value)} /></div>
+        <div className="va-panel" style={{ marginBottom: 16 }}>
+          <h3>{t("Obligations to review")}</h3>
+          {!items.length && <p className="va-dim">{t("Nothing to review.")}</p>}
+          {items.map((o) => (
+            <div key={o.obligation_id} style={{ borderBottom: "1px solid #ffffff10", padding: "8px 0" }}>
+              <div className="va-row"><b>{short(o.obligor)} → {short(o.obligee)} · {asM(o.amount)} DEMO_M</b>
+                <span className="va-neg">{o.state}</span></div>
+              {o.facts.map((f, i) => <div key={i} className="va-dim">• {f.fact}{f.excused ? ` (${t("excused")})` : ""}</div>)}
+              {o.obligor_statement && <div className="va-dim">{t("Statement")}: {o.obligor_statement}</div>}
+              <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
+                {o.state === "OVERDUE_REVIEW" && <>
+                  <button type="button" className="va-btn warn" disabled={!ok} onClick={() => void act(
+                    `/v1/admin/federation/arena/obligations/${o.obligation_id}/decide`,
+                    { decision: "confirm", note, operator: "console" })}>{t("Confirm default")}</button>
+                  <button type="button" className="va-btn" disabled={!ok} onClick={() => void act(
+                    `/v1/admin/federation/arena/obligations/${o.obligation_id}/decide`,
+                    { decision: "excuse", note, operator: "console" })}>{t("Excuse")}</button></>}
+                <button type="button" className="va-btn" disabled={!ok} onClick={() => void act(
+                  `/v1/admin/federation/arena/obligations/${o.obligation_id}/decide`,
+                  { decision: "resolve", note, operator: "console" })}>{t("Resolve")}</button>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="va-panel">
+          <h3>{t("Disputed results")}</h3>
+          {!disputed.length && <p className="va-dim">{t("Nothing to review.")}</p>}
+          {disputed.map((m) => (
+            <div className="va-row" key={m.match_id}>
+              <span>{m.match_id} · {m.mode} · {m.history[m.history.length - 1]?.note}</span>
+              <span style={{ display: "flex", gap: 8 }}>
+                <button type="button" className="va-btn" disabled={!ok} onClick={() => void act(
+                  `/v1/admin/federation/arena/matches/${m.match_id}/resolve`,
+                  { outcome: "uphold", note, operator: "console" })}>{t("Uphold")}</button>
+                <button type="button" className="va-btn warn" disabled={!ok} onClick={() => void act(
+                  `/v1/admin/federation/arena/matches/${m.match_id}/resolve`,
+                  { outcome: "void", note, operator: "console" })}>{t("Void")}</button>
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeclareDialog({ t, classes, busy, onClose, onDeclare }: {
+  t: T; classes: string[]; busy: boolean; onClose: () => void;
+  onDeclare: (modelClass: string, tokens: number) => void;
+}) {
+  const [cls, setCls] = useState(classes[0] ?? "");
+  const [m, setM] = useState(5);
+  return (
+    <div className="va-modal" role="dialog" aria-label={t("Declare simulated capacity")}>
+      <div className="va-dialog">
+        <h3>{t("Declare simulated capacity")}</h3>
+        <p className="va-dim">{t("Your stakes come from this. It is simulated (MOCK_DEMO): no real quota, no value. Only an owner can declare.")}</p>
+        <label className="va-row">{t("Model class")}
+          <select value={cls} onChange={(event) => setCls(event.target.value)}>
+            {classes.map((c) => <option key={c} value={c}>{c}</option>)}</select></label>
+        <label className="va-row">{t("Amount (DEMO_M)")}
+          <input style={{ width: 90 }} value={m} inputMode="decimal"
+            onChange={(event) => setM(Number(event.target.value) || 0)} /></label>
+        <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 8 }}>
+          <button type="button" className="va-btn primary" disabled={busy || m <= 0}
+            onClick={() => onDeclare(cls, Math.round(m * M))}>{t("Declare")}</button>
+          <button type="button" className="va-btn" onClick={onClose}>{t("Cancel")}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 function LobbyView({ lobby, t, busy, modelClass, setModelClass, spec, onJoin, onLeaveQueue }: {
   lobby: Lobby; t: T; busy: boolean; modelClass: string; setModelClass: (c: string) => void;
@@ -659,7 +1241,7 @@ function LobbyView({ lobby, t, busy, modelClass, setModelClass, spec, onJoin, on
           );
         })}
       </div>
-      <div className="va-h"><h2>{t("Tournaments")}</h2>{sizes(sngSize, setSngSize)}</div>
+      <div className="va-h" id="tournaments"><h2>{t("Tournaments")}</h2>{sizes(sngSize, setSngSize)}</div>
       <p className="va-dim" style={{ marginTop: -6 }}>{t("Sit and go · starts when the table is full · rising blinds · paid by place")}</p>
       <div className="va-grid">
         {sng.map((table, i) => {
@@ -683,53 +1265,6 @@ function LobbyView({ lobby, t, busy, modelClass, setModelClass, spec, onJoin, on
             </div>
           );
         })}
-      </div>
-    </>
-  );
-}
-
-function MineView({ t, live, record, owed, onOpen }: {
-  t: T; live: Match[]; record: Record_ | null; owed: Obligation[]; onOpen: (id: string) => void;
-}) {
-  return (
-    <>
-      <div className="va-h"><h2>{t("My games")}</h2></div>
-      <div className="va-panel" style={{ marginBottom: 16 }}>
-        <h3>{t("Open tables")}</h3>
-        {live.length === 0 && <p className="va-dim">{t("You are not at any table.")}</p>}
-        {live.map((m) => (
-          <div className="va-row" key={m.match_id}>
-            <span>{m.mode === "cash" ? t("Cash table") : t("Tournament")} · {m.model_class} ·{" "}
-              {asM(m.stake)} DEMO_M · {t(STATE[m.state] ?? m.state)}</span>
-            <button type="button" className="va-btn primary" onClick={() => onOpen(m.match_id)}>
-              {t("Open table")}</button>
-          </div>
-        ))}
-      </div>
-      <div className="va-panel" style={{ marginBottom: 16 }}>
-        <h3>{t("Recent results")}</h3>
-        {!record?.recent.length && <p className="va-dim">{t("No finished matches yet.")}</p>}
-        {record?.recent.map((r) => (
-          <div className="va-row" key={r.match_id}>
-            <span>{r.mode === "cash" ? t("Cash table") : t("Tournament")} · {r.model_class} ·{" "}
-              {r.players > 2 ? t("{n} players", { n: r.players }) : t("vs {who}", { who: short(r.opponent) })}
-              {r.mode === "sng" && r.place ? ` · ${t("Place {n}", { n: r.place })}` : ""} ·{" "}
-              {t("{n} hands", { n: r.hands })} ·{" "}
-              <span className="va-dim">{t(REASON[r.reason] ?? r.reason)}</span></span>
-            <span className={r.net > 0 ? "va-pos" : r.net < 0 ? "va-neg" : "va-dim"}>
-              {r.net > 0 ? "+" : ""}{asM(r.net)}</span>
-          </div>
-        ))}
-      </div>
-      <div className="va-panel">
-        <h3>{t("Obligations")}</h3>
-        {!owed.length && <p className="va-dim">{t("You owe no work.")}</p>}
-        {owed.map((o) => (
-          <div className="va-row" key={o.obligation_id}>
-            <span>{t("Owed to {who}", { who: short(o.obligee) })} · {asM(o.amount)} DEMO_M</span>
-            <span className="va-dim">{o.state}</span>
-          </div>
-        ))}
       </div>
     </>
   );
