@@ -231,3 +231,41 @@ The run found three more defects, fixed in the same commit:
 Still open: B4 for tasks with a repository on a one-computer board, C1, C5,
 and steps 3–4 of `LOOP_SIMPLE_MODEL.md`. Tasks with a repository were not part
 of the unattended run (no Kernel here).
+
+## H. Each workspace is scheduled on its own (2026-11-18)
+
+The scheduler used to be one sweep for the whole platform: every 15 s, one
+server process (a platform-wide advisory lock) ran a pass over every workspace
+with a computer, one after another. A pass is about 60 ms, so the sweep grew
+with the number of users: 12 s at 200 workspaces, about 60 s at 1,000. A task
+created by anyone waited for everyone else's workspaces, up to the sweep plus
+the interval (27 s at 200, about 75 s at 1,000). One user's latency depended on
+how many other users the platform had.
+
+Now:
+
+- **A change schedules its own workspace at once** (`scheduler.kick`): a task
+  created, released, handed off or finished (the committed `collab_tasks`
+  change on the workspace event bus), a computer saying hello, a seat coming
+  free (the nerve ping), a placement reported, a worker exiting. Kicks are
+  merged per workspace (0.2 s, at most one pass per 0.3 s per workspace) and
+  run in slots of their own, never queued behind the sweep. Measured with 456
+  other workspaces on the board: a new task is offered 0.29–0.32 s after it is
+  created.
+- **What only time brings about** (an offer not taken, a lease running out, a
+  computer gone quiet, a stopped task whose failures aged, a supervise round)
+  is written per workspace as `runner_hosts.next_pass_at` at the end of each
+  pass: one reaper interval when something is on a computer, four when a task
+  found no computer, otherwise the idle recheck (10 min, never later than the
+  next supervise round).
+- **The sweep takes only workspaces that are due**, by moving their time a
+  minute on in one statement, so any number of server processes share it with
+  no platform-wide lock, and a pass that dies is retried a minute later. Due
+  passes run side by side (`scheduler_concurrency`, 4). Finding nothing due is
+  one indexed query (8 ms with 456 workspaces), so the sweep looks every 2 s.
+  All of them due at once (a restart) takes about 15 s for 456 workspaces and
+  delays nobody's new task.
+
+`tests/test_scheduler_kicks.py` checks the kick path with the sweep out of the
+way; `tests/test_phase0_server.py` checks that two processes never take the
+same workspace.

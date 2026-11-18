@@ -175,8 +175,8 @@ async def test_two_failures_change_host_and_three_rounds_stop(client):
         assert released.status_code == 200, released.text
     assert seen == [first["agent_id"], first["agent_id"], second["agent_id"]]
 
-    result = await _schedule(client, ws)
-    assert result["stopped"] == 1
+    # The release kicks a pass of its own, so which pass stops it varies.
+    await _schedule(client, ws)
     task = await _task_row(client, ws, key)
     assert task["status"] == "HANDOFF"
     assert task["assignee"] is None

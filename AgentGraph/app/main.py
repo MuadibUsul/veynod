@@ -172,7 +172,7 @@ async def lifespan(app: FastAPI):
     from app.services.incidents import incident_check_loop
     from app.services.mailer import mail_worker_loop
     from app.services.presence import presence_loop
-    from app.services.scheduler import scheduler_loop
+    from app.services.scheduler import kick_loop, scheduler_loop
     from app.services.situation import evaluation_loop as situation_evaluation_loop
     from app.services.situation import flush as flush_metrics
     from app.services.situation import situation_loop
@@ -189,6 +189,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(blob_gc_loop(), name="agentgraph-blob-gc"),
         asyncio.create_task(presence_loop(), name="agentgraph-presence"),
         asyncio.create_task(scheduler_loop(), name="agentgraph-scheduler"),
+        asyncio.create_task(kick_loop(), name="agentgraph-scheduler-kicked"),
         asyncio.create_task(deploy_loop(), name="agentgraph-deploys"),
     ]
     if settings.federation_enabled:

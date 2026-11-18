@@ -8,6 +8,7 @@ namespace kept reviewed and for tasks with a repository, the review step stays.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
 import pytest
@@ -260,7 +261,10 @@ async def test_a_command_check_is_reported_by_the_computer_that_did_the_work(cli
     row = await _row(client, ws, key)
     assert row["check_results"] == [{"id": "tests", "type": "command", "passed": None,
                                      "detail": "waits for the computer that did the work"}]
-    assert row["needs_attention"] is False and row["acceptance_state"][0]["status"] == "PASS"
+    # One task in ten is drawn for a routine look; that is the only flag allowed here.
+    assert row["attention_reasons"] in ([], None, [
+        "sampled: a routine look, nothing was flagged"])
+    assert row["acceptance_state"][0]["status"] == "PASS"
 
     refused = await client.post(f"/v1/tasks/{key}/checks", headers=other["headers"],
                                 json={"results": [{"id": "tests", "passed": True}]})
@@ -320,10 +324,13 @@ async def test_a_code_task_the_kernel_merged_is_finished_without_a_person(client
                merged, evidence("pass", True))
     await _sql("UPDATE collab_tasks SET correlation = CAST($2 AS jsonb) WHERE task_key = $1",
                failed, evidence("fail", False))
-    result = await _schedule(client, ws)
-    assert result["merged"] == 1, result
-
-    row = await _row(client, ws, merged)
+    # The change kicks a pass of its own, so which pass finishes it varies.
+    await _schedule(client, ws)
+    for _ in range(50):
+        row = await _row(client, ws, merged)
+        if row["status"] == "DONE":
+            break
+        await asyncio.sleep(0.2)
     assert (row["status"], row["needs_attention"], row["reviewed_by"]) == ("DONE", False, None)
     assert (await _row(client, ws, after))["status"] == "READY"
     # A gate that failed is not finished on trust: the revision turn and people own it.
