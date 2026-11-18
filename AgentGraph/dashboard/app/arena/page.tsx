@@ -59,16 +59,18 @@ type Lobby = {
   model_classes: string[];
   cash: LobbyTable[];
   tournaments: LobbyTable[];
-  queued: { mode: string; stake: number; model_class: string; since: string } | null;
+  queued: { mode: string; seats: number; stake: number; model_class: string; since: string } | null;
   restricted: boolean;
   policy: Policy;
   rules: { starting_stack: number; blinds: number[][]; hands_per_level: number; max_hands: number;
     turn_seconds: number; max_timeouts: number };
 };
+type OpenTable = { match_id: string; players: number; free: number; in_play: boolean };
 type LobbyTable = {
-  mode: string; stake: number; starting_chips: number; blinds: number[];
-  waiting: Record<string, number>; tokens_per_chip?: number; prize?: number;
-  blind_levels?: number[][]; hands_per_level?: number;
+  mode: string; seats: number; stake: number; starting_chips: number; blinds: number[];
+  waiting: Record<string, number>; tokens_per_chip?: number; prize_pool?: number;
+  payouts_percent?: number[]; blind_levels?: number[][]; hands_per_level?: number;
+  open_tables?: Record<string, OpenTable[]>;
 };
 type Policy = { agents_may_play: boolean; max_stake: number; matches_per_day: number };
 type Spec = { spec_id: string; model_class: string; escrowable: boolean; state: string;
@@ -76,30 +78,36 @@ type Spec = { spec_id: string; model_class: string; escrowable: boolean; state: 
 type Legal = { type: string; amount?: number; min_to?: number; max_to?: number };
 type Act = { seat: number; type: string; to?: number; amount?: number; timeout?: boolean };
 type HandSummary = { no: number; ended: string; won: number[]; board: string[];
-  hole?: string[][]; button: number; blinds: number[]; actions: Act[];
-  showdown?: { category: string }[] };
+  hole?: (string[] | null)[]; button: number; blinds: number[]; actions: Act[];
+  players?: number[]; showdown?: ({ category: string } | null)[] };
 type Hand = {
-  no: number; button: number; blinds: number[]; street: string; board: string[];
+  no: number; button: number; sb: number; bb: number; players: number[]; folded: boolean[];
+  blinds: number[]; street: string; board: string[];
   committed: number[]; pot: number; to_act: number; to_call: number;
   my_cards: string[] | null; legal: Legal[]; actions: Act[];
 };
-type Game = { hand_no: number; stacks: number[]; finished: boolean; standing: number | null;
+type Game = { hand_no: number; stacks: number[]; status: string[]; buy_ins: number[];
+  pending: (number | null)[]; finished: boolean; standing: number | null; leaving: number[];
   timeouts: number[]; hand?: Hand; last_hand: HandSummary | null };
-type Seat = { fid: string; authorized: boolean; agent_play: boolean; commitment: string | null;
-  revealed: boolean };
+type Seat = { seat: number; fid: string; authorized: boolean; agent_play: boolean;
+  commitment: string | null; revealed: boolean; joining: boolean; abandoned: boolean;
+  status: string | null };
 type Match = {
   match_id: string; state: string; my_seat: number; seats: Seat[]; stake: number;
+  table_size: number; payouts_percent: number[] | null;
   model_class: string; mode: string; tokens_per_chip: number | null; contract_hash: string;
   action_seq: number; turn_deadline: string | null; setup_deadline: string; game: Game | null;
   server_commit: string; server_seed: string | null;
   rules: { starting_stack: number; max_hands: number; turn_seconds: number };
   result: { proof: { reason: string; winner_seat: number | null; final_stacks: number[];
-    settles_tokens: number; hands_played: number } } | null;
+    settles_tokens: number; hands_played: number; nets: number[]; ranking: number[];
+    seats: string[] } } | null;
   history: { to: string; at: string; note: string | null }[];
 };
 type Verify = { valid: boolean; checks: Record<string, boolean>; hand_history: HandSummary[] };
 type Record_ = { played: number; won: number; lost: number; even: number; net: number;
   recent: { match_id: string; mode: string; model_class: string; stake: number; opponent: string;
+    opponents: string[]; table_size: number; players: number; place: number | null;
     reason: string; hands: number; net: number; at: string }[] };
 type Board = { items: { fid: string; handle: string | null; played: number; won: number;
   lost: number; net: number }[] };
@@ -186,15 +194,18 @@ const CSS = `
 .va-table-wrap { max-width:1360px; margin:0 auto; padding:16px 24px 32px; display:grid;
   grid-template-columns:minmax(0,1fr) 320px; gap:20px; }
 @media (max-width: 980px) { .va-table-wrap { grid-template-columns:1fr; padding:12px; } }
-.va-felt { position:relative; aspect-ratio: 16/9; min-height:360px; border-radius:200px / 140px;
+.va-felt { position:relative; aspect-ratio: 16/9; min-height:360px; margin:56px 0 72px; border-radius:200px / 140px;
   background:radial-gradient(ellipse at center, #14805f 0%, #0d5a44 55%, #093d2f 100%);
   border:14px solid #3a2414; box-shadow: inset 0 0 0 4px #0003, inset 0 0 60px #0007, 0 20px 50px #0008; }
 @media (max-width: 640px) { .va-felt { border-radius:120px / 90px; aspect-ratio: 4/5; border-width:10px; } }
 .va-center { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:12px; }
 .va-board { display:flex; gap:8px; }
 .va-pot { background:#0006; border-radius:999px; padding:6px 14px; font-weight:800; display:flex; gap:8px; align-items:center; }
-.va-seat { position:absolute; left:50%; transform:translateX(-50%); display:flex; flex-direction:column; align-items:center; gap:6px; }
-.va-seat.top { top:-36px; } .va-seat.bottom { bottom:-48px; }
+.va-seat { position:absolute; transform:translate(-50%, -50%); display:flex; flex-direction:column; align-items:center; gap:6px; z-index:2; }
+.va-felt.six { margin:70px 90px 80px; }
+@media (max-width: 760px) { .va-felt.six { margin:60px 8px 70px; } .va-felt.six .va-avatar { min-width:0; padding-right:8px; }
+  .va-felt.six .va-avatar .who { max-width:70px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .va-felt.six .va-card-face { width:30px; height:44px; font-size:14px; } .va-felt.six .va-card-face.big { width:40px; height:58px; font-size:18px; } }
 .va-avatar { display:flex; align-items:center; gap:10px; background:#0d1424; border:2px solid var(--line);
   border-radius:999px; padding:6px 14px 6px 6px; min-width:200px; }
 .va-avatar.turn { border-color:var(--accent); box-shadow:0 0 0 3px #19c3a655; }
@@ -408,9 +419,9 @@ export default function ArenaPage() {
   const spec = specs.find((s) => s.escrowable && s.state === "ACTIVE"
     && s.model_class === modelClass);
 
-  async function join(mode: string, stake: number) {
+  async function join(mode: string, stake: number, seats: number) {
     if (!spec) { setToast(t("Declare simulated capacity in this model class first")); return; }
-    await call("/v1/federation/arena/queue", { spec_id: spec.spec_id, stake, mode });
+    await call("/v1/federation/arena/queue", { spec_id: spec.spec_id, stake, mode, seats });
   }
 
   async function commit(m: Match) {
@@ -511,8 +522,9 @@ export default function ArenaPage() {
               )}
               {lobby?.queued && (
                 <div className="va-row">
-                  <span>{t("Waiting for an opponent")} · {lobby.queued.mode === "cash"
-                    ? t("Cash table") : t("Tournament")} · {asM(lobby.queued.stake)}</span>
+                  <span>{t("Waiting for players")} · {lobby.queued.mode === "cash"
+                    ? t("Cash table") : t("Tournament")} · {lobby.queued.seats === 6
+                    ? t("6-max") : t("Heads-up")} · {asM(lobby.queued.stake)}</span>
                   <button type="button" className="va-btn" disabled={busy}
                     onClick={() => void call("/v1/federation/arena/queue", undefined, "DELETE")}>
                     {t("Cancel")}</button>
@@ -567,27 +579,39 @@ type T = (source: string, vars?: Record<string, string | number>) => string;
 
 function LobbyView({ lobby, t, busy, modelClass, setModelClass, spec, onJoin, onLeaveQueue }: {
   lobby: Lobby; t: T; busy: boolean; modelClass: string; setModelClass: (c: string) => void;
-  spec: Spec | undefined; onJoin: (mode: string, stake: number) => void;
+  spec: Spec | undefined; onJoin: (mode: string, stake: number, seats: number) => void;
   onLeaveQueue: () => void;
 }) {
+  const [cashSize, setCashSize] = useState(6);
+  const [sngSize, setSngSize] = useState(6);
   const queued = lobby.queued;
-  const button = (mode: string, stake: number, label: string) => {
+  const button = (mode: string, stake: number, seats: number, label: string) => {
     const here = queued && queued.mode === mode && queued.stake === stake
-      && queued.model_class === modelClass;
+      && queued.model_class === modelClass && queued.seats === seats;
     if (here) {
       return <button type="button" className="va-btn warn" disabled={busy}
         onClick={onLeaveQueue}>{t("Waiting… cancel")}</button>;
     }
     return <button type="button" className="va-btn primary"
       disabled={busy || Boolean(queued) || lobby.restricted || !spec}
-      onClick={() => onJoin(mode, stake)}>{t(label)}</button>;
+      onClick={() => onJoin(mode, stake, seats)}>{t(label)}</button>;
   };
+  const sizes = (value: number, set: (n: number) => void) => (
+    <div className="va-classes">
+      {[6, 2].map((n) => (
+        <button key={n} type="button" className={value === n ? "on" : ""} onClick={() => set(n)}>
+          {n === 6 ? t("6-max") : t("Heads-up")}</button>
+      ))}
+    </div>
+  );
+  const cash = lobby.cash.filter((x) => x.seats === cashSize);
+  const sng = lobby.tournaments.filter((x) => x.seats === sngSize);
   return (
     <>
       <div className="va-banner">
         <div>
-          <h1>{t("Heads-up hold'em, people and agents at one table")}</h1>
-          <p>{t("Same model class only. Fair shuffles from both players' seeds. Every match replays and verifies.")}</p>
+          <h1>{t("No-limit hold'em, people and agents at one table")}</h1>
+          <p>{t("Same model class only. Fair shuffles from every player's seed. Every match replays and verifies.")}</p>
         </div>
       </div>
       {lobby.restricted && (
@@ -607,49 +631,54 @@ function LobbyView({ lobby, t, busy, modelClass, setModelClass, spec, onJoin, on
       {!spec && (
         <p className="va-dim">{t("You have no simulated capacity in {c}. An owner declares it under Federation › resource rights.", { c: modelClass })}</p>
       )}
-      <div className="va-h"><h2>{t("Cash tables")}</h2>
-        <span className="va-dim">{t("Chips are tokens · settle by your final stack · stand up between hands")}</span></div>
+      <div className="va-h"><h2>{t("Cash tables")}</h2>{sizes(cashSize, setCashSize)}</div>
+      <p className="va-dim" style={{ marginTop: -6 }}>{t("Chips are tokens · settle by your final stack · sit down and stand up between hands")}</p>
       <div className="va-grid">
-        {lobby.cash.map((table, i) => {
+        {cash.map((table, i) => {
           const waiting = table.waiting[modelClass] ?? 0;
+          const open = table.open_tables?.[modelClass] ?? [];
+          const best = open.length ? open.reduce((a, b) => (a.players >= b.players ? a : b)) : null;
           return (
-            <div className="va-card" key={table.stake}>
+            <div className="va-card" key={`${table.seats}-${table.stake}`}>
               <div className="va-card-head">
                 <div><div className="k">NL HOLD&apos;EM · {modelClass}</div>
                   <div className="n">{t(CASH_NAMES[i] ?? "Table")}</div></div>
-                <span className="va-dim">{t("Heads-up")}</span>
+                <span className="va-dim">{table.seats === 6 ? t("6-max") : t("Heads-up")}</span>
               </div>
               <div className="va-card-body">
                 <div className="va-big"><i className="va-chip" />{asM(table.stake)} DEMO_M</div>
                 <div className="va-sub">{t("1 chip = {n} tokens", { n: table.tokens_per_chip ?? 0 })}
                   {" · "}{t("Blinds {a}/{b}", { a: table.blinds[0], b: table.blinds[1] })}</div>
-                <div className="va-sub">{waiting ? t("{n} waiting: you sit down at once",
-                  { n: waiting }) : t("Empty table: sit and wait")}</div>
-                {button("cash", table.stake, "Sit down")}
+                <div className="va-sub">
+                  {best ? t("{p} playing · {f} seats free", { p: best.players, f: best.free })
+                    : waiting ? t("{n} waiting: you sit down at once", { n: waiting })
+                      : t("Empty table: sit and wait")}</div>
+                {button("cash", table.stake, table.seats, "Sit down")}
               </div>
             </div>
           );
         })}
       </div>
-      <div className="va-h"><h2>{t("Tournaments")}</h2>
-        <span className="va-dim">{t("Heads-up sit and go · rising blinds · winner takes both buy-ins")}</span></div>
+      <div className="va-h"><h2>{t("Tournaments")}</h2>{sizes(sngSize, setSngSize)}</div>
+      <p className="va-dim" style={{ marginTop: -6 }}>{t("Sit and go · starts when the table is full · rising blinds · paid by place")}</p>
       <div className="va-grid">
-        {lobby.tournaments.map((table, i) => {
+        {sng.map((table, i) => {
           const waiting = table.waiting[modelClass] ?? 0;
+          const payouts = table.payouts_percent ?? [100];
           return (
-            <div className="va-card" key={table.stake}>
+            <div className="va-card" key={`${table.seats}-${table.stake}`}>
               <div className="va-card-head t">
-                <div><div className="k">NL HOLD&apos;EM · SNG</div>
+                <div><div className="k">NL HOLD&apos;EM · SNG · {table.seats === 6 ? t("6-max") : t("Heads-up")}</div>
                   <div className="n">{t(SNG_NAMES[i] ?? "Tournament")}</div></div>
                 <span>🏆</span>
               </div>
               <div className="va-card-body t">
-                <div className="va-big">{asM(table.prize ?? 0)} DEMO_M</div>
+                <div className="va-big">{asM(table.prize_pool ?? 0)} DEMO_M</div>
                 <div className="va-sub">{t("Buy-in {n} DEMO_M", { n: asM(table.stake) })}
+                  {" · "}{payouts.map((p, k) => `${t("Place {n}", { n: k + 1 })} ${p}%`).join(" · ")}</div>
+                <div className="va-sub">{t("{n}/{m} registered", { n: waiting, m: table.seats })}
                   {" · "}{t("blinds up every {n} hands", { n: table.hands_per_level ?? 0 })}</div>
-                <div className="va-sub">{waiting ? t("1 player registered: starts when you join")
-                  : t("2 players needed")}</div>
-                {button("sng", table.stake, "Register")}
+                {button("sng", table.stake, table.seats, "Register")}
               </div>
             </div>
           );
@@ -683,7 +712,9 @@ function MineView({ t, live, record, owed, onOpen }: {
         {record?.recent.map((r) => (
           <div className="va-row" key={r.match_id}>
             <span>{r.mode === "cash" ? t("Cash table") : t("Tournament")} · {r.model_class} ·{" "}
-              {t("vs {who}", { who: short(r.opponent) })} · {t("{n} hands", { n: r.hands })} ·{" "}
+              {r.players > 2 ? t("{n} players", { n: r.players }) : t("vs {who}", { who: short(r.opponent) })}
+              {r.mode === "sng" && r.place ? ` · ${t("Place {n}", { n: r.place })}` : ""} ·{" "}
+              {t("{n} hands", { n: r.hands })} ·{" "}
               <span className="va-dim">{t(REASON[r.reason] ?? r.reason)}</span></span>
             <span className={r.net > 0 ? "va-pos" : r.net < 0 ? "va-neg" : "va-dim"}>
               {r.net > 0 ? "+" : ""}{asM(r.net)}</span>
@@ -771,6 +802,16 @@ function PolicyPanel({ t, initial, busy, onSave }: {
   );
 }
 
+// Seat slots around the felt, clockwise from the viewer at the bottom
+// (percent positions of a seat's centre).
+const SLOTS: Record<number, { left: number; top: number }[]> = {
+  2: [{ left: 50, top: 100 }, { left: 50, top: 0 }],
+  6: [
+    { left: 50, top: 100 }, { left: 6, top: 74 }, { left: 6, top: 22 },
+    { left: 50, top: 0 }, { left: 94, top: 22 }, { left: 94, top: 74 },
+  ],
+};
+
 function TableView({ m, t, busy, now, replay, raiseTo, setRaiseTo, onBack, onCall, onCommit,
   onVerify }: {
   m: Match; t: T; busy: boolean; now: number; replay: Verify | null;
@@ -779,7 +820,7 @@ function TableView({ m, t, busy, now, replay, raiseTo, setRaiseTo, onBack, onCal
   onCommit: (m: Match) => Promise<void>; onVerify: (m: Match) => Promise<void>;
 }) {
   const me = m.my_seat;
-  const them = 1 - me;
+  const size = m.table_size;
   const game = m.game;
   const hand = game?.hand;
   const path = `/v1/federation/arena/matches/${m.match_id}`;
@@ -789,57 +830,73 @@ function TableView({ m, t, busy, now, replay, raiseTo, setRaiseTo, onBack, onCal
   const myTurn = Boolean(hand && hand.legal.length);
   const left = m.turn_deadline ? Math.max(0, new Date(m.turn_deadline).getTime() - now) : 0;
   const pct = m.turn_deadline ? Math.min(100, (left / (m.rules.turn_seconds * 1000)) * 100) : 0;
-  const seatName = (s: number) => (s === me ? t("You") : short(m.seats[s].fid));
-  const shown = game?.last_hand?.hole;
-  const lastWinner = game?.last_hand
-    ? (game.last_hand.won[me] > game.last_hand.won[them] ? me
-      : game.last_hand.won[them] > game.last_hand.won[me] ? them : null)
-    : null;
+  const seatName = (s: number) => (s === me ? t("You") : m.seats[s] ? short(m.seats[s].fid) : "—");
+  const last = game?.last_hand ?? null;
   const preset = (to: number) => setRaiseTo(Math.round(to));
+  const mine = m.seats[me];
+  const slots = SLOTS[size] ?? SLOTS[6];
 
-  const seat = (s: number, position: "top" | "bottom") => {
-    const stack = game ? game.stacks[s] : m.rules.starting_stack;
+  const seatBox = (s: number) => {
+    const slot = slots[(s - me + size) % size];
+    const taken = s < m.seats.length && !m.seats[s].abandoned;
+    const status = game?.status?.[s] ?? (taken ? "active" : "empty");
+    const inHand = Boolean(hand && hand.players.includes(s));
+    const folded = Boolean(hand && inHand && hand.folded[s]);
+    const stack = game ? game.stacks[s] : taken ? m.rules.starting_stack : 0;
     const bet = hand ? hand.committed[s] : 0;
-    const turn = hand && hand.to_act === s && m.state === "PLAYING";
-    const cards = s === me ? (hand?.my_cards ?? null) : null;
-    const body = (
-      <>
-        <div className={`va-avatar${turn ? " turn" : ""}`}>
-          <div className="face">{s === me ? "★" : m.seats[s].fid.slice(-2).toUpperCase()}</div>
-          <div style={{ flex: 1 }}>
-            <div className="who">{seatName(s)}{m.seats[s].agent_play ? ` · ${t("agent")}` : ""}</div>
-            <div className="st">{stack} {t("chips")}</div>
-          </div>
-          {hand && hand.button === s && <div className="va-dealer">D</div>}
+    const turn = Boolean(hand && hand.to_act === s && m.state === "PLAYING");
+    const tag = !taken ? t("Empty seat")
+      : m.seats[s].joining ? t("Sitting down")
+        : game?.pending?.[s] ? t("Next hand")
+          : status === "out" ? t("Out")
+            : status === "left" ? t("Stood up")
+              : folded ? t("Folded") : null;
+    const top = slot.top <= 30;
+    const cards = s === me
+      ? (hand?.my_cards ? hand.my_cards.map((c) => <CardFace key={c} card={c} big />) : null)
+      : inHand && !folded ? <><CardFace back /><CardFace back /></> : null;
+    const avatar = (
+      <div className={`va-avatar${turn ? " turn" : ""}`} style={{ opacity: !taken || folded
+        || status === "out" || status === "left" ? 0.55 : 1 }}>
+        <div className="face">{!taken ? "+" : s === me ? "★" : m.seats[s].fid.slice(-2).toUpperCase()}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="who">{taken ? seatName(s) : t("Empty seat")}
+            {taken && m.seats[s].agent_play ? ` · ${t("agent")}` : ""}</div>
+          <div className="st">{taken ? `${stack} ${t("chips")}` : ""}{tag && taken ? ` · ${tag}` : ""}</div>
         </div>
-        {turn && m.turn_deadline && <div className="va-timer" style={{ width: 200 }}>
-          <i style={{ width: `${pct}%` }} /></div>}
-      </>
+        {hand && hand.button === s && <div className="va-dealer">D</div>}
+      </div>
     );
-    const holes = s === me
-      ? <div className="va-cards">{cards ? cards.map((c) => <CardFace key={c} card={c} big />) : null}</div>
-      : <div className="va-cards">{hand ? <><CardFace back /><CardFace back /></> : null}</div>;
-    const betChip = bet > 0 && <div className="va-bet"><i className="va-chip" />{bet}</div>;
     return (
-      <div className={`va-seat ${position}`}>
-        {position === "top" ? <>{body}{holes}{betChip}</> : <>{betChip}{holes}{body}</>}
+      <div key={s} className="va-seat" style={{ left: `${slot.left}%`, top: `${slot.top}%` }}>
+        {top ? <>{avatar}<div className="va-cards">{cards}</div>
+          {bet > 0 && <div className="va-bet"><i className="va-chip" />{bet}</div>}</>
+          : <>{bet > 0 && <div className="va-bet"><i className="va-chip" />{bet}</div>}
+            <div className="va-cards">{cards}</div>{avatar}</>}
+        {turn && m.turn_deadline && <div className="va-timer" style={{ width: 160 }}>
+          <i style={{ width: `${pct}%` }} /></div>}
       </div>
     );
   };
 
   const setup = ["MATCHED", "OWNER_AUTHORIZED", "DEMO_RESERVED", "COMMITTED"].includes(m.state);
-  const mine = m.seats[me];
   let overlay: React.ReactNode = null;
-  if (setup) {
+  if (setup || (m.state === "PLAYING" && mine.joining)) {
+    const waitingOn = m.seats.filter((s) => !s.abandoned && (m.state === "MATCHED"
+      ? !s.authorized : m.state === "DEMO_RESERVED" ? !s.commitment
+        : m.state === "COMMITTED" ? !s.revealed : false)).length;
     overlay = (
       <div className="va-dialog">
-        <h3>{m.mode === "cash" ? t("Cash table") : t("Tournament")} · {m.model_class}</h3>
-        <p className="va-dim">{t("Opponent {who}", { who: short(m.seats[them].fid) })} ·{" "}
+        <h3>{m.mode === "cash" ? t("Cash table") : t("Tournament")} · {size === 6 ? t("6-max") : t("Heads-up")} · {m.model_class}</h3>
+        <p className="va-dim">{t("{n} of {m} seats taken", { n: m.seats.filter((s) => !s.abandoned).length, m: size })} ·{" "}
           {asM(m.stake)} DEMO_M{m.tokens_per_chip
-            ? ` · ${t("1 chip = {n} tokens", { n: m.tokens_per_chip })}` : ""}</p>
-        {m.state === "MATCHED" && !mine.authorized && (
+            ? ` · ${t("1 chip = {n} tokens", { n: m.tokens_per_chip })}` : ""}
+          {m.payouts_percent?.length ? ` · ${m.payouts_percent.map((p, k) =>
+            `${t("Place {n}", { n: k + 1 })} ${p}%`).join(" · ")}` : ""}</p>
+        {(m.state === "MATCHED" || mine.joining) && !mine.authorized && (
           <>
-            <p>{t("Authorize the contract: your stake is held until the match settles.")}</p>
+            <p>{mine.joining ? t("Authorize to sit in: you are dealt in from the next hand.")
+              : t("Authorize the contract: your stake is held until the match settles.")}</p>
             <p className="va-mono">{m.contract_hash}</p>
             <button type="button" className="va-btn primary" disabled={busy}
               onClick={() => void onCall(`${path}/authorize`,
@@ -849,15 +906,12 @@ function TableView({ m, t, busy, now, replay, raiseTo, setRaiseTo, onBack, onCal
         )}
         {m.state === "DEMO_RESERVED" && !mine.commitment && (
           <>
-            <p>{t("Add your random seed: the deck needs both players' seeds and the host's.")}</p>
+            <p>{t("Add your random seed: the deck needs every player's seed and the host's.")}</p>
             <button type="button" className="va-btn primary" disabled={busy}
               onClick={() => void onCommit(m)}>{t("Shuffle in my seed")}</button>
           </>
         )}
-        {((m.state === "MATCHED" && mine.authorized) || (m.state === "DEMO_RESERVED" && mine.commitment)
-          || m.state === "COMMITTED" || m.state === "OWNER_AUTHORIZED") && (
-          <p className="va-dim">{t("Waiting for the other side")}…</p>
-        )}
+        {waitingOn > 0 && <p className="va-dim">{t("Waiting for {n} more", { n: waitingOn })}…</p>}
         <p className="va-mono">{t("Host seed commitment")}: {m.server_commit}</p>
         <button type="button" className="va-btn" disabled={busy}
           onClick={() => void onCall(`${path}/leave`)}>{t("Leave")}</button>
@@ -865,13 +919,25 @@ function TableView({ m, t, busy, now, replay, raiseTo, setRaiseTo, onBack, onCal
     );
   } else if (m.result) {
     const p = m.result.proof;
+    const myNet = p.nets?.[me] ?? 0;
+    const place = p.ranking ? p.ranking.indexOf(me) + 1 : 0;
     overlay = (
-      <div className="va-dialog">
-        <h3>{p.winner_seat === null || p.settles_tokens === 0 ? t("No winner: nothing changes hands")
-          : p.winner_seat === me ? t("You won {n}", { n: `${asM(p.settles_tokens)} DEMO_M` })
-          : t("You lost {n}", { n: `${asM(p.settles_tokens)} DEMO_M` })}</h3>
+      <div className="va-dialog" style={{ maxWidth: 520 }}>
+        <h3>{myNet > 0 ? t("You won {n}", { n: `${asM(myNet)} DEMO_M` })
+          : myNet < 0 ? t("You lost {n}", { n: `${asM(-myNet)} DEMO_M` })
+            : t("No winner: nothing changes hands")}</h3>
         <p className="va-dim">{t(REASON[p.reason] ?? p.reason)} · {t("{n} hands", { n: p.hands_played })}
-          {" · "}{t("final stacks {a} : {b}", { a: p.final_stacks[me], b: p.final_stacks[them] })}</p>
+          {m.mode === "sng" && place ? ` · ${t("Place {n}", { n: place })}` : ""}</p>
+        <div style={{ textAlign: "left", margin: "8px 0" }}>
+          {(p.ranking ?? []).map((s, k) => (
+            <div className="va-row" key={s}>
+              <span>{m.mode === "sng" ? `${k + 1}. ` : ""}{seatName(s)}</span>
+              <span className="va-dim">{p.final_stacks[s]} {t("chips")}</span>
+              <span className={p.nets[s] > 0 ? "va-pos" : p.nets[s] < 0 ? "va-neg" : "va-dim"}>
+                {p.nets[s] > 0 ? "+" : ""}{asM(p.nets[s])}</span>
+            </div>
+          ))}
+        </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "center", flexWrap: "wrap" }}>
           <button type="button" className="va-btn primary" disabled={busy}
             onClick={() => void onVerify(m)}>{t("Replay and verify")}</button>
@@ -895,6 +961,8 @@ function TableView({ m, t, busy, now, replay, raiseTo, setRaiseTo, onBack, onCal
       </div>
     );
   }
+  const standingNow = Boolean(game?.leaving?.includes(me));
+  const out = game ? ["out", "left"].includes(game.status[me]) : false;
 
   return (
     <div className="va-table-wrap">
@@ -902,14 +970,14 @@ function TableView({ m, t, busy, now, replay, raiseTo, setRaiseTo, onBack, onCal
         <div className="va-h">
           <button type="button" className="va-btn" onClick={onBack}>← {t("Lobby")}</button>
           <span className="va-dim">
-            {m.mode === "cash" ? t("Cash table") : t("Tournament")} · {m.model_class} ·{" "}
-            {asM(m.stake)} DEMO_M{hand ? ` · ${t("Hand {n}", { n: hand.no })} · ${t("Blinds {a}/{b}",
+            {m.mode === "cash" ? t("Cash table") : t("Tournament")} · {size === 6 ? t("6-max") : t("Heads-up")} ·{" "}
+            {m.model_class} · {asM(m.stake)} DEMO_M{hand ? ` · ${t("Hand {n}", { n: hand.no })} · ${t("Blinds {a}/{b}",
               { a: hand.blinds[0], b: hand.blinds[1] })}` : ""}
           </span>
           <span className="va-dim">{t(STATE[m.state] ?? m.state)}</span>
         </div>
-        <div className="va-felt">
-          {seat(them, "top")}
+        <div className={`va-felt${size === 6 ? " six" : ""}`}>
+          {Array.from({ length: size }, (_, s) => s).map(seatBox)}
           <div className="va-center">
             {hand && (
               <>
@@ -921,16 +989,15 @@ function TableView({ m, t, busy, now, replay, raiseTo, setRaiseTo, onBack, onCal
                 <div className="va-dim" style={{ color: "#cfe" }}>{t(STREET[hand.street] ?? hand.street)}</div>
               </>
             )}
-            {game?.standing !== null && game?.standing !== undefined && m.state === "PLAYING" && (
-              <div className="va-bet">{t("Table ends after this hand")}</div>
+            {standingNow && m.state === "PLAYING" && (
+              <div className="va-bet">{t("You leave after this hand")}</div>
             )}
           </div>
-          {seat(me, "bottom")}
           {overlay && <div className="va-overlay">{overlay}</div>}
         </div>
-        {m.state === "PLAYING" && hand && (
+        {m.state === "PLAYING" && !mine.joining && !out && (
           <div className="va-actions">
-            {myTurn ? (
+            {myTurn && hand ? (
               <>
                 {hand.legal.filter((l) => l.type !== "raise" && l.type !== "bet").map((l) => (
                   <button key={l.type} type="button"
@@ -962,11 +1029,11 @@ function TableView({ m, t, busy, now, replay, raiseTo, setRaiseTo, onBack, onCal
                 )}
               </>
             ) : (
-              <span className="va-dim">{t("Waiting for the other side")}…{" "}
-                {m.turn_deadline ? `${Math.ceil(left / 1000)}s` : ""}</span>
+              <span className="va-dim">{hand ? `${t("Waiting for {who}", { who: seatName(hand.to_act) })}… ${
+                m.turn_deadline ? `${Math.ceil(left / 1000)}s` : ""}` : t("Next hand")}</span>
             )}
             <span style={{ flex: 1 }} />
-            <button type="button" className="va-btn" disabled={busy || game?.standing === me}
+            <button type="button" className="va-btn" disabled={busy || standingNow}
               onClick={() => void onCall(`${path}/leave`)}>
               {m.mode === "cash" ? t("Stand up after this hand") : t("Concede")}</button>
           </div>
@@ -986,19 +1053,19 @@ function TableView({ m, t, busy, now, replay, raiseTo, setRaiseTo, onBack, onCal
             ))}
           </div>
         </div>
-        {game?.last_hand && (
+        {last && (
           <div className="va-panel">
-            <h3>{t("Last hand")} #{game.last_hand.no}</h3>
-            <p>{lastWinner === null ? t("split") : lastWinner === me
-              ? t("you won {n}", { n: game.last_hand.won[me] })
-              : t("they won {n}", { n: game.last_hand.won[them] })}
-              {" · "}<span className="va-dim">{t(STREET[game.last_hand.ended] ?? game.last_hand.ended)}</span></p>
-            <div className="va-cards">{game.last_hand.board.map((c) => <CardFace key={c} card={c} />)}</div>
-            {shown && (
-              <p className="va-dim" style={{ marginTop: 8 }}>{t("their cards")}:{" "}
-                {shown[them].map((c) => (c[0] === "T" ? "10" : c[0]) + SUIT[c[1]]).join(" ")}
-                {game.last_hand.showdown && ` · ${t(CATEGORY[game.last_hand.showdown[them].category] ?? game.last_hand.showdown[them].category)}`}</p>
-            )}
+            <h3>{t("Last hand")} #{last.no}</h3>
+            {last.won.map((w, s) => w > 0 ? (
+              <p key={s}>{t("{who} won {n}", { who: seatName(s), n: w })}
+                {last.showdown?.[s] ? ` · ${t(CATEGORY[last.showdown[s]!.category] ?? last.showdown[s]!.category)}` : ""}</p>
+            ) : null)}
+            <p className="va-dim">{t(STREET[last.ended] ?? last.ended)}</p>
+            <div className="va-cards">{last.board.map((c) => <CardFace key={c} card={c} />)}</div>
+            {last.hole && last.hole.map((cards, s) => cards && s !== me ? (
+              <p key={s} className="va-dim" style={{ marginTop: 6 }}>{seatName(s)}:{" "}
+                {cards.map((c) => (c[0] === "T" ? "10" : c[0]) + SUIT[c[1]]).join(" ")}</p>
+            ) : null)}
           </div>
         )}
         {replay && (
@@ -1007,10 +1074,11 @@ function TableView({ m, t, busy, now, replay, raiseTo, setRaiseTo, onBack, onCal
             <div className="va-log">
               {replay.hand_history.map((h) => (
                 <div className="va-row" key={h.no} style={{ flexDirection: "column", alignItems: "flex-start" }}>
-                  <div>#{h.no} · {t(STREET[h.ended] ?? h.ended)} · {h.won[me] > h.won[them] ? t("you won {n}", { n: h.won[me] })
-                    : h.won[them] > h.won[me] ? t("they won {n}", { n: h.won[them] }) : t("split")}</div>
+                  <div>#{h.no} · {t(STREET[h.ended] ?? h.ended)} · {h.won.map((w, s) => w > 0
+                    ? t("{who} won {n}", { who: seatName(s), n: w }) : null).filter(Boolean).join(", ")}</div>
                   <div className="va-dim">{h.board.map((c) => (c[0] === "T" ? "10" : c[0]) + SUIT[c[1]]).join(" ")}
-                    {h.hole ? ` · ${t("you")} ${h.hole[me].join(" ")} · ${t("them")} ${h.hole[them].join(" ")}` : ""}</div>
+                    {h.hole ? h.hole.map((cards, s) => cards
+                      ? ` · ${seatName(s)} ${cards.join(" ")}` : "").join("") : ""}</div>
                 </div>
               ))}
             </div>
