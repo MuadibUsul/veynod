@@ -34,6 +34,15 @@ const MOVE: Record<string, string> = {
   fold: "Fold", check: "Check", call: "Call", bet: "Bet", raise: "Raise", all_in: "All in",
   timeout: "Timed out", timeout_forfeit: "Forfeit on time",
 };
+const STREET: Record<string, string> = {
+  preflop: "Preflop", flop: "Flop", turn: "Turn", river: "River",
+  fold: "Won by a fold", showdown: "Showdown", forfeit: "Forfeit",
+};
+const CATEGORY: Record<string, string> = {
+  high_card: "High card", pair: "Pair", two_pair: "Two pair", three_of_a_kind: "Three of a kind",
+  straight: "Straight", flush: "Flush", full_house: "Full house", four_of_a_kind: "Four of a kind",
+  straight_flush: "Straight flush",
+};
 const REASON: Record<string, string> = {
   bust: "a stack ran out", conceded: "conceded", stood_up: "stood up",
   forfeit_timeouts: "too many timeouts", hand_limit: "hand limit reached",
@@ -124,8 +133,8 @@ const CSS = `
 .va a { color: inherit; }
 .va-top { position:sticky; top:0; z-index:5; display:flex; align-items:center; gap:24px;
   padding:12px 24px; background:#0c1324ee; border-bottom:1px solid var(--line); backdrop-filter: blur(6px); }
-.va-brand { display:flex; align-items:center; gap:10px; font-weight:800; letter-spacing:.3px; font-size:18px; }
-.va-brand small { font-weight:600; color:var(--accent); font-size:11px; border:1px solid var(--accent);
+.va-brand { display:flex; align-items:center; gap:10px; white-space:nowrap; text-decoration:none; font-weight:800; letter-spacing:.3px; font-size:18px; }
+.va-brand small { white-space:nowrap; font-weight:600; color:var(--accent); font-size:11px; border:1px solid var(--accent);
   border-radius:4px; padding:1px 5px; margin-left:4px; }
 .va-nav { display:flex; gap:4px; flex:1; flex-wrap:wrap; }
 .va-nav button { background:none; border:0; color:var(--dim); font-weight:600; font-size:15px;
@@ -140,6 +149,9 @@ const CSS = `
 .va-main { display:grid; grid-template-columns: minmax(0,1fr) 340px; gap:24px; padding:24px;
   max-width:1360px; margin:0 auto; }
 @media (max-width: 980px) { .va-main { grid-template-columns: 1fr; padding:16px; } .va-top { gap:12px; padding:10px 16px; } }
+@media (max-width: 700px) { .va-top { flex-wrap:wrap; } .va-nav { order:3; flex:1 0 100%; flex-wrap:nowrap; overflow-x:auto; }
+  .va-nav button { white-space:nowrap; } .va-hide-sm { display:none !important; } .va-brand { white-space:nowrap; }
+  .va-avatar { min-width:160px; } .va-banner h1 { font-size:20px; } }
 .va-h { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:8px 0 14px; flex-wrap:wrap; }
 .va-h h2 { margin:0; font-size:24px; }
 .va-classes { display:flex; gap:6px; flex-wrap:wrap; }
@@ -332,9 +344,10 @@ export default function ArenaPage() {
   const open = matches.find((m) => m.match_id === openId) ?? null;
   const polling = Boolean(lobby?.queued) || live.length > 0 || Boolean(open);
 
+  // Fast while seated or queued; slower otherwise, so the lobby shows who is waiting.
   useEffect(() => {
-    if (!ready || !polling) return;
-    const timer = window.setInterval(() => { void load(); }, POLL_MS);
+    if (!ready) return;
+    const timer = window.setInterval(() => { void load(); }, polling ? POLL_MS : 5000);
     return () => window.clearInterval(timer);
   }, [ready, polling, load]);
   useEffect(() => {
@@ -418,13 +431,15 @@ export default function ArenaPage() {
     }
   }
 
-  if (!ready) return <div className="va"><style>{CSS}</style></div>;
+  if (!ready) return <div className="va"><style dangerouslySetInnerHTML={{ __html: CSS }} /></div>;
 
   const top = (
     <header className="va-top">
       <a className="va-brand" href="/dashboard/arena/" onClick={(event) => {
         event.preventDefault(); setOpenId(null); setView("lobby"); }}>
-        <BrandMark size={28} />
+        <span style={{ width: 28, height: 28, display: "inline-flex", overflow: "hidden", flex: "0 0 28px" }}>
+          <BrandMark size={28} tile={false} />
+        </span>
         <span>Veynod Arena</span><small>{t("SIMULATED")}</small>
       </a>
       <nav className="va-nav">
@@ -437,12 +452,12 @@ export default function ArenaPage() {
         ))}
       </nav>
       {spec && (
-        <span className="va-pill" title={t("Unreserved simulated capacity")}>
+        <span className="va-pill va-hide-sm" title={t("Unreserved simulated capacity")}>
           <i className="va-chip" />{asM(spec.unreserved_tokens ?? 0)} DEMO_M
         </span>
       )}
       <LanguageToggle />
-      <a className="va-dim" href="/dashboard/">{t("Console")}</a>
+      <a className="va-dim va-hide-sm" href="/dashboard/">{t("Console")}</a>
     </header>
   );
   const notice = (
@@ -453,7 +468,7 @@ export default function ArenaPage() {
 
   if (off) {
     return (
-      <div className="va"><style>{CSS}</style>{top}{notice}
+      <div className="va"><style dangerouslySetInnerHTML={{ __html: CSS }} />{top}{notice}
         <div className="va-main"><div className="va-panel">
           <h3>{t("The arena is off on this deployment")}</h3>
           <p className="va-dim">{off}</p>
@@ -465,7 +480,7 @@ export default function ArenaPage() {
 
   return (
     <div className="va">
-      <style>{CSS}</style>
+      <style dangerouslySetInnerHTML={{ __html: CSS }} />
       {top}
       {notice}
       {open ? (
@@ -903,7 +918,7 @@ function TableView({ m, t, busy, now, replay, raiseTo, setRaiseTo, onBack, onCal
                   {[0, 1, 2, 3, 4].map((i) => hand.board[i]
                     ? <CardFace key={i} card={hand.board[i]} /> : <CardFace key={i} slot />)}
                 </div>
-                <div className="va-dim" style={{ color: "#cfe" }}>{t(hand.street)}</div>
+                <div className="va-dim" style={{ color: "#cfe" }}>{t(STREET[hand.street] ?? hand.street)}</div>
               </>
             )}
             {game?.standing !== null && game?.standing !== undefined && m.state === "PLAYING" && (
@@ -977,12 +992,12 @@ function TableView({ m, t, busy, now, replay, raiseTo, setRaiseTo, onBack, onCal
             <p>{lastWinner === null ? t("split") : lastWinner === me
               ? t("you won {n}", { n: game.last_hand.won[me] })
               : t("they won {n}", { n: game.last_hand.won[them] })}
-              {" · "}<span className="va-dim">{t(game.last_hand.ended)}</span></p>
+              {" · "}<span className="va-dim">{t(STREET[game.last_hand.ended] ?? game.last_hand.ended)}</span></p>
             <div className="va-cards">{game.last_hand.board.map((c) => <CardFace key={c} card={c} />)}</div>
             {shown && (
               <p className="va-dim" style={{ marginTop: 8 }}>{t("their cards")}:{" "}
                 {shown[them].map((c) => (c[0] === "T" ? "10" : c[0]) + SUIT[c[1]]).join(" ")}
-                {game.last_hand.showdown && ` · ${t(game.last_hand.showdown[them].category)}`}</p>
+                {game.last_hand.showdown && ` · ${t(CATEGORY[game.last_hand.showdown[them].category] ?? game.last_hand.showdown[them].category)}`}</p>
             )}
           </div>
         )}
@@ -992,7 +1007,7 @@ function TableView({ m, t, busy, now, replay, raiseTo, setRaiseTo, onBack, onCal
             <div className="va-log">
               {replay.hand_history.map((h) => (
                 <div className="va-row" key={h.no} style={{ flexDirection: "column", alignItems: "flex-start" }}>
-                  <div>#{h.no} · {t(h.ended)} · {h.won[me] > h.won[them] ? t("you won {n}", { n: h.won[me] })
+                  <div>#{h.no} · {t(STREET[h.ended] ?? h.ended)} · {h.won[me] > h.won[them] ? t("you won {n}", { n: h.won[me] })
                     : h.won[them] > h.won[me] ? t("they won {n}", { n: h.won[them] }) : t("split")}</div>
                   <div className="va-dim">{h.board.map((c) => (c[0] === "T" ? "10" : c[0]) + SUIT[c[1]]).join(" ")}
                     {h.hole ? ` · ${t("you")} ${h.hole[me].join(" ")} · ${t("them")} ${h.hole[them].join(" ")}` : ""}</div>
