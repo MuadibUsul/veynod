@@ -3027,3 +3027,25 @@ async def stats(
             else principal.allowed_namespaces
         ),
     )
+
+
+@router.get("/state-machines",
+            summary="Every state machine: its states, the moves between them and why")
+async def list_state_machines(principal: Principal = Depends(get_principal)) -> dict:
+    del principal
+    from app import state_machines
+
+    return {"items": state_machines.describe_all()}
+
+
+@router.get("/state-machines/{name}",
+            summary="One state machine, with the moves allowed from each state")
+async def get_state_machine(name: str, principal: Principal = Depends(get_principal)) -> dict:
+    del principal
+    from app import state_machines
+
+    machine = state_machines.by_name(name)
+    if machine is None:
+        raise ApiError(404, "not_found", f"no state machine named {name}",
+                       details={"known": [m.name for m in state_machines.MACHINES]})
+    return machine.describe()

@@ -627,6 +627,12 @@ async def overload_handler(request: Request, exc: SQLAlchemyTimeoutError) -> JSO
 async def database_error_handler(
     request: Request, exc: SQLAlchemyError
 ) -> JSONResponse:
+    from app.state_machines import from_database_error
+
+    refused = from_database_error(exc)
+    if refused is not None:
+        # A trigger refused the change: the request is wrong, not the database.
+        return JSONResponse(status_code=refused.status_code, content=refused.body())
     logger.exception("database error")
     return JSONResponse(
         status_code=503,

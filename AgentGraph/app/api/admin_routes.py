@@ -1964,3 +1964,15 @@ async def growth_overview(
     from app.services import growth_metrics
 
     return await growth_metrics.growth_overview(session, days=days)
+
+
+@router.get("/state-machines/violations",
+            summary="State moves let through undeclared while the guard records")
+async def state_machine_violations(
+    days: int = Query(default=30, ge=1, le=365),
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app import state_machines
+
+    return {"mode": get_settings().state_guard,
+            "items": await state_machines.violations(session, days)}

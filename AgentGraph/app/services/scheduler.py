@@ -145,16 +145,26 @@ async def _hosts(session: AsyncSession, workspace_id: Any) -> list[dict[str, Any
 
 
 async def _end(session: AsyncSession, placement: dict[str, Any], status: str,
-               reason: str | None = None, note: str | None = None) -> None:
-    await session.execute(text(
+               reason: str | None = None, note: str | None = None) -> bool:
+    """Move an open placement on; False when it had already ended, and stays so.
+
+    ``placement`` may be a read from before another pass or the runner's report
+    ended it; writing over that end used to replace its outcome (withdrawn
+    became superseded) and announce the round a second time.
+    """
+    moved = (await session.execute(text(
         "UPDATE runner_placements SET status = CAST(:status AS text), "
         "reason = COALESCE(CAST(:reason AS text), reason), "
         "note = COALESCE(CAST(:note AS text), note), updated_at = NOW(), "
         "ended_at = CASE WHEN CAST(:status AS text) IN "
         "('suggested', 'offered', 'claimed', 'unplaced') "
-        "THEN NULL ELSE NOW() END WHERE placement_id = :id"),
+        "THEN NULL ELSE NOW() END WHERE placement_id = :id "
+        "AND status IN ('suggested', 'offered', 'claimed', 'unplaced') "
+        "RETURNING placement_id"),
         {"status": status, "reason": reason, "note": note and note[:500],
-         "id": placement["placement_id"]})
+         "id": placement["placement_id"]})).scalar_one_or_none()
+    if moved is None:
+        return False
     was_open = placement.get("status") in OPEN
     placement["status"] = status
     outcome = ROUND_OUTCOMES.get(status) if placement.get("step") == "supervise" else None
@@ -168,6 +178,7 @@ async def _end(session: AsyncSession, placement: dict[str, Any], status: str,
                      "reason": reason, "note": note and note[:500],
                      "started": placement.get("started_at") is not None,
                      "idempotency_key": f"{placement['placement_id']}:{status}"})
+    return True
 
 
 async def _unassign(session: AsyncSession, task: CollabTask, actor: str) -> None:
@@ -262,7 +273,8 @@ async def _reconcile(session: AsyncSession, workspace_id: Any,
         # task, even if it gave it back before this pass saw the claim.
         taken = (task.lease_epoch or 0) > (placement["lease_epoch"] or 0)
         if status == "offered" and (_holds(task, host) or taken):
-            await _end(session, placement, "claimed")
+            if not await _end(session, placement, "claimed"):
+                continue  # ended meanwhile (moved by another pass): nothing left to do
             status = "claimed"
             counts["claimed"] += 1
         if task.status in PAST_WORK:

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Bump on every release and add notes in app/services/releases.py.
     app_version: str = "3.24.0"
     environment: Literal["development", "staging", "production", "test"] = "development"
+    # See ``state_guard``: unset, production records undeclared state moves and
+    # every other environment refuses them.
+    state_guard_mode: Literal["record", "enforce"] | None = None
     debug: bool = False
     host: str = "0.0.0.0"
     port: int = 8000
@@ -519,6 +522,14 @@ class Settings(BaseSettings):
         if value < 1:
             raise ValueError("max_search_top_k must be positive")
         return value
+
+    @property
+    def state_guard(self) -> str:
+        """``enforce`` refuses a state move not declared in app/state_machines.py;
+        ``record`` lets it through and counts it. Production records until set."""
+        if self.state_guard_mode is not None:
+            return self.state_guard_mode
+        return "record" if self.environment == "production" else "enforce"
 
     @property
     def is_production(self) -> bool:

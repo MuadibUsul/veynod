@@ -269,3 +269,46 @@ Now:
 `tests/test_scheduler_kicks.py` checks the kick path with the sweep out of the
 way; `tests/test_phase0_server.py` checks that two processes never take the
 same workspace.
+
+## I. Implicit state machines (2026-11-18)
+
+Every status column was a state machine only by convention. `collab_tasks.status`
+alone was written from about thirty places in eight files, by the ORM and by raw
+SQL in background loops; the database refused only three things (leaving a
+finished task, `IN_PROGRESS` without a lease, `REVIEWING` without a brief). The
+same held for 52 other columns. What was found, and what changed:
+
+- **One declaration for all 53 machines**: `app/state_machine_catalog.py` (states,
+  moves, the reason for each move); the federation market's own table is
+  derived, not copied. `docs/STATE_MACHINES.md` is generated from it, and
+  `GET /v1/state-machines[/{name}]` returns it to people and agents.
+- **The database holds every writer**: one trigger function
+  (`agentgraph_guard_transition`) on each column checks the move against
+  `state_transitions`, copied from the catalog at every start. It holds the
+  application's own connections (`application_name = veynod`). A person or tool
+  on the database directly (an operator repairing a row) is never blocked, only
+  recorded; an undo (`veynod.state_override = 'undo'`) may restore any state.
+- **Rollout without surprises**: `STATE_GUARD_MODE` is `enforce` in tests and
+  development and `record` in production until set. Recorded moves are at
+  `GET /v1/admin/state-machines/violations`, marked by whether the application
+  made them; set `enforce` once that list holds nothing from the application.
+- **How the moves were found**: a recording trigger on every status column through
+  the whole test suite, then the suite again in record mode against the draft.
+  It found two moves the code makes that a reading of the code missed (an
+  escalation or peer review finished straight from `READY`; the scheduler stopping
+  a `READY` task). The record mode itself first upserted one counter row per move,
+  which made two writers of the same move wait on each other: it is append-only.
+- **Errors that name the way out**: a trigger's refusal used to reach the generic
+  database handler and come back as 503 `database_unavailable`, which tells a
+  caller to retry a request that can never succeed. Refusals are now a 409
+  `invalid_state_transition` with `details.machine`, `current`, `requested` and
+  `allowed`; the locked-acceptance and finished-task refusals get their own codes.
+- **Nothing left implicit by accident**: `tests/test_state_machines.py` fails when
+  a status-like column is neither declared nor listed in `NOT_MACHINES` with the
+  reason it is not a lifecycle (a setting, a once-written log, a mirror), and when
+  the declared states differ from the schema's own list.
+
+Same pass, the other "one loop for everything" risk: the lease reaper ran about
+twenty upkeep steps inside one `try`, so a step that raised skipped every step
+after it, round after round, with nothing naming the step. Each step now runs on
+its own and a failure is logged by name (`reaper.last_errors`).
