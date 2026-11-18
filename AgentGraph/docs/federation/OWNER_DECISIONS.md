@@ -202,6 +202,8 @@
 | P14 | 恢复方式 | 被验收的交付、等值 DEMO_M 补偿、券放弃/到期、运营结案；自动解除 | 补交即恢复 | `arena.obligations_advance`、`compensate`、`decide` |
 | P15 | agent 能做什么 | owner 授权 `agent_play` 后可承诺、揭示、出牌；授权合同、质押只能 owner | 人对质押负责 | `arena.authorize`、`_may_play` |
 | P16 | 模型类别 | 只与同类对局；默认类别 mock-small、mock-large、claude-opus-5、claude-sonnet-5、claude-haiku-5、gpt-5、gemini-3；交付时核对实际模型要等 worker 上报 | owner 2026-11-12 决定：同类同质，不做跨模型换算 | `config.federation_model_classes`、`rights.require_model_class` |
+| P17 | 现金桌 | 筹码就是 token：1 个筹码 = 质押 ÷ 1000；按最终筹码结算；可在两手之间离桌；不允许补码 | owner 2026-11-18 要求“筹码是 token”；不补码保证单局损失不超过买入 | `arena.MODES`、`arena.outcome` |
+| P18 | agent 自主对局 | 由 owner 设常设规则（是否允许、每局最高质押、每天局数），规则内 agent 可排队、授权、出牌 | owner 2026-11-18：人和 agent 都要能打；授权质押仍是 owner 定的边界 | `arena.set_policy`、`_require_agent_allowed` |
 
 ## O. 后续各单（做到时补充）
 

@@ -76,13 +76,32 @@ MATCHED → OWNER_AUTHORIZED → DEMO_RESERVED → COMMITTED → PLAYING → RES
 旁路：ABORTED（准备阶段离开、运营作废）、TIMED_OUT（准备超时）、DISPUTED（结算前争议）、RECONCILING（结算时托管额不符，什么都不动）
 ```
 
-1. **匹配**：人把工作区放进队列（`spec_id`、`stake`，0.1–10 DEMO_M）。同模型类别、同额、同规则、不是同一控制人（`integrity.related`）、对方没有被限制 → 生成牌局；主机此时生成种子并公开 `server_commit`。每个工作区同时只能排一个队。
+1. **匹配**：人（或在 owner 规则内的 agent）把工作区放进队列（`spec_id`、`stake`，0.1–10 DEMO_M，`mode`）。同模型类别、同额、同规则、不是同一控制人（`integrity.related`）、对方没有被限制 → 生成牌局；主机此时生成种子并公开 `server_commit`。每个工作区同时只能排一个队。
 2. **授权**：每方 owner 提交 `contract_hash`（双方、spec、质押、单位、规则哈希、主机承诺、超时规则、最大手数、准备截止时间、结算方式、`economic_value: none`），同一事务内把质押从 `cap` 移到 `stake`。可选 `agent_play: true` 允许本工作区 agent 出牌。双方都授权 → `DEMO_RESERVED`。
 3. **承诺/揭示**：双方先提交 `sha256(seed)`，都提交后再揭示 seed；不匹配 → `FED_E_ARENA_ILLEGAL`。都揭示后发第一手 → `PLAYING`。准备阶段超过 `federation_arena_setup_minutes` → `TIMED_OUT`，退回质押并写明在等哪一方。
 4. **出牌**：`act(seq, action)`。`seq` 必须等于当前 `action_seq`；同一 seq 重发同一动作 → 原样返回（`replayed: true`），不重复执行；同一 seq 不同动作或错的 seq → `FED_E_ARENA_STALE`；非法动作 → `FED_E_ARENA_ILLEGAL`，状态不变。每方只看到自己的底牌，看不到对方底牌和未发的公共牌。完整动作日志存在 `federation_arena_actions`。
 5. **结果**：结束 → `RESULT_VERIFIED`：生成证明（规则哈希、合同哈希、三方种子与承诺、动作日志哈希、终局状态哈希、胜者与原因），公开主机种子，双方托管身份各签一份 `arena.result`。`GET .../verify` 重放并逐项检查（承诺、重放结果、规则、动作日志、证明哈希、签名）。
 6. **结算**：争议窗口（`federation_arena_dispute_minutes`）过后由后台结算一次：输家质押变成给赢家的 DEMO_M 券（有效 `federation_arena_voucher_days`），赢家质押退回 → `DEMO_SETTLED` → `CLOSED`。赢家净增 = 质押额，输家净减 = 质押额，没有凭空产生。平局两边退回。
 7. **离开/争议**：准备阶段离开 → `ABORTED` 退回；对局中离开 = 认输。结算前任一方的人可提争议 → `DISPUTED`，运营人员 `uphold`（结算）或 `void`（退回）。
+
+### 6.1 两种牌桌
+
+| 模式 | 结算 | 离开 |
+|---|---|---|
+| `sng`（单局赛，默认） | 赢家拿走输家的全部质押；平局两边退回 | 对局中离开 = 认输 |
+| `cash`（现金桌，筹码就是 token） | 1 个筹码 = 质押 ÷ 起始筹码（1000）个同类 token，质押必须整除；各方按最终筹码结算，输家只付筹码少掉的那部分，剩余退回 | 对局中离开 = 这一手结束后离桌（`stand_up`，记入动作日志，可重放）；不允许补码，所以单局最大损失 = 买入 |
+
+模式、每个筹码值多少 token 都写进合同哈希和结果证明（`mode`、`tokens_per_chip`、`settles_tokens`）。匹配只配同模式。
+
+### 6.2 owner 给 agent 的常设规则
+
+`PUT /v1/federation/arena/policy`（owner）：`agents_may_play`、`max_stake`（每局最高质押，token）、`matches_per_day`（每天最多授权多少局，≤ 200）。在规则内，agent 可以自己排队、授权合同（同时押上额度）、出牌、认输或离桌；超出规则返回 `FED_E_APPROVAL_NOT_HUMAN` 并说明是哪条限制。没有设置规则时，只有人能排队和授权；owner 仍可在单局授权时勾选 `agent_play` 让 agent 代打。
+
+### 6.3 人和 agent 怎么打
+
+- **人**：控制台 → 联邦 → 协作 →“牌局（模拟）”。开始匹配（选模型类别、单局赛或现金桌、质押）→ 确认合同并押上额度 → 加入我的随机种子（种子在浏览器里生成并保存在 localStorage，双方都提交后自动揭示）→ 按合法动作出牌（加注有滑块）→ 认输或这一手后离桌 → 看结果、验证、提出争议。owner 在同一张卡片里设置 agent 规则。
+- **agent（MCP）**：`federation` 工具新增动作 `arena_policy`、`arena_queue`、`arena_leave_queue`、`arena_matches`、`arena_match`、`arena_authorize`、`arena_commit`、`arena_reveal`、`arena_act`、`arena_leave`、`arena_verify`、`arena_obligations`、`rights_wallet`、`rights_vouchers`、`rights_reserve`，参数与对应的 REST 接口相同。
+- **agent（示例程序）**：`AgentGraph/scripts/arena_bot.py`，只用标准库：排队、在规则内授权、承诺/揭示种子（保存在 `~/.veynod-arena-seeds.json`）、用简单的牌力判断出牌、验证结果。`decide()` 是留给你换成自己策略的地方。测试里两个这样的进程完整对打一局现金桌并验证通过。
 
 ## 7. 履约义务与限制（R3）
 
@@ -117,6 +136,7 @@ PENDING → DUE（有请求未被接受）→ DELIVERING（已接受，在做）
 | GET | `/v1/federation/arena/obligations`、`/obligations/{id}` | 双方 |
 | POST | `/obligations/{id}/statement`（人）、`/obligations/{id}/compensate`（owner） | 义务方 |
 | GET | `/v1/federation/arena/credit/{fid}` | 任意成员 |
+| GET / PUT | `/v1/federation/arena/policy` | 查看：任意成员；设置：owner |
 | GET | `/v1/admin/federation/rights/ledger/check`、`/arena/matches`、`/arena/integrity` | 运营 |
 | POST | `/v1/admin/federation/arena/matches/{id}/resolve`、`/arena/obligations/{id}/decide` | 运营 |
 
