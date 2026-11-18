@@ -305,6 +305,12 @@ async def arena_record(principal: Principal = Depends(get_principal)) -> dict[st
     return await _call(arena.my_record(_workspace_id(principal)))
 
 
+@router.get("/arena/stats", summary="Hands, pots, missions and achievements of this workspace")
+async def arena_stats(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    _arena()
+    return await _call(arena.my_stats(_workspace_id(principal)))
+
+
 @router.get("/arena/leaderboard", summary="Standings: wins and net DEMO_M per workspace")
 async def arena_leaderboard(
     limit: int = Query(default=20, ge=1, le=100), principal: Principal = Depends(get_principal)

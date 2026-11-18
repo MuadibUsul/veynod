@@ -2583,6 +2583,134 @@ async def leaderboard(limit: int = 20) -> dict[str, Any]:
     }
 
 
+MISSIONS = (
+    ("play_hands", "Play {n} hands", "hands_played", 10),
+    ("see_showdown", "Reach a showdown {n} times", "showdowns", 2),
+    ("win_hands", "Win {n} hands", "hands_won", 3),
+    ("finish_table", "Finish {n} table", "tables_finished", 1),
+)
+ACHIEVEMENTS = (
+    ("first_hand", "First hand dealt", lambda st: st["hands_played"] >= 1),
+    ("first_pot", "First pot won", lambda st: st["hands_won"] >= 1),
+    ("showdown", "Cards on the table", lambda st: st["showdowns"] >= 1),
+    ("cash_regular", "Cash table regular", lambda st: st["cash_finished"] >= 1),
+    ("tournament_player", "Tournament player", lambda st: st["sng_finished"] >= 1),
+    ("full_ring", "Full six-max table", lambda st: st["six_max"] >= 1),
+    ("in_profit", "In profit", lambda st: st["net"] > 0),
+    ("hundred_hands", "A hundred hands", lambda st: st["hands_played"] >= 100),
+)
+
+
+async def my_stats(workspace_id: str) -> dict[str, Any]:
+    """Hands, pots, showdowns and tables from this workspace's matches (live
+    and finished), with missions (rolling targets) and achievements."""
+    require_enabled()
+    async with async_session_factory() as session:
+        me = await rights.fid_of(session, workspace_id)
+        rows = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT m.match_id, m.mode, m.table_size, m.model_class, m.stake, "
+                        "m.state, m.seats, m.game, m.result, m.updated_at FROM "
+                        "federation_arena_matches m WHERE m.match_id IN (SELECT match_id FROM "
+                        "federation_arena_players WHERE fid = :f) AND m.game IS NOT NULL "
+                        "ORDER BY m.updated_at DESC LIMIT 200"
+                    ),
+                    {"f": me},
+                )
+            )
+            .mappings()
+            .all()
+        )
+    st = {
+        "hands_played": 0,
+        "hands_won": 0,
+        "showdowns": 0,
+        "tables_finished": 0,
+        "cash_finished": 0,
+        "sng_finished": 0,
+        "six_max": 0,
+        "net": 0,
+    }
+    recent: list[dict[str, Any]] = []
+    sessions: list[dict[str, Any]] = []
+    for r in rows:
+        seats = r["seats"] if not isinstance(r["seats"], str) else json.loads(r["seats"])
+        game = r["game"] if not isinstance(r["game"], str) else json.loads(r["game"])
+        chairs = {int(s.get("chair", i)) for i, s in enumerate(seats) if s["fid"] == me}
+        for h in game.get("hands", []):
+            mine = [c for c in chairs if c in h.get("players", [])]
+            if not mine:
+                continue
+            c = mine[0]
+            won = int(h["won"][c]) - int(h["contrib"][c])
+            st["hands_played"] += 1
+            if h["won"][c] > 0:
+                st["hands_won"] += 1
+            shown = h.get("hole")
+            if h.get("ended") == "showdown" and shown and shown[c]:
+                st["showdowns"] += 1
+            if len(recent) < 30:
+                recent.append(
+                    {
+                        "match_id": r["match_id"],
+                        "mode": r["mode"],
+                        "hand": h["no"],
+                        "ended": h.get("ended"),
+                        "chips": won,
+                        "board": h["board"],
+                    }
+                )
+        if r["state"] in ("CLOSED", "DEMO_SETTLED") and r["result"]:
+            result = r["result"] if not isinstance(r["result"], str) else json.loads(r["result"])
+            proof = result["proof"]
+            net = sum(int(n) for f, n in zip(proof["seats"], proof["nets"], strict=True) if f == me)
+            st["tables_finished"] += 1
+            st["cash_finished" if r["mode"] == "cash" else "sng_finished"] += 1
+            st["net"] += net
+            if int(r["table_size"]) == 6 and len({f for f in proof["seats"]}) >= 6:
+                st["six_max"] += 1
+            sessions.append(
+                {
+                    "match_id": r["match_id"],
+                    "mode": r["mode"],
+                    "table_size": int(r["table_size"]),
+                    "model_class": r["model_class"],
+                    "net": net,
+                    "hands": proof["hands_played"],
+                    "at": r["updated_at"].isoformat(),
+                }
+            )
+    missions = []
+    for key, label, field, step in MISSIONS:
+        have = st[field]
+        target = (have // step + 1) * step  # the next round number
+        missions.append(
+            {
+                "key": key,
+                "label": label,
+                "n": target,
+                "progress": have,
+                "target": target,
+                "percent": int(100 * (have % step) / step),
+            }
+        )
+    achievements = [
+        {"key": key, "label": label, "unlocked": bool(test(st))}
+        for key, label, test in ACHIEVEMENTS
+    ]
+    return {
+        "fid": me,
+        "stats": st,
+        "missions": missions,
+        "achievements": achievements,
+        "recent_hands": recent,
+        "sessions": sessions[:20],
+        "economic_value": "none",
+    }
+
+
 async def admin_obligations(state: str | None = None) -> list[dict[str, Any]]:
     """Operator: obligations to review (in review and restricted by default)."""
     states = [state] if state else ["OVERDUE_REVIEW", "RESTRICTED", "CONFIRMED_UNFULFILLED"]

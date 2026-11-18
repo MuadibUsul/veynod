@@ -1600,3 +1600,17 @@ async def test_a_winner_spends_a_voucher_in_one_step(client, admin_headers, aren
     await arena.obligations_advance()
     review = await arena.admin_obligations()
     assert any(o["obligor"] == lo["fid"] and o["state"] == "OVERDUE_REVIEW" for o in review)
+
+
+async def test_stats_missions_and_achievements(client, admin_headers, arena_on):
+    a, b, sa, sb, mid, match = await _seated(client, admin_headers, "st")
+    await _ready(a, b, mid, match["contract_hash"])
+    await _play_out(a, b, mid)
+    await arena.settle_due()
+    st = await arena.my_stats(a["id"])
+    assert st["stats"]["hands_played"] >= 1 and st["stats"]["tables_finished"] == 1
+    assert st["stats"]["sng_finished"] == 1
+    unlocked = {x["key"] for x in st["achievements"] if x["unlocked"]}
+    assert {"first_hand", "tournament_player"} <= unlocked
+    assert all(m["target"] > m["progress"] for m in st["missions"])
+    assert st["recent_hands"] and st["sessions"][0]["match_id"] == mid
