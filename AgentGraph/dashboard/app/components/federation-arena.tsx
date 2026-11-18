@@ -206,6 +206,7 @@ export function ArenaCard({ request, notify }: {
       <div className="lin-group">
         <i className="lamp amber" />{t("Arena (simulated)")}
         <span className="flow-aside">{t("No economic value; not redeemable or exchangeable")}</span>
+        <a className="button primary small" href="/dashboard/arena/">{t("Open the arena")}</a>
       </div>
 
       {restricted && (
