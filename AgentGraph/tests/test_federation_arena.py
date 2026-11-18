@@ -1327,3 +1327,40 @@ async def test_two_bot_processes_play_a_whole_match(arena_http):
     assert all("verified=True" in log for log in logs), logs
     matches = (await arena_http.get("/v1/federation/arena/matches", headers=a["key"])).json()
     assert matches["items"][0]["mode"] == "cash"
+
+
+async def test_lobby_record_and_leaderboard(client, admin_headers, arena_on):
+    """The lobby lists table levels with who is waiting; the record and the
+    standings come from settled results and add up."""
+    a, b, sa, sb, mid, match = await _seated(client, admin_headers, "lb", stake=M)
+    await _ready(a, b, mid, match["contract_hash"])
+    await _play_out(a, b, mid)
+    await arena.settle_due()
+    proof = (await arena.get_match(a["id"], mid))["result"]["proof"]
+    ra, rb = await arena.my_record(a["id"]), await arena.my_record(b["id"])
+    assert ra["played"] == rb["played"] == 1
+    assert ra["net"] == -rb["net"] and abs(ra["net"]) == proof["settles_tokens"]
+    assert ra["recent"][0]["match_id"] == mid and ra["recent"][0]["opponent"] == b["fid"]
+    board = {row["fid"]: row for row in (await arena.leaderboard(100))["items"]}
+    assert board[a["fid"]]["net"] == ra["net"] and board[b["fid"]]["net"] == rb["net"]
+
+    waiter, looker = (
+        await _ws(client, admin_headers, "lbw"),
+        await _ws(client, admin_headers, "lbl"),
+    )
+    spec = await _mock_spec(waiter)
+    await _mock_spec(looker)
+    await arena.join_queue(
+        waiter["id"],
+        spec_id=spec["spec_id"],
+        stake=arena.CASH_LEVELS[0],
+        mode="cash",
+        actor=waiter["person"],
+    )
+    seen = await arena.lobby(looker["id"])
+    cash = next(t for t in seen["cash"] if t["stake"] == arena.CASH_LEVELS[0])
+    assert cash["waiting"]["mock-small"] >= 1 and cash["tokens_per_chip"] == 100
+    assert all("prize" in t for t in seen["tournaments"])
+    mine = await arena.lobby(waiter["id"])
+    assert mine["queued"]["mode"] == "cash" and mine["economic_value"] == "none"
+    await arena.leave_queue(waiter["id"], actor=waiter["person"])

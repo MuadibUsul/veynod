@@ -1899,6 +1899,196 @@ async def integrity_flags(window_days: int = 7, threshold: int = 3) -> list[dict
     return out
 
 
+# ── lobby, standings, my record ──────────────────────────────────────────
+
+# The tables the lobby offers (tokens of simulated capacity). Cash: the buy-in
+# (1000 chips); a chip is worth buy-in / 1000 tokens. Tournament (heads-up sit
+# and go): the buy-in; the winner takes both.
+CASH_LEVELS = (100_000, 500_000, 1_000_000, 2_000_000, 5_000_000)
+SNG_LEVELS = (100_000, 1_000_000, 5_000_000)
+
+
+async def lobby(workspace_id: str) -> dict[str, Any]:
+    """What a player picks from: each table level per model class, how many
+    are waiting there, and where this workspace stands."""
+    require_enabled()
+    rules = _rules()
+    rules_hash = engine.rules_hash(rules)
+    async with async_session_factory() as session:
+        me = await rights.fid_of(session, workspace_id)
+        waiting = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT mode, stake, model_class, count(*) AS n FROM "
+                        "federation_arena_queue WHERE state = 'WAITING' AND rules_hash = :h "
+                        "AND fid <> :f GROUP BY 1, 2, 3"
+                    ),
+                    {"h": rules_hash, "f": me},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        mine = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT entry_id, mode, stake, model_class, created_at FROM "
+                        "federation_arena_queue WHERE fid = :f AND state = 'WAITING'"
+                    ),
+                    {"f": me},
+                )
+            )
+            .mappings()
+            .first()
+        )
+        restriction = await active_restriction(session, me)
+        policy = await _policy(session, me)
+    counts: dict[tuple[str, int, str], int] = {
+        (r["mode"], int(r["stake"]), r["model_class"]): int(r["n"]) for r in waiting
+    }
+    classes = rights.model_classes()
+
+    def tables(mode: str, levels: tuple[int, ...]) -> list[dict[str, Any]]:
+        out = []
+        for stake in levels:
+            item: dict[str, Any] = {
+                "mode": mode,
+                "stake": stake,
+                "stake_m": rights.as_m(stake),
+                "starting_chips": rules["starting_stack"],
+                "blinds": rules["blinds"][0],
+                "seats": 2,
+                "waiting": {c: counts.get((mode, stake, c), 0) for c in classes},
+            }
+            if mode == "cash":
+                item["tokens_per_chip"] = stake // rules["starting_stack"]
+            else:
+                item["prize"] = 2 * stake
+                item["prize_m"] = rights.as_m(2 * stake)
+                item["blind_levels"] = rules["blinds"]
+                item["hands_per_level"] = rules["hands_per_level"]
+            out.append(item)
+        return out
+
+    return {
+        "model_classes": classes,
+        "cash": tables("cash", CASH_LEVELS),
+        "tournaments": tables("sng", SNG_LEVELS),
+        "rules": rules,
+        "queued": {
+            "entry_id": mine["entry_id"],
+            "mode": mine["mode"],
+            "stake": int(mine["stake"]),
+            "model_class": mine["model_class"],
+            "since": mine["created_at"].isoformat(),
+        }
+        if mine
+        else None,
+        "restricted": restriction is not None,
+        "policy": policy,
+        "simulated": True,
+        "economic_value": "none",
+        "notice": NOTICE,
+    }
+
+
+async def _closed_results(session: AsyncSession, fid: str | None = None) -> list[dict]:
+    query = (
+        "SELECT match_id, mode, model_class, stake, seat0_fid, seat1_fid, result, updated_at "
+        "FROM federation_arena_matches WHERE state IN ('CLOSED', 'DEMO_SETTLED') AND "
+        "result IS NOT NULL"
+    )
+    params: dict[str, Any] = {}
+    if fid:
+        query += " AND (seat0_fid = :f OR seat1_fid = :f)"
+        params["f"] = fid
+    rows = (
+        (await session.execute(text(query + " ORDER BY updated_at DESC LIMIT 2000"), params))
+        .mappings()
+        .all()
+    )
+    out = []
+    for r in rows:
+        result = r["result"] if not isinstance(r["result"], str) else json.loads(r["result"])
+        proof = result["proof"]
+        out.append({**dict(r), "proof": proof})
+    return out
+
+
+def _tally(rows: list[dict], fid: str) -> dict[str, Any]:
+    won = lost = drawn = net = 0
+    for r in rows:
+        seat = 0 if r["seat0_fid"] == fid else 1
+        winner = r["proof"]["winner_seat"]
+        paid = int(r["proof"].get("settles_tokens", 0))
+        if winner is None or paid == 0:
+            drawn += 1
+        elif winner == seat:
+            won += 1
+            net += paid
+        else:
+            lost += 1
+            net -= paid
+    return {"played": won + lost + drawn, "won": won, "lost": lost, "even": drawn, "net": net}
+
+
+async def my_record(workspace_id: str) -> dict[str, Any]:
+    """This workspace's record and its recent finished matches."""
+    require_enabled()
+    async with async_session_factory() as session:
+        me = await rights.fid_of(session, workspace_id)
+        rows = await _closed_results(session, me)
+    recent = []
+    for r in rows[:20]:
+        seat = 0 if r["seat0_fid"] == me else 1
+        winner = r["proof"]["winner_seat"]
+        paid = int(r["proof"].get("settles_tokens", 0))
+        recent.append(
+            {
+                "match_id": r["match_id"],
+                "mode": r["mode"],
+                "model_class": r["model_class"],
+                "stake": int(r["stake"]),
+                "opponent": r["seat1_fid"] if seat == 0 else r["seat0_fid"],
+                "reason": r["proof"]["reason"],
+                "hands": r["proof"]["hands_played"],
+                "net": 0 if winner is None else (paid if winner == seat else -paid),
+                "at": r["updated_at"].isoformat(),
+            }
+        )
+    return {
+        "fid": me,
+        **_tally(rows, me),
+        "recent": recent,
+        "unit": rights.UNIT,
+        "economic_value": "none",
+    }
+
+
+async def leaderboard(limit: int = 20) -> dict[str, Any]:
+    """Standings over finished matches: wins and net DEMO_M per workspace.
+    Shows a workspace's public handle when it has one."""
+    require_enabled()
+    from app.services.federation import identity
+
+    async with async_session_factory() as session:
+        rows = await _closed_results(session)
+        fids = {r["seat0_fid"] for r in rows} | {r["seat1_fid"] for r in rows}
+        board = []
+        for fid in fids:
+            tally = _tally([r for r in rows if fid in (r["seat0_fid"], r["seat1_fid"])], fid)
+            board.append({"fid": fid, "handle": await identity._alias(session, fid), **tally})
+    board.sort(key=lambda b: (-b["net"], -b["won"], b["fid"]))
+    return {
+        "items": board[: max(1, min(limit, 100))],
+        "unit": rights.UNIT,
+        "economic_value": "none",
+        "notice": NOTICE,
+    }
+
+
 async def admin_matches(state: str | None = None) -> list[dict[str, Any]]:
     async with async_session_factory() as session:
         q = "SELECT match_id FROM federation_arena_matches"

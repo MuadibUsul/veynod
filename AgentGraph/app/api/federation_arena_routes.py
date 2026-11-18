@@ -263,6 +263,26 @@ async def rr_waive(
 # ── arena (R2) ────────────────────────────────────────────────────────────
 
 
+@router.get("/arena/lobby", summary="Cash tables and tournaments to pick from (no economic value)")
+async def arena_lobby(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    _arena()
+    return await _call(arena.lobby(_workspace_id(principal)))
+
+
+@router.get("/arena/record", summary="This workspace's record and recent finished matches")
+async def arena_record(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
+    _arena()
+    return await _call(arena.my_record(_workspace_id(principal)))
+
+
+@router.get("/arena/leaderboard", summary="Standings: wins and net DEMO_M per workspace")
+async def arena_leaderboard(
+    limit: int = Query(default=20, ge=1, le=100), principal: Principal = Depends(get_principal)
+) -> dict[str, Any]:
+    _arena()
+    return await _call(arena.leaderboard(limit))
+
+
 @router.get("/arena/policy", summary="How far this workspace's agents may play on their own")
 async def arena_get_policy(principal: Principal = Depends(get_principal)) -> dict[str, Any]:
     _arena()
