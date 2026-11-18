@@ -320,7 +320,7 @@ export function FederationView({ request, notify, sessionMode }: {
               <DelegationsCard delegations={delegations} connections={connections} busy={busy}
                 call={call} />
               <MarketCard request={request} notify={notify} myFid={me.federation_id} />
-              <ArenaCard request={request} />
+              <ArenaCard request={request} notify={notify} />
             </>
           )}
           {current === "skills" && <SkillsCard request={request} notify={notify} />}
