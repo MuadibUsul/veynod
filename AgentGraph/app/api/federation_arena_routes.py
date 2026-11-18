@@ -94,6 +94,15 @@ class Reserve(_Body):
     idempotency_key: str = Field(min_length=8, max_length=128)
 
 
+class VoucherUse(_Body):
+    objective: str = Field(min_length=5, max_length=4000)
+    acceptance_criteria: list[str] = Field(min_length=1, max_length=20)
+    amount: int = Field(strict=True, gt=0, description="Tokens of the voucher to spend.")
+    deadline_hours: int = Field(default=72, ge=1, le=720)
+    data_classification: Literal["public", "internal", "confidential"] = "internal"
+    input_summary: str | None = Field(default=None, max_length=8000)
+
+
 class QueueJoin(_Body):
     spec_id: str = Field(pattern=_SPEC)
     stake: int = Field(strict=True, gt=0, description="Tokens of simulated capacity.")
@@ -239,6 +248,24 @@ async def rr_reserve(
             voucher_id=voucher_id,
             **body.model_dump(),
             actor=_actor(principal),
+        )
+    )
+
+
+@router.post(
+    "/rights/vouchers/{voucher_id}/use",
+    status_code=201,
+    summary="Spend a voucher: send its issuer a task paid from it (a person)",
+)
+async def rr_use(
+    body: VoucherUse,
+    voucher_id: str = Path(pattern=_VOUCHER),
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    _rr()
+    return await _call(
+        rights.use_voucher(
+            _workspace_id(principal), voucher_id, **body.model_dump(), actor=_actor(principal)
         )
     )
 
@@ -520,6 +547,12 @@ async def arena_admin_decide(
     return await _call(
         arena.decide(obligation_id, decision=body.decision, note=body.note, operator=body.operator)
     )
+
+
+@admin_router.get("/arena/obligations", summary="Operator: obligations to review")
+async def arena_admin_obligations(state: str | None = Query(default=None, max_length=24)) -> dict:
+    _arena()
+    return {"items": await arena.admin_obligations(state)}
 
 
 @admin_router.get("/arena/integrity", summary="Operator: pairs to review (no automatic action)")

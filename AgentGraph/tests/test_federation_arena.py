@@ -1562,3 +1562,41 @@ async def test_cash_leavers_settle_at_once_and_chairs_are_reused(client, admin_h
     assert record["recent"][0]["net"] == sum(
         n for f, n in zip(proof["seats"], proof["nets"], strict=True) if f == c["fid"]
     )
+
+
+async def test_a_winner_spends_a_voucher_in_one_step(client, admin_headers, arena_on):
+    a, b, sa, sb, mid, match = await _seated(client, admin_headers, "use")
+    await _ready(a, b, mid, match["contract_hash"])
+    final = await _play_out(a, b, mid)
+    await arena.settle_due()
+    winner = final["result"]["proof"]["winner_seat"]
+    w, lo = (a, b) if winner == 0 else (b, a)
+    voucher = (await rights.list_vouchers(w["id"]))["held"][0]
+    task = {
+        "objective": "Summarise three public reports on grid demand.",
+        "acceptance_criteria": ["Cites each report"],
+        "amount": 300_000,
+    }
+    # No connection yet: the bridge refuses, nothing is reserved.
+    assert (
+        await _code(rights.use_voucher(w["id"], voucher["voucher_id"], **task, actor=w["owner"]))
+        == "FED_E_GRANT_UNKNOWN"
+    )
+    assert (
+        await _code(rights.use_voucher(w["id"], voucher["voucher_id"], **task, actor=w["agent"]))
+        == "FED_E_APPROVAL_NOT_HUMAN"
+    )
+    await _connect(w, lo)
+    used = await rights.use_voucher(w["id"], voucher["voucher_id"], **task, actor=w["owner"])
+    terms = used["delegation"]["terms"]
+    assert terms["budget_cap"]["amount"] == 300_000
+    assert terms["model_policy"] == {"mode": "exact", "model_class": "mock-small"}
+    assert used["voucher"]["reserved_amount"] == 300_000
+    # The loser sees the task and can refuse it: a fact for review.
+    theirs = (await delegations.get(lo["id"], used["federation_job_id"]))["delegation"]
+    assert theirs["state"] == "OFFERED"
+    await delegations.act(lo["id"], used["federation_job_id"], "reject", actor=lo["owner"])
+    await rights.settle_reservations()
+    await arena.obligations_advance()
+    review = await arena.admin_obligations()
+    assert any(o["obligor"] == lo["fid"] and o["state"] == "OVERDUE_REVIEW" for o in review)

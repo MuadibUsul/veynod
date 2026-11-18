@@ -2583,6 +2583,26 @@ async def leaderboard(limit: int = 20) -> dict[str, Any]:
     }
 
 
+async def admin_obligations(state: str | None = None) -> list[dict[str, Any]]:
+    """Operator: obligations to review (in review and restricted by default)."""
+    states = [state] if state else ["OVERDUE_REVIEW", "RESTRICTED", "CONFIRMED_UNFULFILLED"]
+    async with async_session_factory() as session:
+        ids = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT obligation_id FROM federation_arena_obligations WHERE state = "
+                        "ANY(:s) ORDER BY updated_at DESC LIMIT 200"
+                    ),
+                    {"s": states},
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return [await get_obligation(i) for i in ids]
+
+
 async def admin_matches(state: str | None = None) -> list[dict[str, Any]]:
     async with async_session_factory() as session:
         q = "SELECT match_id FROM federation_arena_matches"

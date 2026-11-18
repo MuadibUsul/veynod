@@ -1130,3 +1130,74 @@ async def wallet(fid: str) -> dict[str, Any]:
         "redeemable": False,
         "notice": NOTICE,
     }
+
+
+async def use_voucher(
+    workspace_id: str,
+    voucher_id: str,
+    *,
+    objective: str,
+    acceptance_criteria: list[str],
+    amount: int,
+    deadline_hours: int = 72,
+    data_classification: str = "internal",
+    input_summary: str | None = None,
+    actor: Actor,
+) -> dict[str, Any]:
+    """The beneficiary's person spends part of a voucher in one step: a
+    delegation to the issuer pinned to the voucher's model class, with an
+    enforced model_tokens cap equal to the amount, and the reservation that
+    binds the voucher to it. Needs a connection that lets this workspace
+    delegate to the issuer (request one first if there is none)."""
+    require_enabled()
+    _person(actor, "uses a voucher")
+    amount = _tokens(amount)
+    if not isinstance(objective, str) or not 5 <= len(objective.strip()) <= 4000:
+        raise FederationError("FED_E_PACKAGE_INVALID", "objective is 5 to 4000 characters")
+    if not 1 <= int(deadline_hours) <= 24 * 30:
+        raise FederationError("FED_E_PACKAGE_INVALID", "the deadline is 1 hour to 30 days away")
+    from app.services.federation import delegations
+
+    async with async_session_factory() as session:
+        me = await fid_of(session, workspace_id)
+        row = await _voucher_row(session, voucher_id)
+        if row["beneficiary_fid"] != me:
+            raise FederationError("FED_E_VOUCHER_UNKNOWN", "no such voucher of yours")
+        if row["status"] != "ACTIVE":
+            raise FederationError("FED_E_VOUCHER_STATE", "the voucher is not active")
+        left = await balance(session, voucher_account(voucher_id))
+        if left < amount:
+            raise FederationError(
+                "FED_E_CAPACITY_EXCEEDED", "the voucher does not have that much left", left=left
+            )
+        model_class = await session.scalar(
+            text("SELECT model_family FROM federation_rr_specs WHERE spec_id = :s"),
+            {"s": row["spec_id"]},
+        )
+    deadline = (_now() + timedelta(hours=int(deadline_hours))).replace(microsecond=0)
+    terms = {
+        "objective": objective.strip(),
+        "acceptance_criteria": acceptance_criteria,
+        "input_summary": (input_summary or "Everything needed is in the objective.").strip(),
+        "data_classification": data_classification,
+        "allowed_use": "Only for this task, paid from an arena voucher; do not keep the inputs.",
+        "deadline": deadline.isoformat(),
+        "budget_cap": {"amount": amount, "unit": "model_tokens"},
+        "result_contract": "A result that meets every acceptance criterion.",
+        "cancellation_policy": "drain",
+        "external_side_effects": False,
+        "model_policy": {"mode": "exact", "model_class": model_class},
+    }
+    sent = await delegations.offer(
+        workspace_id, peer_workspace=row["issuer_fid"], terms=terms, actor=actor
+    )
+    job_id = sent["delegation"]["federation_job_id"]
+    view = await reserve(
+        workspace_id,
+        voucher_id=voucher_id,
+        federation_job_id=job_id,
+        amount=amount,
+        idempotency_key=f"use-{job_id}",
+        actor=actor,
+    )
+    return {"federation_job_id": job_id, "delegation": sent["delegation"], "voucher": view}
