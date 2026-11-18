@@ -5030,6 +5030,17 @@
        "description": "",
        "method": "GET",
        "parameters": [],
+       "path": "/v1/federation/arena/stats",
+       "responses": [
+        "200"
+       ],
+       "summary": "Hands, pots, missions and achievements of this workspace"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
        "path": "/v1/federation/connections",
        "responses": [
         "200"
@@ -6971,6 +6982,63 @@
         "422"
        ],
        "summary": "Issuer takes back the unused part"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "objective",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "acceptance_criteria",
+         "required": true,
+         "type": "string[]"
+        },
+        {
+         "description": "Tokens of the voucher to spend.",
+         "name": "amount",
+         "required": true,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "name": "deadline_hours",
+         "required": false,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "name": "data_classification",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "input_summary",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "voucher_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/rights/vouchers/{voucher_id}/use",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Spend a voucher: send its issuer a task paid from it (a person)"
       },
       {
        "body": [],
