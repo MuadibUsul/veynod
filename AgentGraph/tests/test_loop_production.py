@@ -123,18 +123,18 @@ async def test_runner_cli_e2e_custom_runtime(client, api_base_url):
 
         task = await _task_row(client, ws, key)
         # The work was claimed with the builder's own key (a claim by anyone else is
-        # refused: the placement assigned the task to the builder's agent), and the
-        # review came from the other identity.
-        assert task["reviewed_by"] not in (None, "", builder["agent_id"]), task["reviewed_by"]
+        # refused: the placement assigned the task to the builder's agent). Under
+        # full automation its hand-off ended the task: no review was placed on the
+        # other computer and nobody had to approve it (docs/LOOP_SIMPLE_MODEL.md).
+        assert task["reviewed_by"] is None, task["reviewed_by"]
         work = json.loads((logs["build"] / "work.json").read_text())
-        review = json.loads((logs["review"] / "review.json").read_text())
         assert work["key_tail"] == builder["key"][-6:]
-        assert review["key_tail"] == reviewer["key"][-6:]
+        assert not (logs["review"] / "review.json").exists()
         # Repo-less work runs in the runner's scratch directory, never the service's cwd.
         assert work["cwd"].startswith(str(tmp_path / "state-build" / "runner" / "scratch")), work
         assert not Path(work["cwd"]).exists()
 
-        # The placements catch up on the next scheduling pass.
+        # The placement catches up on the next scheduling pass.
         steps: list = []
         for _ in range(40):
             steps = sorted((item["step"], item["status"], item["host_id"])
@@ -142,5 +142,4 @@ async def test_runner_cli_e2e_custom_runtime(client, api_base_url):
             if all(status == "delivered" for _, status, _ in steps):
                 break
             await asyncio.sleep(0.5)
-        assert ("work", "delivered", by_agent[builder["agent_id"]]["host_id"]) in steps, steps
-        assert ("review", "delivered", by_agent[reviewer["agent_id"]]["host_id"]) in steps, steps
+        assert steps == [("work", "delivered", by_agent[builder["agent_id"]]["host_id"])], steps

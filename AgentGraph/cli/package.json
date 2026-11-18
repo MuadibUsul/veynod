@@ -1,6 +1,6 @@
 {
   "name": "veynod",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "Official CLI & MCP bridge for Veynod — a shared blackboard and MCP control plane for multi-agent teams.",
   "type": "module",
   "bin": {
@@ -16,6 +16,8 @@
     "bin/usage.mjs",
     "bin/update.mjs",
     "bin/login.mjs",
+    "bin/clients.mjs",
+    "bin/providers.mjs",
     "README.md",
     "USAGE.md",
     "LICENSE"

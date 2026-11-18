@@ -1213,6 +1213,12 @@ async def agent_handoff_task(
     REVIEWING/HANDOFF require a structured brief with summary, key_metrics,
     unverified_hypotheses and risk_flag (boolean). Agents must use REVIEWING;
     DONE is human-only, and human_feedback is rejected for non-human callers.
+    Under full automation a hand-off to REVIEWING of work without a repository
+    ends the task (DONE on trust) and releases what depends on it; risk_flag,
+    acceptance_not_met in key_metrics, MANUAL acceptance or an owner topic
+    (brief.owner_topic: money, identity, legal, data_deletion,
+    external_commitment) mark it needs_attention for a person to look at.
+    HANDOFF passes unfinished work on to the next holder.
     Providing artifact_text stores the L2 body as a document and returns
     artifact_uri (doc://...); artifact_text and artifact_uri are mutually
     exclusive. The lease is released. REVIEWING enters the ping-pong circuit
@@ -1249,6 +1255,17 @@ async def agent_handoff_task(
             "watch": "your inbox (or the next result's inbox block): task.reviewed / "
                      "task.review_rejected with the verdict note",
             "do_not": "hand off again, or mark it DONE yourself",
+        }
+    elif payload.get("status") == "DONE":
+        # Trust by default: the hand-off ended the task and released what waits on it.
+        task = payload.get("task") or {}
+        payload["next"] = {
+            "you_are_done": True,
+            "finished": "the task is DONE on trust; what depended on it is released",
+            "needs_attention": bool(task.get("needs_attention")),
+            "attention_reasons": task.get("attention_reasons") or [],
+            "note": "a flagged task is looked at by a person or an AUDITOR afterwards; "
+                    "a redo arrives as a new follow-up task, not as a rejection",
         }
     return _compact(payload)
 
@@ -2020,7 +2037,7 @@ async def list_hosts(host: str | None = None, include_revoked: bool = False) -> 
 
 
 _LOOP_ACTIONS = ("agenda", "placements", "placement", "report", "move", "withdraw",
-                 "schedule_now", "hosts", "doctor")
+                 "schedule_now", "hosts", "doctor", "metrics")
 
 
 @mcp.tool(name="loop")
@@ -2034,7 +2051,9 @@ async def loop(action: str, placement_id: str | None = None, host_id: str | None
     - agenda: what waits or went wrong now (the list a supervise round gets).
     - placements: placements, filtered by task_key, step (work|review|merge|
       supervise) and open_only; needs_you lists the ones no computer can take.
-    - placement: one placement with its detail (placement_id).
+    - placement: one placement with its detail (placement_id): its stage
+      (offered, delivered, ready, started, finished, failed, skipped) and the
+      three times of its delivery.
     - report: the computer a step was placed on says how it ended (placement_id,
       outcome finished|failed, note). A finish that changes nothing counts as a
       failure after 2 minutes.
@@ -2046,6 +2065,10 @@ async def loop(action: str, placement_id: str | None = None, host_id: str | None
     - schedule_now: run a scheduling pass now (people and commanders).
     - hosts: the computers, as list_hosts.
     - doctor: what the Loop needs and what is missing, each with the fix.
+    - metrics: the last 24 hours in three stages: delivery, worker start and
+      execution start times (p50/p95/p99), why pokes did not land, how many
+      supervise rounds ended finished (the only success), failed or skipped,
+      and the tasks the scheduler stopped with what their rounds failed on.
     agenda, move and withdraw are for people, super admins and supervisor
     computers (SUPER_ADMIN token or the supervisor capability)."""
     from app.services import runners, scheduler
@@ -2081,6 +2104,8 @@ async def loop(action: str, placement_id: str | None = None, host_id: str | None
                 result = await scheduler.schedule_now(session, principal)
             elif action == "doctor":
                 result = await scheduler.doctor(session, principal)
+            elif action == "metrics":
+                result = await scheduler.loop_metrics(session, principal)
             else:
                 result = await runners.list_hosts(session, principal)
         except ApiError as exc:

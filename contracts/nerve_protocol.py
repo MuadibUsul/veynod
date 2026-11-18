@@ -38,6 +38,10 @@ class NerveFrameType(str, Enum):
     TASK_ACK_NET = "task.ack.net"
     TASK_ACK_EXEC = "task.ack.exec"
     TASK_BUSY_REJECT = "task.busy.reject"
+    # the worker process of a placement ended (code, signal): a worker that
+    # dies without reporting is a failure the hub hears about at once, not at
+    # the lease's expiry
+    TASK_WORKER_EXIT = "task.worker.exit"
 
     # lease upkeep and the kill order
     LEASE_HEARTBEAT = "lease.heartbeat"
@@ -86,8 +90,20 @@ def smooth_rtt_ms(previous: float | None, sample: float) -> float:
     return previous + (float(sample) - previous) / 8.0
 #: The worker must be past orientation in this window or it is killed; the
 #: frame carries the smaller orientation budget for the messenger's watchdog.
+#: These are the defaults: a deployment moves both ends with one setting
+#: (``NERVE_EXEC_ACK_TIMEOUT_SECONDS``), because the hub's wait and the
+#: messenger's watchdog are one budget. Raising only the client's side cannot
+#: help: the hub stops waiting first.
 EXEC_ACK_TIMEOUT_S = 5.000
+#: How much earlier than the hub's wait the messenger's watchdog fires, so its
+#: refusal (with the reason) reaches the hub before the hub's own timeout.
+ORIENTATION_MARGIN_MS = 500
 ORIENTATION_TIMEOUT_MS = 4_500
+
+
+def orientation_timeout_ms(exec_ack_timeout_s: float = EXEC_ACK_TIMEOUT_S) -> int:
+    """The messenger's watchdog for a hub that waits ``exec_ack_timeout_s``."""
+    return max(ORIENTATION_MARGIN_MS, int(exec_ack_timeout_s * 1000) - ORIENTATION_MARGIN_MS)
 #: A heartbeat per this many seconds; three missed is an offline agent.
 PING_EVERY_S = 5.0
 #: Close codes (4000-4999 are application-defined).
@@ -102,6 +118,8 @@ class NerveError(str, Enum):
 
     NOT_CONNECTED = "AGENT_NOT_CONNECTED_ON_WS_NERVE"
     BUSY = "AGENT_WORKER_BUSY"
+    #: The computer is finishing its work before it restarts on a new version.
+    DRAINING = "AGENT_DRAINING"
     NET_ACK_TIMEOUT = "QOS_TIMEOUT_NET_ACK_200MS"
     EXEC_ACK_TIMEOUT = "QOS_TIMEOUT_EXEC_ACK_5000MS"
     REJECTED = "AGENT_REJECTED"

@@ -643,6 +643,22 @@ async def list_agent_tokens(
                                             include_computers)
 
 
+@router.get(
+    "/workspaces/{workspace_id}/connections",
+    summary="How many client installations a workspace has, by status (counts only)",
+)
+async def workspace_connection_counts(
+    workspace_id: uuid.UUID,
+    session: AsyncSession = Depends(get_db),
+) -> dict:
+    from app.services import connections
+
+    workspace = await services.get_workspace(session, workspace_id)
+    # A workspace's connections are its content: the operator sees counts.
+    return {"workspace_id": str(workspace.id),
+            "counts": await connections.counts_for(session, workspace.id)}
+
+
 @router.post(
     "/workspaces/{workspace_id}/agent-tokens",
     response_model=AgentTokenCreatedResponse,

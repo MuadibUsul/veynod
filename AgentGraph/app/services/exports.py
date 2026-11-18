@@ -112,6 +112,8 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "runner_hosts": ("objects.jsonl", ()),
     # Which host each task was put on, and why it moved (v3.61).
     "runner_placements": ("objects.jsonl", ()),
+    # Client installations and their status (v3.100); no secret is in the row.
+    "mcp_connections": ("objects.jsonl", ()),
     "doc_derivations": ("doc_edges.jsonl", ()),
     "recalls": ("objects.jsonl", ()),
     "recall_nodes": ("objects.jsonl", ()),

@@ -348,7 +348,7 @@ async def update_acceptance(session: AsyncSession, principal: Principal, ref: st
 
         raise VersionConflict(task.version, request.expected_version)
     before = task.acceptance or []
-    after = [item.model_dump() for item in request.acceptance]
+    after = [item.model_dump(exclude_none=True) for item in request.acceptance]
     if task.acceptance_locked:
         # v3.41 keeps acceptance immutable after the lock. The checks above are
         # the authorization decision, so this transaction asserts it for the

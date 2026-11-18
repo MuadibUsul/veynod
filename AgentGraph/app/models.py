@@ -270,6 +270,10 @@ class AgentToken(Base):
     agent_profile: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     revoke_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     revoked_ancestor: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    # The client installation this credential belongs to (MCP connections);
+    # NULL for tokens from before connections and for ones no CLI asked for.
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True)
     expiring_notified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -616,6 +620,12 @@ class CollabTask(Base):
     artifact_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     artifact_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     handed_off_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Finished on trust and flagged for a look, with the reasons (v3.101).
+    needs_attention: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false"))
+    attention_reasons: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    # Results of the AUTO acceptance checks (v3.102).
+    check_results: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB, nullable=True)
     review_round: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=text("0")
     )

@@ -112,6 +112,9 @@ async def ws_nerve(ws: WebSocket) -> None:
             if frame["type"] == NerveFrameType.LEASE_HEARTBEAT.value:
                 await _heartbeat_lease(ws, principal, agent_id, frame)
                 continue
+            if frame["type"] == NerveFrameType.TASK_WORKER_EXIT.value:
+                await _worker_exit(principal, agent_id, frame)
+                continue
             reply = hub.nerve_hub.on_frame(sock, frame)
             if reply is not None:
                 await ws.send_json(reply)
@@ -171,6 +174,24 @@ async def _heartbeat_lease(ws: WebSocket, principal: Principal, agent_id: str,
             payload={"task_key": task_key, "lease_epoch": epoch,
                      "reason": "FENCING_EPOCH_EXPIRED"},
         ).to_dict())
+
+
+async def _worker_exit(principal: Principal, agent_id: str, frame: dict[str, Any]) -> None:
+    """A worker process ended: one that left no report is a failure, now."""
+    payload = frame["payload"]
+    placement_id = str(payload.get("placement_id") or frame["frame_id"] or "")[:40]
+    if not placement_id or payload.get("reported") is True:
+        return
+    try:
+        from app.services import scheduler
+
+        reason = payload.get("reason")
+        await scheduler.worker_exited(
+            principal.workspace.id, agent_id, placement_id,
+            code=payload.get("code"), signal=payload.get("signal"),
+            reason=str(reason)[:500] if reason else None)
+    except Exception:  # noqa: BLE001 - a bad frame never takes the socket down
+        logger.warning("could not record the worker exit of %s", placement_id, exc_info=True)
 
 
 async def _announce(principal: Principal) -> None:
