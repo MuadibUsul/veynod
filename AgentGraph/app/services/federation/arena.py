@@ -779,7 +779,7 @@ async def reveal_seed(workspace_id: str, match_id: str, *, seed: str, actor: Act
         row["seats"][seat]["seed"] = seed
         if all(s.get("seed") for s in row["seats"]):
             combined = engine.combined_seed(row["server_seed"], [s["seed"] for s in row["seats"]])
-            row["game"] = engine.new_match(row["rules"], combined)
+            row["game"] = engine.new_match(row["rules"], combined, mode=row["mode"])
             await _move(session, row, "PLAYING", actor.ref, "both seeds revealed; hand 1 dealt")
             row["turn_deadline"] = _deadline(row)
             if row["game"]["finished"]:
@@ -988,12 +988,12 @@ async def leave(workspace_id: str, match_id: str, *, actor: Actor) -> dict[str, 
             await _return_stakes(session, row, "ABORTED", actor.ref, f"seat {seat} left")
         elif row["state"] == "PLAYING" and row["mode"] == "cash":
             _may_play(row, seat, actor)
-            if row["game"].get("standing") is None:
+            if seat not in row["game"].get("standing", []):
                 row["game"] = engine.stand_up(row["game"], seat)
                 await _log_action(session, row, seat, {"type": "stand_up"}, actor.ref)
         elif row["state"] == "PLAYING":
             _may_play(row, seat, actor)
-            row["game"] = engine.concede(row["game"], seat)
+            row["game"] = engine.concede(row["game"], seat, row["rules"], _seed(row))
             await _log_action(session, row, seat, {"type": "concede"}, actor.ref)
             await _finish(session, row, actor.ref)
         else:
@@ -1095,7 +1095,10 @@ async def verify(match_id: str) -> dict[str, Any]:
     )
     seed = engine.combined_seed(proof["server_seed"], proof["seat_seeds"])
     replayed = engine.replay(
-        row["rules"], seed, [{"seat": e["seat"], "action": e["action"]} for e in log]
+        row["rules"],
+        seed,
+        [{"seat": e["seat"], "action": e["action"]} for e in log],
+        mode=row["mode"],
     )
     checks["replay_matches"] = sha256_hex(replayed) == proof["final_state_sha256"]
     checks["rules_hash"] = engine.rules_hash(row["rules"]) == proof["rules_hash"]

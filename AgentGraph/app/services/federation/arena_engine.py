@@ -1,4 +1,4 @@
-"""Heads-up no-limit hold'em rules engine for the Agent Poker Arena (R2).
+"""No-limit hold'em rules engine for the Agent Poker Arena: 2 to 6 seats.
 
 Contract: docs/federation/ICD_P6_RESOURCE_RIGHTS_ARENA.md §5.
 
@@ -7,8 +7,19 @@ The deck of every hand comes from one seed (the match's combined
 commit/reveal seed) and the hand number, so anyone holding the seeds and the
 action log can replay the match and get the same result (``replay``).
 
+* Heads-up (two players in the hand): the button posts the small blind and
+  acts first before the flop; the big blind acts first after it.
+* Three or more: small blind left of the button, big blind next, the first
+  to act before the flop is left of the big blind; after the flop, the first
+  player left of the button who can still act.
+* Side pots: every pot is split among the players who are still in and put
+  in at least that level; odd chips go clockwise from the button.
+* Modes: ``sng`` (tournament: busted players are out, the last player with
+  chips wins, places are kept) and ``cash`` (players may sit down at an empty
+  seat and stand up between hands; the table ends when fewer than two remain).
+
 Chips (ARENA_CHIP) exist only inside this state. They have no ledger, no
-price and no conversion to anything: the match result is only who won.
+price and no conversion: the match result is the final stacks and places.
 """
 
 from __future__ import annotations
@@ -26,16 +37,18 @@ SUITS = "cdhs"
 DECK = tuple(r + s for r in RANKS for s in SUITS)
 
 RULES_V1: dict[str, Any] = {
-    "version": "hu-nlhe-v1",
+    "version": "nlhe-v1",
     "unit": "ARENA_CHIP",
     "starting_stack": 1000,
     # [small blind, big blind] per level; the last level repeats.
     "blinds": [[5, 10], [10, 20], [15, 30], [25, 50], [50, 100], [100, 200], [200, 400]],
     "hands_per_level": 8,
-    "max_hands": 80,  # then the chip leader wins; equal stacks are a draw
+    "max_hands": 80,  # then the table ends: places / settlement by stacks
     "turn_seconds": 60,
-    "max_timeouts": 3,  # this many timeouts in a row forfeit the match
+    "max_timeouts": 3,  # in a row: out of a tournament; up from a cash table
 }
+MIN_SEATS, MAX_SEATS = 2, 6
+MODES = ("sng", "cash")
 
 ACTIONS = ("fold", "check", "call", "bet", "raise", "all_in")
 CATEGORIES = (
@@ -153,19 +166,45 @@ def best_hand(cards: list[str]) -> tuple[tuple[int, ...], list[str]]:
 # ── match state ───────────────────────────────────────────────────────────
 
 
-def new_match(rules: dict[str, Any], seed: str) -> dict[str, Any]:
-    state = {
+# ── match state ───────────────────────────────────────────────────────────
+
+
+def new_match(
+    rules: dict[str, Any],
+    seed: str,
+    *,
+    players: int = 2,
+    seats: int | None = None,
+    mode: str = "sng",
+) -> dict[str, Any]:
+    """``players`` sit at seats 0..players-1 of a ``seats``-seat table."""
+    size = seats or players
+    if not MIN_SEATS <= players <= size <= MAX_SEATS:
+        raise ValueError("2 to 6 seats, at least 2 players")
+    if mode not in MODES:
+        raise ValueError("mode is sng or cash")
+    start = int(rules["starting_stack"])
+    state: dict[str, Any] = {
         "rules_hash": rules_hash(rules),
-        "stacks": [rules["starting_stack"], rules["starting_stack"]],
+        "mode": mode,
+        "size": size,
+        "stacks": [start] * players + [0] * (size - players),
+        "status": ["active"] * players + ["empty"] * (size - players),
+        "buy_ins": [start] * players + [0] * (size - players),
+        "pending": [None] * size,  # cash: chips of a player sitting down next hand
+        "standing": [],  # cash: seats leaving after this hand
+        "forfeits": [],  # sng: seats out after this hand (conceded or timed out)
+        "out_reason": None,
         "hand_no": 0,
-        "button": 1,  # flips to seat 0 for hand 1
+        "button": None,
         "hand": None,
-        "hands": [],  # summaries of finished hands
-        "timeouts": [0, 0],
+        "hands": [],
+        "timeouts": [0] * size,
+        "eliminated": [],  # sng: seats in the order they went out
         "finished": False,
-        "winner": None,  # 0, 1, or None for a draw
+        "winner": None,
+        "ranking": None,
         "reason": None,
-        "standing": None,  # cash tables: the seat that asked to leave after this hand
     }
     _start_hand(rules, seed, state)
     return state
@@ -177,50 +216,123 @@ def _blinds(rules: dict[str, Any], hand_no: int) -> tuple[int, int]:
     return int(sb), int(bb)
 
 
+def _after(seats: list[int], seat: int) -> int:
+    """The next seat of ``seats`` clockwise after ``seat`` (seat need not be in it)."""
+    later = [s for s in seats if s > seat]
+    return later[0] if later else seats[0]
+
+
 def _start_hand(rules: dict[str, Any], seed: str, state: dict[str, Any]) -> None:
+    for seat, chips in enumerate(state["pending"]):
+        if chips is not None:
+            state["status"][seat] = "active"
+            state["stacks"][seat] = chips
+            state["buy_ins"][seat] += chips
+            state["pending"][seat] = None
+    size = state["size"]
+    players = [s for s in range(size) if state["status"][s] == "active" and state["stacks"][s] > 0]
     state["hand_no"] += 1
-    state["button"] = 1 - state["button"]
-    no, button = state["hand_no"], state["button"]
-    other = 1 - button
+    no = state["hand_no"]
+    button = players[0] if state["button"] is None else _after(players, state["button"])
+    state["button"] = button
+    if len(players) == 2:
+        sb, bb = button, _after(players, button)
+        first = button
+    else:
+        sb = _after(players, button)
+        bb = _after(players, sb)
+        first = _after(players, bb)
     deck = shuffled_deck(seed, no)
-    sb, bb = _blinds(rules, no)
+    hole: list[list[str] | None] = [None] * size
+    for k, seat in enumerate(players):
+        hole[seat] = deck[2 * k : 2 * k + 2]
+    base = 2 * len(players)
+    small, big = _blinds(rules, no)
     stacks = state["stacks"]
-    committed = [0, 0]
-    # Heads-up: the button posts the small blind and acts first preflop.
-    posted_sb = min(sb, stacks[button])
-    posted_bb = min(bb, stacks[other])
-    committed[button], committed[other] = posted_sb, posted_bb
-    stacks[button] -= posted_sb
-    stacks[other] -= posted_bb
+    committed = [0] * size
+    for seat, blind in ((sb, small), (bb, big)):
+        paid = min(blind, stacks[seat])
+        committed[seat] = paid
+        stacks[seat] -= paid
     state["hand"] = {
         "no": no,
         "button": button,
-        "blinds": [sb, bb],
+        "sb": sb,
+        "bb": bb,
+        "players": players,
+        "blinds": [small, big],
         "deck_sha256": hashlib.sha256(",".join(deck).encode()).hexdigest(),
-        "hole": [deck[0:2], deck[2:4]],
-        # burn 4, flop 5-7, burn 8, turn 9, burn 10, river 11
-        "runout": [deck[5], deck[6], deck[7], deck[9], deck[11]],
+        "hole": hole,
+        # burn, flop x3, burn, turn, burn, river after the hole cards
+        "runout": [deck[base + 1], deck[base + 2], deck[base + 3], deck[base + 5], deck[base + 7]],
         "board": [],
         "street": "preflop",
-        "committed": committed,  # this street
-        "contrib": list(committed),  # whole hand
-        "min_raise": bb,
-        "acted": [False, False],
-        "to_act": button,
+        "committed": committed,
+        "contrib": list(committed),
+        "min_raise": big,
+        "acted": [False] * size,
+        "folded": [False] * size,
+        "to_act": first,
         "actions": [],
     }
-    # A blind that put a player all in for no more than the other's blind
-    # leaves nothing to decide: the board runs out.
-    for seat in (button, other):
-        if stacks[seat] == 0 and committed[seat] <= committed[1 - seat]:
-            _close_street(rules, seed, state)
-            return
+    _progress(rules, seed, state, start=first)
 
 
-def to_call(state: dict[str, Any]) -> int:
+# ── who acts ──────────────────────────────────────────────────────────────
+
+
+def _live(hand: dict[str, Any]) -> list[int]:
+    return [s for s in hand["players"] if not hand["folded"][s]]
+
+
+def _needs_action(state: dict[str, Any], seat: int) -> bool:
     hand = state["hand"]
-    me = hand["to_act"]
+    stacks = state["stacks"]
+    if seat not in hand["players"] or hand["folded"][seat] or stacks[seat] == 0:
+        return False
+    top = max(hand["committed"])
+    others = [s for s in _live(hand) if s != seat and stacks[s] > 0]
+    if hand["committed"][seat] < top:
+        return True
+    # Matched: only an unacted player with someone left to bet against decides.
+    return not hand["acted"][seat] and bool(others)
+
+
+def _progress(
+    rules: dict[str, Any], seed: str, state: dict[str, Any], *, start: int | None = None
+) -> None:
+    """After a change: award an uncontested pot, close the street, or move on."""
+    hand = state["hand"]
+    live = _live(hand)
+    if len(live) == 1:
+        _award_uncontested(rules, seed, state, live[0])
+        return
+    order = hand["players"]
+    first = start if start is not None else _after(order, hand["to_act"])
+    seat = first
+    for _ in range(len(order)):
+        if _needs_action(state, seat):
+            hand["to_act"] = seat
+            return
+        seat = _after(order, seat)
+    _close_street(rules, seed, state)
+
+
+def to_call(state: dict[str, Any], seat: int | None = None) -> int:
+    hand = state["hand"]
+    me = hand["to_act"] if seat is None else seat
     return max(hand["committed"]) - hand["committed"][me]
+
+
+def _may_raise(state: dict[str, Any], seat: int) -> bool:
+    hand = state["hand"]
+    stacks = state["stacks"]
+    owed = to_call(state, seat)
+    others = [s for s in _live(hand) if s != seat and stacks[s] > 0]
+    if stacks[seat] <= owed or not others:
+        return False
+    # Facing a short all-in after acting: call or fold only.
+    return not (hand["acted"][seat] and owed > 0)
 
 
 def legal_actions(state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -230,7 +342,6 @@ def legal_actions(state: dict[str, Any]) -> list[dict[str, Any]]:
     hand = state["hand"]
     me = hand["to_act"]
     stack = state["stacks"][me]
-    opp_stack = state["stacks"][1 - me]
     owed = to_call(state)
     out: list[dict[str, Any]] = []
     if owed > 0:
@@ -238,18 +349,18 @@ def legal_actions(state: dict[str, Any]) -> list[dict[str, Any]]:
         out.append({"type": "call", "amount": min(owed, stack)})
     else:
         out.append({"type": "check"})
-    # Nobody bets into a player who is all in.
-    if stack > owed and opp_stack > 0:
+    raising = _may_raise(state, me)
+    if raising:
         top = max(hand["committed"])
-        mine = hand["committed"][me]
-        most = mine + stack
+        most = hand["committed"][me] + stack
         least = min(top + hand["min_raise"], most)
         out.append({"type": "bet" if owed == 0 else "raise", "min_to": least, "max_to": most})
-    # All in is a bet or raise only while the other player still has chips;
-    # otherwise it is an all-in call, offered only when it is one.
-    if stack > 0 and (opp_stack > 0 or stack <= owed):
+    if stack > 0 and (raising or stack <= owed):
         out.append({"type": "all_in", "amount": stack})
     return out
+
+
+# ── actions ───────────────────────────────────────────────────────────────
 
 
 def apply(
@@ -275,7 +386,9 @@ def apply(
         kind = "check" if to_call(state) == 0 else "fold"
         if state["timeouts"][seat] >= rules["max_timeouts"]:
             hand["actions"].append({"seat": seat, "type": "timeout_forfeit"})
-            _finish(state, winner=1 - seat, reason="forfeit_timeouts")
+            _leave_now(state, seat, "forfeit_timeouts")
+            hand["folded"][seat] = True
+            _progress(rules, seed, state)
             return state
     else:
         state["timeouts"][seat] = 0
@@ -289,8 +402,9 @@ def apply(
     if kind == "fold":
         if owed == 0:
             raise IllegalAction("nothing to call: check instead of folding")
+        hand["folded"][seat] = True
         hand["actions"].append(record)
-        _award_fold(rules, seed, state, winner=1 - seat)
+        _progress(rules, seed, state)
         return state
     if kind == "check":
         if owed != 0:
@@ -305,23 +419,24 @@ def apply(
         hand["acted"][seat] = True
     else:
         if kind == "all_in":
-            target = mine + stack
             if stack <= 0:
                 raise IllegalAction("no chips left")
+            target = mine + stack
             if target <= top:  # an all-in call
                 _put(state, seat, stack)
                 record.update(type="call", amount=stack, all_in=True)
                 hand["acted"][seat] = True
                 hand["actions"].append(record)
-                return _after_action(rules, seed, state)
+                _progress(rules, seed, state)
+                return state
         else:
+            # "bet" and "raise" are the same move here: a "to" amount above the
+            # current bet (the big blind's preflop option is a raise to).
             target = action.get("amount")
-            # "bet" and "raise" are the same move here: a "to" amount above
-            # the current bet (the big blind's preflop option is a raise to).
             if not isinstance(target, int) or isinstance(target, bool):
                 raise IllegalAction("bet and raise take an integer 'to' amount")
-        if state["stacks"][1 - seat] == 0:
-            raise IllegalAction("the other player is all in: call or fold")
+        if not _may_raise(state, seat):
+            raise IllegalAction("no raise here: call or fold")
         if target - mine > stack:
             raise IllegalAction("more than your stack")
         all_in = target - mine == stack
@@ -333,12 +448,13 @@ def apply(
         increase = target - top
         if increase >= hand["min_raise"]:
             hand["min_raise"] = increase
-            hand["acted"] = [False, False]  # a full raise reopens the action
+            hand["acted"] = [False] * state["size"]  # a full raise reopens the action
         _put(state, seat, target - mine)
         hand["acted"][seat] = True
         record.update(type="all_in" if all_in else ("bet" if top == 0 else "raise"), to=target)
     hand["actions"].append(record)
-    return _after_action(rules, seed, state)
+    _progress(rules, seed, state)
+    return state
 
 
 def _put(state: dict[str, Any], seat: int, amount: int) -> None:
@@ -348,43 +464,28 @@ def _put(state: dict[str, Any], seat: int, amount: int) -> None:
     hand["contrib"][seat] += amount
 
 
-def _after_action(rules: dict[str, Any], seed: str, state: dict[str, Any]) -> dict[str, Any]:
-    hand = state["hand"]
-    c = hand["committed"]
-    stacks = state["stacks"]
-    level = c[0] == c[1]
-    # A player all in for less than the bet has nothing more to match.
-    for seat in (0, 1):
-        if stacks[seat] == 0 and c[seat] < c[1 - seat] and hand["acted"][1 - seat]:
-            level = True
-    done = level and (all(hand["acted"]) or 0 in stacks)
-    if done:
-        _close_street(rules, seed, state)
-    else:
-        hand["to_act"] = 1 - hand["to_act"]
-        if stacks[hand["to_act"]] == 0:  # all in already: nothing to decide
-            _close_street(rules, seed, state)
-    return state
-
-
 def _close_street(rules: dict[str, Any], seed: str, state: dict[str, Any]) -> None:
     hand = state["hand"]
-    stacks = state["stacks"]
-    runout_all = 0 in stacks
     while True:
-        street = hand["street"]
-        if street == "river":
+        if hand["street"] == "river":
             _showdown(rules, seed, state)
             return
-        nxt = {"preflop": "flop", "flop": "turn", "turn": "river"}[street]
+        nxt = {"preflop": "flop", "flop": "turn", "turn": "river"}[hand["street"]]
         hand["street"] = nxt
         hand["board"] = hand["runout"][: {"flop": 3, "turn": 4, "river": 5}[nxt]]
-        hand["committed"] = [0, 0]
-        hand["acted"] = [False, False]
+        hand["committed"] = [0] * state["size"]
+        hand["acted"] = [False] * state["size"]
         hand["min_raise"] = hand["blinds"][1]
-        hand["to_act"] = 1 - hand["button"]  # the big blind acts first after the flop
-        if not runout_all:
-            return
+        able = [s for s in _live(hand) if state["stacks"][s] > 0]
+        if len(able) >= 2:
+            first = _after(hand["players"], hand["button"])
+            seat = first
+            for _ in range(len(hand["players"])):
+                if _needs_action(state, seat):
+                    hand["to_act"] = seat
+                    return
+                seat = _after(hand["players"], seat)
+        # Nobody (or one player) can still bet: run the board out.
 
 
 def _summary(hand: dict[str, Any], **extra: Any) -> dict[str, Any]:
@@ -392,6 +493,7 @@ def _summary(hand: dict[str, Any], **extra: Any) -> dict[str, Any]:
         "no": hand["no"],
         "button": hand["button"],
         "blinds": hand["blinds"],
+        "players": hand["players"],
         "deck_sha256": hand["deck_sha256"],
         "board": hand["board"],
         "contrib": hand["contrib"],
@@ -400,125 +502,241 @@ def _summary(hand: dict[str, Any], **extra: Any) -> dict[str, Any]:
     }
 
 
-def _award_fold(rules: dict[str, Any], seed: str, state: dict[str, Any], winner: int) -> None:
+def _clockwise_from_button(hand: dict[str, Any], seats: list[int]) -> list[int]:
+    order = []
+    seat = hand["button"]
+    for _ in range(len(hand["players"])):
+        seat = _after(hand["players"], seat)
+        if seat in seats and seat not in order:
+            order.append(seat)
+    return order
+
+
+def _award_uncontested(rules: dict[str, Any], seed: str, state: dict[str, Any], winner: int):
     hand = state["hand"]
     pot = sum(hand["contrib"])
     state["stacks"][winner] += pot
-    state["hands"].append(
-        _summary(hand, ended="fold", won=[pot if s == winner else 0 for s in (0, 1)])
-    )
+    won = [pot if s == winner else 0 for s in range(state["size"])]
+    state["hands"].append(_summary(hand, ended="fold", won=won))
     _next(rules, seed, state)
 
 
 def _showdown(rules: dict[str, Any], seed: str, state: dict[str, Any]) -> None:
     hand = state["hand"]
+    size = state["size"]
     contrib = hand["contrib"]
-    matched = min(contrib)
-    won = [contrib[0] - matched, contrib[1] - matched]  # an uncalled excess goes back
-    pot = 2 * matched
-    scores = []
-    for seat in (0, 1):
+    live = _live(hand)
+    scores: dict[int, tuple[int, ...]] = {}
+    shown: list[dict[str, Any] | None] = [None] * size
+    for seat in live:
         score, five = best_hand(hand["hole"][seat] + hand["board"])
-        scores.append({"score": list(score), "category": CATEGORIES[score[0]], "best": five})
-    if scores[0]["score"] > scores[1]["score"]:
-        won[0] += pot
-    elif scores[1]["score"] > scores[0]["score"]:
-        won[1] += pot
-    else:
-        half = pot // 2
-        odd = pot - 2 * half
-        won[0] += half
-        won[1] += half
-        won[1 - hand["button"]] += odd  # the odd chip to the player out of position
-    state["stacks"][0] += won[0]
-    state["stacks"][1] += won[1]
-    state["hands"].append(
-        _summary(hand, ended="showdown", hole=hand["hole"], showdown=scores, won=won)
-    )
+        scores[seat] = score
+        shown[seat] = {"score": list(score), "category": CATEGORIES[score[0]], "best": five}
+    won = [0] * size
+    previous = 0
+    for level in sorted({c for c in contrib if c > 0}):
+        part = sum(min(c, level) - min(c, previous) for c in contrib)
+        previous = level
+        eligible = [s for s in live if contrib[s] >= level]
+        if not eligible:  # only folded money at this level: the deepest live player
+            deepest = max(contrib[s] for s in live)
+            eligible = [s for s in live if contrib[s] == deepest]
+        best = max(scores[s] for s in eligible)
+        winners = [s for s in eligible if scores[s] == best]
+        share, odd = divmod(part, len(winners))
+        for s in winners:
+            won[s] += share
+        for s in _clockwise_from_button(hand, winners)[:odd]:
+            won[s] += 1
+    for s in range(size):
+        state["stacks"][s] += won[s]
+    hole = [hand["hole"][s] if s in live else None for s in range(size)]
+    state["hands"].append(_summary(hand, ended="showdown", hole=hole, showdown=shown, won=won))
     _next(rules, seed, state)
+
+
+def _leave_now(state: dict[str, Any], seat: int, reason: str) -> None:
+    """Conceded or timed out: out of a tournament after this hand (its chips
+    are shared among the others), up from a cash table (keeps its chips)."""
+    if state["mode"] == "cash":
+        if seat not in state["standing"]:
+            state["standing"].append(seat)
+    elif seat not in state["forfeits"]:
+        state["forfeits"].append(seat)
+        state["out_reason"] = reason
 
 
 def _next(rules: dict[str, Any], seed: str, state: dict[str, Any]) -> None:
     stacks = state["stacks"]
+    hand = state["hand"]
     state["hand"] = None
-    if stacks[0] == 0 or stacks[1] == 0:
-        _finish(state, winner=0 if stacks[1] == 0 else 1, reason="bust")
+    for seat in state["forfeits"]:
+        if state["status"][seat] != "active":
+            continue
+        others = [
+            s
+            for s in range(state["size"])
+            if state["status"][s] == "active"
+            and stacks[s] > 0
+            and s != seat
+            and s not in state["forfeits"]
+        ]
+        if stacks[seat] and others:
+            share, odd = divmod(stacks[seat], len(others))
+            for s in others:
+                stacks[s] += share
+            for s in _clockwise_from_button(hand, others)[:odd] if hand else others[:odd]:
+                stacks[s] += 1
+            stacks[seat] = 0
+        state["status"][seat] = "out"
+        state["eliminated"].append(seat)
+    state["forfeits"] = []
+    for seat in hand["players"] if hand else []:
+        if state["status"][seat] == "active" and stacks[seat] == 0:
+            state["status"][seat] = "out"
+            state["eliminated"].append(seat)
+            if state["out_reason"] is None:
+                state["out_reason"] = "bust"
+    for seat in state["standing"]:
+        if state["status"][seat] == "active":
+            state["status"][seat] = "left"
+    stood = bool(state["standing"])
+    state["standing"] = []
+    active = [s for s in range(state["size"]) if state["status"][s] == "active" and stacks[s] > 0]
+    waiting = [s for s in range(state["size"]) if state["pending"][s] is not None]
+    if state["mode"] == "sng" and len(active) == 1:
+        _finish(state, reason=state["out_reason"] or "bust")
         return
-    if state.get("standing") is not None:
-        # A cash table ends between hands when a seat stands up; chips settle as they are.
-        _finish(state, winner=_leader(stacks), reason="stood_up")
+    if state["mode"] == "cash" and len(active) + len(waiting) < 2:
+        _finish(state, reason="stood_up" if stood or "left" in state["status"] else "bust")
         return
     if state["hand_no"] >= rules["max_hands"]:
-        if stacks[0] == stacks[1]:
-            _finish(state, winner=None, reason="hand_limit_draw")
-        else:
-            _finish(state, winner=0 if stacks[0] > stacks[1] else 1, reason="hand_limit")
+        top = max(stacks[s] for s in active)
+        leaders = [s for s in active if stacks[s] == top]
+        _finish(state, reason="hand_limit" if len(leaders) == 1 else "hand_limit_draw")
         return
+    state["out_reason"] = None if state["mode"] == "cash" else state["out_reason"]
     _start_hand(rules, seed, state)
 
 
-def _finish(state: dict[str, Any], *, winner: int | None, reason: str) -> None:
-    if state["hand"] is not None:
-        hand = state["hand"]
-        # A forfeit mid-hand: chips in the pot go back before the result.
-        state["stacks"][0] += hand["contrib"][0]
-        state["stacks"][1] += hand["contrib"][1]
-        state["hands"].append(_summary(hand, ended="forfeit", won=hand["contrib"]))
-        state["hand"] = None
+def _finish(state: dict[str, Any], *, reason: str) -> None:
+    stacks = state["stacks"]
+    seated = [s for s in range(state["size"]) if state["status"][s] != "empty"]
+    if state["mode"] == "sng":
+        alive = sorted(
+            (s for s in seated if state["status"][s] == "active" and stacks[s] > 0),
+            key=lambda s: (-stacks[s], s),
+        )
+        state["ranking"] = alive + list(reversed(state["eliminated"]))
+    else:
+        state["ranking"] = sorted(seated, key=lambda s: (-stacks[s], s))
+    top = state["ranking"][0]
+    tie = any(stacks[s] == stacks[top] for s in state["ranking"][1:]) and (
+        state["mode"] == "cash" or reason.startswith("hand_limit")
+    )
+    state["winner"] = None if tie else top
     state["finished"] = True
-    state["winner"] = winner
     state["reason"] = reason
+    state["hand"] = None
 
 
-def _leader(stacks: list[int]) -> int | None:
-    if stacks[0] == stacks[1]:
-        return None
-    return 0 if stacks[0] > stacks[1] else 1
+def sit(state: dict[str, Any], seat: int, chips: int) -> dict[str, Any]:
+    """Cash tables: a player takes an empty seat; dealt in from the next hand."""
+    if state["mode"] != "cash" or state["finished"]:
+        raise IllegalAction("seats are taken only at an open cash table")
+    if (
+        not 0 <= seat < state["size"]
+        or state["status"][seat] != "empty"
+        or (state["pending"][seat] is not None)
+    ):
+        raise IllegalAction("that seat is not free")
+    state = copy.deepcopy(state)
+    state["pending"][seat] = int(chips)
+    return state
 
 
 def stand_up(state: dict[str, Any], seat: int) -> dict[str, Any]:
-    """Cash tables: leave after the hand in progress. Nothing else changes now;
-    the match ends when that hand ends (whoever is to act)."""
+    """Cash tables: leave after the hand in progress, keeping the chips."""
     state = copy.deepcopy(state)
-    if not state["finished"] and state.get("standing") is None:
-        state["standing"] = seat
+    if state["finished"]:
+        return state
+    if state["pending"][seat] is not None:  # sat down, never dealt in
+        state["buy_ins"][seat] += 0
+        state["pending"][seat] = None
+        return state
+    if state["status"][seat] == "active" and seat not in state["standing"]:
+        state["standing"].append(seat)
     return state
 
 
-def concede(state: dict[str, Any], seat: int) -> dict[str, Any]:
+def concede(
+    state: dict[str, Any], seat: int, rules: dict[str, Any] | None = None, seed: str | None = None
+) -> dict[str, Any]:
+    """Tournaments: out now. In a hand the seat folds; its remaining chips go
+    to the others when the hand ends."""
     state = copy.deepcopy(state)
-    if not state["finished"]:
-        _finish(state, winner=1 - seat, reason="conceded")
+    if state["finished"] or state["status"][seat] != "active":
+        return state
+    _leave_now(state, seat, "conceded")
+    hand = state["hand"]
+    if hand is not None and seat in hand["players"] and not hand["folded"][seat]:
+        hand["folded"][seat] = True
+        hand["actions"].append({"seat": seat, "type": "concede"})
+        if rules is None or seed is None:
+            raise ValueError("conceding during a hand needs the rules and the seed")
+        if hand["to_act"] == seat:
+            _progress(rules, seed, state)
+        else:  # the seat to act still acts
+            _progress(rules, seed, state, start=hand["to_act"])
     return state
 
 
-def replay(rules: dict[str, Any], seed: str, log: list[dict[str, Any]]) -> dict[str, Any]:
-    """Recompute a match from its seed and action log (each entry: seat and
-    action, or ``{"seat": s, "action": {"type": "concede"}}``)."""
-    state = new_match(rules, seed)
+def replay(
+    rules: dict[str, Any],
+    seed: str,
+    log: list[dict[str, Any]],
+    *,
+    players: int = 2,
+    seats: int | None = None,
+    mode: str = "sng",
+) -> dict[str, Any]:
+    """Recompute a match from its seed and action log: each entry is a seat
+    and an action, or one of concede / stand_up / sit {chips}."""
+    state = new_match(rules, seed, players=players, seats=seats, mode=mode)
     for entry in log:
         action = entry["action"]
-        if action.get("type") == "concede":
-            state = concede(state, entry["seat"])
-        elif action.get("type") == "stand_up":
+        kind = action.get("type")
+        if kind == "concede":
+            state = concede(state, entry["seat"], rules, seed)
+        elif kind == "stand_up":
             state = stand_up(state, entry["seat"])
+        elif kind == "sit":
+            state = sit(state, entry["seat"], int(action["chips"]))
         else:
             state = apply(rules, seed, state, entry["seat"], action)
     return state
 
 
 def seat_view(state: dict[str, Any], seat: int | None) -> dict[str, Any]:
-    """What one seat may see: its own hole cards, never the opponent's or the
+    """What one seat may see: its own hole cards, never the others' or the
     cards still to come."""
     hand = state["hand"]
     view: dict[str, Any] = {
+        "size": state["size"],
+        "mode": state["mode"],
         "hand_no": state["hand_no"],
         "stacks": state["stacks"],
+        "status": state["status"],
+        "buy_ins": state["buy_ins"],
+        "pending": state["pending"],
         "finished": state["finished"],
         "winner": state["winner"],
+        "ranking": state["ranking"],
         "reason": state["reason"],
-        "standing": state.get("standing"),
+        "standing": state["standing"][0] if state["standing"] else None,
+        "leaving": state["standing"],
         "timeouts": state["timeouts"],
+        "eliminated": state["eliminated"],
         "hands_played": len(state["hands"]),
         "last_hand": state["hands"][-1] if state["hands"] else None,
     }
@@ -526,14 +744,20 @@ def seat_view(state: dict[str, Any], seat: int | None) -> dict[str, Any]:
         view["hand"] = {
             "no": hand["no"],
             "button": hand["button"],
+            "sb": hand["sb"],
+            "bb": hand["bb"],
+            "players": hand["players"],
+            "folded": hand["folded"],
             "blinds": hand["blinds"],
             "street": hand["street"],
             "board": hand["board"],
             "committed": hand["committed"],
             "pot": sum(hand["contrib"]),
             "to_act": hand["to_act"],
-            "to_call": to_call(state),
-            "my_cards": hand["hole"][seat] if seat in (0, 1) else None,
+            "to_call": to_call(state, seat) if seat in hand["players"] else 0,
+            "my_cards": hand["hole"][seat]
+            if seat is not None and 0 <= seat < state["size"]
+            else None,
             "actions": hand["actions"],
             "legal": legal_actions(state) if seat == hand["to_act"] else [],
         }
