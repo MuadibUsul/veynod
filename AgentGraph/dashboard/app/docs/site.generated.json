@@ -4582,6 +4582,37 @@
        "body": [],
        "description": "",
        "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "limit",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/federation/arena/leaderboard",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Standings: wins and net DEMO_M per workspace"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/arena/lobby",
+       "responses": [
+        "200"
+       ],
+       "summary": "Cash tables and tournaments to pick from (no economic value)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
        "parameters": [],
        "path": "/v1/federation/arena/matches",
        "responses": [
@@ -4950,6 +4981,12 @@
          "type": "string"
         },
         {
+         "description": "Heads-up (2) or 6-max. A 6-max cash table can be joined in play.",
+         "name": "seats",
+         "required": false,
+         "type": "integer"
+        },
+        {
          "description": "",
          "name": "unit",
          "required": false,
@@ -4976,6 +5013,17 @@
         "200"
        ],
        "summary": "Leave the queue"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/arena/record",
+       "responses": [
+        "200"
+       ],
+       "summary": "This workspace's record and recent finished matches"
       },
       {
        "body": [],

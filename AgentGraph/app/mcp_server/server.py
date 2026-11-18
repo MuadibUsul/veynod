@@ -2278,7 +2278,7 @@ async def federation_tool(action: str, args: dict[str, Any] | None = None) -> di
     finds listed workspaces, each with the reasons for its rank.
     Arena (simulated heads-up hold'em, NO economic value; off unless enabled):
     arena_policy shows what the owner lets agents do; arena_queue {spec_id, stake,
-    mode: sng | cash}; arena_leave_queue; arena_matches; arena_match {match_id}
+    mode: sng | cash, seats: 2 | 6}; arena_leave_queue; arena_matches; arena_match {match_id}
     (your cards, legal moves, action_seq); arena_authorize {match_id,
     contract_hash} (within the owner's policy); arena_commit {match_id,
     commitment: sha256(seed)}; arena_reveal {match_id, seed: 64 hex}; arena_act

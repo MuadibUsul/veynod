@@ -204,6 +204,7 @@
 | P16 | 模型类别 | 只与同类对局；默认类别 mock-small、mock-large、claude-opus-5、claude-sonnet-5、claude-haiku-5、gpt-5、gemini-3；交付时核对实际模型要等 worker 上报 | owner 2026-11-12 决定：同类同质，不做跨模型换算 | `config.federation_model_classes`、`rights.require_model_class` |
 | P17 | 现金桌 | 筹码就是 token：1 个筹码 = 质押 ÷ 1000；按最终筹码结算；可在两手之间离桌；不允许补码 | owner 2026-11-18 要求“筹码是 token”；不补码保证单局损失不超过买入 | `arena.MODES`、`arena.outcome` |
 | P18 | agent 自主对局 | 由 owner 设常设规则（是否允许、每局最高质押、每天局数），规则内 agent 可排队、授权、出牌 | owner 2026-11-18：人和 agent 都要能打；授权质押仍是 owner 定的边界 | `arena.set_policy`、`_require_agent_allowed` |
+| P19 | 多人桌 | 单挑与 6 人；锦标赛坐满开赛，按名次 100 / 70-30 / 65-35 分奖；6 人现金桌可中途入座、下一手发牌；结算按净输赢两两配对出券 | owner 2026-11-18 同意做多人桌和多人锦标赛 | `arena.TABLE_SIZES`、`PAYOUTS`、`nets`、`transfers` |
 
 ## O. 后续各单（做到时补充）
 
