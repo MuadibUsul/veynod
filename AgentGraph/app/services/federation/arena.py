@@ -87,34 +87,87 @@ def _rules() -> dict[str, Any]:
     return dict(engine.RULES_V1)
 
 
+TABLE_SIZES = (2, 6)
+# Tournament prize shares by number of players (percent, by place).
+PAYOUTS: dict[int, tuple[int, ...]] = {
+    2: (100,),
+    3: (70, 30),
+    4: (70, 30),
+    5: (65, 35),
+    6: (65, 35),
+}
+
+
+def _fids(row: dict[str, Any]) -> list[str]:
+    return [s["fid"] for s in row["seats"]]
+
+
+def _seated(row: dict[str, Any]) -> list[int]:
+    """Seats that hold (or will hold) a stake: not given up before sitting."""
+    return [i for i, s in enumerate(row["seats"]) if not s.get("abandoned")]
+
+
 def tokens_per_chip(row: dict[str, Any]) -> int | None:
     if row["mode"] != "cash":
         return None
     return int(row["stake"]) // int(row["rules"]["starting_stack"])
 
 
-def outcome(row: dict[str, Any], game: dict[str, Any]) -> tuple[int | None, int]:
-    """(winner seat, tokens the loser pays). sng: the whole stake; cash: what
-    the loser's stack lost, in tokens. None/0: nothing changes hands."""
+def nets(row: dict[str, Any], game: dict[str, Any]) -> list[int]:
+    """Tokens each seat wins (+) or loses (-); they add up to zero.
+
+    cash: (final chips - chips bought) x tokens per chip.
+    sng: prize shares of everyone's buy-ins by place, minus the buy-in.
+    """
+    seats = row["seats"]
+    stake = int(row["stake"])
     if row["mode"] == "cash":
-        start = int(row["rules"]["starting_stack"])
-        stacks = game["stacks"]
-        if stacks[0] == stacks[1]:
-            return None, 0
-        winner = 0 if stacks[0] > stacks[1] else 1
-        return winner, (start - stacks[1 - winner]) * tokens_per_chip(row)
-    if game["winner"] is None:
-        return None, 0
-    return game["winner"], int(row["stake"])
+        tpc = tokens_per_chip(row) or 0
+        return [
+            (game["stacks"][i] - game["buy_ins"][i]) * tpc if game["buy_ins"][i] else 0
+            for i in range(len(seats))
+        ]
+    players = [i for i in range(len(seats)) if seats[i].get("seed")]
+    if game["winner"] is None:  # a drawn heads-up: nothing changes hands
+        return [0] * len(seats)
+    pool = stake * len(players)
+    pay = [0] * len(seats)
+    ranking = [s for s in game["ranking"] if s in players]
+    paid = 0
+    for place, pct in enumerate(PAYOUTS[len(players)]):
+        amount = pool * pct // 100
+        pay[ranking[place]] += amount
+        paid += amount
+    pay[ranking[0]] += pool - paid
+    return [pay[i] - (stake if i in players else 0) for i in range(len(seats))]
+
+
+def transfers(net: list[int]) -> list[tuple[int, int, int]]:
+    """(loser seat, winner seat, tokens): biggest loser pays biggest winner first."""
+    owe = sorted(((-n, i) for i, n in enumerate(net) if n < 0), reverse=True)
+    gain = sorted(((n, i) for i, n in enumerate(net) if n > 0), reverse=True)
+    owe_l = [[a, i] for a, i in owe]
+    gain_l = [[a, i] for a, i in gain]
+    out = []
+    li = wi = 0
+    while li < len(owe_l) and wi < len(gain_l):
+        amount = min(owe_l[li][0], gain_l[wi][0])
+        out.append((owe_l[li][1], gain_l[wi][1], amount))
+        owe_l[li][0] -= amount
+        gain_l[wi][0] -= amount
+        if owe_l[li][0] == 0:
+            li += 1
+        if gain_l[wi][0] == 0:
+            wi += 1
+    return out
 
 
 def _contract(row: dict[str, Any]) -> dict[str, Any]:
-    """What both owners authorize, hashed: fixed for the whole match."""
+    """The table's terms, hashed; every player authorizes the same hash."""
     return {
-        "v": 1,
+        "v": 2,
         "match_id": row["match_id"],
-        "seats": [row["seat0_fid"], row["seat1_fid"]],
-        "specs": [row["seat0_spec"], row["seat1_spec"]],
+        "table_size": int(row["table_size"]),
         "model_class": row["model_class"],
         "mode": row["mode"],
         "tokens_per_chip": tokens_per_chip(row),
@@ -125,15 +178,19 @@ def _contract(row: dict[str, Any]) -> dict[str, Any]:
         "turn_timeout_policy": {
             "turn_seconds": row["rules"]["turn_seconds"],
             "on_timeout": "check if possible, else fold",
-            "forfeit_after": row["rules"]["max_timeouts"],
+            "after_timeouts": row["rules"]["max_timeouts"],
         },
         "max_hands": row["rules"]["max_hands"],
         "setup_deadline": row["setup_deadline"].isoformat(),
+        "payouts_percent": None
+        if row["mode"] == "cash"
+        else {str(n): list(p) for n, p in PAYOUTS.items()},
         "settlement": (
-            "each side's final stack times tokens_per_chip; what one side lost becomes a "
-            "DEMO_M voucher for the other; no rebuys"
+            "each seat's final chips minus chips bought, times tokens_per_chip; losers' "
+            "tokens become DEMO_M vouchers for winners; no rebuys"
             if row["mode"] == "cash"
-            else "loser's stake becomes a DEMO_M voucher for the winner; draw returns both"
+            else "prize shares of all buy-ins by place; losers' tokens become DEMO_M "
+            "vouchers for winners"
         ),
         "economic_value": "none",
     }
@@ -163,10 +220,9 @@ async def _match(session: AsyncSession, match_id: str, *, lock: bool = False) ->
 
 
 def _seat_of(row: dict[str, Any], fid: str) -> int:
-    if fid == row["seat0_fid"]:
-        return 0
-    if fid == row["seat1_fid"]:
-        return 1
+    for i, s in enumerate(row["seats"]):
+        if s["fid"] == fid:
+            return i
     raise FederationError("FED_E_MATCH_UNKNOWN", "no such match")
 
 
@@ -333,9 +389,8 @@ async def _require_agent_allowed(
     today = int(
         await session.scalar(
             text(
-                "SELECT count(*) FROM federation_arena_matches WHERE created_at > NOW() - "
-                "interval '1 day' AND ((seat0_fid = :f AND seats->0->>'authorized_by' IS NOT "
-                "NULL) OR (seat1_fid = :f AND seats->1->>'authorized_by' IS NOT NULL))"
+                "SELECT count(*) FROM federation_arena_players WHERE fid = :f AND "
+                "authorized_at > NOW() - interval '1 day'"
             ),
             {"f": fid},
         )
@@ -352,18 +407,70 @@ async def _require_agent_allowed(
 # ── queue and matching ────────────────────────────────────────────────────
 
 
+async def _insert_players(
+    session: AsyncSession, match_id: str, players: list[tuple[str, str]], first_seat: int = 0
+) -> None:
+    for offset, (fid, spec) in enumerate(players):
+        await session.execute(
+            text(
+                "INSERT INTO federation_arena_players (match_id, seat, fid, spec_id) VALUES "
+                "(:m, :s, :f, :p)"
+            ),
+            {"m": match_id, "s": first_seat + offset, "f": fid, "p": spec},
+        )
+
+
+async def _open_cash_table(
+    session: AsyncSession, me: str, *, stake: int, model_class: str, rules_hash: str
+) -> dict[str, Any] | None:
+    """A 6-seat cash table of this level with a free seat, forming or in play."""
+    from app.services.federation import integrity
+
+    ids = (
+        (
+            await session.execute(
+                text(
+                    "SELECT match_id FROM federation_arena_matches WHERE mode = 'cash' AND "
+                    "table_size = 6 AND stake = :s AND model_class = :c AND rules_hash = :h AND "
+                    "state IN ('MATCHED', 'PLAYING') ORDER BY created_at LIMIT 20"
+                ),
+                {"s": stake, "c": model_class, "h": rules_hash},
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for match_id in ids:
+        row = await _match(session, match_id, lock=True)
+        if row["state"] not in ("MATCHED", "PLAYING") or len(row["seats"]) >= 6:
+            continue
+        if row["game"] is not None and row["game"]["finished"]:
+            continue
+        fids = _fids(row)
+        if me in fids:
+            continue
+        if any([await integrity.related(me, other) for other in fids]):
+            continue
+        return row
+    return None
+
+
 async def join_queue(
     workspace_id: str,
     *,
     spec_id: str,
     stake: int,
     mode: str = "sng",
+    seats: int = 2,
     unit: str | None = None,
     actor: Actor,
 ) -> dict[str, Any]:
-    """A person (or an agent inside its owner's policy) puts this workspace in
-    the queue; a compatible waiting workspace (same model class, mode, stake
-    and rules, not the same controller) is matched."""
+    """A person (or an agent inside its owner's policy) asks for a seat.
+
+    Tournaments (sng) start when the table is full (2 or 6). Cash tables
+    start with two; a 6-seat cash table then takes more players at any
+    time: a player joining one in play is dealt in from the next hand.
+    Workspaces that count as one controller never share a table."""
     require_enabled()
     rights.check_unit(unit)
     if not isinstance(stake, int) or isinstance(stake, bool) or not MIN_STAKE <= stake <= MAX_STAKE:
@@ -376,6 +483,8 @@ async def join_queue(
     rules_hash = engine.rules_hash(rules)
     if mode not in MODES:
         raise FederationError("FED_E_PACKAGE_INVALID", "mode is sng or cash")
+    if seats not in TABLE_SIZES:
+        raise FederationError("FED_E_PACKAGE_INVALID", "a table has 2 or 6 seats")
     if mode == "cash" and stake % rules["starting_stack"]:
         raise FederationError(
             "FED_E_PACKAGE_INVALID",
@@ -398,76 +507,125 @@ async def join_queue(
             {"f": me},
         ):
             raise FederationError("FED_E_MATCH_STATE", "this workspace is already waiting")
-        candidates = (
-            (
+        if await session.scalar(
+            text(
+                "SELECT 1 FROM federation_arena_players p JOIN federation_arena_matches m "
+                "USING (match_id) WHERE p.fid = :f AND m.state IN ('MATCHED', "
+                "'OWNER_AUTHORIZED', 'DEMO_RESERVED', 'COMMITTED', 'PLAYING') AND "
+                "(m.game IS NULL OR NOT (m.game->'status'->>p.seat::int) = ANY "
+                "(ARRAY['left', 'out']))"
+            ),
+            {"f": me},
+        ):
+            raise FederationError("FED_E_MATCH_STATE", "this workspace is already at a table")
+        model_class = spec["model_family"]
+        match_id = None
+        entry_id = rights.new_id("faq")
+        state = "WAITING"
+        if mode == "cash" and seats == 6:
+            table = await _open_cash_table(
+                session, me, stake=stake, model_class=model_class, rules_hash=rules_hash
+            )
+            if table is not None:
+                seat = len(table["seats"])
+                table["seats"].append(
+                    {
+                        "fid": me,
+                        "spec": spec_id,
+                        "joining": table["state"] == "PLAYING",
+                        "joined_at": _now().isoformat(),
+                    }
+                )
+                await _insert_players(session, table["match_id"], [(me, spec_id)], seat)
+                await _history(
+                    session,
+                    table["match_id"],
+                    table["state"],
+                    table["state"],
+                    actor.ref,
+                    f"seat {seat} taken",
+                )
+                await _save(session, table)
+                match_id = table["match_id"]
+                state = "MATCHED"
+        if match_id is None:
+            need = 1 if mode == "cash" else seats - 1
+            candidates = (
+                (
+                    await session.execute(
+                        text(
+                            "SELECT * FROM federation_arena_queue WHERE state = 'WAITING' AND "
+                            "stake = :s AND rules_hash = :h AND model_class = :c AND mode = :md "
+                            "AND table_size = :n AND fid <> :f ORDER BY created_at LIMIT 100"
+                        ),
+                        # Same model class only: like-for-like stakes, no conversion.
+                        {
+                            "s": stake,
+                            "h": rules_hash,
+                            "c": model_class,
+                            "md": mode,
+                            "n": seats,
+                            "f": me,
+                        },
+                    )
+                )
+                .mappings()
+                .all()
+            )
+            group: list[dict[str, Any]] = []
+            for c in candidates:
+                if len(group) == need:
+                    break
+                members = [me] + [g["fid"] for g in group]
+                if any([await integrity.related(c["fid"], m) for m in members]):
+                    continue  # one controller never plays itself
+                if await active_restriction(session, c["fid"]):
+                    continue
+                group.append(dict(c))
+            if len(group) == need:
+                players = [(g["fid"], g["spec_id"]) for g in group] + [(me, spec_id)]
+                match_id = await _create_match(
+                    session,
+                    players=players,
+                    table_size=seats,
+                    model_class=model_class,
+                    mode=mode,
+                    stake=stake,
+                    rules=rules,
+                    actor=actor.ref,
+                )
+                state = "MATCHED"
                 await session.execute(
                     text(
-                        "SELECT * FROM federation_arena_queue WHERE state = 'WAITING' AND "
-                        "stake = :s AND rules_hash = :h AND model_class = :c AND mode = :md "
-                        "AND fid <> :f ORDER BY created_at LIMIT 50"
+                        "UPDATE federation_arena_queue SET state = 'MATCHED', match_id = :m "
+                        "WHERE entry_id = ANY(:ids)"
                     ),
-                    # Same model class only: like-for-like stakes, no conversion.
-                    {
-                        "s": stake,
-                        "h": rules_hash,
-                        "c": spec["model_family"],
-                        "md": mode,
-                        "f": me,
-                    },
+                    {"m": match_id, "ids": [g["entry_id"] for g in group]},
                 )
-            )
-            .mappings()
-            .all()
-        )
-        partner = None
-        for c in candidates:
-            if await integrity.related(me, c["fid"]):
-                continue  # one controller never plays itself
-            if await active_restriction(session, c["fid"]):
-                continue
-            partner = dict(c)
-            break
-        entry_id = rights.new_id("faq")
-        await session.execute(
-            text(
-                "INSERT INTO federation_arena_queue (entry_id, fid, spec_id, model_class, mode, "
-                "stake, rules_hash, state, created_by) VALUES (:e, :f, :s, :c, :md, :k, :h, :st, "
-                ":by)"
-            ),
-            {
-                "e": entry_id,
-                "f": me,
-                "s": spec_id,
-                "c": spec["model_family"],
-                "md": mode,
-                "k": stake,
-                "h": rules_hash,
-                "st": "MATCHED" if partner else "WAITING",
-                "by": actor.ref,
-            },
-        )
-        match_id = None
-        if partner is not None:
-            match_id = await _create_match(
-                session,
-                seats=[(partner["fid"], partner["spec_id"]), (me, spec_id)],
-                model_class=spec["model_family"],
-                mode=mode,
-                stake=stake,
-                rules=rules,
-                actor=actor.ref,
-            )
             await session.execute(
                 text(
-                    "UPDATE federation_arena_queue SET state = 'MATCHED', match_id = :m "
-                    "WHERE entry_id IN (:a, :b)"
+                    "INSERT INTO federation_arena_queue (entry_id, fid, spec_id, model_class, "
+                    "mode, table_size, stake, rules_hash, state, match_id, created_by) VALUES "
+                    "(:e, :f, :s, :c, :md, :n, :k, :h, :st, :m, :by)"
                 ),
-                {"m": match_id, "a": partner["entry_id"], "b": entry_id},
+                {
+                    "e": entry_id,
+                    "f": me,
+                    "s": spec_id,
+                    "c": model_class,
+                    "md": mode,
+                    "n": seats,
+                    "k": stake,
+                    "h": rules_hash,
+                    "st": state,
+                    "m": match_id,
+                    "by": actor.ref,
+                },
             )
         await session.commit()
     return {
         "entry_id": entry_id,
-        "state": "MATCHED" if match_id else "WAITING",
+        "state": state,
         "match": await get_match(workspace_id, match_id) if match_id else None,
         "notice": NOTICE,
     }
@@ -493,7 +651,8 @@ async def leave_queue(workspace_id: str, *, actor: Actor) -> dict[str, Any]:
 async def _create_match(
     session: AsyncSession,
     *,
-    seats: list[tuple[str, str]],
+    players: list[tuple[str, str]],
+    table_size: int,
     model_class: str,
     mode: str,
     stake: int,
@@ -503,12 +662,10 @@ async def _create_match(
     match_id = rights.new_id("fam")
     server_seed = secrets.token_hex(32)
     setup_deadline = _now() + timedelta(minutes=get_settings().federation_arena_setup_minutes)
+    now = _now().isoformat()
     row = {
         "match_id": match_id,
-        "seat0_fid": seats[0][0],
-        "seat1_fid": seats[1][0],
-        "seat0_spec": seats[0][1],
-        "seat1_spec": seats[1][1],
+        "table_size": table_size,
         "model_class": model_class,
         "mode": mode,
         "stake": stake,
@@ -517,33 +674,33 @@ async def _create_match(
         "server_commit": engine.seed_commitment(server_seed),
         "setup_deadline": setup_deadline,
     }
+    seats = [{"fid": fid, "spec": spec, "joined_at": now} for fid, spec in players]
     await session.execute(
         text(
-            "INSERT INTO federation_arena_matches (match_id, seat0_fid, seat1_fid, seat0_spec, "
-            "seat1_spec, model_class, mode, stake, rules, rules_hash, contract_hash, state, "
-            "seats, server_seed, server_commit, setup_deadline) VALUES (:m, :a, :b, :sa, :sb, "
-            ":mc, :md, :k, "
-            "CAST(:r AS jsonb), :rh, :ch, 'MATCHED', CAST(:seats AS jsonb), :ss, :sc, :sd)"
+            "INSERT INTO federation_arena_matches (match_id, table_size, model_class, mode, "
+            "stake, rules, rules_hash, contract_hash, state, seats, server_seed, server_commit, "
+            "setup_deadline) VALUES (:m, :n, :mc, :md, :k, CAST(:r AS jsonb), :rh, :ch, "
+            "'MATCHED', CAST(:seats AS jsonb), :ss, :sc, :sd)"
         ),
         {
             "m": match_id,
-            "a": row["seat0_fid"],
-            "b": row["seat1_fid"],
-            "sa": row["seat0_spec"],
-            "sb": row["seat1_spec"],
+            "n": table_size,
             "mc": model_class,
             "md": mode,
             "k": stake,
             "r": json.dumps(rules),
             "rh": row["rules_hash"],
             "ch": sha256_hex(_contract(row)),
-            "seats": json.dumps([{}, {}]),
+            "seats": json.dumps(seats),
             "ss": server_seed,
             "sc": row["server_commit"],
             "sd": setup_deadline,
         },
     )
-    await _history(session, match_id, None, "MATCHED", actor)
+    await _insert_players(session, match_id, players)
+    await _history(
+        session, match_id, None, "MATCHED", actor, f"{len(players)} of {table_size} seats"
+    )
     return match_id
 
 
@@ -564,18 +721,21 @@ async def _view(session: AsyncSession, row: dict[str, Any], seat: int | None) ->
         .mappings()
         .all()
     )
-    seats = []
-    for i, fid in enumerate((row["seat0_fid"], row["seat1_fid"])):
-        s = row["seats"][i]
-        seats.append(
-            {
-                "fid": fid,
-                "authorized": bool(s.get("authorized_by")),
-                "agent_play": bool(s.get("agent_play")),
-                "commitment": s.get("commit"),
-                "revealed": bool(s.get("seed")),
-            }
-        )
+    status = row["game"]["status"] if row["game"] is not None else None
+    seats = [
+        {
+            "seat": i,
+            "fid": s["fid"],
+            "authorized": bool(s.get("authorized_by")),
+            "agent_play": bool(s.get("agent_play")),
+            "commitment": s.get("commit"),
+            "revealed": bool(s.get("seed")),
+            "joining": bool(s.get("joining")),
+            "abandoned": bool(s.get("abandoned")),
+            "status": status[i] if status is not None and i < len(status) else None,
+        }
+        for i, s in enumerate(row["seats"])
+    ]
     game = None
     if row["game"] is not None:
         game = engine.seat_view(row["game"], seat)
@@ -587,10 +747,14 @@ async def _view(session: AsyncSession, row: dict[str, Any], seat: int | None) ->
         "state": row["state"],
         "version": row["version"],
         "my_seat": seat,
+        "table_size": int(row["table_size"]),
         "seats": seats,
         "model_class": row["model_class"],
         "mode": row["mode"],
         "tokens_per_chip": tokens_per_chip(row),
+        "payouts_percent": None
+        if row["mode"] == "cash"
+        else list(PAYOUTS.get(len([s for s in row["seats"] if not s.get("joining")]), ())),
         "stake": int(row["stake"]),
         "stake_m": rights.as_m(row["stake"]),
         "unit": row["unit"],
@@ -635,18 +799,20 @@ async def list_matches(workspace_id: str) -> list[dict[str, Any]]:
     require_enabled()
     async with async_session_factory() as session:
         me = await rights.fid_of(session, workspace_id)
-        ids = [
-            r[0]
-            for r in (
+        ids = (
+            (
                 await session.execute(
                     text(
-                        "SELECT match_id FROM federation_arena_matches WHERE seat0_fid = :m OR "
-                        "seat1_fid = :m ORDER BY created_at DESC LIMIT 50"
+                        "SELECT p.match_id FROM federation_arena_players p JOIN "
+                        "federation_arena_matches m USING (match_id) WHERE p.fid = :m "
+                        "ORDER BY m.created_at DESC LIMIT 50"
                     ),
                     {"m": me},
                 )
-            ).all()
-        ]
+            )
+            .scalars()
+            .all()
+        )
     return [await get_match(workspace_id, m) for m in ids]
 
 
@@ -671,8 +837,9 @@ async def authorize(
     actor: Actor,
 ) -> dict[str, Any]:
     """The owner (or an agent inside the owner's standing policy) authorizes
-    the match contract by its hash; the stake is held from simulated capacity
-    in the same transaction. An agent that authorizes also plays."""
+    the table's contract by its hash; the stake is held from simulated
+    capacity in the same transaction. A seat taken at a cash table in play is
+    dealt in from the next hand. An agent that authorizes also plays."""
     require_enabled()
     if actor.kind == "user":
         _person(actor, "authorizes a match", owner=True)
@@ -685,18 +852,22 @@ async def authorize(
                 session, me, actor, stake=int(row["stake"]), what="authorizes a match"
             )
             agent_play = True
-        if row["state"] != "MATCHED":
+        mine = row["seats"][seat]
+        joining = row["state"] == "PLAYING" and mine.get("joining")
+        if row["state"] != "MATCHED" and not joining:
             raise FederationError(
                 "FED_E_MATCH_STATE", "the match is past authorization", state=row["state"]
             )
+        if mine.get("abandoned"):
+            raise FederationError("FED_E_MATCH_STATE", "this seat was given up")
         if contract_hash != row["contract_hash"]:
             raise FederationError(
                 "FED_E_MATCH_STATE", "authorize the contract as shown: its hash differs"
             )
-        if row["seats"][seat].get("authorized_by"):
+        if mine.get("authorized_by"):
             raise FederationError("FED_E_MATCH_STATE", "already authorized")
         await _require_unrestricted(session, me)
-        spec_id = row[f"seat{seat}_spec"]
+        spec_id = mine["spec"]
         spec = await rights.spec_row(session, spec_id)
         rights.require_escrowable(spec)
         await rights.lock(session, rights.cap(spec_id))
@@ -711,10 +882,35 @@ async def authorize(
             reference=match_id,
             idempotency_key=f"hold:{match_id}:{seat}",
         )
-        row["seats"][seat].update(authorized_by=actor.ref, agent_play=bool(agent_play))
-        if all(s.get("authorized_by") for s in row["seats"]):
-            await _move(session, row, "OWNER_AUTHORIZED", actor.ref, "both owners authorized")
-            await _move(session, row, "DEMO_RESERVED", actor.ref, "both stakes held")
+        mine.update(authorized_by=actor.ref, agent_play=bool(agent_play))
+        await session.execute(
+            text(
+                "UPDATE federation_arena_players SET authorized_at = NOW() WHERE match_id = :m "
+                "AND seat = :s"
+            ),
+            {"m": match_id, "s": seat},
+        )
+        if joining:
+            row["game"] = engine.sit(row["game"], seat, int(row["rules"]["starting_stack"]))
+            await _log_action(
+                session,
+                row,
+                seat,
+                {"type": "sit", "chips": row["rules"]["starting_stack"]},
+                actor.ref,
+            )
+            mine["joining"] = False
+            await _history(
+                session,
+                match_id,
+                row["state"],
+                row["state"],
+                actor.ref,
+                f"seat {seat} sits in from the next hand",
+            )
+        elif all(row["seats"][i].get("authorized_by") for i in _seated(row)):
+            await _move(session, row, "OWNER_AUTHORIZED", actor.ref, "every player authorized")
+            await _move(session, row, "DEMO_RESERVED", actor.ref, "every stake held")
         await _save(session, row)
         await session.commit()
     return await get_match(workspace_id, match_id)
@@ -738,23 +934,23 @@ async def commit_seed(
         _may_play(row, seat, actor)
         if row["state"] != "DEMO_RESERVED":
             raise FederationError(
-                "FED_E_MATCH_STATE", "commit after both stakes are held", state=row["state"]
+                "FED_E_MATCH_STATE", "commit after every stake is held", state=row["state"]
             )
         if row["seats"][seat].get("commit"):
             if row["seats"][seat]["commit"] == commitment.lower():
                 return await _view(session, row, seat)
             raise FederationError("FED_E_MATCH_STATE", "a commitment cannot be changed")
         row["seats"][seat]["commit"] = commitment.lower()
-        if all(s.get("commit") for s in row["seats"]):
-            await _move(session, row, "COMMITTED", actor.ref, "both seats committed")
+        if all(row["seats"][i].get("commit") for i in _seated(row)):
+            await _move(session, row, "COMMITTED", actor.ref, "every player committed")
         await _save(session, row)
         await session.commit()
     return await get_match(workspace_id, match_id)
 
 
 async def reveal_seed(workspace_id: str, match_id: str, *, seed: str, actor: Actor):
-    """A seat reveals its seed; it must match its commitment. When both have
-    revealed, the decks are fixed and the first hand is dealt."""
+    """A seat reveals its seed; it must match its commitment. When every
+    player has revealed, the decks are fixed and the first hand is dealt."""
     require_enabled()
     if not isinstance(seed, str) or len(seed) != 64:
         raise FederationError("FED_E_PACKAGE_INVALID", "a seed is 32 bytes of hex")
@@ -770,17 +966,22 @@ async def reveal_seed(workspace_id: str, match_id: str, *, seed: str, actor: Act
         _may_play(row, seat, actor)
         if row["state"] != "COMMITTED":
             raise FederationError(
-                "FED_E_MATCH_STATE", "reveal after both seats committed", state=row["state"]
+                "FED_E_MATCH_STATE", "reveal after every player committed", state=row["state"]
             )
         if engine.seed_commitment(seed) != row["seats"][seat]["commit"]:
             raise FederationError(
                 "FED_E_ARENA_ILLEGAL", "the seed does not match this seat's commitment"
             )
         row["seats"][seat]["seed"] = seed
-        if all(s.get("seed") for s in row["seats"]):
-            combined = engine.combined_seed(row["server_seed"], [s["seed"] for s in row["seats"]])
-            row["game"] = engine.new_match(row["rules"], combined, mode=row["mode"])
-            await _move(session, row, "PLAYING", actor.ref, "both seeds revealed; hand 1 dealt")
+        if all(row["seats"][i].get("seed") for i in _seated(row)):
+            row["game"] = engine.new_match(
+                row["rules"],
+                _seed(row),
+                players=len(row["seats"]),
+                seats=int(row["table_size"]),
+                mode=row["mode"],
+            )
+            await _move(session, row, "PLAYING", actor.ref, "every seed revealed; hand 1 dealt")
             row["turn_deadline"] = _deadline(row)
             if row["game"]["finished"]:
                 await _finish(session, row, actor.ref)
@@ -795,8 +996,15 @@ def _deadline(row: dict[str, Any]) -> datetime | None:
     return _now() + timedelta(seconds=int(row["rules"]["turn_seconds"]))
 
 
+def _starters(row: dict[str, Any]) -> list[int]:
+    """The seats dealt in at the start: those that revealed a seed."""
+    return [i for i, s in enumerate(row["seats"]) if s.get("seed")]
+
+
 def _seed(row: dict[str, Any]) -> str:
-    return engine.combined_seed(row["server_seed"], [s["seed"] for s in row["seats"]])
+    return engine.combined_seed(
+        row["server_seed"], [row["seats"][i]["seed"] for i in _starters(row)]
+    )
 
 
 # ── play ──────────────────────────────────────────────────────────────────
@@ -811,7 +1019,7 @@ async def act(
     require_enabled()
     if not isinstance(action, dict) or set(action) - {"type", "amount"}:
         raise FederationError("FED_E_ARENA_ILLEGAL", "an action is {type, amount?}")
-    if action.get("type") in ("timeout", "concede", "stand_up"):
+    if action.get("type") in ("timeout", "concede", "stand_up", "sit"):
         raise FederationError("FED_E_ARENA_ILLEGAL", "that action is not played by hand")
     async with async_session_factory() as session:
         me = await rights.fid_of(session, workspace_id)
@@ -912,14 +1120,18 @@ async def _actions(session: AsyncSession, match_id: str) -> list[dict[str, Any]]
 
 def _proof_payload(row: dict[str, Any], log: list[dict[str, Any]]) -> dict[str, Any]:
     game = row["game"]
-    winner, paid = outcome(row, game)
-    fids = [row["seat0_fid"], row["seat1_fid"]]
+    net = nets(row, game)
+    fids = _fids(row)
+    winner = game["winner"]
+    starters = _starters(row)
     return {
-        "v": 1,
+        "v": 2,
         "match_id": row["match_id"],
         "contract_hash": row["contract_hash"],
         "rules_hash": row["rules_hash"],
+        "table_size": int(row["table_size"]),
         "seats": fids,
+        "starters": starters,
         "model_class": row["model_class"],
         "mode": row["mode"],
         "tokens_per_chip": tokens_per_chip(row),
@@ -927,16 +1139,18 @@ def _proof_payload(row: dict[str, Any], log: list[dict[str, Any]]) -> dict[str, 
         "unit": rights.UNIT,
         "server_commit": row["server_commit"],
         "server_seed": row["server_seed"],
-        "seat_commits": [s["commit"] for s in row["seats"]],
-        "seat_seeds": [s["seed"] for s in row["seats"]],
+        "seat_commits": [row["seats"][i]["commit"] for i in starters],
+        "seat_seeds": [row["seats"][i]["seed"] for i in starters],
         "action_count": len(log),
         "actions_sha256": sha256_hex([{"seat": e["seat"], "action": e["action"]} for e in log]),
         "final_state_sha256": sha256_hex(game),
         "winner_seat": winner,
-        "winner": fids[winner] if winner is not None else None,
-        "settles_tokens": paid,
+        "winner": fids[winner] if winner is not None and winner < len(fids) else None,
+        "ranking": [s for s in (game["ranking"] or []) if s < len(fids)],
+        "nets": net,
+        "settles_tokens": sum(n for n in net if n > 0),
         "reason": game["reason"],
-        "final_stacks": game["stacks"],
+        "final_stacks": game["stacks"][: len(fids)],
         "hands_played": len(game["hands"]),
         "economic_value": "none",
     }
@@ -949,7 +1163,8 @@ async def _finish(session: AsyncSession, row: dict[str, Any], actor: str) -> Non
     log = await _actions(session, row["match_id"])
     payload = _proof_payload(row, log)
     signatures = []
-    for fid in (row["seat0_fid"], row["seat1_fid"]):
+    for i in _seated(row):
+        fid = row["seats"][i]["fid"]
         try:
             signatures.append(
                 await identity.sign_as(
@@ -970,32 +1185,55 @@ async def _finish(session: AsyncSession, row: dict[str, Any], actor: str) -> Non
         row,
         "RESULT_VERIFIED",
         actor,
-        f"{payload['reason']}: winner {payload['winner'] or 'none (draw)'}",
+        f"{payload['reason']}: winner {payload['winner'] or 'none (even)'}",
     )
 
 
 async def leave(workspace_id: str, match_id: str, *, actor: Actor) -> dict[str, Any]:
-    """Before play: abort and return both stakes (a person). In play: an sng
-    seat concedes; a cash seat stands up and the table ends after the hand in
-    progress, each side keeping its chips (a person, or an allowed agent)."""
+    """Before play: the table is called off and every stake goes back (a
+    person). In play: a tournament seat concedes (out, its chips go to the
+    others); a cash seat stands up after the hand in progress and keeps its
+    chips (a person, or an allowed agent). A seat taken but not yet dealt in
+    is given up."""
     require_enabled()
     async with async_session_factory() as session:
         me = await rights.fid_of(session, workspace_id)
         row = await _match(session, match_id, lock=True)
         seat = _seat_of(row, me)
+        mine = row["seats"][seat]
         if row["state"] in SETUP_STATES:
             _person(actor, "leaves a match")
             await _return_stakes(session, row, "ABORTED", actor.ref, f"seat {seat} left")
+        elif row["state"] == "PLAYING" and mine.get("joining"):
+            mine["abandoned"] = True
+            mine["joining"] = False
+            await _history(
+                session,
+                match_id,
+                "PLAYING",
+                "PLAYING",
+                actor.ref,
+                f"seat {seat} given up before sitting in",
+            )
         elif row["state"] == "PLAYING" and row["mode"] == "cash":
             _may_play(row, seat, actor)
-            if seat not in row["game"].get("standing", []):
-                row["game"] = engine.stand_up(row["game"], seat)
+            game = row["game"]
+            if game["status"][seat] == "active" and seat not in game.get("standing", []):
+                row["game"] = engine.stand_up(game, seat)
+                await _log_action(session, row, seat, {"type": "stand_up"}, actor.ref)
+            elif game["pending"][seat] is not None:
+                row["game"] = engine.stand_up(game, seat)
                 await _log_action(session, row, seat, {"type": "stand_up"}, actor.ref)
         elif row["state"] == "PLAYING":
             _may_play(row, seat, actor)
+            if row["game"]["status"][seat] != "active":
+                raise FederationError("FED_E_MATCH_STATE", "this seat is already out")
             row["game"] = engine.concede(row["game"], seat, row["rules"], _seed(row))
             await _log_action(session, row, seat, {"type": "concede"}, actor.ref)
-            await _finish(session, row, actor.ref)
+            if row["game"]["finished"]:
+                await _finish(session, row, actor.ref)
+            else:
+                row["turn_deadline"] = _deadline(row)
         else:
             raise FederationError("FED_E_MATCH_STATE", "nothing to leave", state=row["state"])
         await _save(session, row)
@@ -1004,11 +1242,11 @@ async def leave(workspace_id: str, match_id: str, *, actor: Actor) -> dict[str, 
 
 
 async def _return_stakes(
-    session: AsyncSession, row: dict[str, Any], to: str, actor: str, note: str
+    session: AsyncSession, row: dict[str, Any], to: str | None, actor: str, note: str
 ) -> str | None:
-    """Both held stakes go back to their capacity (abort, timeout, draw, void)."""
+    """Every stake still held goes back to its capacity."""
     txn = None
-    for seat in (0, 1):
+    for seat, s in enumerate(row["seats"]):
         account = rights.stake(row["match_id"], seat)
         await rights.lock(session, account)
         held = await rights.balance(session, account)
@@ -1016,12 +1254,13 @@ async def _return_stakes(
             txn, _ = await rights.post(
                 session,
                 kind="stake_return",
-                entries=[(account, -held), (rights.cap(row[f"seat{seat}_spec"]), held)],
+                entries=[(account, -held), (rights.cap(s["spec"]), held)],
                 reference=row["match_id"],
                 idempotency_key=f"return:{row['match_id']}:{seat}",
             )
     row["turn_deadline"] = None
-    await _move(session, row, to, actor, note)
+    if to is not None:
+        await _move(session, row, to, actor, note)
     return txn
 
 
@@ -1050,7 +1289,7 @@ async def dispute(workspace_id: str, match_id: str, *, reason: str, actor: Actor
 
 async def resolve(match_id: str, *, outcome: str, note: str, operator: str) -> dict[str, Any]:
     """Operator: uphold the verified result (it settles) or void the match
-    (both stakes return). Also clears RECONCILING."""
+    (every stake returns). Also clears RECONCILING."""
     require_enabled()
     if outcome not in ("uphold", "void"):
         raise FederationError("FED_E_PACKAGE_INVALID", "outcome is uphold or void")
@@ -1075,7 +1314,7 @@ async def resolve(match_id: str, *, outcome: str, note: str, operator: str) -> d
 
 async def verify(match_id: str) -> dict[str, Any]:
     """Replay the match from the revealed seeds and the action log; check the
-    commitments, the proof hash and both signatures."""
+    commitments, the proof hash and every signature."""
     require_enabled()
     from app.services.federation import identity, keys
     from app.services.federation.envelope import signing_bytes
@@ -1098,6 +1337,8 @@ async def verify(match_id: str) -> dict[str, Any]:
         row["rules"],
         seed,
         [{"seat": e["seat"], "action": e["action"]} for e in log],
+        players=len(proof["starters"]),
+        seats=int(row["table_size"]),
         mode=row["mode"],
     )
     checks["replay_matches"] = sha256_hex(replayed) == proof["final_state_sha256"]
@@ -1107,6 +1348,7 @@ async def verify(match_id: str) -> dict[str, Any]:
         == proof["actions_sha256"]
     )
     checks["proof_hash"] = sha256_hex(proof) == row["result_proof_hash"]
+    checks["nets_balance"] = sum(proof["nets"]) == 0
     signed = []
     for envelope in row["result"]["signatures"]:
         good = False
@@ -1122,14 +1364,14 @@ async def verify(match_id: str) -> dict[str, Any]:
                 except (KeyError, ValueError):
                     good = False
         signed.append({"issuer": envelope.get("issuer"), "valid": good})
-    checks["signatures"] = all(s["valid"] for s in signed)
-    winner = replayed["winner"]
+    checks["signatures"] = bool(signed) and all(s["valid"] for s in signed)
     return {
         "match_id": match_id,
         "valid": all(checks.values()),
         "checks": checks,
         "signatures": signed,
-        "winner_seat": winner,
+        "winner_seat": replayed["winner"],
+        "ranking": replayed["ranking"],
         "reason": replayed["reason"],
         "hands": len(replayed["hands"]),
         "hand_history": replayed["hands"],
@@ -1140,111 +1382,94 @@ async def verify(match_id: str) -> dict[str, Any]:
 
 
 async def _settle(session: AsyncSession, row: dict[str, Any], actor: str) -> None:
-    """Once per match: award or return the stakes, open the obligation."""
+    """Once per match: each loser pays winners from its held stake as DEMO_M
+    vouchers (with a delivery obligation each); every stake's remainder goes
+    back. Nothing is created: the nets add up to zero."""
     if await session.scalar(
         text("SELECT 1 FROM federation_arena_settlements WHERE match_id = :m"),
         {"m": row["match_id"]},
     ):
         return
     stake = int(row["stake"])
-    held = []
-    for seat in (0, 1):
-        await rights.lock(session, rights.stake(row["match_id"], seat))
-        held.append(await rights.balance(session, rights.stake(row["match_id"], seat)))
-    if held != [stake, stake]:
+    match_id = row["match_id"]
+    held, expected = [], []
+    for seat, s in enumerate(row["seats"]):
+        await rights.lock(session, rights.stake(match_id, seat))
+        held.append(await rights.balance(session, rights.stake(match_id, seat)))
+        expected.append(stake if s.get("authorized_by") else 0)
+    if held != expected:
         await _move(
             session,
             row,
             "RECONCILING",
             actor,
-            f"stakes held {held}, expected {stake} each: nothing moved",
+            f"stakes held {held}, expected {expected}: nothing moved",
         )
         return
-    winner = row["result"]["proof"]["winner_seat"]
-    paid = int(row["result"]["proof"].get("settles_tokens", stake))
-    if winner is None or paid == 0:
-        txn = await _return_stakes(
-            session, row, "DEMO_SETTLED", actor, "nothing changes hands: both stakes back"
+    net = row["result"]["proof"]["nets"]
+    fids = _fids(row)
+    vouchers = []
+    expires = _now() + timedelta(days=get_settings().federation_arena_voucher_days)
+    for loser, winner, amount in transfers(net):
+        loser_spec = await rights.spec_row(session, row["seats"][loser]["spec"])
+        voucher_id = await rights.issue(
+            session,
+            spec=loser_spec,
+            beneficiary=fids[winner],
+            amount=amount,
+            origin="arena",
+            origin_ref=f"{match_id}:{loser}",
+            usage_scope=(
+                f"Arena match {match_id}: delegate work to {fids[loser]} through the "
+                f"federation bridge on model class {row['model_class']} only, up to this "
+                "amount of simulated capacity"
+            ),
+            expires_at=expires,
+            source_account=rights.stake(match_id, loser),
+            idempotency_key=f"award:{match_id}:{loser}:{winner}",
         )
+        vouchers.append(
+            {"voucher_id": voucher_id, "from": fids[loser], "to": fids[winner], "amount": amount}
+        )
+        obligation_id = rights.new_id("fob")
         await session.execute(
             text(
-                "INSERT INTO federation_arena_settlements (match_id, kind, txn_id) VALUES "
-                "(:m, 'return', :t)"
+                "INSERT INTO federation_arena_obligations (obligation_id, match_id, "
+                "obligor_fid, obligee_fid, voucher_id, amount, state, due_at) VALUES (:o, :m, "
+                ":a, :b, :v, :k, 'PENDING', :d)"
             ),
-            {"m": row["match_id"], "t": txn},
+            {
+                "o": obligation_id,
+                "m": match_id,
+                "a": fids[loser],
+                "b": fids[winner],
+                "v": voucher_id,
+                "k": amount,
+                "d": expires,
+            },
         )
-        await _move(session, row, "CLOSED", actor)
-        return
-    loser = 1 - winner
-    fids = [row["seat0_fid"], row["seat1_fid"]]
-    loser_spec = await rights.spec_row(session, row[f"seat{loser}_spec"])
-    voucher_id = await rights.issue(
-        session,
-        spec=loser_spec,
-        beneficiary=fids[winner],
-        amount=paid,
-        origin="arena",
-        origin_ref=row["match_id"],
-        usage_scope=(
-            f"Arena match {row['match_id']}: delegate work to {fids[loser]} through the "
-            f"federation bridge on model class {row['model_class']} only, up to this amount "
-            "of simulated capacity"
-        ),
-        expires_at=_now() + timedelta(days=get_settings().federation_arena_voucher_days),
-        source_account=rights.stake(row["match_id"], loser),
-        idempotency_key=f"award:{row['match_id']}",
-    )
-    txn, _ = await rights.post(
-        session,
-        kind="stake_return",
-        entries=[
-            (rights.stake(row["match_id"], winner), -stake),
-            (rights.cap(row[f"seat{winner}_spec"]), stake),
-        ],
-        reference=row["match_id"],
-        idempotency_key=f"return:{row['match_id']}:{winner}",
-    )
-    if stake - paid:  # cash tables: the loser keeps what its stack did not lose
-        await rights.post(
-            session,
-            kind="stake_return",
-            entries=[
-                (rights.stake(row["match_id"], loser), -(stake - paid)),
-                (rights.cap(row[f"seat{loser}_spec"]), stake - paid),
-            ],
-            reference=row["match_id"],
-            idempotency_key=f"return:{row['match_id']}:{loser}",
-        )
+        await _ob_history(session, obligation_id, None, "PENDING", actor, f"match {match_id}")
+    txn = await _return_stakes(session, row, None, actor, "remainders back")
     await session.execute(
         text(
-            "INSERT INTO federation_arena_settlements (match_id, kind, txn_id, voucher_id) "
-            "VALUES (:m, 'award', :t, :v)"
-        ),
-        {"m": row["match_id"], "t": txn, "v": voucher_id},
-    )
-    await _move(session, row, "DEMO_SETTLED", actor, f"voucher {voucher_id} for {fids[winner]}")
-    obligation_id = rights.new_id("fob")
-    expires = await session.scalar(
-        text("SELECT expires_at FROM federation_rr_vouchers WHERE voucher_id = :v"),
-        {"v": voucher_id},
-    )
-    await session.execute(
-        text(
-            "INSERT INTO federation_arena_obligations (obligation_id, match_id, obligor_fid, "
-            "obligee_fid, voucher_id, amount, state, due_at) VALUES (:o, :m, :a, :b, :v, :k, "
-            "'PENDING', :d)"
+            "INSERT INTO federation_arena_settlements (match_id, kind, txn_id, vouchers) "
+            "VALUES (:m, :k, :t, CAST(:v AS jsonb))"
         ),
         {
-            "o": obligation_id,
-            "m": row["match_id"],
-            "a": fids[loser],
-            "b": fids[winner],
-            "v": voucher_id,
-            "k": paid,
-            "d": expires,
+            "m": match_id,
+            "k": "award" if vouchers else "return",
+            "t": txn,
+            "v": json.dumps(vouchers),
         },
     )
-    await _ob_history(session, obligation_id, None, "PENDING", actor, f"match {row['match_id']}")
+    await _move(
+        session,
+        row,
+        "DEMO_SETTLED",
+        actor,
+        "; ".join(f"voucher {v['voucher_id']} for {v['to']}" for v in vouchers)
+        or "nothing changes hands: every stake back",
+    )
     await _move(session, row, "CLOSED", actor)
 
 
@@ -1277,16 +1502,19 @@ async def settle_due(limit: int = 100) -> int:
 
 
 async def tick(limit: int = 100) -> int:
-    """Turn timeouts (check or fold, then forfeit) and setup deadlines."""
+    """Turn timeouts, setup deadlines, and seats taken at a cash table in play
+    but never authorized."""
     now = _now()
+    setup = timedelta(minutes=get_settings().federation_arena_setup_minutes)
     async with async_session_factory() as session:
         rows = (
             (
                 await session.execute(
                     text(
                         "SELECT match_id FROM federation_arena_matches WHERE (state = 'PLAYING' "
-                        "AND turn_deadline <= :n) OR (state IN ('MATCHED', 'OWNER_AUTHORIZED', "
-                        "'DEMO_RESERVED', 'COMMITTED') AND setup_deadline <= :n) LIMIT :l"
+                        "AND (turn_deadline <= :n OR seats::text LIKE '%\"joining\": true%')) "
+                        "OR (state IN ('MATCHED', 'OWNER_AUTHORIZED', 'DEMO_RESERVED', "
+                        "'COMMITTED') AND setup_deadline <= :n) LIMIT :l"
                     ),
                     {"n": now, "l": limit},
                 )
@@ -1298,28 +1526,37 @@ async def tick(limit: int = 100) -> int:
     for match_id in rows:
         async with async_session_factory() as session:
             row = await _match(session, match_id, lock=True)
-            if row["state"] == "PLAYING" and row["turn_deadline"] and row["turn_deadline"] <= now:
-                seat = row["game"]["hand"]["to_act"]
-                row["game"] = engine.apply(
-                    row["rules"], _seed(row), row["game"], seat, {"type": "timeout"}
-                )
-                await _log_action(session, row, seat, {"type": "timeout"}, "system:timeout")
-                if row["game"]["finished"]:
-                    await _finish(session, row, "system:timeout")
-                else:
-                    row["turn_deadline"] = _deadline(row)
-            elif row["state"] in SETUP_STATES and row["setup_deadline"] <= now:
-                missing = [
-                    i
-                    for i, s in enumerate(row["seats"])
-                    if not (
-                        s.get("seed")
-                        if row["state"] == "COMMITTED"
-                        else s.get("commit")
-                        if row["state"] == "DEMO_RESERVED"
-                        else s.get("authorized_by")
+            changed = False
+            if row["state"] == "PLAYING":
+                for i, s in enumerate(row["seats"]):
+                    if s.get("joining") and datetime.fromisoformat(s["joined_at"]) + setup <= now:
+                        s["joining"] = False
+                        s["abandoned"] = True
+                        await _history(
+                            session,
+                            match_id,
+                            "PLAYING",
+                            "PLAYING",
+                            "system:timeout",
+                            f"seat {i} not authorized in time: given up",
+                        )
+                        changed = True
+                if row["turn_deadline"] and row["turn_deadline"] <= now:
+                    seat = row["game"]["hand"]["to_act"]
+                    row["game"] = engine.apply(
+                        row["rules"], _seed(row), row["game"], seat, {"type": "timeout"}
                     )
-                ]
+                    await _log_action(session, row, seat, {"type": "timeout"}, "system:timeout")
+                    if row["game"]["finished"]:
+                        await _finish(session, row, "system:timeout")
+                    else:
+                        row["turn_deadline"] = _deadline(row)
+                    changed = True
+            elif row["state"] in SETUP_STATES and row["setup_deadline"] <= now:
+                key = {"COMMITTED": "seed", "DEMO_RESERVED": "commit"}.get(
+                    row["state"], "authorized_by"
+                )
+                missing = [i for i in _seated(row) if not row["seats"][i].get(key)]
                 await _return_stakes(
                     session,
                     row,
@@ -1327,7 +1564,8 @@ async def tick(limit: int = 100) -> int:
                     "system:timeout",
                     f"setup not finished in time ({row['state']}); waiting on seats {missing}",
                 )
-            else:
+                changed = True
+            if not changed:
                 continue
             await _save(session, row)
             await session.commit()
@@ -1827,8 +2065,9 @@ async def credit(fid: str) -> dict[str, Any]:
         matches = int(
             await session.scalar(
                 text(
-                    "SELECT count(*) FROM federation_arena_matches WHERE (seat0_fid = :f OR "
-                    "seat1_fid = :f) AND state = 'CLOSED'"
+                    "SELECT count(*) FROM federation_arena_players p JOIN "
+                    "federation_arena_matches m USING (match_id) WHERE p.fid = :f AND "
+                    "m.state = 'CLOSED'"
                 ),
                 {"f": fid},
             )
@@ -1838,8 +2077,8 @@ async def credit(fid: str) -> dict[str, Any]:
             await session.scalar(
                 text(
                     "SELECT count(*) FROM federation_arena_history h JOIN "
-                    "federation_arena_matches m ON m.match_id = h.match_id WHERE "
-                    "h.to_state = 'DISPUTED' AND (m.seat0_fid = :f OR m.seat1_fid = :f)"
+                    "federation_arena_players p ON p.match_id = h.match_id WHERE "
+                    "h.to_state = 'DISPUTED' AND p.fid = :f"
                 ),
                 {"f": fid},
             )
@@ -1865,17 +2104,20 @@ async def credit(fid: str) -> dict[str, Any]:
 
 
 async def integrity_flags(window_days: int = 7, threshold: int = 3) -> list[dict[str, Any]]:
-    """Operator view: pairs that keep playing each other, or one-sided runs.
+    """Operator view: pairs that keep sharing tables, or one-sided runs.
     Flags are for review only; nothing is restricted automatically (RR-11)."""
     async with async_session_factory() as session:
         rows = (
             (
                 await session.execute(
                     text(
-                        "SELECT LEAST(seat0_fid, seat1_fid) AS a, GREATEST(seat0_fid, seat1_fid) "
-                        "AS b, count(*) AS n, array_agg(result->'proof'->>'winner') AS winners "
-                        "FROM federation_arena_matches WHERE state = 'CLOSED' AND updated_at > "
-                        ":t GROUP BY 1, 2 HAVING count(*) >= :k"
+                        "SELECT a.fid AS a, b.fid AS b, count(*) AS n, "
+                        "array_agg(m.result->'proof'->>'winner') AS winners FROM "
+                        "federation_arena_players a JOIN federation_arena_players b ON "
+                        "a.match_id = b.match_id AND a.fid < b.fid JOIN "
+                        "federation_arena_matches m ON m.match_id = a.match_id WHERE "
+                        "m.state = 'CLOSED' AND m.updated_at > :t GROUP BY 1, 2 HAVING "
+                        "count(*) >= :k"
                     ),
                     {"t": _now() - timedelta(days=window_days), "k": threshold},
                 )
@@ -1904,16 +2146,17 @@ async def integrity_flags(window_days: int = 7, threshold: int = 3) -> list[dict
 
 # ── lobby, standings, my record ──────────────────────────────────────────
 
-# The tables the lobby offers (tokens of simulated capacity). Cash: the buy-in
-# (1000 chips); a chip is worth buy-in / 1000 tokens. Tournament (heads-up sit
-# and go): the buy-in; the winner takes both.
+# The tables the lobby offers (tokens of simulated capacity), heads-up and
+# 6-max. Cash: the buy-in (1000 chips); a chip is worth buy-in / 1000 tokens.
+# Tournament (sit and go): the buy-in; prizes are shares of all buy-ins.
 CASH_LEVELS = (100_000, 500_000, 1_000_000, 2_000_000, 5_000_000)
 SNG_LEVELS = (100_000, 1_000_000, 5_000_000)
 
 
 async def lobby(workspace_id: str) -> dict[str, Any]:
-    """What a player picks from: each table level per model class, how many
-    are waiting there, and where this workspace stands."""
+    """What a player picks from: each table level and size per model class,
+    how many are waiting, the cash tables with a free seat, and where this
+    workspace stands."""
     require_enabled()
     rules = _rules()
     rules_hash = engine.rules_hash(rules)
@@ -1923,11 +2166,26 @@ async def lobby(workspace_id: str) -> dict[str, Any]:
             (
                 await session.execute(
                     text(
-                        "SELECT mode, stake, model_class, count(*) AS n FROM "
+                        "SELECT mode, table_size, stake, model_class, count(*) AS n FROM "
                         "federation_arena_queue WHERE state = 'WAITING' AND rules_hash = :h "
-                        "AND fid <> :f GROUP BY 1, 2, 3"
+                        "AND fid <> :f GROUP BY 1, 2, 3, 4"
                     ),
                     {"h": rules_hash, "f": me},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        open_rows = (
+            (
+                await session.execute(
+                    text(
+                        "SELECT match_id, stake, model_class, state, seats FROM "
+                        "federation_arena_matches WHERE mode = 'cash' AND table_size = 6 AND "
+                        "rules_hash = :h AND state IN ('MATCHED', 'PLAYING') AND "
+                        "(game IS NULL OR NOT (game->>'finished')::boolean)"
+                    ),
+                    {"h": rules_hash},
                 )
             )
             .mappings()
@@ -1937,7 +2195,7 @@ async def lobby(workspace_id: str) -> dict[str, Any]:
             (
                 await session.execute(
                     text(
-                        "SELECT entry_id, mode, stake, model_class, created_at FROM "
+                        "SELECT entry_id, mode, table_size, stake, model_class, created_at FROM "
                         "federation_arena_queue WHERE fid = :f AND state = 'WAITING'"
                     ),
                     {"f": me},
@@ -1948,41 +2206,63 @@ async def lobby(workspace_id: str) -> dict[str, Any]:
         )
         restriction = await active_restriction(session, me)
         policy = await _policy(session, me)
-    counts: dict[tuple[str, int, str], int] = {
-        (r["mode"], int(r["stake"]), r["model_class"]): int(r["n"]) for r in waiting
+    counts = {
+        (r["mode"], int(r["table_size"]), int(r["stake"]), r["model_class"]): int(r["n"])
+        for r in waiting
     }
+    open_tables: dict[tuple[int, str], list[dict[str, Any]]] = {}
+    for r in open_rows:
+        seats = r["seats"] if not isinstance(r["seats"], str) else json.loads(r["seats"])
+        taken = [s for s in seats if not s.get("abandoned")]
+        open_tables.setdefault((int(r["stake"]), r["model_class"]), []).append(
+            {
+                "match_id": r["match_id"],
+                "players": len(taken),
+                "free": 6 - len(seats),
+                "in_play": r["state"] == "PLAYING",
+            }
+        )
     classes = rights.model_classes()
 
     def tables(mode: str, levels: tuple[int, ...]) -> list[dict[str, Any]]:
         out = []
-        for stake in levels:
-            item: dict[str, Any] = {
-                "mode": mode,
-                "stake": stake,
-                "stake_m": rights.as_m(stake),
-                "starting_chips": rules["starting_stack"],
-                "blinds": rules["blinds"][0],
-                "seats": 2,
-                "waiting": {c: counts.get((mode, stake, c), 0) for c in classes},
-            }
-            if mode == "cash":
-                item["tokens_per_chip"] = stake // rules["starting_stack"]
-            else:
-                item["prize"] = 2 * stake
-                item["prize_m"] = rights.as_m(2 * stake)
-                item["blind_levels"] = rules["blinds"]
-                item["hands_per_level"] = rules["hands_per_level"]
-            out.append(item)
+        for size in TABLE_SIZES:
+            for stake in levels:
+                item: dict[str, Any] = {
+                    "mode": mode,
+                    "seats": size,
+                    "stake": stake,
+                    "stake_m": rights.as_m(stake),
+                    "starting_chips": rules["starting_stack"],
+                    "blinds": rules["blinds"][0],
+                    "waiting": {c: counts.get((mode, size, stake, c), 0) for c in classes},
+                }
+                if mode == "cash":
+                    item["tokens_per_chip"] = stake // rules["starting_stack"]
+                    if size == 6:
+                        item["open_tables"] = {
+                            c: [t for t in open_tables.get((stake, c), []) if t["free"] > 0]
+                            for c in classes
+                        }
+                else:
+                    item["prize_pool"] = size * stake
+                    item["prize_pool_m"] = rights.as_m(size * stake)
+                    item["payouts_percent"] = list(PAYOUTS[size])
+                    item["blind_levels"] = rules["blinds"]
+                    item["hands_per_level"] = rules["hands_per_level"]
+                out.append(item)
         return out
 
     return {
         "model_classes": classes,
+        "table_sizes": list(TABLE_SIZES),
         "cash": tables("cash", CASH_LEVELS),
         "tournaments": tables("sng", SNG_LEVELS),
         "rules": rules,
         "queued": {
             "entry_id": mine["entry_id"],
             "mode": mine["mode"],
+            "seats": int(mine["table_size"]),
             "stake": int(mine["stake"]),
             "model_class": mine["model_class"],
             "since": mine["created_at"].isoformat(),
@@ -1999,13 +2279,13 @@ async def lobby(workspace_id: str) -> dict[str, Any]:
 
 async def _closed_results(session: AsyncSession, fid: str | None = None) -> list[dict]:
     query = (
-        "SELECT match_id, mode, model_class, stake, seat0_fid, seat1_fid, result, updated_at "
+        "SELECT match_id, mode, table_size, model_class, stake, seats, result, updated_at "
         "FROM federation_arena_matches WHERE state IN ('CLOSED', 'DEMO_SETTLED') AND "
         "result IS NOT NULL"
     )
     params: dict[str, Any] = {}
     if fid:
-        query += " AND (seat0_fid = :f OR seat1_fid = :f)"
+        query += " AND match_id IN (SELECT match_id FROM federation_arena_players WHERE fid = :f)"
         params["f"] = fid
     rows = (
         (await session.execute(text(query + " ORDER BY updated_at DESC LIMIT 2000"), params))
@@ -2015,26 +2295,32 @@ async def _closed_results(session: AsyncSession, fid: str | None = None) -> list
     out = []
     for r in rows:
         result = r["result"] if not isinstance(r["result"], str) else json.loads(r["result"])
-        proof = result["proof"]
-        out.append({**dict(r), "proof": proof})
+        seats = r["seats"] if not isinstance(r["seats"], str) else json.loads(r["seats"])
+        out.append({**dict(r), "seats": seats, "proof": result["proof"]})
     return out
 
 
+def _net_of(row: dict[str, Any], fid: str) -> int | None:
+    fids = row["proof"]["seats"]
+    if fid not in fids:
+        return None
+    return int(row["proof"]["nets"][fids.index(fid)])
+
+
 def _tally(rows: list[dict], fid: str) -> dict[str, Any]:
-    won = lost = drawn = net = 0
+    won = lost = even = net = 0
     for r in rows:
-        seat = 0 if r["seat0_fid"] == fid else 1
-        winner = r["proof"]["winner_seat"]
-        paid = int(r["proof"].get("settles_tokens", 0))
-        if winner is None or paid == 0:
-            drawn += 1
-        elif winner == seat:
+        n = _net_of(r, fid)
+        if n is None:
+            continue
+        net += n
+        if n > 0:
             won += 1
-            net += paid
-        else:
+        elif n < 0:
             lost += 1
-            net -= paid
-    return {"played": won + lost + drawn, "won": won, "lost": lost, "even": drawn, "net": net}
+        else:
+            even += 1
+    return {"played": won + lost + even, "won": won, "lost": lost, "even": even, "net": net}
 
 
 async def my_record(workspace_id: str) -> dict[str, Any]:
@@ -2045,19 +2331,24 @@ async def my_record(workspace_id: str) -> dict[str, Any]:
         rows = await _closed_results(session, me)
     recent = []
     for r in rows[:20]:
-        seat = 0 if r["seat0_fid"] == me else 1
-        winner = r["proof"]["winner_seat"]
-        paid = int(r["proof"].get("settles_tokens", 0))
+        fids = r["proof"]["seats"]
+        seat = fids.index(me)
+        ranking = r["proof"].get("ranking") or []
+        others = [f for f in fids if f != me]
         recent.append(
             {
                 "match_id": r["match_id"],
                 "mode": r["mode"],
+                "table_size": int(r["table_size"]),
                 "model_class": r["model_class"],
                 "stake": int(r["stake"]),
-                "opponent": r["seat1_fid"] if seat == 0 else r["seat0_fid"],
+                "opponent": others[0] if others else None,
+                "opponents": others,
+                "place": ranking.index(seat) + 1 if seat in ranking else None,
+                "players": len(fids),
                 "reason": r["proof"]["reason"],
                 "hands": r["proof"]["hands_played"],
-                "net": 0 if winner is None else (paid if winner == seat else -paid),
+                "net": _net_of(r, me),
                 "at": r["updated_at"].isoformat(),
             }
         )
@@ -2071,18 +2362,19 @@ async def my_record(workspace_id: str) -> dict[str, Any]:
 
 
 async def leaderboard(limit: int = 20) -> dict[str, Any]:
-    """Standings over finished matches: wins and net DEMO_M per workspace.
+    """Standings over finished matches: net DEMO_M and wins per workspace.
     Shows a workspace's public handle when it has one."""
     require_enabled()
     from app.services.federation import identity
 
     async with async_session_factory() as session:
         rows = await _closed_results(session)
-        fids = {r["seat0_fid"] for r in rows} | {r["seat1_fid"] for r in rows}
+        fids = {f for r in rows for f in r["proof"]["seats"]}
         board = []
         for fid in fids:
-            tally = _tally([r for r in rows if fid in (r["seat0_fid"], r["seat1_fid"])], fid)
-            board.append({"fid": fid, "handle": await identity._alias(session, fid), **tally})
+            board.append(
+                {"fid": fid, "handle": await identity._alias(session, fid), **_tally(rows, fid)}
+            )
     board.sort(key=lambda b: (-b["net"], -b["won"], b["fid"]))
     return {
         "items": board[: max(1, min(limit, 100))],

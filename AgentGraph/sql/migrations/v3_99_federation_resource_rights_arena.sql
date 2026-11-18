@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS federation_rr_entries (
     id BIGSERIAL PRIMARY KEY,
     txn_id VARCHAR(40) NOT NULL REFERENCES federation_rr_txns(txn_id),
     account TEXT NOT NULL CHECK (account ~ ('^(demo_mint|cap:frs_[a-z2-7]{26}|used:frs_[a-z2-7]{26}'
-        '|voucher:frv_[a-z2-7]{26}|resv:frr_[a-z2-7]{26}|stake:fam_[a-z2-7]{26}:[01])$')),
+        '|voucher:frv_[a-z2-7]{26}|resv:frr_[a-z2-7]{26}|stake:fam_[a-z2-7]{26}:[0-5])$')),
     unit VARCHAR(8) NOT NULL DEFAULT 'DEMO_M' CHECK (unit = 'DEMO_M'),
     amount BIGINT NOT NULL CHECK (amount <> 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -182,6 +182,7 @@ CREATE TABLE IF NOT EXISTS federation_arena_queue (
     model_class VARCHAR(64) NOT NULL,
     -- sng: winner takes the stake; cash: chips are tokens, settled by final stacks.
     mode VARCHAR(8) NOT NULL DEFAULT 'sng' CHECK (mode IN ('sng', 'cash')),
+    table_size SMALLINT NOT NULL DEFAULT 2 CHECK (table_size IN (2, 6)),
     stake BIGINT NOT NULL CHECK (stake > 0),
     rules_hash VARCHAR(64) NOT NULL,
     state VARCHAR(8) NOT NULL DEFAULT 'WAITING' CHECK (state IN ('WAITING', 'MATCHED', 'LEFT')),
@@ -195,10 +196,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_federation_arena_queue_waiting
 
 CREATE TABLE IF NOT EXISTS federation_arena_matches (
     match_id VARCHAR(40) PRIMARY KEY CHECK (match_id ~ '^fam_[a-z2-7]{26}$'),
-    seat0_fid VARCHAR(64) NOT NULL REFERENCES federation_identities(federation_id),
-    seat1_fid VARCHAR(64) NOT NULL REFERENCES federation_identities(federation_id),
-    seat0_spec VARCHAR(40) NOT NULL REFERENCES federation_rr_specs(spec_id),
-    seat1_spec VARCHAR(40) NOT NULL REFERENCES federation_rr_specs(spec_id),
+    -- 2 (heads-up) or 6 seats; who sits where is in seats and in
+    -- federation_arena_players.
+    table_size SMALLINT NOT NULL CHECK (table_size IN (2, 6)),
     model_class VARCHAR(64) NOT NULL,
     mode VARCHAR(8) NOT NULL DEFAULT 'sng' CHECK (mode IN ('sng', 'cash')),
     stake BIGINT NOT NULL CHECK (stake > 0),
@@ -211,7 +211,7 @@ CREATE TABLE IF NOT EXISTS federation_arena_matches (
         'RESULT_VERIFIED', 'DEMO_SETTLED', 'CLOSED',
         'ABORTED', 'TIMED_OUT', 'DISPUTED', 'RECONCILING')),
     version INTEGER NOT NULL DEFAULT 1,
-    seats JSONB NOT NULL DEFAULT '[{}, {}]'::jsonb,
+    seats JSONB NOT NULL DEFAULT '[]'::jsonb,
     -- Sealed by the host until the result: never shown before RESULT_VERIFIED.
     server_seed VARCHAR(64) NOT NULL,
     server_commit VARCHAR(64) NOT NULL,
@@ -222,19 +222,32 @@ CREATE TABLE IF NOT EXISTS federation_arena_matches (
     result JSONB,
     result_proof_hash VARCHAR(64),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CHECK (seat0_fid <> seat1_fid)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_federation_arena_matches_state
     ON federation_arena_matches (state, updated_at);
-CREATE INDEX IF NOT EXISTS idx_federation_arena_matches_seats
-    ON federation_arena_matches (seat0_fid, seat1_fid);
+CREATE INDEX IF NOT EXISTS idx_federation_arena_matches_open
+    ON federation_arena_matches (mode, table_size, stake, model_class, state);
+
+-- Who sits at which seat: one row per seat, one seat per workspace.
+CREATE TABLE IF NOT EXISTS federation_arena_players (
+    match_id VARCHAR(40) NOT NULL REFERENCES federation_arena_matches(match_id),
+    seat SMALLINT NOT NULL CHECK (seat BETWEEN 0 AND 5),
+    fid VARCHAR(64) NOT NULL REFERENCES federation_identities(federation_id),
+    spec_id VARCHAR(40) NOT NULL REFERENCES federation_rr_specs(spec_id),
+    joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    authorized_at TIMESTAMPTZ,
+    PRIMARY KEY (match_id, seat),
+    UNIQUE (match_id, fid)
+);
+CREATE INDEX IF NOT EXISTS idx_federation_arena_players_fid
+    ON federation_arena_players (fid, authorized_at);
 
 -- The complete action log: what replay and verification read.
 CREATE TABLE IF NOT EXISTS federation_arena_actions (
     match_id VARCHAR(40) NOT NULL REFERENCES federation_arena_matches(match_id),
     seq INTEGER NOT NULL CHECK (seq >= 0),
-    seat SMALLINT NOT NULL CHECK (seat IN (0, 1)),
+    seat SMALLINT NOT NULL CHECK (seat BETWEEN 0 AND 5),
     action JSONB NOT NULL,
     actor TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -256,8 +269,9 @@ CREATE INDEX IF NOT EXISTS idx_federation_arena_history ON federation_arena_hist
 CREATE TABLE IF NOT EXISTS federation_arena_settlements (
     match_id VARCHAR(40) PRIMARY KEY REFERENCES federation_arena_matches(match_id),
     kind VARCHAR(8) NOT NULL CHECK (kind IN ('award', 'return')),
-    txn_id VARCHAR(40) NOT NULL REFERENCES federation_rr_txns(txn_id),
-    voucher_id VARCHAR(40) REFERENCES federation_rr_vouchers(voucher_id),
+    txn_id VARCHAR(40) REFERENCES federation_rr_txns(txn_id),
+    -- one voucher per (loser, winner) pair: [{voucher_id, from, to, amount}]
+    vouchers JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -276,7 +290,7 @@ CREATE TABLE IF NOT EXISTS federation_arena_policies (
 
 CREATE TABLE IF NOT EXISTS federation_arena_obligations (
     obligation_id VARCHAR(40) PRIMARY KEY CHECK (obligation_id ~ '^fob_[a-z2-7]{26}$'),
-    match_id VARCHAR(40) NOT NULL UNIQUE REFERENCES federation_arena_matches(match_id),
+    match_id VARCHAR(40) NOT NULL REFERENCES federation_arena_matches(match_id),
     obligor_fid VARCHAR(64) NOT NULL REFERENCES federation_identities(federation_id),
     obligee_fid VARCHAR(64) NOT NULL REFERENCES federation_identities(federation_id),
     voucher_id VARCHAR(40) NOT NULL REFERENCES federation_rr_vouchers(voucher_id),
@@ -293,6 +307,9 @@ CREATE TABLE IF NOT EXISTS federation_arena_obligations (
 );
 CREATE INDEX IF NOT EXISTS idx_federation_arena_obligations_obligor
     ON federation_arena_obligations (obligor_fid, state);
+-- One obligation per loser and winner of a match.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_federation_arena_obligations_pair
+    ON federation_arena_obligations (match_id, obligor_fid, obligee_fid);
 
 CREATE TABLE IF NOT EXISTS federation_arena_obligation_history (
     id BIGSERIAL PRIMARY KEY,
@@ -338,3 +355,4 @@ REVOKE ALL ON federation_arena_obligations FROM agentgraph_app;
 REVOKE ALL ON federation_arena_obligation_history FROM agentgraph_app;
 REVOKE ALL ON federation_arena_restrictions FROM agentgraph_app;
 REVOKE ALL ON federation_arena_policies FROM agentgraph_app;
+REVOKE ALL ON federation_arena_players FROM agentgraph_app;

@@ -102,6 +102,9 @@ class QueueJoin(_Body):
         description="sng: winner takes the stake. cash: chips are tokens, settled by final "
         "stacks; stand up between hands with /leave.",
     )
+    seats: Literal[2, 6] = Field(
+        default=2, description="Heads-up (2) or 6-max. A 6-max cash table can be joined in play."
+    )
     unit: str | None = None
 
 

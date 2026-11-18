@@ -1360,7 +1360,147 @@ async def test_lobby_record_and_leaderboard(client, admin_headers, arena_on):
     seen = await arena.lobby(looker["id"])
     cash = next(t for t in seen["cash"] if t["stake"] == arena.CASH_LEVELS[0])
     assert cash["waiting"]["mock-small"] >= 1 and cash["tokens_per_chip"] == 100
-    assert all("prize" in t for t in seen["tournaments"])
+    assert all("prize_pool" in t for t in seen["tournaments"])
     mine = await arena.lobby(waiter["id"])
     assert mine["queued"]["mode"] == "cash" and mine["economic_value"] == "none"
     await arena.leave_queue(waiter["id"], actor=waiter["person"])
+
+
+# ── 6-max tables ──────────────────────────────────────────────────────────
+
+
+async def _ready_all(players, match_id, contract_hash):
+    for ws in players:
+        await arena.authorize(ws["id"], match_id, contract_hash=contract_hash, actor=ws["owner"])
+    seeds = {ws["fid"]: secrets.token_hex(32) for ws in players}
+    for ws in players:
+        await arena.commit_seed(
+            ws["id"],
+            match_id,
+            commitment=engine.seed_commitment(seeds[ws["fid"]]),
+            actor=ws["owner"],
+        )
+    for ws in players:
+        await arena.reveal_seed(ws["id"], match_id, seed=seeds[ws["fid"]], actor=ws["owner"])
+
+
+async def _check_down(players, match_id, until):
+    """Check or call whoever is to act until ``until(view)`` is true."""
+    by_fid = {ws["fid"]: ws for ws in players}
+    for _ in range(300):
+        view = await arena.get_match(players[0]["id"], match_id)
+        if until(view) or view["state"] != "PLAYING":
+            return view
+        seat = view["game"]["hand"]["to_act"]
+        ws = by_fid[view["seats"][seat]["fid"]]
+        mine = await arena.get_match(ws["id"], match_id)
+        legal = {x["type"] for x in mine["game"]["hand"]["legal"]}
+        move = "check" if "check" in legal else "call"
+        await arena.act(
+            ws["id"], match_id, seq=mine["action_seq"], action={"type": move}, actor=ws["owner"]
+        )
+    raise AssertionError("did not get there")
+
+
+async def test_a_six_player_tournament_pays_by_place(client, admin_headers, arena_on):
+    players = [await _ws(client, admin_headers, f"t6{i}") for i in range(6)]
+    specs = [await _mock_spec(ws) for ws in players]
+    stake = 777_000
+    for i, (ws, spec) in enumerate(zip(players, specs, strict=True)):
+        joined = await arena.join_queue(
+            ws["id"], spec_id=spec["spec_id"], stake=stake, seats=6, actor=ws["person"]
+        )
+        assert joined["state"] == ("MATCHED" if i == 5 else "WAITING")  # starts when full
+    match = joined["match"]
+    mid = match["match_id"]
+    assert match["table_size"] == 6 and len(match["seats"]) == 6
+    assert match["payouts_percent"] == [65, 35]
+    order = [next(ws for ws in players if ws["fid"] == s["fid"]) for s in match["seats"]]
+    await _ready_all(order, mid, match["contract_hash"])
+    view = await arena.get_match(order[0]["id"], mid)
+    assert view["state"] == "PLAYING" and len(view["game"]["hand"]["players"]) == 6
+    # Seats 2..5 concede; 0 and 1 play the hand out; then seat 1 concedes.
+    for seat in (2, 3, 4, 5):
+        await arena.leave(order[seat]["id"], mid, actor=order[seat]["owner"])
+    view = await _check_down(order, mid, lambda v: v["game"]["hand_no"] >= 2)
+    assert view["game"]["status"][2:] == ["out"] * 4
+    assert view["game"]["hand"]["players"] == [0, 1]
+    await arena.leave(order[1]["id"], mid, actor=order[1]["owner"])
+    final = await arena.get_match(order[0]["id"], mid)
+    proof = final["result"]["proof"]
+    assert proof["ranking"][:2] == [0, 1] and proof["winner_seat"] == 0
+    pool = 6 * stake
+    first, second = pool * 65 // 100, pool * 35 // 100
+    first += pool - first - second
+    assert proof["nets"][0] == first - stake and proof["nets"][1] == second - stake
+    assert proof["nets"][2:] == [-stake] * 4 and sum(proof["nets"]) == 0
+    check = await arena.verify(mid)
+    assert check["valid"], check["checks"]
+    assert len(check["signatures"]) == 6
+    await arena.settle_due()
+    closed = await arena.get_match(order[0]["id"], mid)
+    assert closed["state"] == "CLOSED"
+    # Four losers pay the two winners: vouchers and obligations per pair.
+    got = [v for v in (await rights.list_vouchers(order[0]["id"]))["held"]]
+    got += [v for v in (await rights.list_vouchers(order[1]["id"]))["held"]]
+    assert sum(v["face_amount"] for v in got) == 4 * stake
+    owed = 0
+    for seat in range(2, 6):
+        owed += len((await arena.list_obligations(order[seat]["id"]))["owed_by_me"])
+    assert owed == len(got)
+    for s in range(2, 6):
+        assert await _unreserved(specs[players.index(order[s])]["spec_id"]) == 10 * M - stake
+    assert (await rights.is_balanced())["ok"]
+    rec = await arena.my_record(order[0]["id"])
+    assert rec["recent"][0]["place"] == 1 and rec["recent"][0]["players"] == 6
+
+
+async def test_a_six_max_cash_table_takes_players_in_play(client, admin_headers, arena_on):
+    a, b, c = [await _ws(client, admin_headers, f"c6{x}") for x in "abc"]
+    sa, sb, sc = [await _mock_spec(ws) for ws in (a, b, c)]
+    stake = 5 * M  # a lobby level no other test uses for 6-max cash
+    await arena.join_queue(
+        a["id"], spec_id=sa["spec_id"], stake=stake, mode="cash", seats=6, actor=a["person"]
+    )
+    joined = await arena.join_queue(
+        b["id"], spec_id=sb["spec_id"], stake=stake, mode="cash", seats=6, actor=b["person"]
+    )
+    match = joined["match"]
+    mid = match["match_id"]
+    assert len(match["seats"]) == 2  # a cash table starts with two
+    await _ready_all([a, b], mid, match["contract_hash"])
+    lobby = await arena.lobby(c["id"])
+    six = next(t for t in lobby["cash"] if t["seats"] == 6 and t["stake"] == stake)
+    assert six["open_tables"]["mock-small"][0]["free"] == 4
+    # c takes a free seat at the table in play and is dealt in next hand.
+    taken = await arena.join_queue(
+        c["id"], spec_id=sc["spec_id"], stake=stake, mode="cash", seats=6, actor=c["person"]
+    )
+    assert taken["state"] == "MATCHED" and taken["match"]["match_id"] == mid
+    assert (
+        await _code(
+            arena.join_queue(
+                c["id"], spec_id=sc["spec_id"], stake=stake, mode="cash", seats=6, actor=c["person"]
+            )
+        )
+        == "FED_E_MATCH_STATE"
+    )
+    await arena.authorize(c["id"], mid, contract_hash=match["contract_hash"], actor=c["owner"])
+    assert await _unreserved(sc["spec_id"]) == 10 * M - stake
+    view = await _check_down([a, b, c], mid, lambda v: v["game"]["hand_no"] >= 2)
+    assert view["game"]["hand"]["players"] == [0, 1, 2]
+    # Everyone stands up: the table ends and settles by chips.
+    for ws in (a, b, c):
+        await arena.leave(ws["id"], mid, actor=ws["owner"])
+    final = await _check_down([a, b, c], mid, lambda v: v["state"] != "PLAYING")
+    proof = final["result"]["proof"]
+    assert proof["reason"] == "stood_up" and sum(proof["nets"]) == 0
+    assert sum(proof["final_stacks"]) == 3000
+    assert (await arena.verify(mid))["valid"]
+    await arena.settle_due()
+    totals = [await _unreserved(s["spec_id"]) for s in (sa, sb, sc)]
+    held = 0
+    for ws in (a, b, c):
+        held += sum(v["face_amount"] for v in (await rights.list_vouchers(ws["id"]))["held"])
+    assert sum(totals) + held == 30 * M  # nothing made, nothing lost
+    assert (await rights.is_balanced())["ok"]
