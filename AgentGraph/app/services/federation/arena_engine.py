@@ -191,6 +191,9 @@ def new_match(
         "stacks": [start] * players + [0] * (size - players),
         "status": ["active"] * players + ["empty"] * (size - players),
         "buy_ins": [start] * players + [0] * (size - players),
+        # cash: chips taken off the table by players who left (or busted)
+        # before their seat was taken again
+        "cashed_out": 0,
         "pending": [None] * size,  # cash: chips of a player sitting down next hand
         "standing": [],  # cash: seats leaving after this hand
         "forfeits": [],  # sng: seats out after this hand (conceded or timed out)
@@ -210,7 +213,11 @@ def new_match(
     return state
 
 
-def _blinds(rules: dict[str, Any], hand_no: int) -> tuple[int, int]:
+def _blinds(rules: dict[str, Any], hand_no: int, mode: str = "sng") -> tuple[int, int]:
+    """Tournaments raise the blinds by level; cash tables keep the first level."""
+    if mode == "cash":
+        sb, bb = rules["blinds"][0]
+        return int(sb), int(bb)
     level = min((hand_no - 1) // rules["hands_per_level"], len(rules["blinds"]) - 1)
     sb, bb = rules["blinds"][level]
     return int(sb), int(bb)
@@ -247,7 +254,7 @@ def _start_hand(rules: dict[str, Any], seed: str, state: dict[str, Any]) -> None
     for k, seat in enumerate(players):
         hole[seat] = deck[2 * k : 2 * k + 2]
     base = 2 * len(players)
-    small, big = _blinds(rules, no)
+    small, big = _blinds(rules, no, state["mode"])
     stacks = state["stacks"]
     committed = [0] * size
     for seat, blind in ((sb, small), (bb, big)):
@@ -610,7 +617,8 @@ def _next(rules: dict[str, Any], seed: str, state: dict[str, Any]) -> None:
     if state["mode"] == "cash" and len(active) + len(waiting) < 2:
         _finish(state, reason="stood_up" if stood or "left" in state["status"] else "bust")
         return
-    if state["hand_no"] >= rules["max_hands"]:
+    # The hand limit ends tournaments only; a cash table runs while two sit.
+    if state["mode"] == "sng" and state["hand_no"] >= rules["max_hands"]:
         top = max(stacks[s] for s in active)
         leaders = [s for s in active if stacks[s] == top]
         _finish(state, reason="hand_limit" if len(leaders) == 1 else "hand_limit_draw")
@@ -641,16 +649,21 @@ def _finish(state: dict[str, Any], *, reason: str) -> None:
 
 
 def sit(state: dict[str, Any], seat: int, chips: int) -> dict[str, Any]:
-    """Cash tables: a player takes an empty seat; dealt in from the next hand."""
+    """Cash tables: a player takes a free seat (empty, or left by someone who
+    stood up or busted); dealt in from the next hand. Chips a previous
+    occupant left on the seat leave the table with that player."""
     if state["mode"] != "cash" or state["finished"]:
         raise IllegalAction("seats are taken only at an open cash table")
     if (
         not 0 <= seat < state["size"]
-        or state["status"][seat] != "empty"
+        or state["status"][seat] not in ("empty", "left", "out")
         or (state["pending"][seat] is not None)
     ):
         raise IllegalAction("that seat is not free")
     state = copy.deepcopy(state)
+    state["cashed_out"] = state.get("cashed_out", 0) + state["stacks"][seat]
+    state["stacks"][seat] = 0
+    state["status"][seat] = "empty"
     state["pending"][seat] = int(chips)
     return state
 
@@ -729,6 +742,7 @@ def seat_view(state: dict[str, Any], seat: int | None) -> dict[str, Any]:
         "status": state["status"],
         "buy_ins": state["buy_ins"],
         "pending": state["pending"],
+        "cashed_out": state.get("cashed_out", 0),
         "finished": state["finished"],
         "winner": state["winner"],
         "ranking": state["ranking"],

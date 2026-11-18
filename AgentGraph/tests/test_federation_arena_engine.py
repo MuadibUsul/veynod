@@ -244,7 +244,7 @@ def test_the_seat_view_hides_the_other_cards_and_the_runout():
 def _total_chips(state) -> int:
     pot = sum(state["hand"]["contrib"]) if state["hand"] else 0
     pending = sum(c for c in state["pending"] if c is not None)
-    return sum(state["stacks"]) + pot + pending
+    return sum(state["stacks"]) + pot + pending + state.get("cashed_out", 0)
 
 
 def _play_multi(seed, rng, players, mode, size=None, limit=20000):
@@ -390,3 +390,29 @@ def test_tournament_places_follow_eliminations():
         state = e.apply(RULES, SEED, state, seat, {"type": "check" if "check" in legal else "call"})
     assert state["winner"] == 1 and state["ranking"][0] == 1
     assert state["ranking"][-1] == 2 and state["stacks"][1] == 4000
+
+
+def test_cash_blinds_stay_and_there_is_no_hand_limit():
+    state = e.new_match(RULES, SEED, players=2, seats=6, mode="cash")
+    for _ in range(20000):
+        if state["finished"] or state["hand_no"] > RULES["max_hands"] + 5:
+            break
+        seat = state["hand"]["to_act"]
+        legal = {a["type"] for a in e.legal_actions(state)}
+        state = e.apply(RULES, SEED, state, seat, {"type": "check" if "check" in legal else "call"})
+    assert not state["finished"] and state["hand_no"] > RULES["max_hands"]
+    assert state["hand"]["blinds"] == RULES["blinds"][0]
+
+
+def test_a_left_chair_takes_a_new_player_and_chips_stay_counted():
+    state = e.new_match(RULES, SEED, players=3, seats=6, mode="cash")
+    state = e.stand_up(state, 2)
+    while state["hand"]["no"] == 1:
+        seat = state["hand"]["to_act"]
+        legal = {a["type"] for a in e.legal_actions(state)}
+        state = e.apply(RULES, SEED, state, seat, {"type": "check" if "check" in legal else "call"})
+    assert state["status"][2] == "left"
+    left_with = state["stacks"][2]
+    state = e.sit(state, 2, 1000)
+    assert state["cashed_out"] == left_with and state["pending"][2] == 1000
+    assert _total_chips(state) == sum(state["buy_ins"]) + 1000

@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS federation_rr_entries (
     id BIGSERIAL PRIMARY KEY,
     txn_id VARCHAR(40) NOT NULL REFERENCES federation_rr_txns(txn_id),
     account TEXT NOT NULL CHECK (account ~ ('^(demo_mint|cap:frs_[a-z2-7]{26}|used:frs_[a-z2-7]{26}'
-        '|voucher:frv_[a-z2-7]{26}|resv:frr_[a-z2-7]{26}|stake:fam_[a-z2-7]{26}:[0-5])$')),
+        '|voucher:frv_[a-z2-7]{26}|resv:frr_[a-z2-7]{26}|stake:fam_[a-z2-7]{26}:[0-9]{1,2})$')),
     unit VARCHAR(8) NOT NULL DEFAULT 'DEMO_M' CHECK (unit = 'DEMO_M'),
     amount BIGINT NOT NULL CHECK (amount <> 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -229,16 +229,17 @@ CREATE INDEX IF NOT EXISTS idx_federation_arena_matches_state
 CREATE INDEX IF NOT EXISTS idx_federation_arena_matches_open
     ON federation_arena_matches (mode, table_size, stake, model_class, state);
 
--- Who sits at which seat: one row per seat, one seat per workspace.
+-- One row per sitting: seat is the sitting's index, chair where it sat. A
+-- cash table reuses chairs, and a workspace may sit again after leaving.
 CREATE TABLE IF NOT EXISTS federation_arena_players (
     match_id VARCHAR(40) NOT NULL REFERENCES federation_arena_matches(match_id),
-    seat SMALLINT NOT NULL CHECK (seat BETWEEN 0 AND 5),
+    seat SMALLINT NOT NULL CHECK (seat BETWEEN 0 AND 99),
+    chair SMALLINT NOT NULL CHECK (chair BETWEEN 0 AND 5),
     fid VARCHAR(64) NOT NULL REFERENCES federation_identities(federation_id),
     spec_id VARCHAR(40) NOT NULL REFERENCES federation_rr_specs(spec_id),
     joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     authorized_at TIMESTAMPTZ,
-    PRIMARY KEY (match_id, seat),
-    UNIQUE (match_id, fid)
+    PRIMARY KEY (match_id, seat)
 );
 CREATE INDEX IF NOT EXISTS idx_federation_arena_players_fid
     ON federation_arena_players (fid, authorized_at);
@@ -307,9 +308,9 @@ CREATE TABLE IF NOT EXISTS federation_arena_obligations (
 );
 CREATE INDEX IF NOT EXISTS idx_federation_arena_obligations_obligor
     ON federation_arena_obligations (obligor_fid, state);
--- One obligation per loser and winner of a match.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_federation_arena_obligations_pair
-    ON federation_arena_obligations (match_id, obligor_fid, obligee_fid);
+-- One obligation per voucher (a pair may settle more than once at a cash table).
+CREATE UNIQUE INDEX IF NOT EXISTS uq_federation_arena_obligations_voucher
+    ON federation_arena_obligations (voucher_id);
 
 CREATE TABLE IF NOT EXISTS federation_arena_obligation_history (
     id BIGSERIAL PRIMARY KEY,
