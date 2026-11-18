@@ -4753,7 +4753,7 @@
         "200",
         "422"
        ],
-       "summary": "Abort before play, concede in play"
+       "summary": "Abort before play; in play concede (sng) or stand up after this hand (cash)"
       },
       {
        "body": [
@@ -4888,6 +4888,48 @@
        "summary": "Answer the facts (obligor)"
       },
       {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/arena/policy",
+       "responses": [
+        "200"
+       ],
+       "summary": "How far this workspace's agents may play on their own"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "agents_may_play",
+         "required": true,
+         "type": "boolean"
+        },
+        {
+         "description": "",
+         "name": "max_stake",
+         "required": false,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "name": "matches_per_day",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "description": "",
+       "method": "PUT",
+       "parameters": [],
+       "path": "/v1/federation/arena/policy",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Let agents queue, authorize and play within limits (owner)"
+      },
+      {
        "body": [
         {
          "description": "",
@@ -4900,6 +4942,12 @@
          "name": "stake",
          "required": true,
          "type": "integer"
+        },
+        {
+         "description": "sng: winner takes the stake. cash: chips are tokens, settled by final stacks; stand up between hands with /leave.",
+         "name": "mode",
+         "required": false,
+         "type": "string"
         },
         {
          "description": "",
