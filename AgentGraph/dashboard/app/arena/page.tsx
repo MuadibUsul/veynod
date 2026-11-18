@@ -144,9 +144,10 @@ const CSS = `
 .va-brand { display:flex; align-items:center; gap:10px; white-space:nowrap; text-decoration:none; font-weight:800; letter-spacing:.3px; font-size:18px; }
 .va-brand small { white-space:nowrap; font-weight:600; color:var(--accent); font-size:11px; border:1px solid var(--accent);
   border-radius:4px; padding:1px 5px; margin-left:4px; }
-.va-nav { display:flex; gap:4px; flex:1; flex-wrap:wrap; }
+.va-nav { display:flex; gap:2px; flex:1; flex-wrap:nowrap; overflow-x:auto; scrollbar-width:none; min-width:0; }
+.va-nav::-webkit-scrollbar { display:none; }
 .va-nav button { background:none; border:0; color:var(--dim); font-weight:600; font-size:15px;
-  padding:8px 12px; border-radius:8px; cursor:pointer; }
+  padding:8px 10px; border-radius:8px; cursor:pointer; white-space:nowrap; }
 .va-nav button.on { color:var(--ink); background:var(--panel2); }
 .va-pill { display:flex; align-items:center; gap:8px; background:var(--panel2); border:1px solid var(--line);
   border-radius:999px; padding:6px 12px; font-weight:700; white-space:nowrap; }
@@ -203,7 +204,8 @@ const CSS = `
 .va-pot { background:#0006; border-radius:999px; padding:6px 14px; font-weight:800; display:flex; gap:8px; align-items:center; }
 .va-seat { position:absolute; transform:translate(-50%, -50%); display:flex; flex-direction:column; align-items:center; gap:6px; z-index:2; }
 .va-felt.six { margin:70px 90px 80px; }
-@media (max-width: 760px) { .va-felt.six { margin:60px 8px 70px; } .va-felt.six .va-avatar { min-width:0; padding-right:8px; }
+@media (max-width: 760px) { .va-felt.six { margin:60px 8px 70px; } .va-seat.empty { display:none; }
+  .va-declare { padding:6px 10px; font-size:13px; } .va-felt.six .va-avatar { min-width:0; padding-right:8px; }
   .va-felt.six .va-avatar .who { max-width:70px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .va-felt.six .va-card-face { width:30px; height:44px; font-size:14px; } .va-felt.six .va-card-face.big { width:40px; height:58px; font-size:18px; } }
 .va-avatar { display:flex; align-items:center; gap:10px; background:#0d1424; border:2px solid var(--line);
@@ -507,7 +509,7 @@ export default function ArenaPage() {
           <i className="va-chip" />{asM(spec.unreserved_tokens ?? 0)} DEMO_M
         </span>
       )}
-      <button type="button" className="va-btn accent" onClick={() => setDeclaring(true)}>
+      <button type="button" className="va-btn accent va-declare" onClick={() => setDeclaring(true)}>
         {t("Declare capacity")}</button>
       <LanguageToggle />
       <a className="va-dim va-hide-sm" href="/dashboard/">{t("Console")}</a>
@@ -1403,7 +1405,8 @@ function TableView({ m, t, busy, now, replay, raiseTo, setRaiseTo, onBack, onCal
       </div>
     );
     return (
-      <div key={s} className="va-seat" style={{ left: `${slot.left}%`, top: `${slot.top}%` }}>
+      <div key={s} className={`va-seat${taken ? "" : " empty"}`}
+        style={{ left: `clamp(70px, ${slot.left}%, calc(100% - 70px))`, top: `${slot.top}%` }}>
         {top ? <>{avatar}<div className="va-cards">{cards}</div>
           {bet > 0 && <div className="va-bet"><i className="va-chip" />{bet}</div>}</>
           : <>{bet > 0 && <div className="va-bet"><i className="va-chip" />{bet}</div>}
