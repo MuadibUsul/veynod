@@ -294,3 +294,33 @@ test("a hub whose runner file is gone refuses with that reason and asks to be re
   assert.equal(spawned.length, 0);
   assert.equal(missing, "/gone/runner.mjs");
 });
+
+test("a worker killed before its own cleanup has its scratch directory removed", async () => {
+  const { mkdtempSync, mkdirSync, existsSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { scratchDir } = await import("../bin/runner.mjs");
+  const stateDir = mkdtempSync(join(tmpdir(), "veynod-scratch-"));
+  try {
+    const { messenger } = wired(2);
+    const killed = [];
+    messenger.onWorkerKilled = (worker) => {
+      killed.push(worker);
+      rmSync(scratchDir(stateDir, worker.step, worker.taskKey ?? worker.placementId),
+        { recursive: true, force: true });
+    };
+    messenger.onFrame(poke("plc_1", "a"));
+    messenger.onFrame(poke("plc_2", "b"));
+    for (const key of ["a", "b"]) mkdirSync(scratchDir(stateDir, "work", key), { recursive: true });
+    // A revocation kills one worker; a shutdown (an update, Ctrl+C) the other.
+    messenger.onFrame({ type: "lease.revoked", payload: { task_key: "a", lease_epoch: 1, reason: "moved" } });
+    assert.equal(existsSync(scratchDir(stateDir, "work", "a")), false);
+    assert.equal(existsSync(scratchDir(stateDir, "work", "b")), true);
+    messenger.stop();
+    assert.equal(existsSync(scratchDir(stateDir, "work", "b")), false);
+    assert.deepEqual(killed.map((worker) => [worker.taskKey, worker.step, worker.placementId]),
+      [["a", "work", "plc_1"], ["b", "work", "plc_2"]]);
+  } finally {
+    rmSync(stateDir, { recursive: true, force: true });
+  }
+});

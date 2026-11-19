@@ -383,6 +383,12 @@ export class Messenger {
     this.#forget(frameId);
     this.#kill(worker.child);
     this.say(`[nerve] worker killed (${reason})`);
+    // Its own cleanup may never run now: remove what it worked in.
+    try {
+      this.onWorkerKilled?.({ step: worker.step, taskKey: worker.taskKey, placementId: frameId });
+    } catch (error) {
+      this.say(`[nerve] could not remove the killed worker's files: ${error.message}`);
+    }
   }
 
   #forget(frameId) {
@@ -567,6 +573,7 @@ export async function runComputer(options, { say = () => {}, version, createRunn
     ...(options.onRunnerMissing ? { onRunnerMissing: options.onRunnerMissing } : {}),
   });
   messenger.hostRecord = await make({ ...options, running: messenger.running }, { version, say });
+  messenger.onWorkerKilled = (worker) => messenger.hostRecord?.dropScratch?.(worker);
   await messenger.start();
   return messenger;
 }
