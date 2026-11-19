@@ -247,11 +247,16 @@ Now:
 - **A change schedules its own workspace at once** (`scheduler.kick`): a task
   created, released, handed off or finished (the committed `collab_tasks`
   change on the workspace event bus), a computer saying hello, a seat coming
-  free (the nerve ping), a placement reported, a worker exiting. Kicks are
-  merged per workspace (0.2 s, at most one pass per 0.3 s per workspace) and
-  run in slots of their own, never queued behind the sweep. Measured with 456
-  other workspaces on the board: a new task is offered 0.29–0.32 s after it is
-  created.
+  free (the nerve ping), a worker exiting. Kicks are merged per workspace
+  (0.2 s, at most one pass per 0.3 s per workspace) and run in slots of their
+  own, never queued behind the sweep. Measured with 456 other workspaces on the
+  board: a new task is offered 0.29–0.32 s after it is created; the unattended
+  board's 12 tasks finish in 9 s (35–64 s before).
+- **Passes close together stay correct**: an offer is checked again just before
+  it is sent, so two passes never send it twice; a merged code task is re-read
+  under its lock before it is finished; and a computer's live seats (its nerve
+  socket) count when placing, because a worker reports and hands off before it
+  exits. A report therefore does not kick a pass; the seat coming free does.
 - **What only time brings about** (an offer not taken, a lease running out, a
   computer gone quiet, a stopped task whose failures aged, a supervise round)
   is written per workspace as `runner_hosts.next_pass_at` at the end of each
