@@ -64,9 +64,6 @@ MAX_ROUNDS = 3
 FAILS_PER_HOST = 2
 # Why a host lost a work placement, when it is the host's own doing.
 COUNTED_AGAINST_HOST = {"not_claimed", "reported_failed"}
-# One scheduling pass at a time, whatever the number of server processes.
-_LOCK_SQL = "SELECT pg_try_advisory_lock(hashtext('veynod_scheduler')::bigint)"
-_UNLOCK_SQL = "SELECT pg_advisory_unlock(hashtext('veynod_scheduler')::bigint)"
 # One pass per workspace at a time, across processes; released at commit.
 _WORKSPACE_LOCK_SQL = (
     "SELECT pg_advisory_xact_lock(hashtext('veynod_scheduler:' || CAST(:ws AS text))::bigint)"
@@ -148,16 +145,26 @@ async def _hosts(session: AsyncSession, workspace_id: Any) -> list[dict[str, Any
 
 
 async def _end(session: AsyncSession, placement: dict[str, Any], status: str,
-               reason: str | None = None, note: str | None = None) -> None:
-    await session.execute(text(
+               reason: str | None = None, note: str | None = None) -> bool:
+    """Move an open placement on; False when it had already ended, and stays so.
+
+    ``placement`` may be a read from before another pass or the runner's report
+    ended it; writing over that end used to replace its outcome (withdrawn
+    became superseded) and announce the round a second time.
+    """
+    moved = (await session.execute(text(
         "UPDATE runner_placements SET status = CAST(:status AS text), "
         "reason = COALESCE(CAST(:reason AS text), reason), "
         "note = COALESCE(CAST(:note AS text), note), updated_at = NOW(), "
         "ended_at = CASE WHEN CAST(:status AS text) IN "
         "('suggested', 'offered', 'claimed', 'unplaced') "
-        "THEN NULL ELSE NOW() END WHERE placement_id = :id"),
+        "THEN NULL ELSE NOW() END WHERE placement_id = :id "
+        "AND status IN ('suggested', 'offered', 'claimed', 'unplaced') "
+        "RETURNING placement_id"),
         {"status": status, "reason": reason, "note": note and note[:500],
-         "id": placement["placement_id"]})
+         "id": placement["placement_id"]})).scalar_one_or_none()
+    if moved is None:
+        return False
     was_open = placement.get("status") in OPEN
     placement["status"] = status
     outcome = ROUND_OUTCOMES.get(status) if placement.get("step") == "supervise" else None
@@ -171,6 +178,7 @@ async def _end(session: AsyncSession, placement: dict[str, Any], status: str,
                      "reason": reason, "note": note and note[:500],
                      "started": placement.get("started_at") is not None,
                      "idempotency_key": f"{placement['placement_id']}:{status}"})
+    return True
 
 
 async def _unassign(session: AsyncSession, task: CollabTask, actor: str) -> None:
@@ -265,7 +273,8 @@ async def _reconcile(session: AsyncSession, workspace_id: Any,
         # task, even if it gave it back before this pass saw the claim.
         taken = (task.lease_epoch or 0) > (placement["lease_epoch"] or 0)
         if status == "offered" and (_holds(task, host) or taken):
-            await _end(session, placement, "claimed")
+            if not await _end(session, placement, "claimed"):
+                continue  # ended meanwhile (moved by another pass): nothing left to do
             status = "claimed"
             counts["claimed"] += 1
         if task.status in PAST_WORK:
@@ -467,8 +476,17 @@ async def _load(session: AsyncSession, workspace_id: Any,
             {"ws": workspace_id})).all():
         if host_id in load:
             load[host_id] = active
+    from app.services import nerve_hub
+
     for host in hosts:
         load[host["host_id"]] = max(load[host["host_id"]], len(host["running"] or []))
+        # The live socket knows sooner than either record: a worker reports and
+        # hands off before it exits, so its placement can be over while its seat
+        # is still taken. Offered then, the next poke met a busy worker.
+        sock = nerve_hub.nerve_hub.get(workspace_id, host["agent_id"]) \
+            if host.get("agent_id") else None
+        if sock is not None and not sock.closed:
+            load[host["host_id"]] = max(load[host["host_id"]], sock.active)
     return load
 
 
@@ -583,6 +601,17 @@ async def dispatch_offered(workspace_id: Any | None = None, limit: int = 50) -> 
                 continue
             _DISPATCHING.add(placement["placement_id"])
             try:
+                # The list was read before this placement was ours to send: another
+                # call may have delivered it since (and left _DISPATCHING). Sent
+                # twice, the second poke meets a busy worker.
+                still_due = (await session.execute(text(
+                    "SELECT 1 FROM runner_placements p WHERE p.placement_id = :id "
+                    "AND p.status = 'offered' AND NOT EXISTS (SELECT 1 FROM poke_deliveries d "
+                    "WHERE d.workspace_id = p.workspace_id AND d.frame_id = p.placement_id)"),
+                    {"id": placement["placement_id"]})).first()
+                if still_due is None:
+                    counts["skipped"] += 1
+                    continue
                 await _deliver_one(session, placement, nerve_hub, counts)
             finally:
                 _DISPATCHING.discard(placement["placement_id"])
@@ -755,6 +784,7 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
         if workspace_mode == "full" else {}
     rounds = await _supervise(session, workspace_id, hosts, online, now) \
         if workspace_mode == "full" else 0
+    await _set_next_pass(session, workspace_id, workspace_mode, now)
     await session.commit()
     # Code tasks the Kernel merged are finished on trust (their own transaction:
     # reading the Kernel's evidence commits).
@@ -861,19 +891,6 @@ async def _reopen_handed_on(session: AsyncSession, workspace_id: Any, now: datet
     return reopened
 
 
-async def run_all_locked() -> int | None:
-    """One pass for every workspace, by one process at a time; None when another
-    process is already scheduling."""
-    async with async_session_factory() as lock:
-        if not await lock.scalar(text(_LOCK_SQL)):
-            return None
-        try:
-            return await run_all()
-        finally:
-            await lock.execute(text(_UNLOCK_SQL))
-            await lock.commit()
-
-
 async def scheduler_loop() -> None:
     """Scheduling has its own loop: a failing step elsewhere (the lease reaper
     runs a dozen) must never stop tasks from being placed."""
@@ -881,12 +898,14 @@ async def scheduler_loop() -> None:
 
     while True:
         try:
-            await run_all_locked()
+            await run_all()
         except asyncio.CancelledError:
             raise
         except Exception:  # pragma: no cover - background resilience
             logger.exception("scheduling pass failed")
-        await asyncio.sleep(settings.lease_reaper_interval_seconds)
+        # Finding nothing due is one indexed query: look often, so a due time is
+        # met within a couple of seconds whatever the reaper interval.
+        await asyncio.sleep(min(2.0, settings.lease_reaper_interval_seconds))
 
 
 async def nerve_dispatch_loop(interval_seconds: float = 1.0) -> None:
@@ -904,20 +923,186 @@ async def nerve_dispatch_loop(interval_seconds: float = 1.0) -> None:
         await asyncio.sleep(interval_seconds)
 
 
-async def run_all() -> int:
-    """One pass for every workspace with runner hosts."""
-    async with async_session_factory() as session:
-        workspaces = (await session.execute(text(
-            "SELECT DISTINCT workspace_id FROM runner_hosts WHERE status <> 'revoked'"
-        ))).scalars().all()
-    placed = 0
-    for workspace_id in workspaces:
+# Passes that run at once in this process: the sweep's, and the kicked ones on
+# their own, so a change is never queued behind a sweep of many due workspaces.
+_slots: dict[str, Any] = {}
+
+
+def _limit(lane: str) -> Any:
+    import asyncio
+
+    if lane not in _slots:
+        _slots[lane] = asyncio.Semaphore(settings.scheduler_concurrency)
+    return _slots[lane]
+
+
+async def _pass(workspace_id: Any, lane: str = "sweep") -> int:
+    """One workspace's pass in its own session; a failure stays in that workspace."""
+    async with _limit(lane):
         try:
             async with async_session_factory() as session:
-                placed += (await run_pass(session, workspace_id)).get("placed", 0)
+                return (await run_pass(session, workspace_id)).get("placed", 0)
         except Exception:  # noqa: BLE001 - one workspace must not stop the others
             logger.warning("scheduling pass failed for %s", workspace_id, exc_info=True)
-    return placed
+            return 0
+
+
+async def _next_pass(session: AsyncSession, workspace_id: Any, mode: str | None,
+                     now: datetime) -> datetime:
+    """When this workspace next needs a pass that no change will ask for.
+
+    Changes kick their workspace (``kick``); this covers what only time brings
+    about. Something on a computer (an offer to be taken, a lease to run out, a
+    report to be checked, a merge to be read from the Kernel): one reaper
+    interval. A task that found no computer (quotas reset, failures age out):
+    four. Otherwise the idle recheck, never later than the next supervise round.
+    """
+    busy = (await session.execute(text(
+        "SELECT EXISTS (SELECT 1 FROM runner_placements WHERE workspace_id = :ws "
+        "  AND status IN ('offered', 'claimed')) "
+        "OR EXISTS (SELECT 1 FROM collab_tasks WHERE workspace_id = :ws "
+        "  AND status = 'REVIEWING' AND repo IS NOT NULL)"),
+        {"ws": workspace_id})).scalar()
+    every = settings.lease_reaper_interval_seconds
+    if busy:
+        return now + timedelta(seconds=every)
+    waiting = (await session.execute(text(
+        "SELECT EXISTS (SELECT 1 FROM runner_placements WHERE workspace_id = :ws "
+        "  AND status = 'unplaced') "
+        "OR EXISTS (SELECT 1 FROM collab_tasks WHERE workspace_id = :ws "
+        "  AND status = 'HANDOFF' AND handed_off_by IS NULL)"),
+        {"ws": workspace_id})).scalar()
+    if waiting:
+        return now + timedelta(seconds=every * 4)
+    idle = settings.scheduler_idle_recheck_seconds
+    if mode == "full":
+        idle = min(idle, settings.runner_supervise_every_seconds)
+    return now + timedelta(seconds=idle)
+
+
+async def _set_next_pass(session: AsyncSession, workspace_id: Any, mode: str | None,
+                         now: datetime) -> None:
+    await session.execute(text(
+        "UPDATE runner_hosts SET next_pass_at = :at WHERE workspace_id = :ws "
+        "AND status <> 'revoked'"),
+        {"ws": workspace_id, "at": await _next_pass(session, workspace_id, mode, now)})
+
+
+async def _take_due(limit: int = 500) -> list[Any]:
+    """The workspaces whose next pass is due, taken by this process.
+
+    Taking one moves its time a minute on (the pass sets the real one), so a
+    second process sweeping at the same moment finds it no longer due: the
+    processes split the sweep, and a pass that dies is retried a minute later.
+    """
+    async with async_session_factory() as session:
+        taken = (await session.execute(text(
+            "WITH due AS ("
+            "  SELECT workspace_id FROM runner_hosts WHERE status <> 'revoked' "
+            "  GROUP BY workspace_id "
+            "  HAVING min(COALESCE(next_pass_at, '-infinity'::timestamptz)) <= NOW() "
+            "  LIMIT :limit) "
+            "UPDATE runner_hosts h SET next_pass_at = NOW() + INTERVAL '1 minute' "
+            "FROM due WHERE h.workspace_id = due.workspace_id AND h.status <> 'revoked' "
+            "AND COALESCE(h.next_pass_at, '-infinity'::timestamptz) <= NOW() "
+            "RETURNING h.workspace_id"), {"limit": limit})).scalars().all()
+        await session.commit()
+    return list(dict.fromkeys(taken))
+
+
+async def run_all() -> int:
+    """The sweep: a pass for every workspace whose next pass is due.
+
+    Each workspace is scheduled on its own. A change schedules its workspace at
+    once (``kick``); the sweep only does what time brings about, for the
+    workspaces whose time has come (``_next_pass``), side by side
+    (``scheduler_concurrency``), and any number of server processes share it.
+    It used to visit every workspace with a computer, one after another in one
+    process for the whole platform: about 60 ms each, 12 s at 200, and a new
+    task waited for all of them.
+    """
+    import asyncio
+
+    workspaces = await _take_due()
+    results = await asyncio.gather(*(_pass(workspace_id) for workspace_id in workspaces))
+    return sum(results)
+
+
+# ------------------------------------------------------------------ kicks
+#
+# A change in a workspace (a task created, released, handed off or finished; a
+# computer free again) schedules that workspace at once, instead of waiting for
+# the sweep. Changes to tasks arrive through the workspace event bus, which only
+# carries committed changes; the nerve hub and the runner routes kick directly.
+
+_kicked: set[str] = set()
+_wakeup: Any = None
+_last_kick: dict[str, float] = {}
+_listening = False
+
+
+def kick(workspace_id: Any) -> None:
+    """Schedule this workspace soon (within about a second). Safe to call often."""
+    import asyncio
+
+    global _wakeup
+    if workspace_id is None or not _listening:
+        return
+    _kicked.add(str(workspace_id))
+    if _wakeup is None:
+        _wakeup = asyncio.Event()
+    _wakeup.set()
+
+
+async def _listen_for_changes() -> None:
+    """Kick the workspace of every committed change to a task."""
+    from app.events import event_bus
+
+    async with event_bus.subscribe() as queue:
+        while True:
+            payload = await queue.get()
+            try:
+                change = json.loads(payload)
+            except (TypeError, ValueError):
+                continue
+            if change.get("table") == "collab_tasks" and change.get("workspace_id"):
+                kick(change["workspace_id"])
+
+
+async def kick_loop() -> None:
+    """Run the passes kicks asked for: merged per workspace, one per gap at most."""
+    import asyncio
+    import time
+
+    global _wakeup, _listening
+    if _wakeup is None:
+        _wakeup = asyncio.Event()
+    _listening = True
+    listener = asyncio.create_task(_listen_for_changes(), name="agentgraph-scheduler-kicks")
+    try:
+        while True:
+            await _wakeup.wait()
+            _wakeup.clear()
+            # A burst of changes (a hand-off writes several rows) is one pass.
+            await asyncio.sleep(0.2)
+            now = time.monotonic()
+            ready = [ws for ws in _kicked
+                     if now - _last_kick.get(ws, 0.0) >= settings.scheduler_kick_gap_seconds]
+            later = _kicked - set(ready)
+            _kicked.clear()
+            _kicked.update(later)
+            for ws in ready:
+                _last_kick[ws] = now
+            if later:
+                # Asked again too soon: run once the gap is over.
+                asyncio.get_running_loop().call_later(
+                    settings.scheduler_kick_gap_seconds, _wakeup.set)
+            if ready:
+                await asyncio.gather(*(_pass(ws, "kick") for ws in ready))
+    except asyncio.CancelledError:
+        _listening = False
+        listener.cancel()
+        raise
 
 
 # ------------------------------------------------------------------ steps
@@ -1586,6 +1771,9 @@ async def report(session: AsyncSession, principal: Principal, placement_id: str,
         "updated_at = NOW() WHERE placement_id = :id"),
         {"o": outcome, "n": (note or None) and note[:500], "id": placement_id})
     await session.commit()
+    # No kick here: a worker reports before it exits, so its seat is still taken.
+    # The seat coming free (the nerve ping) and the worker's exit kick instead;
+    # a pass now would offer the next task to a computer that is still busy.
     return _placement_out(await _own_placement(session, principal, placement_id))
 
 
@@ -1665,6 +1853,7 @@ async def worker_exited(workspace_id: Any, agent_id: str, placement_id: str, *,
         await session.commit()
     if marked:
         logger.info("placement %s: %s", placement_id, note)
+        kick(workspace_id)
     return marked is not None
 
 

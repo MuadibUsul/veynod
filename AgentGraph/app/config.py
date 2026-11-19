@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # Bump on every release and add notes in app/services/releases.py.
     app_version: str = "3.24.0"
     environment: Literal["development", "staging", "production", "test"] = "development"
+    # See ``state_guard``: unset, production records undeclared state moves and
+    # every other environment refuses them.
+    state_guard_mode: Literal["record", "enforce"] | None = None
     debug: bool = False
     host: str = "0.0.0.0"
     port: int = 8000
@@ -146,6 +149,16 @@ class Settings(BaseSettings):
     # and how often the supervisor walks the floor when something waits.
     runner_step_timeout_seconds: int = Field(default=1800, ge=60, le=86_400)
     runner_supervise_every_seconds: int = Field(default=600, ge=60, le=86_400)
+    # Scheduling passes that run at once, for the sweep and, separately, for
+    # passes started by a change (those never wait behind a long sweep). Each
+    # pass may hold up to three connections.
+    scheduler_concurrency: int = Field(default=4, ge=1, le=64)
+    # The least time between two passes started by changes in one workspace. A
+    # pass's own writes kick it once more; that pass finds nothing to change.
+    scheduler_kick_gap_seconds: float = Field(default=0.3, ge=0.1, le=60)
+    # When a workspace with nothing going on is looked at again anyway (a safety
+    # net: every change schedules its workspace at once).
+    scheduler_idle_recheck_seconds: int = Field(default=600, ge=30, le=86_400)
     # A round whose agenda is the same as the last finished round's is not
     # started again before this long: each round is an agent session that uses
     # the subscription, and looking again at what it could not change changes
@@ -509,6 +522,14 @@ class Settings(BaseSettings):
         if value < 1:
             raise ValueError("max_search_top_k must be positive")
         return value
+
+    @property
+    def state_guard(self) -> str:
+        """``enforce`` refuses a state move not declared in app/state_machines.py;
+        ``record`` lets it through and counts it. Production records until set."""
+        if self.state_guard_mode is not None:
+            return self.state_guard_mode
+        return "record" if self.environment == "production" else "enforce"
 
     @property
     def is_production(self) -> bool:

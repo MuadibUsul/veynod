@@ -291,6 +291,9 @@ async def hello(session: AsyncSession, principal: Principal,
                      "runtimes": [item["id"] for item in host["runtimes"]]})
     await session.commit()
     await _presence(principal, session)
+    from app.services.scheduler import kick
+
+    kick(principal.workspace.id)
     return {**host_out(dict(row)), "created": bool(row["created"]),
             "heartbeat_every_s": HEARTBEAT_EVERY_S,
             "offline_after_s": int(ONLINE_WINDOW.total_seconds())}

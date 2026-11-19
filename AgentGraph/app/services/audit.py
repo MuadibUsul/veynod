@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import and_, delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import ApiError, Forbidden, NotFound, UndoConflict
@@ -325,6 +325,9 @@ async def undo_batch(
     actor: str = "human_commander",
     force: bool = False,
 ) -> BatchUndoResponse:
+    # Undo restores earlier snapshots: the state guard lets a restored state
+    # through whatever move it is (app/state_machines.py). Ends with the transaction.
+    await session.execute(text("SELECT set_config('veynod.state_override', 'undo', true)"))
     diffs = (
         await session.execute(
             select(StateAuditDiff)

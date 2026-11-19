@@ -260,9 +260,13 @@ async def test_a_refused_start_fails_at_once_with_its_reason(api_base_url, clien
         # The first receipt was measured even though the start failed.
         assert moved["timings"]["delivered_ms"] is not None
         assert moved["timings"]["worker_ready_ms"] is None
-        # Nothing is left behind: the task is free and can be dispatched again.
-        state = await _fetch("SELECT dispatch_state FROM collab_tasks WHERE task_key = $1", key)
-        assert state[0]["dispatch_state"] == "IDLE"
+        # Nothing is left behind: the refused dispatch is gone and the task can be
+        # dispatched again. Its return to READY kicks a pass at once, so it may
+        # already be on its way again, under a newer lease epoch.
+        state = await _fetch(
+            "SELECT dispatch_state, lease_epoch FROM collab_tasks WHERE task_key = $1", key)
+        assert (state[0]["dispatch_state"] == "IDLE"
+                or state[0]["lease_epoch"] > poke["payload"]["lease_epoch"]), state
         # The hub told the computer to drop whatever it started for that frame.
         revoked = await box.wait_for(lambda: [frame for frame in box.frames
                                               if frame["type"] == "lease.revoked"])
@@ -693,7 +697,7 @@ async def test_a_stopped_task_is_tried_again_once_its_failures_are_old(client) -
     ws = await _workspace(client, "full")
     host = await _host(client, ws, f"again-{uuid.uuid4().hex[:4]}", slots=4)
 
-    async def stopped(age: str) -> str:
+    async def stopped(age: str, *, parent: bool = False) -> str:
         key = await _task(client, ws)
         task_id = (await _fetch("SELECT id FROM collab_tasks WHERE task_key = $1", key))[0]["id"]
         for _ in range(3):
@@ -703,21 +707,32 @@ async def test_a_stopped_task_is_tried_again_once_its_failures_are_old(client) -
                 f"$3, $4, $5, 'assign', 'failed', 'work', 'not_claimed', NOW() - INTERVAL '{age}', "
                 f"NOW() - INTERVAL '{age}')",
                 ws["id"], task_id, key, host["host_id"], host["agent_id"])
-        await _sql("UPDATE collab_tasks SET status = 'HANDOFF' WHERE task_key = $1", key)
+        # A pass kicked by the task's creation may have offered it already.
+        await _sql("UPDATE runner_placements SET status = 'withdrawn' WHERE task_key = $1 "
+                   "AND status IN ('suggested', 'offered', 'claimed', 'unplaced')", key)
+        if parent:
+            # Its subtask exists before it is handed off: no pass sees it alone.
+            child = await _task(client, ws)
+            await _sql("UPDATE collab_tasks SET parent_task_id = $1, status = 'DONE', "
+                       "assignee = NULL, claimed_by = NULL, lease_owner = NULL "
+                       "WHERE task_key = $2", task_id, child)
+        await _sql("UPDATE collab_tasks SET status = 'HANDOFF', assignee = NULL, "
+                   "claimed_by = NULL, lease_owner = NULL, handed_off_by = $2 "
+                   "WHERE task_key = $1", key, "someone" if parent else None)
         return key
 
     old = await stopped("3 days")
     fresh = await stopped("1 hour")
     # A task with subtasks is not one piece of work: it is never reopened.
-    parent = await stopped("3 days")
-    child = await _task(client, ws)
-    await _sql("UPDATE collab_tasks SET parent_task_id = (SELECT id FROM collab_tasks "
-               "WHERE task_key = $1), status = 'DONE' WHERE task_key = $2", parent, child)
-    await _sql("UPDATE collab_tasks SET handed_off_by = 'someone' WHERE task_key = $1", parent)
+    parent = await stopped("3 days", parent=True)
 
-    result = await _schedule(client, ws)
-    assert result["resumed"] >= 1, result
-    row = await _task_row(client, ws, old)
+    # Every change kicks a pass of its own, so which pass resumes it varies.
+    await _schedule(client, ws)
+    for _ in range(50):
+        row = await _task_row(client, ws, old)
+        if row["assignee"] == host["assignee"]:
+            break
+        await asyncio.sleep(0.2)
     assert row["status"] in ("READY", "IN_PROGRESS") and row["assignee"] == host["assignee"], row
     assert (await _task_row(client, ws, fresh))["status"] == "HANDOFF"
     assert (await _task_row(client, ws, parent))["status"] == "HANDOFF"
@@ -779,8 +794,8 @@ async def test_work_an_agent_handed_on_goes_back_on_the_board(client) -> None:
                   "key_metrics": {}, "unverified_hypotheses": [], "risk_flag": False}})
     assert passed.status_code == 200 and passed.json()["status"] == "HANDOFF", passed.text
 
-    result = await _schedule(client, ws)
-    assert result["resumed"] >= 1, result
+    # The hand-off kicks a pass of its own, so which pass reopens it varies.
+    await _schedule(client, ws)
     row = await _task_row(client, ws, key)
     # Back on the board and placed again; the brief and the hand-off author stay.
     assert row["status"] in ("READY", "IN_PROGRESS"), row

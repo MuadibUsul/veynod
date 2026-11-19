@@ -211,11 +211,13 @@ async def test_the_supervisor_walks_the_floor_only_when_something_waits(client):
     # A supervisor comes online: it gets one round with the agenda.
     boss = await _host(client, ws, f"sv-{uuid.uuid4().hex[:4]}", role="AUDITOR",
                        capabilities=["supervisor"])
-    result = await _schedule(client, ws)
-    assert result["rounds"] == 1
-    round_ = next(item for item in (await client.get(
+    # Its hello kicks a pass of its own, so which pass offers the round varies.
+    await _schedule(client, ws)
+    offered = [item for item in (await client.get(
         "/v1/runner/placements", headers=ws["owner"], params={"step": "supervise"})).json()["items"]
-        if item["status"] == "offered")
+        if item["status"] == "offered"]
+    assert len(offered) == 1, offered
+    round_ = offered[0]
     assert round_["host_id"] == boss["host_id"]
     detail = await client.get(f"/v1/runner/placements/{round_['placement_id']}",
                               headers=boss["headers"])

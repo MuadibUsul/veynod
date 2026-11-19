@@ -36,7 +36,14 @@ if settings.db_null_pool if settings.db_null_pool is not None else (
 
     _pool_kwargs = {"echo": settings.db_echo, "poolclass": NullPool}
 
-engine: AsyncEngine = create_async_engine(settings.database_url, **_pool_kwargs)
+# The application's own connections say who they are: the state guard holds
+# them to the declared moves (app/state_machines.py), and only records a move by
+# anyone else (an operator in psql, a test arranging a scenario).
+APPLICATION_NAME = "veynod"
+engine: AsyncEngine = create_async_engine(
+    settings.database_url,
+    connect_args={"server_settings": {"application_name": APPLICATION_NAME}},
+    **_pool_kwargs)
 async_session_factory = async_sessionmaker(
     bind=engine,
     class_=AsyncSession,
@@ -287,6 +294,8 @@ _INCREMENTAL_MIGRATIONS: list[tuple[str, Path]] = [
     ("3.100.0", _MIGRATIONS_DIR / "v3_100_mcp_connections.sql"),
     ("3.101.0", _MIGRATIONS_DIR / "v3_101_trust_by_default.sql"),
     ("3.102.0", _MIGRATIONS_DIR / "v3_102_acceptance_checks.sql"),
+    ("3.103.0", _MIGRATIONS_DIR / "v3_103_scheduler_due.sql"),
+    ("3.104.0", _MIGRATIONS_DIR / "v3_104_state_machines.sql"),
 ]
 CURRENT_SCHEMA_VERSION = _INCREMENTAL_MIGRATIONS[-1][0]
 
@@ -353,6 +362,7 @@ async def apply_schema(dsn: str | None = None) -> None:
         if await conn.fetchval("SELECT 1 FROM schema_migrations WHERE version = $1",
                                fingerprint):
             logger.info("database schema is up to date (%s)", fingerprint)
+            await _sync_state_machines(conn)
             return
         has_v2 = await conn.fetchval(
             """
@@ -459,8 +469,16 @@ async def apply_schema(dsn: str | None = None) -> None:
         logger.info(
             "database schema is up to date (v%s)", _INCREMENTAL_MIGRATIONS[-1][0]
         )
+        await _sync_state_machines(conn)
     finally:
         await conn.close()
+
+
+async def _sync_state_machines(conn: asyncpg.Connection) -> None:
+    """The declared state machines into the database (app/state_machines.py)."""
+    from app import state_machines
+
+    await state_machines.sync(conn, settings.state_guard)
 
 
 async def check_database() -> bool:

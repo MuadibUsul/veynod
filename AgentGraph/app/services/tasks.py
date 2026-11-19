@@ -338,7 +338,12 @@ async def finish_merged_on_trust(workspace_id: Any) -> int:
             if not (delivery.get("merged") and delivery.get("gate") in ("pass", None)
                     and not delivery.get("needs_human")):
                 continue
-            task = await session.get(CollabTask, task.id, with_for_update=True)
+            # Re-read under the lock: the task is already in this session from the
+            # candidate query, and a plain get would hand back that read. Two
+            # passes of one workspace (a kick and the sweep) then both finished
+            # it and announced the merge twice.
+            task = await session.get(CollabTask, task.id, with_for_update=True,
+                                     populate_existing=True)
             if task is None or task.status is not TaskStatus.REVIEWING:
                 continue
             brief = task.handoff_brief if isinstance(task.handoff_brief, dict) else {}

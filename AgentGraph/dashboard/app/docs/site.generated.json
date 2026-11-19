@@ -12011,6 +12011,42 @@
        "description": "",
        "method": "GET",
        "parameters": [],
+       "path": "/v1/state-machines",
+       "responses": [
+        "200"
+       ],
+       "summary": "Every state machine: its states, the moves between them and why"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "name",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/state-machines/{name}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "One state machine, with the moves allowed from each state"
+      }
+     ],
+     "group": "state-machines"
+    },
+    {
+     "endpoints": [
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
        "path": "/v1/stats",
        "responses": [
         "200"
@@ -16210,7 +16246,7 @@
       "code": "terminal_state_immutable",
       "http": 409,
       "retryable": false,
-      "rule": "The task is DONE or FAILED; create a new task instead."
+      "rule": "The task is DONE, FAILED or CANCELLED; create a new task instead."
      },
      {
       "action": "fix_request_then_resend",
@@ -17194,7 +17230,7 @@
       "code": "invalid_state_transition",
       "http": 409,
       "retryable": false,
-      "rule": "Re-read the task; give up this action."
+      "rule": "Not a move from the current state: details.allowed lists the moves that are (GET /v1/state-machines/{details.machine}); re-read and pick one."
      },
      {
       "action": "abandon_and_release_local_state",

@@ -183,6 +183,7 @@ class NerveHub:
         sock.last_seen_ms = _ms()
         frame_type, frame_id, payload = frame["type"], frame["frame_id"], frame["payload"]
         if frame_type == NerveFrameType.PING.value:
+            was_full = sock.active >= sock.slots
             try:
                 sock.slots = max(1, int(payload.get("slots") or 1))
             except (TypeError, ValueError):
@@ -200,6 +201,11 @@ class NerveHub:
             sock.active_task_key = str(active) if active else None
             epoch = payload.get("lease_epoch")
             sock.active_lease_epoch = int(epoch) if isinstance(epoch, int) else None
+            if was_full and sock.active < sock.slots and not sock.draining:
+                # A seat came free: schedule this workspace now, not at the sweep.
+                from app.services.scheduler import kick
+
+                kick(sock.workspace_id)
             return NerveEnvelope(
                 type=NerveFrameType.PONG,
                 frame_id=frame_id or str(uuid.uuid4()),
