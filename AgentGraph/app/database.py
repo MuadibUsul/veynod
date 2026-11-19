@@ -287,7 +287,7 @@ _INCREMENTAL_MIGRATIONS: list[tuple[str, Path]] = [
     ("3.100.0", _MIGRATIONS_DIR / "v3_100_mcp_connections.sql"),
     ("3.101.0", _MIGRATIONS_DIR / "v3_101_trust_by_default.sql"),
     ("3.102.0", _MIGRATIONS_DIR / "v3_102_acceptance_checks.sql"),
-    ("3.103.0", _MIGRATIONS_DIR / "v3_103_federation_resource_rights_arena.sql"),
+    ("3.105.0", _MIGRATIONS_DIR / "v3_105_federation_resource_rights_arena.sql"),
 ]
 CURRENT_SCHEMA_VERSION = _INCREMENTAL_MIGRATIONS[-1][0]
 

@@ -1,4 +1,4 @@
--- v3.103 Federation resource rights (simulated) and the Agent Poker Arena
+-- v3.105 Federation resource rights (simulated) and the Agent Poker Arena
 -- (task fed-resource-rights-poker-arena-sim-v1, R1-R3;
 -- docs/federation/ICD_P6_RESOURCE_RIGHTS_ARENA.md).
 --

@@ -224,7 +224,7 @@ EPHEMERAL = frozenset({
     # Simulated market (v3.98): deployment-wide, keyed by federation ids.
     "federation_offers", "federation_contracts", "federation_contract_history",
     "federation_ledger_txns", "federation_ledger_entries", "federation_settlements",
-    # Simulated resource rights and the arena (v3.103): deployment-wide, keyed by
+    # Simulated resource rights and the arena (v3.105): deployment-wide, keyed by
     # federation ids; DEMO_M has no economic value.
     "federation_rr_specs", "federation_rr_txns", "federation_rr_entries",
     "federation_rr_vouchers", "federation_rr_reservations",
