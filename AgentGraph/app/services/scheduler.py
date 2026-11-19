@@ -476,8 +476,17 @@ async def _load(session: AsyncSession, workspace_id: Any,
             {"ws": workspace_id})).all():
         if host_id in load:
             load[host_id] = active
+    from app.services import nerve_hub
+
     for host in hosts:
         load[host["host_id"]] = max(load[host["host_id"]], len(host["running"] or []))
+        # The live socket knows sooner than either record: a worker reports and
+        # hands off before it exits, so its placement can be over while its seat
+        # is still taken. Offered then, the next poke met a busy worker.
+        sock = nerve_hub.nerve_hub.get(workspace_id, host["agent_id"]) \
+            if host.get("agent_id") else None
+        if sock is not None and not sock.closed:
+            load[host["host_id"]] = max(load[host["host_id"]], sock.active)
     return load
 
 
@@ -592,6 +601,17 @@ async def dispatch_offered(workspace_id: Any | None = None, limit: int = 50) -> 
                 continue
             _DISPATCHING.add(placement["placement_id"])
             try:
+                # The list was read before this placement was ours to send: another
+                # call may have delivered it since (and left _DISPATCHING). Sent
+                # twice, the second poke meets a busy worker.
+                still_due = (await session.execute(text(
+                    "SELECT 1 FROM runner_placements p WHERE p.placement_id = :id "
+                    "AND p.status = 'offered' AND NOT EXISTS (SELECT 1 FROM poke_deliveries d "
+                    "WHERE d.workspace_id = p.workspace_id AND d.frame_id = p.placement_id)"),
+                    {"id": placement["placement_id"]})).first()
+                if still_due is None:
+                    counts["skipped"] += 1
+                    continue
                 await _deliver_one(session, placement, nerve_hub, counts)
             finally:
                 _DISPATCHING.discard(placement["placement_id"])
@@ -1751,7 +1771,9 @@ async def report(session: AsyncSession, principal: Principal, placement_id: str,
         "updated_at = NOW() WHERE placement_id = :id"),
         {"o": outcome, "n": (note or None) and note[:500], "id": placement_id})
     await session.commit()
-    kick(principal.workspace.id)
+    # No kick here: a worker reports before it exits, so its seat is still taken.
+    # The seat coming free (the nerve ping) and the worker's exit kick instead;
+    # a pass now would offer the next task to a computer that is still busy.
     return _placement_out(await _own_placement(session, principal, placement_id))
 
 

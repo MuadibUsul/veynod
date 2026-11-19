@@ -277,7 +277,9 @@ async def test_a_command_check_is_reported_by_the_computer_that_did_the_work(cli
     assert failed.status_code == 200, failed.text
     row = await _row(client, ws, key)
     assert (row["status"], row["needs_attention"]) == ("DONE", True)
-    assert row["attention_reasons"] == ["check_failed: tests: exit 1: 2 failed"]
+    # A task drawn for the routine look keeps that reason ahead of the failed check.
+    reasons = [r for r in row["attention_reasons"] if not r.startswith("sampled:")]
+    assert reasons == ["check_failed: tests: exit 1: 2 failed"]
     assert row["acceptance_state"] == [{"id": "tests", "status": "FAIL"}]
 
 
