@@ -237,7 +237,10 @@ async def test_an_auto_check_judges_the_item_instead_of_a_person(client) -> None
     await _work(client, worker, bad)
 
     row = await _row(client, ws, good)
-    assert (row["status"], row["needs_attention"]) == ("DONE", False)
+    # One task in ten is drawn for a routine look; that is the only flag allowed here.
+    assert row["status"] == "DONE"
+    assert row["attention_reasons"] in ([], None, [
+        "sampled: a routine look, nothing was flagged"]), row["attention_reasons"]
     assert row["check_results"] == [{"id": "plan", "type": "document_exists", "passed": True,
                                      "detail": f"document {written} is there"}]
     assert row["acceptance_state"] == [{"id": "plan", "status": "PASS"}]

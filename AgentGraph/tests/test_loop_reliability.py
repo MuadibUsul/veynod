@@ -260,9 +260,13 @@ async def test_a_refused_start_fails_at_once_with_its_reason(api_base_url, clien
         # The first receipt was measured even though the start failed.
         assert moved["timings"]["delivered_ms"] is not None
         assert moved["timings"]["worker_ready_ms"] is None
-        # Nothing is left behind: the task is free and can be dispatched again.
-        state = await _fetch("SELECT dispatch_state FROM collab_tasks WHERE task_key = $1", key)
-        assert state[0]["dispatch_state"] == "IDLE"
+        # Nothing is left behind: the refused dispatch is gone and the task can be
+        # dispatched again. Its return to READY kicks a pass at once, so it may
+        # already be on its way again, under a newer lease epoch.
+        state = await _fetch(
+            "SELECT dispatch_state, lease_epoch FROM collab_tasks WHERE task_key = $1", key)
+        assert (state[0]["dispatch_state"] == "IDLE"
+                or state[0]["lease_epoch"] > poke["payload"]["lease_epoch"]), state
         # The hub told the computer to drop whatever it started for that frame.
         revoked = await box.wait_for(lambda: [frame for frame in box.frames
                                               if frame["type"] == "lease.revoked"])
