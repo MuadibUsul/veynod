@@ -9,8 +9,13 @@
 // is rolled back to the previous version by the launcher, before it loads, and
 // that version is not installed again; a newer one is.
 //
-// The hub restarts only while no task runs on it, so an update never cuts a
-// session short. Updates come from the npm registry through npm itself, so npm
+// An update is a switch between two processes, in this order: the new version
+// is installed beside the old one and checked (it must start and say its
+// version); the old hub stops taking placements and lets its workers finish
+// (drain); only then does it exit and the service start the new one. A version's
+// files are removed only when no hub of that version is still alive (each hub
+// leaves a marker with its pid), so a hub never runs with its runner.mjs
+// deleted under it. Updates come from the npm registry through npm itself, so npm
 // checks the package's integrity. `npx veynod --no-auto-update` turns them off.
 
 import { execFile } from "node:child_process";
@@ -112,11 +117,67 @@ export function installLauncher(version, root) {
   return launcher;
 }
 
-/** Removes the installed versions not in `keep`; the launcher and its state stay. */
-export function pruneVersions(root, keep) {
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+
+const runningDir = (root) => join(root, ".running");
+
+/**
+ * A hub says which version it runs: a marker named after its pid. Returns the
+ * function that removes it (call it on the way out).
+ */
+export function markRunning(version, root, pid = process.pid) {
+  const file = join(runningDir(root), String(pid));
+  try {
+    mkdirSync(runningDir(root), { recursive: true, mode: 0o700 });
+    writeFileSync(file, `${version}\n`);
+  } catch {
+    return () => {};
+  }
+  return () => rmSync(file, { force: true });
+}
+
+/** The versions a live hub still runs; markers of processes that ended are cleared. */
+export function liveVersions(root, { alive = pidAlive, self = process.pid } = {}) {
+  const live = new Set();
+  let names = [];
+  try {
+    names = readdirSync(runningDir(root));
+  } catch {
+    return live;
+  }
+  for (const name of names) {
+    const pid = Number(name);
+    const file = join(runningDir(root), name);
+    if (!Number.isInteger(pid) || (pid !== self && !alive(pid))) {
+      rmSync(file, { force: true });
+      continue;
+    }
+    try {
+      live.add(readFileSync(file, "utf8").trim());
+    } catch {
+      // the hub removed it just now
+    }
+  }
+  return live;
+}
+
+/**
+ * Removes the installed versions not in `keep`; the launcher and its state
+ * stay. A version some hub is still running is left alone, whatever `keep`
+ * says: its process reads its files (runner.mjs for every worker) until it ends.
+ */
+export function pruneVersions(root, keep, { alive = pidAlive } = {}) {
   const removed = [];
+  const live = liveVersions(root, { alive });
   for (const name of existsSync(root) ? readdirSync(root) : []) {
-    if (VERSION.test(name) && !keep.includes(name)) {
+    if (VERSION.test(name) && !keep.includes(name) && !live.has(name)) {
       rmSync(join(root, name), { recursive: true, force: true });
       removed.push(name);
     }
@@ -183,6 +244,20 @@ export function npmInstall(version, root, { spec = `veynod@${version}`, run = ex
 }
 
 /**
+ * Whether an installed version starts: its own CLI must print its version.
+ * Checked before the launcher is pointed at it, so a broken install never
+ * replaces a hub that works.
+ */
+export function healthy(version, root, { run = execFile, node = process.execPath } = {}) {
+  const script = join(root, version, "node_modules", "veynod", "bin", "veynod.mjs");
+  return new Promise((resolve) => {
+    run(node, [script, "--version"], { timeout: 30_000, windowsHide: true }, (error, stdout) => {
+      resolve(!error && String(stdout || "").includes(version));
+    });
+  });
+}
+
+/**
  * One update check: when npm has a newer veynod, install it beside this one
  * and point the launcher at it. Only for a hub the launcher started (the
  * service), and not when the owner turned updates off. Returns
@@ -190,7 +265,7 @@ export function npmInstall(version, root, { spec = `veynod@${version}`, run = ex
  * in words for the log.
  */
 export async function checkForUpdate({ version, root, config = {}, launched = process.env.VEYNOD_LAUNCHER,
-  fetchImpl = fetch, install = npmInstall } = {}) {
+  fetchImpl = fetch, install = npmInstall, check = healthy } = {}) {
   if (config?.auto_update === false) return { text: "auto-update is off" };
   if (!launched) return { text: "not running as the service" };
   const latest = await latestVersion(fetchImpl);
@@ -203,6 +278,12 @@ export async function checkForUpdate({ version, root, config = {}, launched = pr
   } catch (error) {
     return { text: `could not install ${latest}: ${error.message}` };
   }
+  if (!(await check(latest, root))) {
+    // It installed but does not start: this hub stays, and that version is not tried again.
+    rmSync(join(root, latest), { recursive: true, force: true });
+    writeState(root, { ...readState(root), rolled_back: latest });
+    return { text: `${latest} was installed but did not start; staying on ${version}` };
+  }
   writeState(root, { ...readState(root), previous: version, current: latest, attempts: 0 });
   return { installed: latest, text: `installed ${latest}` };
 }
@@ -214,9 +295,10 @@ export async function checkForUpdate({ version, root, config = {}, launched = pr
  * Returns stop().
  */
 export function startUpdates({ version, root, config, say = () => {}, busy = () => false,
-  restart = () => process.kill(process.pid, "SIGTERM"), check = checkForUpdate,
+  restart = () => process.kill(process.pid, "SIGTERM"), check = checkForUpdate, drain = null,
   every = UPDATE_EVERY_MS, idleEvery = IDLE_CHECK_MS, launched = process.env.VEYNOD_LAUNCHER } = {}) {
   if (!launched) return () => {};
+  const unmark = markRunning(version, root);
   confirmRunning(version, root);
   if (config?.auto_update === false) {
     say("[update] auto-update is off (npx veynod --no-auto-update)");
@@ -240,6 +322,16 @@ export function startUpdates({ version, root, config, say = () => {}, busy = () 
       if (result.installed) {
         waiting = result.installed;
         if (busy()) say(`[update] ${waiting} takes over once the running tasks finish`);
+        if (drain) {
+          // Stop taking placements, let the workers finish, then hand over. A
+          // poll for an idle moment could wait forever on a busy computer, and
+          // could restart just as a new placement arrived.
+          await drain();
+          say(`[update] restarting on ${waiting}`);
+          unmark();
+          restart();
+          return;
+        }
         idleTimer = setInterval(restartWhenIdle, idleEvery);
         idleTimer.unref?.();
         restartWhenIdle();
@@ -256,5 +348,6 @@ export function startUpdates({ version, root, config, say = () => {}, busy = () 
   return () => {
     clearInterval(timer);
     clearInterval(idleTimer);
+    unmark();
   };
 }

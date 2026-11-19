@@ -112,6 +112,8 @@ EXPORTED: dict[str, tuple[str, tuple[str, ...]]] = {
     "runner_hosts": ("objects.jsonl", ()),
     # Which host each task was put on, and why it moved (v3.61).
     "runner_placements": ("objects.jsonl", ()),
+    # Client installations and their status (v3.100); no secret is in the row.
+    "mcp_connections": ("objects.jsonl", ()),
     "doc_derivations": ("doc_edges.jsonl", ()),
     "recalls": ("objects.jsonl", ()),
     "recall_nodes": ("objects.jsonl", ()),
@@ -222,7 +224,7 @@ EPHEMERAL = frozenset({
     # Simulated market (v3.98): deployment-wide, keyed by federation ids.
     "federation_offers", "federation_contracts", "federation_contract_history",
     "federation_ledger_txns", "federation_ledger_entries", "federation_settlements",
-    # Simulated resource rights and the arena (v3.99): deployment-wide, keyed by
+    # Simulated resource rights and the arena (v3.103): deployment-wide, keyed by
     # federation ids; DEMO_M has no economic value.
     "federation_rr_specs", "federation_rr_txns", "federation_rr_entries",
     "federation_rr_vouchers", "federation_rr_reservations",

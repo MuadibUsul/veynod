@@ -386,3 +386,26 @@ test("a saved key the board refuses is asked for again, not reported as connecte
   assert.equal(offline.identities.length, 1);
   assert.deepEqual(offline.refused, []);
 });
+
+test("an installation has one id per board, kept without any key, until --fresh", async () => {
+  const { installationId, connectionPath } = await import("../bin/up.mjs");
+  const { mkdtempSync, readFileSync, statSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const home = mkdtempSync(join(tmpdir(), "veynod-conn-"));
+  let made = 0;
+  const make = () => `id-${++made}-aaaaaaaa`;
+  const first = installationId({ host: "https://a.example", home, make });
+  assert.equal(first, "id-1-aaaaaaaa");
+  assert.equal(installationId({ host: "https://a.example", home, make }), first, "the same id on every run");
+  assert.equal(installationId({ host: "https://b.example", home, make }), "id-2-aaaaaaaa", "another board, another id");
+  assert.equal(installationId({ host: "https://a.example", home, make }), first);
+  const state = JSON.parse(readFileSync(connectionPath(home), "utf8"));
+  assert.deepEqual(Object.keys(state.hosts).sort(), ["https://a.example", "https://b.example"]);
+  assert.equal(JSON.stringify(state).includes("agt_"), false, "no key in the state file");
+  if (process.platform !== "win32") assert.equal(statSync(connectionPath(home)).mode & 0o777, 0o600);
+  // --fresh starts a new installation; an id named on the command line is kept.
+  assert.equal(installationId({ host: "https://a.example", home, make, fresh: true }), "id-3-aaaaaaaa");
+  assert.equal(installationId({ host: "https://a.example", home, make, given: "ci-runner-0001" }), "ci-runner-0001");
+  assert.equal(installationId({ host: "https://a.example", home, make }), "ci-runner-0001");
+});

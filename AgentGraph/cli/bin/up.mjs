@@ -81,6 +81,43 @@ export function readKey(identity) {
   return readFileSync(identity.key_file, "utf8").trim();
 }
 
+// ------------------------------------------------------------------ installation
+
+export function connectionPath(home = defaultHome()) {
+  return join(veynodDir(home), "connection.json");
+}
+
+/**
+ * This installation's own id for a board: made once, kept in
+ * ~/.veynod/connection.json (0600, no key in it) and sent with every sign-in,
+ * so the board rotates this installation's credential instead of minting
+ * another (`cursor-2`). `fresh` starts a new installation; `given` is an id
+ * named on the command line (CI). One id per host: another board is another
+ * connection.
+ */
+export function installationId({ host, home = defaultHome(), fresh = false, given = "",
+  make = () => crypto.randomUUID(), now = () => new Date().toISOString() } = {}) {
+  let state = null;
+  try {
+    state = JSON.parse(readFileSync(connectionPath(home), "utf8"));
+  } catch {
+    state = null;
+  }
+  const kept = state && typeof state === "object" ? state : {};
+  const hosts = kept.hosts && typeof kept.hosts === "object" ? kept.hosts : {};
+  const wanted = String(given || "").trim();
+  const current = hosts[host]?.client_instance_id;
+  if (!wanted && !fresh && typeof current === "string" && current) return current;
+  const id = wanted || make();
+  try {
+    writePrivate(connectionPath(home), `${JSON.stringify({ version: 1,
+      hosts: { ...hosts, [host]: { client_instance_id: id, created_at: now() } } }, null, 2)}\n`);
+  } catch {
+    // A home that cannot be written still connects; the id is just not kept.
+  }
+  return id;
+}
+
 // ------------------------------------------------------------------ stable copy
 
 /**
@@ -181,6 +218,11 @@ export function withEarlierChoices(options, previous) {
     slots: keep("slots", options.slots, previous.slots || undefined),
     supervisor: keep("supervisor", options.supervisor, previous.supervisor === undefined ? undefined : Boolean(previous.supervisor)),
     autoUpdate: keep("autoUpdate", options.autoUpdate, previous.auto_update === undefined ? undefined : previous.auto_update !== false),
+    // The model goes with the runtime it was chosen for: another runtime starts without it.
+    provider: explicit.has("provider") || runtime !== (previous.runtime || runtime) ? options.provider || ""
+      : options.provider || previous.provider || "",
+    model: explicit.has("model") || explicit.has("provider") || runtime !== (previous.runtime || runtime)
+      ? options.model || "" : options.model || previous.model || "",
     // --repo on a re-run adds a repository; it never drops the ones kept before.
     repos: [...new Set([...(previous.repos || []), ...(options.repos || [])])],
     decided: true,
@@ -310,7 +352,14 @@ export async function runHub(options, { listen, runComputer, version, say = () =
         // Work arrives only over the nerve socket the messenger holds.
         const messenger = await runComputer({ host, key, agent: identity.agent_id,
           runtime: config.runtime || "", exec: config.exec || "", slots: config.slots || 1,
-          repos: config.repos || [], ...(config.deploy ? { deploy: config.deploy } : {}) },
+          provider: config.provider || "", model: config.model || "",
+          repos: config.repos || [], ...(config.deploy ? { deploy: config.deploy } : {}),
+          // This version's files were removed under the hub: exit, so the
+          // service starts the version that is installed now.
+          onRunnerMissing: () => {
+            tag("this version's files are gone; restarting on the installed one");
+            stop();
+          } },
         { version, say: tag });
         releases.push(() => messenger.stop());
         messengers.push(messenger);
@@ -324,7 +373,9 @@ export async function runHub(options, { listen, runComputer, version, say = () =
     // the way a service stop does: on Windows a process cannot signal itself
     // gracefully, so it calls stop() instead of sending SIGTERM.
     const stopUpdates = onStarted?.({ config, restart: stop,
-      busy: () => messengers.some((messenger) => messenger.running?.size > 0) });
+      busy: () => messengers.some((messenger) => (messenger.workers?.size || messenger.running?.size) > 0),
+      // An update drains first: no new placements, running workers finish.
+      drain: messengers.length ? () => Promise.all(messengers.map((messenger) => messenger.drain())) : null });
     if (typeof stopUpdates === "function") releases.push(stopUpdates);
     const results = await Promise.all(loops);
     return results.some((code) => code) ? 1 : 0;

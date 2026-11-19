@@ -171,5 +171,5 @@ PENDING → DUE（有请求未被接受）→ DELIVERING（已接受，在做）
 
 ## 10. 部署与回滚
 
-- 部署：合并后迁移 3.99 自动执行（只新增表）。两个开关保持关闭；要试用时先在预发环境同时打开 `FEDERATION_RESOURCE_RIGHTS_ENABLED` 和 `FEDERATION_ARENA_ENABLED`。
+- 部署：合并后迁移 3.103 自动执行（只新增表）。两个开关保持关闭；要试用时先在预发环境同时打开 `FEDERATION_RESOURCE_RIGHTS_ENABLED` 和 `FEDERATION_ARENA_ENABLED`。
 - 回滚：关闭开关即可，路由回到 404，后台不再推进。若要删除数据，先确认没有进行中的牌局与预留，再按依赖倒序 `DROP`：restrictions → obligation_history → obligations → settlements → history → actions → matches → queue → reservations → vouchers → rr_entries → rr_txns → rr_specs（账表有只追加触发器，需先删触发器）。

@@ -148,6 +148,9 @@ def task_summary(task: CollabTask) -> TaskSummary:
         reviewed_by=task.reviewed_by,
         awaiting_deploy=True if status == "HANDOFF" and isinstance(brief.get("approval"), dict)
         and brief["approval"].get("awaiting_deploy") else None,
+        needs_attention=bool(getattr(task, "needs_attention", False)),
+        attention_reasons=getattr(task, "attention_reasons", None),
+        check_results=getattr(task, "check_results", None),
         ping_pong_count=task.ping_pong_count,
         retry_count=task.ping_pong_count,
         max_retries=task.max_retries,
@@ -343,6 +346,7 @@ def agent_token_out(token: AgentToken) -> AgentTokenOut:
         issued_by_agent=token.issued_by_agent_id if (token.depth or 1) > 1 else None,
         depth=token.depth or 1,
         parent_token_id=token.parent_token_id,
+        connection_id=getattr(token, "connection_id", None),
     )
 
 

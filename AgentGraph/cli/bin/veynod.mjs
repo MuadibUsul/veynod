@@ -31,12 +31,19 @@ import { dirname, isAbsolute, join, posix } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
-export const VERSION = "0.8.0";
+import { AGENT_CLIENT_IDS, agentClient, detectAgentClients, wireAgentClient } from "./clients.mjs";
+import { PROVIDER_IDS, provider as providerOf } from "./providers.mjs";
+
+export const VERSION = "0.9.0";
 const SEAL_INFO = Buffer.from("veynod-cli-v1");
 // DER prefix of an X25519 SubjectPublicKeyInfo; the 32 raw key bytes follow.
 const X25519_SPKI_PREFIX = Buffer.from("302a300506032b656e032100", "hex");
 const SERVER_NAME = "veynod";
-const CLIENTS = ["claude-code", "cursor", "claude-desktop", "print"];
+// Claude Code, Cursor and Claude Desktop are wired here; the other coding
+// agents come from clients.mjs (recognised when installed, wired where known).
+const CLIENTS = ["claude-code", "cursor", "claude-desktop", ...AGENT_CLIENT_IDS, "print"];
+// What the board's sign-in knows a client as; any other agent is "other".
+const BOARD_CLIENT_KINDS = new Set(["claude-code", "cursor", "claude-desktop"]);
 
 const color = process.stdout.isTTY && !process.env.NO_COLOR;
 const paint = (code) => (text) => (color ? `\x1b[${code}m${text}\x1b[0m` : String(text));
@@ -130,7 +137,9 @@ function detectClients() {
   if (onPath("claude")) found.push("claude-code");
   if (existsSync(join(homedir(), ".cursor"))) found.push("cursor");
   if (existsSync(dirname(claudeDesktopConfigPath()))) found.push("claude-desktop");
-  return found;
+  // Cursor's command-line agent shares the editor's file: one entry serves both.
+  const others = detectAgentClients({ onPath }).filter((id) => !(id === "cursor-cli" && found.includes("cursor")));
+  return [...found, ...others];
 }
 
 export function selectedClients(requested, detected) {
@@ -354,6 +363,13 @@ export function parseArgs(argv) {
     else if (arg === "--dry-run") options.dryRun = true;
     else if (arg === "--runner") options.runner = true;
     else if (arg === "--agent") options.agent = value();
+    else if (arg === "--provider") {
+      options.provider = value();
+      options.explicit.add("provider");
+    } else if (arg === "--model") {
+      options.model = value();
+      options.explicit.add("model");
+    }
     else if (arg === "--runtime") {
       options.runtime = value();
       options.explicit.add("runtime");
@@ -377,6 +393,7 @@ export function parseArgs(argv) {
     else if (arg === "--yes" || arg === "-y") options.yes = true;
     else if (arg === "--name") options.name = value();
     else if (arg === "--fresh") options.fresh = true;
+    else if (arg === "--client-instance-id") options.clientInstanceId = value();
     else if (arg === "--supervisor") {
       // A supervisor computer also looks after the Loop; it runs board tasks.
       options.supervisor = true;
@@ -403,6 +420,16 @@ export function parseArgs(argv) {
   }
   if (!["", "claude", "codex", "custom"].includes(options.runtime)) {
     throw new Error(`unknown runtime ${options.runtime} (claude, codex or custom)`);
+  }
+  if (options.provider) {
+    const chosen = providerOf(options.provider);
+    if (!chosen) throw new Error(`unknown provider ${options.provider} (${PROVIDER_IDS.join(", ")})`);
+    // A provider runs through the agent that speaks its API.
+    if (!options.runtime) options.runtime = chosen.runtime;
+    else if (options.runtime !== chosen.runtime) {
+      throw new Error(`${chosen.name} runs through ${chosen.runtime === "claude" ? "Claude Code" : "Codex"}; `
+        + `use --runtime ${chosen.runtime} or leave --runtime out`);
+    }
   }
   if (options.deploy) {
     if (!options.composeDir || !isAbsolute(options.composeDir)) {
@@ -440,12 +467,15 @@ ${bold("Options")}
   --supervisor            Run board tasks and also look after the Loop (one computer is enough).
   --repo owner/name,...   Repositories tasks on this computer may work on.
   --runtime claude|codex|custom  --slots N  --name NAME
+  --provider ID --model NAME     The model the agent runs on: ${PROVIDER_IDS.join(", ")}.
+                                 The provider's key stays in this computer's environment.
   --client claude-code,cursor,claude-desktop,print
                           Which MCP clients to wire (print shows the key and a
                           config to paste). Default: every client found.
   --host URL              Your Veynod server (default https://veynod.com, or VEYNOD_HOST).
   --no-open               Print the approval link instead of opening a browser.
   --yes                   Ask nothing.   --fresh  New identities.   --dry-run  Show the plan.
+  --client-instance-id ID This installation's id (default: made once, kept in ~/.veynod/connection.json).
   --no-service            Leave starting \`veynod hub\` to your own supervisor.
   --no-auto-update        Keep the service on this version (it updates itself from npm by default).
 
@@ -486,21 +516,34 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  * terminal's own agent, the rest come back in `extra`, each with its own key.
  * `legacy` is true when the server predates that and minted only one.
  */
-export async function connect(options, { clients = [], label = hostname(), out = () => {}, identities = [] } = {}) {
+export async function connect(options, { clients = [], label = hostname(), out = () => {}, identities = [],
+  instanceId = options.clientInstanceId || "" } = {}) {
   const { privateKey, publicRaw } = makeKeyPair();
   const body = {
     public_key: publicRaw.toString("base64"),
     client_label: String(label).slice(0, 64),
-    clients: clients.map((item) => (item === "print" ? "other" : item)),
+    clients: [...new Set(clients.map((item) => (BOARD_CLIENT_KINDS.has(item) ? item : "other")))],
   };
+  // Which installation this is: the board then rotates its credential instead
+  // of minting another. A board that does not know the field is asked without it.
+  const named = instanceId ? { ...body, client_instance_id: instanceId } : body;
   let started;
   let legacy = false;
+  const start = async (base) => {
+    try {
+      return await call(options.host, "/v1/auth/cli/sessions", identities.length ? { ...base, identities } : base);
+    } catch (error) {
+      if (!identities.length || error.status !== 422) throw error;
+      legacy = true;
+      return call(options.host, "/v1/auth/cli/sessions", base);
+    }
+  };
   try {
-    started = await call(options.host, "/v1/auth/cli/sessions", identities.length ? { ...body, identities } : body);
+    started = await start(named);
   } catch (error) {
-    if (!identities.length || error.status !== 422) throw error;
-    legacy = true;
-    started = await call(options.host, "/v1/auth/cli/sessions", body);
+    if (named === body || error.status !== 422) throw error;
+    legacy = false;
+    started = await start(body);
   }
   const link = `${options.host}/dashboard/cli/?code=${encodeURIComponent(started.user_code)}`;
   out();
@@ -548,6 +591,17 @@ export function wireClients(clients, mcpUrl, key, out = () => {}) {
       else if (client === "cursor") configured.push(`Cursor (${mergeServer(cursorConfigPath(), cursorEntry(mcpUrl, key))})`);
       else if (client === "claude-desktop") {
         configured.push(`Claude Desktop (${mergeServer(claudeDesktopConfigPath(), claudeDesktopEntry(mcpUrl, key))})`);
+      } else if (agentClient(client)) {
+        const result = wireAgentClient(client, mcpUrl, key);
+        if (result.wired) configured.push(`${agentClient(client).name} (${result.wired})`);
+        else {
+          // Found, but where its MCP servers live is not known here: show the
+          // entry instead of writing a guess into its configuration.
+          out(`  ${yellow("!")} ${agentClient(client).name} is installed; add this server to its MCP settings by hand:`);
+          // The key is not printed here (only --client print shows it).
+          const shown = { url: result.manual.url, headers: { Authorization: "Bearer <agent key: --client print shows it>" } };
+          out(JSON.stringify({ [SERVER_NAME]: shown }, null, 2).split("\n").map((line) => `      ${line}`).join("\n"));
+        }
       } else if (client === "print") {
         out();
         out(`  ${bold("Agent key")} ${dim("(shown once; keep it in your client's secret store)")}`);
@@ -1352,7 +1406,7 @@ export function computerCapabilities(options) {
 
 /** veynod up: connect this computer, wire its agents, install the hub, run the doctor. */
 async function up(options) {
-  const { doctor, doctorOk, dropRefusedKeys, installStableCopy, loadConfig, pruneStableCopies,
+  const { doctor, doctorOk, dropRefusedKeys, installStableCopy, installationId, loadConfig, pruneStableCopies,
     reuseIdentities, saveConfig, stableDir, storeKey, upPlan, veynodDir, withEarlierChoices } = await import("./up.mjs");
   const { installLauncher, readState } = await import("./update.mjs");
   const out = (line = "") => process.stdout.write(`${line}\n`);
@@ -1428,6 +1482,8 @@ async function up(options) {
     else if (legacy) out(`  In the console, approve it with role ${bold(asked[0].wants_role)}.`);
     const result = await connect(options, { clients: asked[0].role === "computer" ? clients : [],
       label: asked[0].label, out,
+      // The same installation every time; --fresh starts a new one.
+      instanceId: installationId({ host: options.host, fresh: options.fresh, given: options.clientInstanceId }),
       identities: legacy ? [] : asked.map((item) => ({ name: item.label, role_scope: item.wants_role, why: item.why })) });
     const got = [{ wanted: asked[0], agentId: result.approved.agent_signature, key: result.key }];
     for (const item of result.extra) {
@@ -1469,6 +1525,7 @@ async function up(options) {
     }
   }
   saveConfig({ host: options.host, run_tasks: plan.run_tasks, runtime: options.runtime, exec: options.exec,
+    provider: options.provider || "", model: options.model || "",
     supervisor: Boolean(options.supervisor), auto_update: options.autoUpdate !== false,
     slots: options.slots, repos: options.repos, identities: [...identities, ...reused.parked],
     ...(options.deploy ? { deploy: { dir: options.composeDir, file: options.composeFile || "docker-compose.yml",
@@ -1581,8 +1638,8 @@ export async function main(argv = process.argv.slice(2)) {
       const say = (text) => process.stderr.write(`  ${dim(new Date().toISOString())} ${text}\n`);
       const { startUpdates } = await import("./update.mjs");
       // Under the launcher (the service), the hub keeps itself current.
-      const onStarted = ({ config, busy, restart }) => startUpdates({ version: VERSION, config, say, busy,
-        restart, root: join(hubModule.veynodDir(), "cli") });
+      const onStarted = ({ config, busy, restart, drain }) => startUpdates({ version: VERSION, config, say, busy,
+        restart, drain, root: join(hubModule.veynodDir(), "cli") });
       return await hubModule.runHub(options, { listen: (opts) => listen(opts), runComputer,
         version: VERSION, say, onStarted });
     } catch (error) {

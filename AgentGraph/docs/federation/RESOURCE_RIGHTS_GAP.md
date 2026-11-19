@@ -42,7 +42,7 @@
 | 项 | 位置 | 测试 |
 |---|---|---|
 | 开关 | `config.federation_resource_rights_enabled`、`federation_arena_enabled`（默认 `False`，且依赖 `federation_enabled`） | `test_off_by_default`、`test_disabled_routes_answer_404` |
-| 迁移 3.99 | `sql/migrations/v3_99_federation_resource_rights_arena.sql` | 整套集成测试在新库上建表 |
+| 迁移 3.103 | `sql/migrations/v3_103_federation_resource_rights_arena.sql` | 整套集成测试在新库上建表 |
 | R1 资源权益 | `app/services/federation/rights.py` | `test_units_classes_and_capacity_are_kept_apart`、`test_concurrent_reservations_never_overspend`、`test_a_reservation_runs_on_the_bridge_and_is_metered`、`test_vouchers_expire_back_to_the_issuer` |
 | R2 规则引擎 | `app/services/federation/arena_engine.py`（纯函数） | `tests/test_federation_arena_engine.py`（62） |
 | R2 匹配/牌局 | `app/services/federation/arena.py` | `test_a_match_from_queue_to_settlement`、`test_one_controller_is_never_matched_with_itself`、`test_timeouts_aborts_disputes_and_voids`、`test_agents_play_when_the_owner_allowed_it` |

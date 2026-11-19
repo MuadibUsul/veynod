@@ -119,8 +119,8 @@ async def create_session(
         inserted = await session.scalar(
             text(
                 "INSERT INTO cli_sessions (device_code_hash, user_code, client_public_key, "
-                "client_label, client_kinds, identities, expires_at) "
-                "VALUES (:h, :u, :k, :l, CAST(:c AS jsonb), CAST(:i AS jsonb), :x) "
+                "client_label, client_kinds, identities, expires_at, client_instance_id) "
+                "VALUES (:h, :u, :k, :l, CAST(:c AS jsonb), CAST(:i AS jsonb), :x, :ci) "
                 "ON CONFLICT (user_code) DO NOTHING RETURNING id"
             ),
             {
@@ -131,6 +131,7 @@ async def create_session(
                 "c": json.dumps(sorted(set(request.clients))),
                 "i": json.dumps([item.model_dump() for item in request.identities]),
                 "x": expires_at,
+                "ci": (request.client_instance_id or None),
             },
         )
         if inserted is not None:
@@ -248,22 +249,52 @@ async def approve(
                            f"the terminal asked for no identity number {item.index}")
     purpose = f"npx veynod init ({row['client_label'] or 'terminal'})"
     public_key = base64.b64decode(row["client_public_key"])
-    created = await mint_unique(
-        scoped, principal.workspace, request.agent_signature, request.role_scope,
-        request.allowed_namespaces, purpose=purpose,
-    )
-    sealed = seal(created.api_key, public_key)
+    from app.services import connections
+
+    # The installation this sign-in comes from, when the CLI says which. A
+    # revoked connection issues nothing: that installation starts a new one.
+    connection = None
+    instance_id = connections.clean_instance_id(row.get("client_instance_id"))
+    if instance_id:
+        connection = await connections.upsert(
+            scoped, principal.workspace, instance_id, label=row["client_label"] or "",
+            kinds=list(row["client_kinds"] or []))
+        if connection["status"] == "revoked":
+            raise ApiError(409, "connection_revoked",
+                           "this installation's connection was revoked; run "
+                           "`npx veynod --fresh` to connect it again",
+                           details={"connection_id": str(connection["id"])})
+
+    async def credential(signature: str, role: str) -> tuple[str, str, Any, str]:
+        """(raw key, signature, token id, created|rotated|adopted) for one identity."""
+        if connection is not None:
+            token, how = await connections.credential_for(
+                scoped, principal.workspace, connection, signature.strip())
+            if token is not None:
+                raw = await connections.reuse(
+                    scoped, principal.workspace, connection, token, role=role,
+                    namespaces=request.allowed_namespaces, purpose=purpose)
+                return raw, token.agent_signature, token.id, how
+        minted = await mint_unique(scoped, principal.workspace, signature, role,
+                                   request.allowed_namespaces, purpose=purpose)
+        # Every credential the CLI issues expires; with a connection it is its history.
+        await connections.link(scoped, minted.token.id, connection)
+        return minted.api_key, minted.token.agent_signature, minted.token.id, "created"
+
+    raw_key, signature, token_id, how = await credential(
+        request.agent_signature, request.role_scope)
+    sealed = seal(raw_key, public_key)
     # Each ticked extra keeps the role the terminal asked for, so a -review
     # identity can always review; the owner unticks it rather than changing it.
     extras = []
     for item in sorted(request.also, key=lambda entry: entry.index):
         role = wanted[item.index]["role_scope"]
-        minted = await mint_unique(scoped, principal.workspace, item.agent_signature, role,
-                                   request.allowed_namespaces, purpose=purpose)
+        extra_key, extra_name, extra_id, _ = await credential(item.agent_signature, role)
         extras.append({"name": wanted[item.index]["name"],
-                       "agent_signature": minted.token.agent_signature, "role_scope": role,
-                       "token_id": str(minted.token.id),
-                       "sealed_key": seal(minted.api_key, public_key)})
+                       "agent_signature": extra_name, "role_scope": role,
+                       "token_id": str(extra_id),
+                       "sealed_key": seal(extra_key, public_key)})
+    await scoped.commit()
     await unscoped.execute(
         text(
             "UPDATE cli_sessions SET status = 'approved', workspace_id = :w, user_id = :u, "
@@ -274,8 +305,8 @@ async def approve(
         {
             "w": principal.workspace.id,
             "u": principal.user_id,
-            "a": created.token.agent_signature,
-            "t": uuid.UUID(str(created.token.id)),
+            "a": signature,
+            "t": uuid.UUID(str(token_id)),
             "s": sealed,
             "k": json.dumps(extras) if extras else None,
             "id": row["id"],
@@ -288,7 +319,11 @@ async def approve(
     )
     return {
         "status": "approved",
-        "agent_signature": created.token.agent_signature,
+        "agent_signature": signature,
+        # created: a new credential; rotated: this installation's own, with a new
+        # secret; adopted: a token from before connections, now this installation's.
+        "credential": how,
+        "connection_id": str(connection["id"]) if connection else None,
         "also": [{"agent_signature": item["agent_signature"], "role_scope": item["role_scope"]}
                  for item in extras],
         "workspace": {"id": str(principal.workspace.id), "name": principal.workspace.name},

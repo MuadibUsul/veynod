@@ -831,9 +831,16 @@ async def list_agent_tokens(
         tokens = kept
     else:
         left_out = 0
+    connections = {row["id"]: row for row in (await session.execute(
+        text("SELECT id, label, status FROM mcp_connections WHERE workspace_id = :w"),
+        {"w": workspace.id})).mappings().all()}
     items = []
     for token in tokens:
         out = agent_token_out(token)
+        connection = connections.get(token.connection_id)
+        if connection:
+            out.connection_label = connection["label"]
+            out.connection_status = connection["status"]
         counts = below.get(token.canonical_id)
         if counts:
             out.delegated_total = int(counts["total"])
