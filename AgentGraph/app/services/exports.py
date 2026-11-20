@@ -135,6 +135,8 @@ EPHEMERAL = frozenset({
     "agent_presence", "poke_deliveries", "inbox_acks",
     "budget_backoff", "budget_buckets", "budget_circuits", "budget_limits",
     "human_sessions", "idempotency_records", "rate_limit_windows", "schema_migrations",
+    # Platform state-machine declarations and the guard's record (state_machines.py).
+    "state_transitions", "state_guard", "state_transition_violations",
     "webhook_deliveries", "exports", "export_archives", "imports",
     # Platform records (R1.3): backups, drills, incidents and their notices
     # belong to the operator, not to a tenant's data.

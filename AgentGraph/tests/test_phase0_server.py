@@ -110,30 +110,27 @@ async def test_a_full_slot_moves_the_task_without_counting_against_the_host(clie
         "failed", "reported_failed")
 
 
-async def test_one_scheduling_pass_at_a_time():
+async def test_processes_split_the_sweep_and_never_take_one_workspace_twice():
+    """No platform-wide lock: each process takes the due workspaces it gets to first."""
     from app.services import scheduler
 
-    holder = await asyncpg.connect(_db())
+    conn = await asyncpg.connect(_db())
     try:
-        # Wait until the server's own loop is not holding the lock, then take it.
-        for _ in range(50):
-            if await holder.fetchval(
-                    "SELECT pg_try_advisory_lock(hashtext('veynod_scheduler')::bigint)"):
-                break
-            await asyncio.sleep(0.1)
-        else:
-            pytest.fail("the scheduler lock never came free")
-        assert await scheduler.run_all_locked() is None
-        await holder.execute("SELECT pg_advisory_unlock(hashtext('veynod_scheduler')::bigint)")
-        ran = None
-        for _ in range(50):
-            ran = await scheduler.run_all_locked()
-            if ran is not None:
-                break
-            await asyncio.sleep(0.1)
-        assert isinstance(ran, int)
+        await conn.execute("UPDATE runner_hosts SET next_pass_at = NULL WHERE status <> 'revoked'")
+        due = await conn.fetchval(
+            "SELECT count(DISTINCT workspace_id) FROM runner_hosts WHERE status <> 'revoked'")
+        first, second = await asyncio.gather(scheduler._take_due(100_000),
+                                             scheduler._take_due(100_000))
+        assert not set(first) & set(second)
+        # The server's own sweep may have taken some at the same moment.
+        assert len(first) + len(second) <= due
+        assert await scheduler._take_due(100_000) == []
+        after = await conn.fetchval(
+            "SELECT count(*) FROM runner_hosts WHERE status <> 'revoked' "
+            "AND (next_pass_at IS NULL OR next_pass_at <= NOW())")
+        assert after == 0
     finally:
-        await holder.close()
+        await conn.close()
 
 
 def test_scheduling_is_not_part_of_the_reaper():

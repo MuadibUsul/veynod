@@ -610,6 +610,11 @@ export async function pinsIdentity(runtime) {
 
 const repoSlug = (repo) => repo.replace(/[^A-Za-z0-9_.-]+/g, "__");
 
+/** Where a step without a repository runs: one directory per step and task. */
+export function scratchDir(stateDir, step, slot) {
+  return join(stateDir, "runner", "scratch", repoSlug(`${step || "work"}-${slot}`));
+}
+
 // ------------------------------------------------------------------ host
 
 const OS = { linux: "linux", darwin: "darwin", win32: "windows", freebsd: "freebsd" };
@@ -836,7 +841,7 @@ export async function createRunner(options, {
       if (!cwd && !skipAgent) {
         // Work without a repository gets an empty directory of its own, never the
         // service's working directory. Kernel coding tasks already have cwd.
-        scratch = join(stateDir, "runner", "scratch", repoSlug(`${step}-${slot}`));
+        scratch = scratchDir(stateDir, step, slot);
         rmSync(scratch, { recursive: true, force: true });
         mkdirSync(scratch, { recursive: true });
         cwd = scratch;
@@ -924,6 +929,12 @@ export async function createRunner(options, {
     report,
     running,
     adapter: () => adapter,
+    // A worker killed before its own cleanup (a shutdown, a revocation) leaves its
+    // scratch directory behind: the messenger that killed it removes it.
+    dropScratch: ({ step, taskKey, placementId }) => {
+      const slot = taskKey ?? placementId;
+      if (slot) rmSync(scratchDir(stateDir, step, slot), { recursive: true, force: true });
+    },
   };
 }
 

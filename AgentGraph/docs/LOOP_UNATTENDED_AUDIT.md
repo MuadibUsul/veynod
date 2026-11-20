@@ -231,3 +231,89 @@ The run found three more defects, fixed in the same commit:
 Still open: B4 for tasks with a repository on a one-computer board, C1, C5,
 and steps 3–4 of `LOOP_SIMPLE_MODEL.md`. Tasks with a repository were not part
 of the unattended run (no Kernel here).
+
+## H. Each workspace is scheduled on its own (2026-11-18)
+
+The scheduler used to be one sweep for the whole platform: every 15 s, one
+server process (a platform-wide advisory lock) ran a pass over every workspace
+with a computer, one after another. A pass is about 60 ms, so the sweep grew
+with the number of users: 12 s at 200 workspaces, about 60 s at 1,000. A task
+created by anyone waited for everyone else's workspaces, up to the sweep plus
+the interval (27 s at 200, about 75 s at 1,000). One user's latency depended on
+how many other users the platform had.
+
+Now:
+
+- **A change schedules its own workspace at once** (`scheduler.kick`): a task
+  created, released, handed off or finished (the committed `collab_tasks`
+  change on the workspace event bus), a computer saying hello, a seat coming
+  free (the nerve ping), a worker exiting. Kicks are merged per workspace
+  (0.2 s, at most one pass per 0.3 s per workspace) and run in slots of their
+  own, never queued behind the sweep. Measured with 456 other workspaces on the
+  board: a new task is offered 0.29–0.32 s after it is created; the unattended
+  board's 12 tasks finish in 9 s (35–64 s before).
+- **Passes close together stay correct**: an offer is checked again just before
+  it is sent, so two passes never send it twice; a merged code task is re-read
+  under its lock before it is finished; and a computer's live seats (its nerve
+  socket) count when placing, because a worker reports and hands off before it
+  exits. A report therefore does not kick a pass; the seat coming free does.
+- **What only time brings about** (an offer not taken, a lease running out, a
+  computer gone quiet, a stopped task whose failures aged, a supervise round)
+  is written per workspace as `runner_hosts.next_pass_at` at the end of each
+  pass: one reaper interval when something is on a computer, four when a task
+  found no computer, otherwise the idle recheck (10 min, never later than the
+  next supervise round).
+- **The sweep takes only workspaces that are due**, by moving their time a
+  minute on in one statement, so any number of server processes share it with
+  no platform-wide lock, and a pass that dies is retried a minute later. Due
+  passes run side by side (`scheduler_concurrency`, 4). Finding nothing due is
+  one indexed query (8 ms with 456 workspaces), so the sweep looks every 2 s.
+  All of them due at once (a restart) takes about 15 s for 456 workspaces and
+  delays nobody's new task.
+
+`tests/test_scheduler_kicks.py` checks the kick path with the sweep out of the
+way; `tests/test_phase0_server.py` checks that two processes never take the
+same workspace.
+
+## I. Implicit state machines (2026-11-18)
+
+Every status column was a state machine only by convention. `collab_tasks.status`
+alone was written from about thirty places in eight files, by the ORM and by raw
+SQL in background loops; the database refused only three things (leaving a
+finished task, `IN_PROGRESS` without a lease, `REVIEWING` without a brief). The
+same held for 52 other columns. What was found, and what changed:
+
+- **One declaration for all 53 machines**: `app/state_machine_catalog.py` (states,
+  moves, the reason for each move); the federation market's own table is
+  derived, not copied. `docs/STATE_MACHINES.md` is generated from it, and
+  `GET /v1/state-machines[/{name}]` returns it to people and agents.
+- **The database holds every writer**: one trigger function
+  (`agentgraph_guard_transition`) on each column checks the move against
+  `state_transitions`, copied from the catalog at every start. It holds the
+  application's own connections (`application_name = veynod`). A person or tool
+  on the database directly (an operator repairing a row) is never blocked, only
+  recorded; an undo (`veynod.state_override = 'undo'`) may restore any state.
+- **Rollout without surprises**: `STATE_GUARD_MODE` is `enforce` in tests and
+  development and `record` in production until set. Recorded moves are at
+  `GET /v1/admin/state-machines/violations`, marked by whether the application
+  made them; set `enforce` once that list holds nothing from the application.
+- **How the moves were found**: a recording trigger on every status column through
+  the whole test suite, then the suite again in record mode against the draft.
+  It found two moves the code makes that a reading of the code missed (an
+  escalation or peer review finished straight from `READY`; the scheduler stopping
+  a `READY` task). The record mode itself first upserted one counter row per move,
+  which made two writers of the same move wait on each other: it is append-only.
+- **Errors that name the way out**: a trigger's refusal used to reach the generic
+  database handler and come back as 503 `database_unavailable`, which tells a
+  caller to retry a request that can never succeed. Refusals are now a 409
+  `invalid_state_transition` with `details.machine`, `current`, `requested` and
+  `allowed`; the locked-acceptance and finished-task refusals get their own codes.
+- **Nothing left implicit by accident**: `tests/test_state_machines.py` fails when
+  a status-like column is neither declared nor listed in `NOT_MACHINES` with the
+  reason it is not a lifecycle (a setting, a once-written log, a mirror), and when
+  the declared states differ from the schema's own list.
+
+Same pass, the other "one loop for everything" risk: the lease reaper ran about
+twenty upkeep steps inside one `try`, so a step that raised skipped every step
+after it, round after round, with nothing naming the step. Each step now runs on
+its own and a failure is logged by name (`reaper.last_errors`).

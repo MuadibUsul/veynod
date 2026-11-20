@@ -107,7 +107,7 @@ do not edit by hand. Every error body is
 | `task_not_done` | 409 | `fix_request` | `fix_request_then_resend` | Re-point a merged chunk to a DONE task. |
 | `task_owned_by_run` | 409 | `fix_request` | `fix_request_then_resend` | A Runtime run holds this task; use POST /v1/tasks/{key}/run or stop the run first. |
 | `tenant_has_children` | 409 | `fix_request` | `fix_request_then_resend` | Fix the request per details. |
-| `terminal_state_immutable` | 409 | `fix_request` | `fix_request_then_resend` | The task is DONE or FAILED; create a new task instead. |
+| `terminal_state_immutable` | 409 | `fix_request` | `fix_request_then_resend` | The task is DONE, FAILED or CANCELLED; create a new task instead. |
 | `upload_incomplete` | 409 | `fix_request` | `fix_request_then_resend` | Upload the remaining parts first. |
 | `workspace_confirmation_mismatch` | 409 | `fix_request` | `fix_request_then_resend` | Confirm with the exact name. |
 | `batch_too_large` | 413 | `fix_request` | `fix_request_then_resend` | Split the batch per details. |
@@ -231,7 +231,7 @@ do not edit by hand. Every error body is
 | `gate_not_passed` | 409 | `abandon` | `abandon_and_release_local_state` | Merge after a passing gate on the current submission. |
 | `host_revoked` | 409 | `abandon` | `abandon_and_release_local_state` | Ask the owner for a new runner token. |
 | `id_collision` | 409 | `abandon` | `abandon_and_release_local_state` | Abort the import or import into a new tenant. |
-| `invalid_state_transition` | 409 | `abandon` | `abandon_and_release_local_state` | Re-read the task; give up this action. |
+| `invalid_state_transition` | 409 | `abandon` | `abandon_and_release_local_state` | Not a move from the current state: details.allowed lists the moves that are (GET /v1/state-machines/{details.machine}); re-read and pick one. |
 | `invalid_transition` | 409 | `abandon` | `abandon_and_release_local_state` | Give up this action. |
 | `lease_conflict` | 409 | `abandon` | `abandon_and_release_local_state` | Another agent holds the lease; do not preempt. |
 | `lease_expired` | 409 | `abandon` | `abandon_and_release_local_state` | Your lease ended before NOW(); claim the task again. |

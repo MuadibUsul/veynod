@@ -168,7 +168,7 @@ REGISTRY: dict[str, ErrorSpec] = {
     "reason_required": _spec(
         422, FIX_REQUEST, "Pass a non-empty reason; it goes into the audit trail."),
     "terminal_state_immutable": _spec(
-        409, FIX_REQUEST, "The task is DONE or FAILED; create a new task instead."
+        409, FIX_REQUEST, "The task is DONE, FAILED or CANCELLED; create a new task instead."
     ),
     "system_namespace_protected": _spec(
         403, FIX_REQUEST, "Use propose_document_change instead.", "propose_document_change"
@@ -393,7 +393,9 @@ REGISTRY: dict[str, ErrorSpec] = {
         409, FIX_REQUEST, "Import details.prev_export_id first, then this increment."
     ),
     "invalid_transition": _spec(409, ABANDON, "Give up this action."),
-    "invalid_state_transition": _spec(409, ABANDON, "Re-read the task; give up this action."),
+    "invalid_state_transition": _spec(
+        409, ABANDON, "Not a move from the current state: details.allowed lists the moves "
+        "that are (GET /v1/state-machines/{details.machine}); re-read and pick one."),
     "lease_lost": _spec(409, ABANDON, "Drop local state and claim again."),
     # Federation (round 2): one API code per kind of refusal; the precise
     # federation code is in details.federation_code (docs/federation/ICD_*).

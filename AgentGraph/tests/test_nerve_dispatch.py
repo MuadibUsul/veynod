@@ -106,7 +106,9 @@ async def test_dispatch_needs_two_receipts_and_grants_the_lease(api_base_url, cl
     finally:
         await socket.close()
 
-    assert result.get("nerve", {}).get("ok") == 1, result
+    # The task's creation kicks a pass of its own, so which pass delivered it
+    # varies; the task held by the computer is what says it arrived.
+    del result
     row = await _task_row(client, ws, key)
     assert row["status"] == "IN_PROGRESS"
     assert row["assignee"] == f"agent:{host['agent_id']}"
@@ -120,17 +122,24 @@ async def test_a_silent_socket_times_out_in_about_200ms_and_the_task_returns(
     key = await _task(client, ws)
     try:
         # Never answer: the server must not wait out a 90 s presence window.
-        result = await _schedule(client, ws)
-        assert result.get("nerve", {}).get("failed") == 1, result
+        await _schedule(client, ws)
+        # Which pass delivered it varies (the task's creation kicks one), and a
+        # kicked pass may offer it again: the moved placement below is the record.
         row = await _task_row(client, ws, key)
-        assert row["status"] == "READY", row
+        assert row["status"] in ("READY", "IN_PROGRESS"), row
         # Nerve is the only channel: an undelivered offer frees the task and the
         # placement moves, so the next pass places it again (no SSE fallback).
         # (The background pass may already have placed it again, so the
         # placement, not the assignee, is what says this one was taken back.)
-        placements = (await client.get("/v1/runner/placements", headers=ws["owner"],
-                                       params={"task_key": key})).json()["items"]
-        moved = [item for item in placements if item["status"] == "moved"]
+        # A kicked pass may be the one delivering, still inside its ~200 ms wait
+        # when ours returns: give the record a moment to land.
+        for _ in range(25):
+            placements = (await client.get("/v1/runner/placements", headers=ws["owner"],
+                                           params={"task_key": key})).json()["items"]
+            moved = [item for item in placements if item["status"] == "moved"]
+            if moved:
+                break
+            await asyncio.sleep(0.2)
         assert moved and moved[0]["reason"].startswith("nerve:"), placements
     finally:
         await socket.close()
@@ -160,7 +169,19 @@ async def test_a_net_ack_without_an_exec_ack_is_revoked(api_base_url, client) ->
     finally:
         await socket.close()
 
-    assert result.get("nerve", {}).get("failed") == 1, result
+    # The task's creation kicks a pass of its own, so which pass delivered the
+    # poke varies: the record of the delivery is what says it was revoked.
+    del result
+    placements = (await client.get("/v1/runner/placements", headers=ws["owner"],
+                                   params={"task_key": key})).json()["items"]
+    assert any(item["status"] == "moved" and (item["reason"] or "").startswith("nerve:")
+               for item in placements), placements
+    # Back on the board. A kicked pass may try it again, but the socket is closed,
+    # so that delivery fails at once and the task returns to READY.
+    for _ in range(50):
+        if (await _task_row(client, ws, key))["status"] == "READY":
+            break
+        await asyncio.sleep(0.2)
     assert (await _task_row(client, ws, key))["status"] == "READY"
 
 
