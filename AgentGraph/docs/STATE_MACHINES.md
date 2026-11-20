@@ -61,6 +61,13 @@ through and counts it instead). The same data: `GET /v1/state-machines`.
 | [federation_sanction](#federation-sanction) | `federation_sanctions.state` | 3 | 3 |
 | [federation_settlement](#federation-settlement) | `federation_settlements.state` | 2 | 1 |
 | [registry_version](#registry-version) | `registry_versions.state` | 2 | 1 |
+| [arena_match](#arena-match) | `federation_arena_matches.state` | 12 | 31 |
+| [arena_obligation](#arena-obligation) | `federation_arena_obligations.state` | 9 | 27 |
+| [arena_queue_entry](#arena-queue-entry) | `federation_arena_queue.state` | 3 | 2 |
+| [arena_restriction](#arena-restriction) | `federation_arena_restrictions.state` | 2 | 1 |
+| [rr_reservation](#rr-reservation) | `federation_rr_reservations.state` | 3 | 2 |
+| [rr_spec](#rr-spec) | `federation_rr_specs.state` | 2 | 1 |
+| [rr_voucher](#rr-voucher) | `federation_rr_vouchers.status` | 5 | 4 |
 
 ## task
 
@@ -2174,3 +2181,332 @@ stateDiagram-v2
 | from | to | why |
 |---|---|---|
 | `published` | `yanked` | its publisher or an operator withdrew it |
+
+## arena_match
+
+`federation_arena_matches.state`: One arena match (a sit-and-go or a cash table), from seating to settlement.
+
+| state | meaning | next |
+|---|---|---|
+| `MATCHED` (start) | Players are seated. | `ABORTED`, `DEMO_RESERVED`, `OWNER_AUTHORIZED`, `TIMED_OUT` |
+| `OWNER_AUTHORIZED` | Every player's owner allowed it. | `ABORTED`, `DEMO_RESERVED`, `TIMED_OUT` |
+| `DEMO_RESERVED` | Every stake is held. | `ABORTED`, `COMMITTED`, `TIMED_OUT` |
+| `COMMITTED` | Every player committed its seed. | `ABORTED`, `PLAYING`, `TIMED_OUT` |
+| `PLAYING` | Hands are being dealt. | `ABORTED`, `DISPUTED`, `RECONCILING`, `RESULT_VERIFIED` |
+| `RESULT_VERIFIED` | The result was checked. | `ABORTED`, `CLOSED`, `DEMO_SETTLED`, `DISPUTED`, `RECONCILING` |
+| `DEMO_SETTLED` | Stakes were paid out. | `ABORTED`, `CLOSED` |
+| `CLOSED` (end) | Over. | — |
+| `ABORTED` (end) | Stopped before a result. | — |
+| `TIMED_OUT` (end) | A player did not act in time during setup. | — |
+| `DISPUTED` | A player disputes the result. | `ABORTED`, `RECONCILING`, `RESULT_VERIFIED` |
+| `RECONCILING` | The result is being worked out again. | `ABORTED`, `DEMO_SETTLED`, `DISPUTED`, `RESULT_VERIFIED` |
+
+```mermaid
+stateDiagram-v2
+    [*] --> s_MATCHED
+    s_MATCHED : MATCHED
+    s_OWNER_AUTHORIZED : OWNER_AUTHORIZED
+    s_DEMO_RESERVED : DEMO_RESERVED
+    s_COMMITTED : COMMITTED
+    s_PLAYING : PLAYING
+    s_RESULT_VERIFIED : RESULT_VERIFIED
+    s_DEMO_SETTLED : DEMO_SETTLED
+    s_CLOSED : CLOSED
+    s_ABORTED : ABORTED
+    s_TIMED_OUT : TIMED_OUT
+    s_DISPUTED : DISPUTED
+    s_RECONCILING : RECONCILING
+    s_COMMITTED --> s_ABORTED
+    s_COMMITTED --> s_PLAYING
+    s_COMMITTED --> s_TIMED_OUT
+    s_DEMO_RESERVED --> s_ABORTED
+    s_DEMO_RESERVED --> s_COMMITTED
+    s_DEMO_RESERVED --> s_TIMED_OUT
+    s_DEMO_SETTLED --> s_ABORTED
+    s_DEMO_SETTLED --> s_CLOSED
+    s_DISPUTED --> s_ABORTED
+    s_DISPUTED --> s_RECONCILING
+    s_DISPUTED --> s_RESULT_VERIFIED
+    s_MATCHED --> s_ABORTED
+    s_MATCHED --> s_DEMO_RESERVED
+    s_MATCHED --> s_OWNER_AUTHORIZED
+    s_MATCHED --> s_TIMED_OUT
+    s_OWNER_AUTHORIZED --> s_ABORTED
+    s_OWNER_AUTHORIZED --> s_DEMO_RESERVED
+    s_OWNER_AUTHORIZED --> s_TIMED_OUT
+    s_PLAYING --> s_ABORTED
+    s_PLAYING --> s_DISPUTED
+    s_PLAYING --> s_RECONCILING
+    s_PLAYING --> s_RESULT_VERIFIED
+    s_RECONCILING --> s_ABORTED
+    s_RECONCILING --> s_DEMO_SETTLED
+    s_RECONCILING --> s_DISPUTED
+    s_RECONCILING --> s_RESULT_VERIFIED
+    s_RESULT_VERIFIED --> s_ABORTED
+    s_RESULT_VERIFIED --> s_CLOSED
+    s_RESULT_VERIFIED --> s_DEMO_SETTLED
+    s_RESULT_VERIFIED --> s_DISPUTED
+    s_RESULT_VERIFIED --> s_RECONCILING
+    s_CLOSED --> [*]
+    s_ABORTED --> [*]
+    s_TIMED_OUT --> [*]
+```
+
+| from | to | why |
+|---|---|---|
+| `COMMITTED` | `ABORTED` | setup failed or a player did not act in time |
+| `COMMITTED` | `PLAYING` | every seed revealed; hand 1 dealt |
+| `COMMITTED` | `TIMED_OUT` | setup failed or a player did not act in time |
+| `DEMO_RESERVED` | `ABORTED` | setup failed or a player did not act in time |
+| `DEMO_RESERVED` | `COMMITTED` | every player committed |
+| `DEMO_RESERVED` | `TIMED_OUT` | setup failed or a player did not act in time |
+| `DEMO_SETTLED` | `ABORTED` | stopped by an operator or a failure |
+| `DEMO_SETTLED` | `CLOSED` | settled and closed |
+| `DISPUTED` | `ABORTED` | stopped by an operator or a failure |
+| `DISPUTED` | `RECONCILING` | the dispute was decided |
+| `DISPUTED` | `RESULT_VERIFIED` | the dispute was decided |
+| `MATCHED` | `ABORTED` | setup failed or a player did not act in time |
+| `MATCHED` | `DEMO_RESERVED` | authorized and every stake held in one step |
+| `MATCHED` | `OWNER_AUTHORIZED` | every player's owner authorized it |
+| `MATCHED` | `TIMED_OUT` | setup failed or a player did not act in time |
+| `OWNER_AUTHORIZED` | `ABORTED` | setup failed or a player did not act in time |
+| `OWNER_AUTHORIZED` | `DEMO_RESERVED` | every stake is held |
+| `OWNER_AUTHORIZED` | `TIMED_OUT` | setup failed or a player did not act in time |
+| `PLAYING` | `ABORTED` | stopped by an operator or a failure |
+| `PLAYING` | `DISPUTED` | the match ended: verified, disputed, or to be worked out again |
+| `PLAYING` | `RECONCILING` | the match ended: verified, disputed, or to be worked out again |
+| `PLAYING` | `RESULT_VERIFIED` | the match ended: verified, disputed, or to be worked out again |
+| `RECONCILING` | `ABORTED` | stopped by an operator or a failure |
+| `RECONCILING` | `DEMO_SETTLED` | worked out again |
+| `RECONCILING` | `DISPUTED` | worked out again |
+| `RECONCILING` | `RESULT_VERIFIED` | worked out again |
+| `RESULT_VERIFIED` | `ABORTED` | stopped by an operator or a failure |
+| `RESULT_VERIFIED` | `CLOSED` | settled and closed in one step |
+| `RESULT_VERIFIED` | `DEMO_SETTLED` | paid out, disputed, or worked out again |
+| `RESULT_VERIFIED` | `DISPUTED` | paid out, disputed, or worked out again |
+| `RESULT_VERIFIED` | `RECONCILING` | paid out, disputed, or worked out again |
+
+## arena_obligation
+
+`federation_arena_obligations.state`: What a player owes after a match, until delivered or resolved.
+
+| state | meaning | next |
+|---|---|---|
+| `PENDING` (start) | Owed; nothing asked yet. | `DELIVERING`, `DUE`, `FULFILLED`, `OVERDUE_REVIEW`, `RESOLVED` |
+| `DUE` | Asked for. | `DELIVERING`, `FULFILLED`, `OVERDUE_REVIEW`, `PENDING`, `RESOLVED` |
+| `DELIVERING` | Being delivered. | `DUE`, `FULFILLED`, `OVERDUE_REVIEW`, `PENDING`, `RESOLVED` |
+| `FULFILLED` (end) | Delivered. | — |
+| `OVERDUE_REVIEW` | Late; a person looks at it. | `CONFIRMED_UNFULFILLED`, `FULFILLED`, `PENDING`, `REMEDIATED`, `RESOLVED`, `RESTRICTED` |
+| `CONFIRMED_UNFULFILLED` | A person confirmed it was not delivered. | `RESOLVED`, `RESTRICTED` |
+| `RESTRICTED` | New matches are blocked until it is settled. | `FULFILLED`, `PENDING`, `REMEDIATED`, `RESOLVED` |
+| `REMEDIATED` (end) | Settled another way. | — |
+| `RESOLVED` (end) | Closed (waived, expired or decided). | — |
+
+```mermaid
+stateDiagram-v2
+    [*] --> s_PENDING
+    s_PENDING : PENDING
+    s_DUE : DUE
+    s_DELIVERING : DELIVERING
+    s_FULFILLED : FULFILLED
+    s_OVERDUE_REVIEW : OVERDUE_REVIEW
+    s_CONFIRMED_UNFULFILLED : CONFIRMED_UNFULFILLED
+    s_RESTRICTED : RESTRICTED
+    s_REMEDIATED : REMEDIATED
+    s_RESOLVED : RESOLVED
+    s_CONFIRMED_UNFULFILLED --> s_RESOLVED
+    s_CONFIRMED_UNFULFILLED --> s_RESTRICTED
+    s_DELIVERING --> s_DUE
+    s_DELIVERING --> s_FULFILLED
+    s_DELIVERING --> s_OVERDUE_REVIEW
+    s_DELIVERING --> s_PENDING
+    s_DELIVERING --> s_RESOLVED
+    s_DUE --> s_DELIVERING
+    s_DUE --> s_FULFILLED
+    s_DUE --> s_OVERDUE_REVIEW
+    s_DUE --> s_PENDING
+    s_DUE --> s_RESOLVED
+    s_OVERDUE_REVIEW --> s_CONFIRMED_UNFULFILLED
+    s_OVERDUE_REVIEW --> s_FULFILLED
+    s_OVERDUE_REVIEW --> s_PENDING
+    s_OVERDUE_REVIEW --> s_REMEDIATED
+    s_OVERDUE_REVIEW --> s_RESOLVED
+    s_OVERDUE_REVIEW --> s_RESTRICTED
+    s_PENDING --> s_DELIVERING
+    s_PENDING --> s_DUE
+    s_PENDING --> s_FULFILLED
+    s_PENDING --> s_OVERDUE_REVIEW
+    s_PENDING --> s_RESOLVED
+    s_RESTRICTED --> s_FULFILLED
+    s_RESTRICTED --> s_PENDING
+    s_RESTRICTED --> s_REMEDIATED
+    s_RESTRICTED --> s_RESOLVED
+    s_FULFILLED --> [*]
+    s_REMEDIATED --> [*]
+    s_RESOLVED --> [*]
+```
+
+| from | to | why |
+|---|---|---|
+| `CONFIRMED_UNFULFILLED` | `RESOLVED` | a person decided |
+| `CONFIRMED_UNFULFILLED` | `RESTRICTED` | a person decided |
+| `DELIVERING` | `DUE` | the obligations step checked it |
+| `DELIVERING` | `FULFILLED` | the obligations step checked it |
+| `DELIVERING` | `OVERDUE_REVIEW` | the obligations step checked it |
+| `DELIVERING` | `PENDING` | the obligations step checked it |
+| `DELIVERING` | `RESOLVED` | the obligations step checked it |
+| `DUE` | `DELIVERING` | the obligations step checked it |
+| `DUE` | `FULFILLED` | the obligations step checked it |
+| `DUE` | `OVERDUE_REVIEW` | the obligations step checked it |
+| `DUE` | `PENDING` | the obligations step checked it |
+| `DUE` | `RESOLVED` | the obligations step checked it |
+| `OVERDUE_REVIEW` | `CONFIRMED_UNFULFILLED` | a person decided, or it was delivered |
+| `OVERDUE_REVIEW` | `FULFILLED` | a person decided, or it was delivered |
+| `OVERDUE_REVIEW` | `PENDING` | a person decided, or it was delivered |
+| `OVERDUE_REVIEW` | `REMEDIATED` | a person decided, or it was delivered |
+| `OVERDUE_REVIEW` | `RESOLVED` | a person decided, or it was delivered |
+| `OVERDUE_REVIEW` | `RESTRICTED` | a person decided, or it was delivered |
+| `PENDING` | `DELIVERING` | the obligations step checked it |
+| `PENDING` | `DUE` | the obligations step checked it |
+| `PENDING` | `FULFILLED` | the obligations step checked it |
+| `PENDING` | `OVERDUE_REVIEW` | the obligations step checked it |
+| `PENDING` | `RESOLVED` | the obligations step checked it |
+| `RESTRICTED` | `FULFILLED` | a person decided, or it was delivered |
+| `RESTRICTED` | `PENDING` | a person decided, or it was delivered |
+| `RESTRICTED` | `REMEDIATED` | a person decided, or it was delivered |
+| `RESTRICTED` | `RESOLVED` | a person decided, or it was delivered |
+
+## arena_queue_entry
+
+`federation_arena_queue.state`: A place in the arena's queue.
+
+| state | meaning | next |
+|---|---|---|
+| `WAITING` (start) | In the queue. | `LEFT`, `MATCHED` |
+| `MATCHED` (end) | Seated in a match. | — |
+| `LEFT` (end) | Left the queue. | — |
+
+```mermaid
+stateDiagram-v2
+    [*] --> s_WAITING
+    s_WAITING : WAITING
+    s_MATCHED : MATCHED
+    s_LEFT : LEFT
+    s_WAITING --> s_LEFT
+    s_WAITING --> s_MATCHED
+    s_MATCHED --> [*]
+    s_LEFT --> [*]
+```
+
+| from | to | why |
+|---|---|---|
+| `WAITING` | `LEFT` | seated, or left |
+| `WAITING` | `MATCHED` | seated, or left |
+
+## arena_restriction
+
+`federation_arena_restrictions.state`: A block on new matches for a player who did not deliver.
+
+| state | meaning | next |
+|---|---|---|
+| `ACTIVE` (start) | In force. | `LIFTED` |
+| `LIFTED` (end) | Lifted. | — |
+
+```mermaid
+stateDiagram-v2
+    [*] --> s_ACTIVE
+    s_ACTIVE : ACTIVE
+    s_LIFTED : LIFTED
+    s_ACTIVE --> s_LIFTED
+    s_LIFTED --> [*]
+```
+
+| from | to | why |
+|---|---|---|
+| `ACTIVE` | `LIFTED` | the obligation was settled |
+
+## rr_reservation
+
+`federation_rr_reservations.state`: Simulated resource units held for a job.
+
+| state | meaning | next |
+|---|---|---|
+| `RESERVED` (start) | Held. | `CONSUMED`, `RELEASED` |
+| `CONSUMED` (end) | Used by the job. | — |
+| `RELEASED` (end) | Given back. | — |
+
+```mermaid
+stateDiagram-v2
+    [*] --> s_RESERVED
+    s_RESERVED : RESERVED
+    s_CONSUMED : CONSUMED
+    s_RELEASED : RELEASED
+    s_RESERVED --> s_CONSUMED
+    s_RESERVED --> s_RELEASED
+    s_CONSUMED --> [*]
+    s_RELEASED --> [*]
+```
+
+| from | to | why |
+|---|---|---|
+| `RESERVED` | `CONSUMED` | the job used them, or they were given back |
+| `RESERVED` | `RELEASED` | the job used them, or they were given back |
+
+## rr_spec
+
+`federation_rr_specs.state`: A provider's offer of simulated resources.
+
+| state | meaning | next |
+|---|---|---|
+| `ACTIVE` (start) | Offered. | `REVOKED` |
+| `REVOKED` (end) | Withdrawn by its provider. | — |
+
+```mermaid
+stateDiagram-v2
+    [*] --> s_ACTIVE
+    s_ACTIVE : ACTIVE
+    s_REVOKED : REVOKED
+    s_ACTIVE --> s_REVOKED
+    s_REVOKED --> [*]
+```
+
+| from | to | why |
+|---|---|---|
+| `ACTIVE` | `REVOKED` | its provider withdrew it |
+
+## rr_voucher
+
+`federation_rr_vouchers.status`: A voucher for simulated resource units.
+
+| state | meaning | next |
+|---|---|---|
+| `ACTIVE` (start) | Can be spent. | `EXHAUSTED`, `EXPIRED`, `REVOKED`, `WAIVED` |
+| `EXHAUSTED` (end) | Spent. | — |
+| `EXPIRED` (end) | Ran out of time. | — |
+| `REVOKED` (end) | Withdrawn by its issuer. | — |
+| `WAIVED` (end) | Forgiven. | — |
+
+```mermaid
+stateDiagram-v2
+    [*] --> s_ACTIVE
+    s_ACTIVE : ACTIVE
+    s_EXHAUSTED : EXHAUSTED
+    s_EXPIRED : EXPIRED
+    s_REVOKED : REVOKED
+    s_WAIVED : WAIVED
+    s_ACTIVE --> s_EXHAUSTED
+    s_ACTIVE --> s_EXPIRED
+    s_ACTIVE --> s_REVOKED
+    s_ACTIVE --> s_WAIVED
+    s_EXHAUSTED --> [*]
+    s_EXPIRED --> [*]
+    s_REVOKED --> [*]
+    s_WAIVED --> [*]
+```
+
+| from | to | why |
+|---|---|---|
+| `ACTIVE` | `EXHAUSTED` | spent, ran out, withdrawn or forgiven; the remainder goes back to the issuer |
+| `ACTIVE` | `EXPIRED` | spent, ran out, withdrawn or forgiven; the remainder goes back to the issuer |
+| `ACTIVE` | `REVOKED` | spent, ran out, withdrawn or forgiven; the remainder goes back to the issuer |
+| `ACTIVE` | `WAIVED` | spent, ran out, withdrawn or forgiven; the remainder goes back to the issuer |
