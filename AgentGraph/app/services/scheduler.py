@@ -470,9 +470,17 @@ async def _load(session: AsyncSession, workspace_id: Any,
     round among what it runs, which the second loop below counts.
     """
     load = {host["host_id"]: 0 for host in hosts}
+    # A placement whose task was finished by its worker ("delivered") still holds
+    # the seat until that worker reports: it hands off first, then runs its checks
+    # and cleans up. Offered in that gap, the next poke met a busy worker. A worker
+    # that dies without a report is marked by the messenger (worker_exited); the
+    # time limit covers a computer that went away altogether.
     for host_id, active in (await session.execute(text(
             "SELECT host_id, count(*) FROM runner_placements WHERE workspace_id = :ws "
-            "AND status IN ('offered', 'claimed') AND step <> 'supervise' GROUP BY host_id"),
+            "AND step <> 'supervise' AND (status IN ('offered', 'claimed') "
+            "  OR (status = 'delivered' AND reported IS NULL AND started_at IS NOT NULL "
+            "      AND ended_at > NOW() - INTERVAL '15 minutes')) "
+            "GROUP BY host_id"),
             {"ws": workspace_id})).all():
         if host_id in load:
             load[host_id] = active
@@ -651,7 +659,14 @@ async def _deliver_one(session: AsyncSession, placement: dict[str, Any], nerve_h
 
 
 async def _undeliverable(session: AsyncSession, placement: dict[str, Any], reason: str) -> None:
-    """The computer did not take the poke: free the task and move the placement."""
+    """The computer did not take the poke: free the task and move the placement.
+
+    Under the workspace's scheduling lock, like a pass: a pass locks the task and
+    then ends the placement, and this locked them the other way round, so the
+    two deadlocked when a pass ran while a delivery failed (and one of them
+    failed with a 503).
+    """
+    await session.execute(text(_WORKSPACE_LOCK_SQL), {"ws": str(placement["workspace_id"])})
     current = (await session.execute(text(
         "SELECT status FROM runner_placements WHERE placement_id = :id FOR UPDATE"),
         {"id": placement["placement_id"]})).scalar_one_or_none()

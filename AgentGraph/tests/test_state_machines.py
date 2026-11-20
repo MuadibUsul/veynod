@@ -41,7 +41,8 @@ def test_every_machine_is_well_formed() -> None:
 
 
 @pytest.mark.integration
-async def test_declared_states_are_exactly_what_the_schema_allows() -> None:
+async def test_declared_states_are_exactly_what_the_schema_allows(client) -> None:
+    del client  # the server has started, so the schema exists (on a fresh database too)
     conn = await asyncpg.connect(_db())
     try:
         for machine in state_machines.MACHINES:
@@ -71,8 +72,9 @@ async def test_declared_states_are_exactly_what_the_schema_allows() -> None:
 
 
 @pytest.mark.integration
-async def test_no_state_column_is_left_implicit() -> None:
+async def test_no_state_column_is_left_implicit(client) -> None:
     """Every status-like column is declared, or listed with why it is not a machine."""
+    del client  # on an empty database this would find nothing and pass for nothing
     from app.state_machine_catalog import NOT_MACHINES
 
     conn = await asyncpg.connect(_db())

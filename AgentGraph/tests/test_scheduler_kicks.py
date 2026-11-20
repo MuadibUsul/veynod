@@ -54,3 +54,41 @@ async def test_a_computer_coming_online_takes_the_waiting_task(kicked):
     await asyncio.sleep(1.5)  # kicked once already: no computer then
     host = await _host(kicked, ws, f"kh-{uuid.uuid4().hex[:4]}")
     await _placed_within(kicked, ws, key, host, 8)
+
+
+async def test_freeing_an_undelivered_placement_waits_for_a_running_pass() -> None:
+    """A failed delivery and a pass of the same workspace take turns.
+
+    A pass locks a task and then ends its placement; freeing an undelivered
+    placement locked them the other way round, and the two deadlocked (one
+    request came back as a 503). It now takes the workspace's lock first.
+    """
+    import os
+
+    import asyncpg
+
+    from app.database import async_session_factory
+    from app.services import scheduler
+
+    workspace_id = str(uuid.uuid4())
+    dsn = os.environ["TEST_DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://", 1)
+    holder = await asyncpg.connect(dsn)
+    try:
+        tx = holder.transaction()
+        await tx.start()
+        # A pass of this workspace is running.
+        await holder.execute(scheduler._WORKSPACE_LOCK_SQL.replace(":ws", "$1"), workspace_id)
+
+        async def free() -> None:
+            async with async_session_factory() as session:
+                await scheduler._undeliverable(
+                    session, {"placement_id": str(uuid.uuid4()), "workspace_id": workspace_id,
+                              "step": "work", "task_id": None, "agent_id": "x"}, "nerve:test")
+
+        freeing = asyncio.create_task(free())
+        await asyncio.sleep(0.5)
+        assert not freeing.done(), "it must wait for the pass to finish"
+        await tx.rollback()
+        await asyncio.wait_for(freeing, timeout=5)
+    finally:
+        await holder.close()
