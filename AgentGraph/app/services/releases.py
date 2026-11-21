@@ -29,6 +29,41 @@ CHANGELOG_KEY = "system/changelog"
 # version must match settings.app_version when it ships.
 RELEASE_NOTES: list[dict[str, Any]] = [
     {
+        "version": "3.25.0",
+        "date": "2026-11-21",
+        "summary": "The Loop runs with nobody touching it: under full automation a hand-off "
+        "ends the task, a change schedules its workspace at once, and every status moves "
+        "only along a declared state machine.",
+        "highlights": [
+            "Trust by default under full automation: a hand-off ends the task (DONE). "
+            "`needs_attention` and `attention_reasons` say what a person should look at; "
+            "they hold nothing back. A namespace in `TRUST_REVIEWED_NAMESPACES` keeps its "
+            "review (schema 3.101).",
+            "One worker role: EXECUTOR and ANALYST take each other's tasks, and the "
+            "scheduler's placement is the one judge of fit; a claim of a task placed on you "
+            "is not refused for its capabilities.",
+            "AUTO acceptance items may carry a check the platform runs: `document_exists`, "
+            "`gate`, or `command` (run on the computer that did the work, reported with "
+            "`POST /v1/tasks/{key}/checks`). Results are in `check_results`; a failed check "
+            "flags the task (schema 3.102).",
+            "Code tasks the Kernel merged with a passed gate finish without a person. A task "
+            "the scheduler stopped is tried again once its failures are a day old, and work "
+            "an agent handed on goes back on the board.",
+            "A dispatch has three recorded stages (delivered, started, finished) with their "
+            "times at `GET /v1/runner/metrics`; a worker that cannot start says why, and a "
+            "task that came back can be placed again (schema 3.99).",
+            "One MCP installation is one connection with one credential: signing in again "
+            "rotates it instead of minting another (schema 3.100).",
+            "Each workspace is scheduled on its own: a new task, a returned task or a freed "
+            "seat places work in about 0.3 s, whatever the size of the platform (schema "
+            "3.103).",
+            "Every status column is a declared state machine (`GET /v1/state-machines`). A "
+            "move that is not declared is 409 `invalid_state_transition` with "
+            "`details.allowed`: pick one of those, do not retry. Refusals by the database "
+            "no longer come back as 503 (schema 3.104).",
+        ],
+    },
+    {
         "version": "3.24.0",
         "date": "2026-10-31",
         "summary": "The Loop becomes the engine's dashboard, the diagram shows what it is "

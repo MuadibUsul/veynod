@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------ app
     app_name: str = "Veynod"
     # Bump on every release and add notes in app/services/releases.py.
-    app_version: str = "3.24.0"
+    app_version: str = "3.25.0"
     environment: Literal["development", "staging", "production", "test"] = "development"
     # See ``state_guard``: unset, production records undeclared state moves and
     # every other environment refuses them.
