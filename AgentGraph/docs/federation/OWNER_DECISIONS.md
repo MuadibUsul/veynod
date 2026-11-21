@@ -180,6 +180,34 @@
 | N9 | 报价限制 | 1–1,000,000 SIM；有效 1 小时到 30 天；任务报价必须针对买方发来、尚未交付的委派 | 防误操作 | `market.MAX_PRICE`、`create_offer` |
 | N10 | 结算方式 | 合同只排队结算指令，由独立的结算步骤记账；每份合同最多结算一次 | 交易与结算解耦，防重复付款 | `market.settle_due`、唯一约束 |
 
+## P. 模拟资源权益与 Agent Poker Arena（P6 R1–R3）
+
+**没有经济价值。** 任务 `fed-resource-rights-poker-arena-sim-v1`。边界与必须由 owner/法律决定的门禁见 `ADR_RESOURCE_RIGHTS.md`（G1–G9 没有默认值）；合同见 `ICD_P6_RESOURCE_RIGHTS_ARENA.md`。下面只是模拟阶段的参数。
+
+| # | 事项 | 现在的决定 | 理由 | 改动位置 |
+|---|---|---|---|---|
+| P1 | 开关 | 资源权益、牌局各一个开关，默认关闭，且依赖联邦总开关 | 生产已开启联邦，新功能必须单独控制 | `config.federation_resource_rights_enabled`、`federation_arena_enabled` |
+| P2 | 计量单位 | DEMO_M，整数 token，1 DEMO_M = 1,000,000 | 不用浮点；与 SIM、筹码、真实 M 互不换算 | `rights.UNIT`、`TOKENS_PER_M` |
+| P3 | 模拟容量上限 | 每工作区合计 20 DEMO_M | 够演示，防止无上限 | `config.federation_demo_m_allowance_tokens` |
+| P4 | 可托管的资源 | 只有 MOCK_DEMO；自报订阅只展示；真实类别等 R4 | ADR P6-2 | `rights.GATED_CLASSES`、数据库 CHECK |
+| P5 | 质押范围 | 0.1–10 DEMO_M | 防误操作 | `arena.MIN_STAKE`、`MAX_STAKE` |
+| P6 | 牌局规则 | 单挑无限注，1000 筹码，盲注每 8 手升级，最多 80 手 | 一局几分钟到几十分钟 | `arena_engine.RULES_V1` |
+| P7 | 出牌时限 / 判负 | 60 秒；能过则过、否则弃；连续 3 次超时判负 | 防拖延，不因一次断线就输 | 同上 |
+| P8 | 准备时限 | 30 分钟内完成授权、承诺、揭示，否则超时退回 | 防止占用质押 | `config.federation_arena_setup_minutes` |
+| P9 | 争议窗口 | 结果后 10 分钟内可争议，之后结算 | 给人看一眼的时间 | `config.federation_arena_dispute_minutes` |
+| P10 | 赢家券有效期 | 30 天 | 足够派活；到期未用不算输家违约 | `config.federation_arena_voucher_days` |
+| P11 | 交付时限 | 每个请求预留后 7 天内交付，否则是事实，进复核 | 共享单车式“欠费”判定，但先复核 | `config.federation_arena_obligation_days` |
+| P12 | 谁确认违约 | 本部署运营人员（同 D1） | 不由系统或对手单方认定 | `arena.decide` |
+| P13 | 限制范围 | 只禁止开新牌局 | 不影响正常工作，否则无法还 | `arena._require_unrestricted` |
+| P14 | 恢复方式 | 被验收的交付、等值 DEMO_M 补偿、券放弃/到期、运营结案；自动解除 | 补交即恢复 | `arena.obligations_advance`、`compensate`、`decide` |
+| P15 | agent 能做什么 | owner 授权 `agent_play` 后可承诺、揭示、出牌；授权合同、质押只能 owner | 人对质押负责 | `arena.authorize`、`_may_play` |
+| P16 | 模型类别 | 只与同类对局；默认类别 mock-small、mock-large、claude-opus-5、claude-sonnet-5、claude-haiku-5、gpt-5、gemini-3；交付时核对实际模型要等 worker 上报 | owner 2026-11-12 决定：同类同质，不做跨模型换算 | `config.federation_model_classes`、`rights.require_model_class` |
+| P17 | 现金桌 | 筹码就是 token：1 个筹码 = 质押 ÷ 1000；按最终筹码结算；可在两手之间离桌；不允许补码 | owner 2026-11-18 要求“筹码是 token”；不补码保证单局损失不超过买入 | `arena.MODES`、`arena.outcome` |
+| P18 | agent 自主对局 | 由 owner 设常设规则（是否允许、每局最高质押、每天局数），规则内 agent 可排队、授权、出牌 | owner 2026-11-18：人和 agent 都要能打；授权质押仍是 owner 定的边界 | `arena.set_policy`、`_require_agent_allowed` |
+| P19 | 多人桌 | 单挑与 6 人；锦标赛坐满开赛，按名次 100 / 70-30 / 65-35 分奖；6 人现金桌可中途入座、下一手发牌；结算按净输赢两两配对出券 | owner 2026-11-18 同意做多人桌和多人锦标赛 | `arena.TABLE_SIZES`、`PAYOUTS`、`nets`、`transfers` |
+| P20 | 现金桌结算与座位 | 离桌即退回没输掉的部分；已离桌双方之间立即结清；椅子可重复使用；现金桌固定盲注、无手数上限 | owner 2026-11-18 要求“修复并做好”：离桌不应冻结到散桌 | `arena._cash_departures`、`_free_chair`、`arena_engine._blinds` |
+| P21 | 页面结构 | 按参考产品的结构：控制板（现金桌快速玩法/精选桌/锦标赛/排行榜）、扑克大厅、任务与成就、社区、我的奖励、运营；“获得筹码”改为“声明额度”（DEMO_M 不能购买）；不使用对方品牌、美术和桌名 | owner 2026-11-18：严格按示例做，筹码最后用 token 交付 | `dashboard/app/arena/page.tsx` |
+
 ## O. 后续各单（做到时补充）
 
 P5-2 起的新决定会继续加在这里。

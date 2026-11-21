@@ -1,0 +1,1616 @@
+"""Simulated resource rights and the Agent Poker Arena (federation P6, R1-R3;
+docs/federation/ICD_P6_RESOURCE_RIGHTS_ARENA.md). NO ECONOMIC VALUE.
+
+Task acceptance covered here (fed-resource-rights-poker-arena-sim-v1):
+RR-02 isolated DEMO_M ledger, voucher lifecycle, concurrent reserve without
+double spend; RR-03 no unit conversion, self-reported quota never escrowed;
+RR-04 matching, commit/reveal, signed result, replay, duplicate and stale
+actions, timeouts; RR-05 an unfulfilled obligation only restricts new arena
+matches, with review and recovery, and a report alone restricts nothing;
+RR-06 the bridge, grants and metering are reused (a revoked connection
+refuses, credentials never travel, settlement happens once); RR-07 the
+features are off by default.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import json
+import os
+import secrets
+import uuid
+from collections.abc import AsyncIterator
+from pathlib import Path
+
+import httpx
+import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
+
+from app.config import get_settings
+from app.database import async_session_factory
+from app.services.federation import (
+    arena,
+    delegations,
+    governance,
+    grants,
+    integrity,
+    ledger,
+    metering,
+    rights,
+)
+from app.services.federation import arena_engine as engine
+from app.services.federation.errors import FederationError
+from tests import test_federation_delegations as _bridge
+from tests.conftest import run_server
+from tests.test_federation_delegations import RESULT, Tasks, _connect, _terms, _ws
+
+pytestmark = pytest.mark.integration
+
+M = rights.TOKENS_PER_M
+REPORT_CATEGORY = "fraud"
+
+
+@pytest.fixture
+def arena_on(monkeypatch):
+    settings = get_settings()
+    monkeypatch.setattr(settings, "federation_enabled", True)
+    monkeypatch.setattr(settings, "federation_kek", base64.b64encode(os.urandom(32)).decode())
+    monkeypatch.setattr(settings, "federation_resource_rights_enabled", True)
+    monkeypatch.setattr(settings, "federation_arena_enabled", True)
+    monkeypatch.setattr(settings, "federation_arena_dispute_minutes", 0)
+    return settings
+
+
+federation_on = _bridge.federation_on
+
+
+async def _code(awaitable) -> str:
+    with pytest.raises(FederationError) as err:
+        await awaitable
+    return err.value.code
+
+
+async def _mock_spec(ws, tokens: int = 10 * M, model_class: str = "mock-small") -> dict:
+    return await rights.declare_spec(
+        ws["id"],
+        resource_class="MOCK_DEMO",
+        model_family=model_class,
+        allowed_use="arena and demo delegations only",
+        declared_tokens=tokens,
+        measured_source="mock",
+        actor=ws["owner"],
+    )
+
+
+async def _unreserved(spec_id: str) -> int:
+    async with async_session_factory() as session:
+        return await rights.balance(session, rights.cap(spec_id))
+
+
+async def _sql(query: str, **params) -> None:
+    async with async_session_factory() as session:
+        await session.execute(text(query), params)
+        await session.commit()
+
+
+# ── R1: resource rights ───────────────────────────────────────────────────
+
+
+async def test_off_by_default(client, admin_headers, federation_on):
+    """RR-07: federation on, resource rights and arena still off."""
+    a = await _ws(client, admin_headers, "off")
+    assert await _code(_mock_spec(a)) == "FED_E_RR_DISABLED"
+    assert (
+        await _code(arena.join_queue(a["id"], spec_id="x", stake=M, actor=a["owner"]))
+        == "FED_E_ARENA_DISABLED"
+    )
+    assert await rights.advance() == 0 and await arena.advance() == 0
+
+
+async def test_units_classes_and_capacity_are_kept_apart(client, admin_headers, arena_on):
+    """RR-02/RR-03: only MOCK_DEMO is escrowable; no conversion, no floats."""
+    a, b = await _ws(client, admin_headers, "ua"), await _ws(client, admin_headers, "ub")
+    # Real classes wait for the R4 gate.
+    for cls in ("CONTROLLED_PREPAID", "AUTHORIZED_PROVIDER_SERVICE"):
+        assert (
+            await _code(
+                rights.declare_spec(
+                    a["id"],
+                    resource_class=cls,
+                    model_family="x",
+                    allowed_use="x",
+                    declared_tokens=M,
+                    measured_source="adapter",
+                    actor=a["owner"],
+                )
+            )
+            == "FED_E_NOT_AVAILABLE"
+        )
+    # A subscription's remaining quota is only shown, never escrowed or staked.
+    sub = await rights.declare_spec(
+        a["id"],
+        resource_class="SELF_REPORTED_SUBSCRIPTION",
+        model_family="claude-sonnet-5",
+        allowed_use="shown only",
+        declared_tokens=5 * M,
+        measured_source="self_reported",
+        actor=a["owner"],
+    )
+    assert sub["escrowable"] is False and "never escrowed" in sub["warning"]
+    assert "unreserved_tokens" not in sub
+    assert (
+        await _code(
+            rights.issue_voucher(
+                a["id"],
+                spec_id=sub["spec_id"],
+                beneficiary=b["fid"],
+                amount=M,
+                usage_scope="try a subscription",
+                actor=a["owner"],
+            )
+        )
+        == "FED_E_RESOURCE_NOT_ESCROWABLE"
+    )
+    assert (
+        await _code(arena.join_queue(a["id"], spec_id=sub["spec_id"], stake=M, actor=a["owner"]))
+        == "FED_E_RESOURCE_NOT_ESCROWABLE"
+    )
+    # The schema itself refuses an escrowable subscription.
+    with pytest.raises(DBAPIError):
+        await _sql(
+            "UPDATE federation_rr_specs SET escrowable = true WHERE spec_id = :s",
+            s=sub["spec_id"],
+        )
+    # Only an owner declares; only people issue.
+    assert (
+        await _code(
+            rights.declare_spec(
+                a["id"],
+                resource_class="MOCK_DEMO",
+                model_family="m",
+                allowed_use="u",
+                declared_tokens=M,
+                measured_source="mock",
+                actor=a["person"],
+            )
+        )
+        == "FED_E_APPROVAL_NOT_HUMAN"
+    )
+    spec = await _mock_spec(a, 5 * M)
+    assert spec["unreserved_tokens"] == 5 * M
+    # The allowance bounds simulated capacity.
+    assert await _code(_mock_spec(a, 16 * M)) == "FED_E_CAPACITY_EXCEEDED"
+    # No other unit, no float, no string amounts.
+    for unit in ("SIM", "ARENA_CHIP", "M", "model_tokens"):
+        assert (
+            await _code(
+                rights.issue_voucher(
+                    a["id"],
+                    spec_id=spec["spec_id"],
+                    beneficiary=b["fid"],
+                    amount=M,
+                    unit=unit,
+                    usage_scope="wrong unit",
+                    actor=a["owner"],
+                )
+            )
+            == "FED_E_UNIT_MISMATCH"
+        )
+    for amount in (1.5, "1000", True, 0, -5):
+        assert (
+            await _code(
+                rights.issue_voucher(
+                    a["id"],
+                    spec_id=spec["spec_id"],
+                    beneficiary=b["fid"],
+                    amount=amount,
+                    usage_scope="bad amount",
+                    actor=a["owner"],
+                )
+            )
+            == "FED_E_PACKAGE_INVALID"
+        )
+    # A credential in a declaration never gets stored.
+    assert (
+        await _code(
+            rights.declare_spec(
+                a["id"],
+                resource_class="MOCK_DEMO",
+                model_family="mock-small",
+                allowed_use="use key sk-ant-abcdefghijklmnopqrstu",
+                declared_tokens=M,
+                measured_source="mock",
+                actor=a["owner"],
+            )
+        )
+        == "FED_E_CREDENTIAL_IN_PAYLOAD"
+    )
+    # The SIM wallet is untouched by any of this; the DEMO_M ledger balances.
+    assert (await ledger.wallet(a["fid"]))["available"] == get_settings().federation_sim_allowance
+    assert (await rights.is_balanced())["ok"]
+    w = await rights.wallet(a["fid"])
+    assert w["redeemable"] is False and "no economic value" in w["notice"]
+
+
+async def _bridge_job(req, prov, amount: int, model_class: str | None = "mock-small") -> str:
+    terms = _terms(budget_cap={"amount": amount, "unit": "model_tokens"})
+    if model_class is not None:
+        terms["model_policy"] = {"mode": "exact", "model_class": model_class}
+    sent = await delegations.offer(
+        req["id"], peer_workspace=prov["fid"], terms=terms, actor=req["owner"]
+    )
+    return sent["delegation"]["federation_job_id"]
+
+
+async def test_concurrent_reservations_never_overspend(client, admin_headers, arena_on):
+    """RR-02/RR-04: parallel reserves on one voucher cannot exceed it; a
+    retry is replayed, a job cannot draw twice, the ledger balances."""
+    a, b = await _ws(client, admin_headers, "ca"), await _ws(client, admin_headers, "cb")
+    await _connect(b, a)  # b may delegate to a
+    spec = await _mock_spec(a, 5 * M)
+    voucher = await rights.issue_voucher(
+        a["id"],
+        spec_id=spec["spec_id"],
+        beneficiary=b["fid"],
+        amount=3 * M,
+        usage_scope="demo research help",
+        actor=a["owner"],
+    )
+    vid = voucher["voucher_id"]
+    assert voucher["available_amount"] == 3 * M and await _unreserved(spec["spec_id"]) == 2 * M
+    jobs = [await _bridge_job(b, a, M) for _ in range(5)]
+    results = await asyncio.gather(
+        *[
+            rights.reserve(
+                b["id"],
+                voucher_id=vid,
+                federation_job_id=j,
+                amount=M,
+                idempotency_key=f"key-{j}",
+                actor=b["agent"],
+            )
+            for j in jobs
+        ],
+        return_exceptions=True,
+    )
+    ok = [r for r in results if isinstance(r, dict)]
+    refused = [r for r in results if isinstance(r, FederationError)]
+    assert len(ok) == 3 and len(refused) == 2
+    assert {e.code for e in refused} == {"FED_E_CAPACITY_EXCEEDED"}
+    after = await rights.get_voucher(vid)
+    assert after["available_amount"] == 0 and after["reserved_amount"] == 3 * M
+    # The same request again is replayed, not booked again.
+    winner_job = ok[0]["reservations"][0]["federation_job_id"]
+    first = next(r for r in after["reservations"] if r["federation_job_id"] == winner_job)
+    again = await rights.reserve(
+        b["id"],
+        voucher_id=vid,
+        federation_job_id=winner_job,
+        amount=M,
+        idempotency_key=f"key-{winner_job}",
+        actor=b["agent"],
+    )
+    assert again["replayed"] and again["reservation_id"] == first["reservation_id"]
+    # The issuer cannot reserve on someone else's voucher; others cannot see it.
+    assert (
+        await _code(
+            rights.reserve(
+                a["id"],
+                voucher_id=vid,
+                federation_job_id=jobs[0],
+                amount=M,
+                idempotency_key="xxxxxxxxxx",
+                actor=a["owner"],
+            )
+        )
+        == "FED_E_VOUCHER_UNKNOWN"
+    )
+    c = await _ws(client, admin_headers, "cc")
+    assert await _code(rights.get_voucher_for(c["id"], vid)) == "FED_E_VOUCHER_UNKNOWN"
+    # A ledger row cannot be edited; an overdraft cannot be committed.
+    with pytest.raises(DBAPIError):
+        await _sql("UPDATE federation_rr_entries SET amount = amount + 1")
+    with pytest.raises(DBAPIError):
+        async with async_session_factory() as session:
+            await rights.post(
+                session,
+                kind="issue",
+                entries=[(rights.voucher_account(vid), -1), (rights.cap(spec["spec_id"]), 1)],
+            )
+            await session.commit()
+    assert (await rights.is_balanced())["ok"]
+
+
+async def test_a_reservation_runs_on_the_bridge_and_is_metered(client, admin_headers, arena_on):
+    """RR-06: the voucher is used only through a delegation; the enforced cap
+    equals the reservation; what was used is consumed, the rest released."""
+    a, b = await _ws(client, admin_headers, "ma"), await _ws(client, admin_headers, "mb")
+    connection = await _connect(b, a)
+    spec = await _mock_spec(a, 4 * M)
+    vid = (
+        await rights.issue_voucher(
+            a["id"],
+            spec_id=spec["spec_id"],
+            beneficiary=b["fid"],
+            amount=2 * M,
+            usage_scope="demo research help",
+            actor=a["owner"],
+        )
+    )["voucher_id"]
+    # A delegation without the matching enforced cap is refused.
+    loose = (
+        await delegations.offer(b["id"], peer_workspace=a["fid"], terms=_terms(), actor=b["owner"])
+    )["delegation"]["federation_job_id"]
+    assert (
+        await _code(
+            rights.reserve(
+                b["id"],
+                voucher_id=vid,
+                federation_job_id=loose,
+                amount=M,
+                idempotency_key="loose-cap-1",
+                actor=b["owner"],
+            )
+        )
+        == "FED_E_RESERVATION_INVALID"
+    )
+    # The delegation must pin the voucher's model class: none, or another, is refused.
+    for other_class in (None, "mock-large"):
+        unpinned = await _bridge_job(b, a, M, model_class=other_class)
+        assert (
+            await _code(
+                rights.reserve(
+                    b["id"],
+                    voucher_id=vid,
+                    federation_job_id=unpinned,
+                    amount=M,
+                    idempotency_key=f"pin-{other_class}",
+                    actor=b["owner"],
+                )
+            )
+            == "FED_E_MODEL_CLASS_MISMATCH"
+        )
+    job = await _bridge_job(b, a, M)
+    pinned = await rights.reserve(
+        b["id"],
+        voucher_id=vid,
+        federation_job_id=job,
+        amount=M,
+        idempotency_key="run-1-key",
+        actor=b["agent"],
+    )
+    assert pinned["model_class"] == "mock-small"
+    assert pinned["model_policy"] == {"mode": "exact", "model_class": "mock-small"}
+    # The provider sees the same pinned class in the frozen terms.
+    assert (await delegations.get(a["id"], job))["delegation"]["terms"]["model_policy"] == {
+        "mode": "exact",
+        "model_class": "mock-small",
+    }
+    assert await rights.settle_reservations() == 0  # still open
+    await delegations.act(
+        a["id"], job, "accept", actor=a["owner"], create_local_task=Tasks().create
+    )
+    await metering.use(
+        a["id"],
+        job,
+        kind="record",
+        unit="model_tokens",
+        amount=400_000,
+        actor_ref=a["agent"].ref,
+        source="adapter",
+        proof_ref="mock-adapter://run/1",
+    )
+    # The provider cannot start a run past the reservation.
+    assert (
+        await _code(
+            metering.use(
+                a["id"],
+                job,
+                kind="reserve",
+                unit="model_tokens",
+                amount=700_000,
+                actor_ref=a["agent"].ref,
+            )
+        )
+        == "FED_E_BUDGET_EXCEEDED"
+    )
+    plain = {k: v for k, v in RESULT.items() if k != "cost_receipt"}
+    await delegations.act(a["id"], job, "submit", actor=a["agent"], result=plain)
+    await delegations.act(b["id"], job, "accept_result", actor=b["owner"])
+    assert await rights.settle_reservations() == 1
+    assert await rights.settle_reservations() == 0  # once only
+    v = await rights.get_voucher(vid)
+    res = v["reservations"][0]
+    assert res["state"] == "CONSUMED" and res["consumed"] == 400_000
+    assert res["consumed_by_source"] == {"adapter": 400_000}  # never relabelled
+    assert v["consumed_amount"] == 400_000 and v["available_amount"] == 2 * M - 400_000
+    # A revoked connection refuses any new reservation (RR-06).
+    await grants.revoke(b["id"], connection, actor=b["owner"])
+    job2_code = await _code(
+        rights.reserve(
+            b["id"],
+            voucher_id=vid,
+            federation_job_id=job,
+            amount=M,
+            idempotency_key="after-revoke",
+            actor=b["owner"],
+        )
+    )
+    assert job2_code in ("FED_E_GRANT_INACTIVE", "FED_E_RESERVATION_INVALID")
+    # Issuer revocation returns only the unused part; arena vouchers are not revocable.
+    revoked = await rights.revoke_voucher(a["id"], vid, actor=a["owner"])
+    assert revoked["status"] == "REVOKED" and revoked["available_amount"] == 0
+    assert await _unreserved(spec["spec_id"]) == 4 * M - 400_000
+    assert (await rights.is_balanced())["ok"]
+
+
+async def test_vouchers_expire_back_to_the_issuer(client, admin_headers, arena_on):
+    a, b = await _ws(client, admin_headers, "ea"), await _ws(client, admin_headers, "eb")
+    spec = await _mock_spec(a, 2 * M)
+    vid = (
+        await rights.issue_voucher(
+            a["id"],
+            spec_id=spec["spec_id"],
+            beneficiary=b["fid"],
+            amount=M,
+            usage_scope="short lived demo",
+            actor=a["owner"],
+        )
+    )["voucher_id"]
+    await _sql(
+        "UPDATE federation_rr_vouchers SET expires_at = NOW() - interval '1 minute' "
+        "WHERE voucher_id = :v",
+        v=vid,
+    )
+    assert await rights.expire_due() >= 1
+    assert (await rights.get_voucher(vid))["status"] == "EXPIRED"
+    assert await _unreserved(spec["spec_id"]) == 2 * M
+
+
+# ── R2: the arena ─────────────────────────────────────────────────────────
+
+
+async def _seated(client, admin_headers, tag: str, stake: int = M):
+    a, b = await _ws(client, admin_headers, f"{tag}a"), await _ws(client, admin_headers, f"{tag}b")
+    sa, sb = await _mock_spec(a, 5 * M), await _mock_spec(b, 5 * M)
+    first = await arena.join_queue(a["id"], spec_id=sa["spec_id"], stake=stake, actor=a["person"])
+    assert first["state"] == "WAITING" and first["match"] is None
+    second = await arena.join_queue(b["id"], spec_id=sb["spec_id"], stake=stake, actor=b["person"])
+    assert second["state"] == "MATCHED"
+    match = second["match"]
+    assert match["seats"][0]["fid"] == a["fid"] and match["seats"][1]["fid"] == b["fid"]
+    return a, b, sa, sb, match["match_id"], match
+
+
+async def _ready(a, b, match_id: str, contract_hash: str, *, agent_play=False):
+    for ws in (a, b):
+        await arena.authorize(
+            ws["id"],
+            match_id,
+            contract_hash=contract_hash,
+            agent_play=agent_play,
+            actor=ws["owner"],
+        )
+    seeds = {}
+    for ws in (a, b):
+        seeds[ws["fid"]] = secrets.token_hex(32)
+        await arena.commit_seed(
+            ws["id"],
+            match_id,
+            commitment=engine.seed_commitment(seeds[ws["fid"]]),
+            actor=ws["owner"],
+        )
+    for ws in (a, b):
+        await arena.reveal_seed(ws["id"], match_id, seed=seeds[ws["fid"]], actor=ws["owner"])
+    return seeds
+
+
+async def _play_out(a, b, match_id: str, *, actor_key="owner") -> dict:
+    """Shove every hand: all in or call, until the match ends."""
+    by_seat = {0: a, 1: b}
+    for _ in range(500):
+        view = await arena.get_match(a["id"], match_id)
+        if view["state"] != "PLAYING":
+            return view
+        to_act = view["game"]["hand"]["to_act"]
+        ws = by_seat[to_act]
+        mine = await arena.get_match(ws["id"], match_id)
+        legal = {x["type"] for x in mine["game"]["hand"]["legal"]}
+        action = {"type": "all_in"} if "all_in" in legal else {"type": "call"}
+        if "all_in" not in legal and "call" not in legal:
+            action = {"type": "check"}
+        await arena.act(
+            ws["id"], match_id, seq=mine["action_seq"], action=action, actor=ws[actor_key]
+        )
+    raise AssertionError("the match did not end")
+
+
+async def test_a_match_from_queue_to_settlement(client, admin_headers, arena_on):
+    """RR-04 and RR-09: matched, authorized, fair seeds, played, verified,
+    settled once; the winner nets exactly the stake, nothing is created."""
+    a, b, sa, sb, mid, match = await _seated(client, admin_headers, "pm")
+    assert match["state"] == "MATCHED" and match["server_seed"] is None
+    assert "no economic value" in match["notice"]
+    # Only an owner authorizes, and only the contract as shown.
+    assert (
+        await _code(
+            arena.authorize(a["id"], mid, contract_hash=match["contract_hash"], actor=a["person"])
+        )
+        == "FED_E_APPROVAL_NOT_HUMAN"
+    )
+    assert (
+        await _code(arena.authorize(a["id"], mid, contract_hash="0" * 64, actor=a["owner"]))
+        == "FED_E_MATCH_STATE"
+    )
+    # Someone not seated sees nothing.
+    c = await _ws(client, admin_headers, "pmc")
+    assert await _code(arena.get_match(c["id"], mid)) == "FED_E_MATCH_UNKNOWN"
+
+    await arena.authorize(a["id"], mid, contract_hash=match["contract_hash"], actor=a["owner"])
+    assert await _unreserved(sa["spec_id"]) == 4 * M  # the stake is held
+    await arena.authorize(b["id"], mid, contract_hash=match["contract_hash"], actor=b["owner"])
+    view = await arena.get_match(a["id"], mid)
+    assert view["state"] == "DEMO_RESERVED"
+    assert [h["to"] for h in view["history"]] == ["MATCHED", "OWNER_AUTHORIZED", "DEMO_RESERVED"]
+    # Commit, then a wrong reveal is refused.
+    seeds = {ws["fid"]: secrets.token_hex(32) for ws in (a, b)}
+    # An agent may not play unless its owner allowed it.
+    assert (
+        await _code(arena.commit_seed(a["id"], mid, commitment="ab" * 32, actor=a["agent"]))
+        == "FED_E_APPROVAL_NOT_HUMAN"
+    )
+    for ws in (a, b):
+        await arena.commit_seed(
+            ws["id"], mid, commitment=engine.seed_commitment(seeds[ws["fid"]]), actor=ws["owner"]
+        )
+    assert (
+        await _code(arena.reveal_seed(a["id"], mid, seed="cd" * 32, actor=a["owner"]))
+        == "FED_E_ARENA_ILLEGAL"
+    )
+    for ws in (a, b):
+        await arena.reveal_seed(ws["id"], mid, seed=seeds[ws["fid"]], actor=ws["owner"])
+    view_a = await arena.get_match(a["id"], mid)
+    view_b = await arena.get_match(b["id"], mid)
+    assert view_a["state"] == "PLAYING" and view_a["server_seed"] is None
+    assert view_a["game"]["hand"]["my_cards"] != view_b["game"]["hand"]["my_cards"]
+    assert set(view_a["game"]["hand"]["my_cards"]).isdisjoint(view_b["game"]["hand"]["my_cards"])
+
+    # Duplicate and stale actions (RR-08).
+    first_seat = view_a["game"]["hand"]["to_act"]
+    actor_ws = a if first_seat == 0 else b
+    other = b if first_seat == 0 else a
+    assert (
+        await _code(
+            arena.act(other["id"], mid, seq=0, action={"type": "call"}, actor=other["owner"])
+        )
+        == "FED_E_ARENA_ILLEGAL"  # not their turn
+    )
+    assert (
+        await _code(
+            arena.act(
+                actor_ws["id"],
+                mid,
+                seq=0,
+                action={"type": "raise", "amount": 3},
+                actor=actor_ws["owner"],
+            )
+        )
+        == "FED_E_ARENA_ILLEGAL"
+    )
+    done = await arena.act(
+        actor_ws["id"], mid, seq=0, action={"type": "call"}, actor=actor_ws["owner"]
+    )
+    assert done["replayed"] is False and done["action_seq"] == 1
+    again = await arena.act(
+        actor_ws["id"], mid, seq=0, action={"type": "call"}, actor=actor_ws["owner"]
+    )
+    assert again["replayed"] is True and again["action_seq"] == 1
+    assert (
+        await _code(
+            arena.act(actor_ws["id"], mid, seq=0, action={"type": "fold"}, actor=actor_ws["owner"])
+        )
+        == "FED_E_ARENA_STALE"
+    )
+    assert (
+        await _code(
+            arena.act(other["id"], mid, seq=5, action={"type": "check"}, actor=other["owner"])
+        )
+        == "FED_E_ARENA_STALE"
+    )
+
+    final = await _play_out(a, b, mid)
+    assert final["state"] in ("RESULT_VERIFIED", "CLOSED")
+    # Settle (dispute window is 0 here) - and only once.
+    await arena.settle_due()
+    await arena.settle_due()
+    final = await arena.get_match(a["id"], mid)
+    assert final["state"] == "CLOSED" and final["server_seed"] is not None
+    states = [h["to"] for h in final["history"]]
+    assert states[-4:] == ["PLAYING", "RESULT_VERIFIED", "DEMO_SETTLED", "CLOSED"]
+    proof = final["result"]["proof"]
+    assert proof["economic_value"] == "none"
+    # Anyone with the record can replay it: seeds, commitments, signatures.
+    check = await arena.verify(mid)
+    assert check["valid"], check["checks"]
+    assert len(final["result"]["signatures"]) == 2
+
+    winner = proof["winner_seat"]
+    assert winner in (0, 1)  # all-in every hand: someone busts within the hand limit
+    w, lo = (a, b) if winner == 0 else (b, a)
+    ws_spec = sa if winner == 0 else sb
+    lo_spec = sb if winner == 0 else sa
+    # RR-09: the winner has its own stake back plus a voucher for exactly the stake.
+    assert await _unreserved(ws_spec["spec_id"]) == 5 * M
+    assert await _unreserved(lo_spec["spec_id"]) == 4 * M
+    held = (await rights.list_vouchers(w["id"]))["held"]
+    assert len(held) == 1 and held[0]["face_amount"] == M and held[0]["origin"] == "arena"
+    assert held[0]["issuer"] == lo["fid"] and held[0]["redeemable"] is False
+    assert (await rights.wallet(w["fid"]))["voucher_tokens_held"] == M
+    # An arena voucher is an obligation: its issuer cannot revoke it.
+    assert (
+        await _code(rights.revoke_voucher(lo["id"], held[0]["voucher_id"], actor=lo["owner"]))
+        == "FED_E_VOUCHER_STATE"
+    )
+    obligations = await arena.list_obligations(lo["id"])
+    assert obligations["owed_by_me"][0]["state"] == "PENDING"
+    assert obligations["owed_by_me"][0]["legal_debt"] is False
+    async with async_session_factory() as session:
+        settled = await session.scalar(
+            text("SELECT count(*) FROM federation_arena_settlements WHERE match_id = :m"),
+            {"m": mid},
+        )
+    assert settled == 1
+    assert (await rights.is_balanced())["ok"]
+    # Chips never reached any ledger: SIM is untouched.
+    assert (await ledger.wallet(a["fid"]))["available"] == get_settings().federation_sim_allowance
+
+
+async def test_one_controller_is_never_matched_with_itself(client, admin_headers, arena_on):
+    """RR-11: linked workspaces wait instead of being matched."""
+    a, b = await _ws(client, admin_headers, "la"), await _ws(client, admin_headers, "lb")
+    await integrity.link(a["fid"], b["fid"], reason="same team, two workspaces", operator="ops")
+    sa, sb = await _mock_spec(a), await _mock_spec(b)
+    stake = 123_457  # a stake nobody else in this suite uses
+    await arena.join_queue(a["id"], spec_id=sa["spec_id"], stake=stake, actor=a["person"])
+    again = await arena.join_queue(b["id"], spec_id=sb["spec_id"], stake=stake, actor=b["person"])
+    assert again["state"] == "WAITING"
+    assert (
+        await _code(
+            arena.join_queue(a["id"], spec_id=sa["spec_id"], stake=stake, actor=a["person"])
+        )
+        == "FED_E_MATCH_STATE"
+    )
+    await arena.leave_queue(a["id"], actor=a["person"])
+    await arena.leave_queue(b["id"], actor=b["person"])
+
+
+async def test_timeouts_aborts_disputes_and_voids(client, admin_headers, arena_on):
+    """RR-08: a turn timeout acts for the seat; a setup that stalls times
+    out with the stakes back; a dispute holds settlement; a void returns."""
+    a, b, sa, sb, mid, match = await _seated(client, admin_headers, "to", stake=2 * M)
+    await _ready(a, b, mid, match["contract_hash"])
+    await _sql(
+        "UPDATE federation_arena_matches SET turn_deadline = NOW() - interval '1 second' "
+        "WHERE match_id = :m",
+        m=mid,
+    )
+    assert await arena.tick() >= 1
+    view = await arena.get_match(a["id"], mid)
+    assert view["action_seq"] == 1 and view["game"]["timeouts"] in ([1, 0], [0, 1])
+    # A concession ends it; the dispute holds the result.
+    await arena.leave(b["id"], mid, actor=b["owner"])
+    view = await arena.get_match(a["id"], mid)
+    assert view["state"] == "RESULT_VERIFIED" and view["result"]["proof"]["reason"] == "conceded"
+    await arena.dispute(b["id"], mid, reason="the timeout fired too early", actor=b["owner"])
+    await arena.settle_due()
+    assert (await arena.get_match(a["id"], mid))["state"] == "DISPUTED"
+    voided = await arena.resolve(mid, outcome="void", note="host clock issue", operator="ops")
+    assert voided["state"] == "ABORTED"
+    assert await _unreserved(sa["spec_id"]) == 5 * M and await _unreserved(sb["spec_id"]) == 5 * M
+
+    # A setup that never finishes times out and returns what was held.
+    c, d, sc, sd, mid2, match2 = await _seated(client, admin_headers, "su", stake=3 * M)
+    await arena.authorize(c["id"], mid2, contract_hash=match2["contract_hash"], actor=c["owner"])
+    assert await _unreserved(sc["spec_id"]) == 2 * M
+    await _sql(
+        "UPDATE federation_arena_matches SET setup_deadline = NOW() - interval '1 second' "
+        "WHERE match_id = :m",
+        m=mid2,
+    )
+    await arena.tick()
+    view = await arena.get_match(c["id"], mid2)
+    assert view["state"] == "TIMED_OUT" and "waiting on seats [1]" in view["history"][-1]["note"]
+    assert await _unreserved(sc["spec_id"]) == 5 * M
+    # Leaving before play aborts.
+    e_, f_, se, sf, mid3, match3 = await _seated(client, admin_headers, "lv", stake=4 * M)
+    await arena.leave(f_["id"], mid3, actor=f_["person"])
+    assert (await arena.get_match(e_["id"], mid3))["state"] == "ABORTED"
+    assert (await rights.is_balanced())["ok"]
+
+
+async def test_agents_play_when_the_owner_allowed_it(client, admin_headers, arena_on):
+    a, b, sa, sb, mid, match = await _seated(client, admin_headers, "ag", stake=5 * M)
+    await _ready(a, b, mid, match["contract_hash"], agent_play=True)
+    final = await _play_out(a, b, mid, actor_key="agent")
+    assert final["state"] in ("RESULT_VERIFIED", "CLOSED")
+    actors = set()
+    async with async_session_factory() as session:
+        for r in (
+            await session.execute(
+                text("SELECT actor FROM federation_arena_actions WHERE match_id = :m"), {"m": mid}
+            )
+        ).all():
+            actors.add(r[0].split(":")[0])
+    assert actors == {"agent"}
+
+
+# ── R3: obligations and the restriction ───────────────────────────────────
+
+
+async def test_an_unfulfilled_obligation_restricts_only_new_matches(
+    client, admin_headers, arena_on
+):
+    """RR-05/RR-10: facts -> review (no restriction) -> excuse or confirm ->
+    restricted from new matches only -> compensate -> restored."""
+    a, b, sa, sb, mid, match = await _seated(client, admin_headers, "ob")
+    await _ready(a, b, mid, match["contract_hash"])
+    final = await _play_out(a, b, mid)
+    await arena.settle_due()
+    winner = final["result"]["proof"]["winner_seat"]
+    w, lo = (a, b) if winner == 0 else (b, a)
+    lo_spec = sb if winner == 0 else sa
+    await _connect(w, lo)  # the winner may delegate to the loser
+    held = (await rights.list_vouchers(w["id"]))["held"][0]
+    ob_id = (await arena.list_obligations(lo["id"]))["owed_by_me"][0]["obligation_id"]
+
+    async def _refused_request(key: str) -> None:
+        job = await _bridge_job(w, lo, 250_000)
+        await rights.reserve(
+            w["id"],
+            voucher_id=held["voucher_id"],
+            federation_job_id=job,
+            amount=250_000,
+            idempotency_key=key,
+            actor=w["agent"],
+        )
+        await arena.obligations_advance()
+        assert (await arena.get_obligation(ob_id))["state"] == "DUE"
+        await delegations.act(lo["id"], job, "reject", actor=lo["owner"])
+        await rights.settle_reservations()
+        await arena.obligations_advance()
+
+    # 1. A refused delegation is a fact: review, not a restriction.
+    await _refused_request("first-request")
+    ob = await arena.get_obligation(ob_id)
+    assert ob["state"] == "OVERDUE_REVIEW" and ob["facts"][0]["fact"] == "delegation REJECTED"
+    assert ob["restriction"] is None
+    # A report filed against the loser restricts nothing by itself either.
+    await governance.file_report(
+        w["id"],
+        accused=lo["fid"],
+        category=REPORT_CATEGORY,
+        statement="they refused the work they owe",
+        actor=w["owner"],
+    )
+    sx = await arena.join_queue(
+        lo["id"], spec_id=lo_spec["spec_id"], stake=200_001, actor=lo["person"]
+    )
+    assert sx["state"] == "WAITING"
+    await arena.leave_queue(lo["id"], actor=lo["person"])
+    # The operator excuses it (an outage): back to pending, nothing recorded against them.
+    await arena.decide(ob_id, decision="excuse", note="provider outage that day", operator="ops")
+    assert (await arena.get_obligation(ob_id))["state"] == "PENDING"
+
+    # 2. Refused again; the obligor answers; the operator confirms the default.
+    await _refused_request("second-request")
+    assert (await arena.get_obligation(ob_id))["state"] == "OVERDUE_REVIEW"
+    await arena.state_case(lo["id"], ob_id, statement="we were over capacity", actor=lo["person"])
+    ob = await arena.decide(ob_id, decision="confirm", note="refused twice", operator="ops")
+    assert ob["state"] == "RESTRICTED" and ob["restriction"]["state"] == "ACTIVE"
+    assert ob["restriction"]["scope"] == "new arena matches only"
+    assert [h["to"] for h in ob["history"]][-2:] == ["CONFIRMED_UNFULFILLED", "RESTRICTED"]
+    assert (
+        await _code(
+            arena.join_queue(
+                lo["id"], spec_id=lo_spec["spec_id"], stake=200_002, actor=lo["person"]
+            )
+        )
+        == "FED_E_ARENA_RESTRICTED"
+    )
+    credit = await arena.credit(lo["fid"])
+    assert credit["restricted"] and credit["confirmed_defaults_ever"] == 1
+    assert credit["score"] is None
+    # Everything else still works: the restricted workspace can delegate and chat.
+    other = await _ws(client, admin_headers, "obx")
+    await _connect(lo, other)
+    sent = await delegations.offer(
+        lo["id"], peer_workspace=other["fid"], terms=_terms(), actor=lo["owner"]
+    )
+    assert sent["delegation"]["state"] == "OFFERED"
+
+    # 3. Compensation must be in the class that is owed.
+    other_class = await _mock_spec(lo, M, model_class="mock-large")
+    assert (
+        await _code(
+            arena.compensate(lo["id"], ob_id, spec_id=other_class["spec_id"], actor=lo["owner"])
+        )
+        == "FED_E_MODEL_CLASS_MISMATCH"
+    )
+    # Equivalent compensation in the same class restores eligibility, automatically.
+    ob = await arena.compensate(lo["id"], ob_id, spec_id=lo_spec["spec_id"], actor=lo["owner"])
+    assert ob["state"] == "REMEDIATED" and ob["restriction"]["state"] == "LIFTED"
+    back = await arena.join_queue(
+        lo["id"], spec_id=lo_spec["spec_id"], stake=200_003, actor=lo["person"]
+    )
+    assert back["state"] == "WAITING"
+    await arena.leave_queue(lo["id"], actor=lo["person"])
+    comp = [v for v in (await rights.list_vouchers(w["id"]))["held"] if v["origin"] == "compensate"]
+    assert len(comp) == 1 and comp[0]["face_amount"] == 250_000
+    assert (await arena.credit(lo["fid"]))["restricted"] is False
+    assert (await rights.is_balanced())["ok"]
+
+
+async def test_an_unused_voucher_is_not_the_obligors_fault(client, admin_headers, arena_on):
+    a, b, sa, sb, mid, match = await _seated(client, admin_headers, "uv")
+    await _ready(a, b, mid, match["contract_hash"])
+    final = await _play_out(a, b, mid)
+    await arena.settle_due()
+    winner = final["result"]["proof"]["winner_seat"]
+    w, lo = (a, b) if winner == 0 else (b, a)
+    held = (await rights.list_vouchers(w["id"]))["held"][0]
+    await rights.waive_voucher(w["id"], held["voucher_id"], actor=w["owner"])
+    await arena.obligations_advance()
+    ob = (await arena.list_obligations(lo["id"]))["owed_by_me"][0]
+    assert ob["state"] == "RESOLVED" and "not the obligor's fault" in ob["history"][-1]["note"]
+
+
+# ── same model class only ─────────────────────────────────────────────────
+
+
+async def test_only_the_same_model_class_is_matched(client, admin_headers, arena_on):
+    """Owner decision 2026-11-12: like-for-like stakes, no cross-model conversion."""
+    assert (
+        await _code(_mock_spec(await _ws(client, admin_headers, "mcx"), model_class="some-model-9"))
+        == "FED_E_PACKAGE_INVALID"
+    )
+    a, b, c = [await _ws(client, admin_headers, f"mc{x}") for x in "abc"]
+    sa = await _mock_spec(a, model_class="mock-small")
+    sb = await _mock_spec(b, model_class="mock-large")
+    sc = await _mock_spec(c, model_class="mock-small")
+    stake = 314_159  # unique to this test
+    first = await arena.join_queue(a["id"], spec_id=sa["spec_id"], stake=stake, actor=a["person"])
+    other = await arena.join_queue(b["id"], spec_id=sb["spec_id"], stake=stake, actor=b["person"])
+    assert first["state"] == "WAITING" and other["state"] == "WAITING"  # different classes
+    same = await arena.join_queue(c["id"], spec_id=sc["spec_id"], stake=stake, actor=c["person"])
+    assert same["state"] == "MATCHED"
+    match = same["match"]
+    assert {s["fid"] for s in match["seats"]} == {a["fid"], c["fid"]}
+    assert match["model_class"] == "mock-small"
+    await arena.leave_queue(b["id"], actor=b["person"])
+    await arena.leave(c["id"], match["match_id"], actor=c["person"])
+
+
+# ── cash tables: chips are tokens ─────────────────────────────────────────
+
+
+async def _turn(a, b, mid):
+    view = await arena.get_match(a["id"], mid)
+    ws = a if view["game"]["hand"]["to_act"] == 0 else b
+    return ws, await arena.get_match(ws["id"], mid)
+
+
+async def test_a_cash_table_settles_by_final_chips(client, admin_headers, arena_on):
+    """Chips are tokens (stake / starting stack each); a seat stands up
+    between hands; only what the loser's stack lost changes hands."""
+    a, b = await _ws(client, admin_headers, "csa"), await _ws(client, admin_headers, "csb")
+    sa, sb = await _mock_spec(a, 5 * M), await _mock_spec(b, 5 * M)
+    stake = 2 * M  # 1000 chips: 2000 tokens a chip
+    assert (
+        await _code(
+            arena.join_queue(
+                a["id"], spec_id=sa["spec_id"], stake=2 * M + 1, mode="cash", actor=a["person"]
+            )
+        )
+        == "FED_E_PACKAGE_INVALID"  # not a whole number of tokens per chip
+    )
+    # An sng seat never meets a cash seat.
+    await arena.join_queue(
+        a["id"], spec_id=sa["spec_id"], stake=stake, mode="cash", actor=a["person"]
+    )
+    c = await _ws(client, admin_headers, "csc")
+    sc = await _mock_spec(c, 5 * M)
+    assert (await arena.join_queue(c["id"], spec_id=sc["spec_id"], stake=stake, actor=c["person"]))[
+        "state"
+    ] == "WAITING"
+    await arena.leave_queue(c["id"], actor=c["person"])
+    joined = await arena.join_queue(
+        b["id"], spec_id=sb["spec_id"], stake=stake, mode="cash", actor=b["person"]
+    )
+    match = joined["match"]
+    mid = match["match_id"]
+    assert match["mode"] == "cash" and match["tokens_per_chip"] == 2000
+    await _ready(a, b, mid, match["contract_hash"], agent_play=True)
+
+    # Hand 1: the button raises to 100 and the big blind folds: +10 chips.
+    ws, view = await _turn(a, b, mid)
+    winner_ws = ws
+    await arena.act(
+        ws["id"],
+        mid,
+        seq=view["action_seq"],
+        action={"type": "raise", "amount": 100},
+        actor=ws["owner"],
+    )
+    ws, view = await _turn(a, b, mid)
+    await arena.act(
+        ws["id"], mid, seq=view["action_seq"], action={"type": "fold"}, actor=ws["owner"]
+    )
+    # Hand 2: the loser's agent stands up; the hand still has to finish.
+    loser_ws = b if winner_ws is a else a
+    standing = await arena.leave(loser_ws["id"], mid, actor=loser_ws["agent"])
+    assert standing["state"] == "PLAYING" and standing["game"]["standing"] is not None
+    ws, view = await _turn(a, b, mid)
+    await arena.act(
+        ws["id"], mid, seq=view["action_seq"], action={"type": "fold"}, actor=ws["owner"]
+    )
+    final = await arena.get_match(a["id"], mid)
+    assert final["state"] == "RESULT_VERIFIED"
+    proof = final["result"]["proof"]
+    assert proof["reason"] == "stood_up" and proof["mode"] == "cash"
+    stacks = proof["final_stacks"]
+    assert sum(stacks) == 2000 and stacks != [1000, 1000]
+    loser_seat = 0 if stacks[0] < stacks[1] else 1
+    lost_chips = 1000 - stacks[loser_seat]
+    assert proof["settles_tokens"] == lost_chips * 2000
+    assert (await arena.verify(mid))["valid"]
+    await arena.settle_due()
+    fids = [a["fid"], b["fid"]]
+    w = a if fids[1 - loser_seat] == a["fid"] else b
+    lo = b if w is a else a
+    w_spec, lo_spec = (sa, sb) if w is a else (sb, sa)
+    # The winner has its stake back and a voucher for exactly the chips it won.
+    assert await _unreserved(w_spec["spec_id"]) == 5 * M
+    assert await _unreserved(lo_spec["spec_id"]) == 5 * M - lost_chips * 2000
+    held = [v for v in (await rights.list_vouchers(w["id"]))["held"] if v["origin"] == "arena"]
+    assert len(held) == 1 and held[0]["face_amount"] == lost_chips * 2000
+    owed = (await arena.list_obligations(lo["id"]))["owed_by_me"][0]
+    assert owed["amount"] == lost_chips * 2000
+    assert (await rights.is_balanced())["ok"]
+
+
+async def test_an_even_cash_table_changes_nothing(client, admin_headers, arena_on):
+    a, b = await _ws(client, admin_headers, "cea"), await _ws(client, admin_headers, "ceb")
+    sa, sb = await _mock_spec(a), await _mock_spec(b)
+    stake = 3 * M
+    await arena.join_queue(
+        a["id"], spec_id=sa["spec_id"], stake=stake, mode="cash", actor=a["person"]
+    )
+    match = (
+        await arena.join_queue(
+            b["id"], spec_id=sb["spec_id"], stake=stake, mode="cash", actor=b["person"]
+        )
+    )["match"]
+    mid = match["match_id"]
+    await _ready(a, b, mid, match["contract_hash"])
+    # Stand up at once and check the hand down: stacks stay even.
+    await arena.leave(a["id"], mid, actor=a["person"])
+    for _ in range(10):
+        view = await arena.get_match(a["id"], mid)
+        if view["state"] != "PLAYING":
+            break
+        ws, view = await _turn(a, b, mid)
+        legal = {x["type"] for x in view["game"]["hand"]["legal"]}
+        await arena.act(
+            ws["id"],
+            mid,
+            seq=view["action_seq"],
+            action={"type": "check" if "check" in legal else "call"},
+            actor=ws["owner"],
+        )
+    final = await arena.get_match(a["id"], mid)
+    proof = final["result"]["proof"]
+    if proof["final_stacks"] == [1000, 1000]:
+        assert proof["settles_tokens"] == 0 and proof["winner_seat"] is None
+        await arena.settle_due()
+        assert await _unreserved(sa["spec_id"]) == 10 * M
+        assert await _unreserved(sb["spec_id"]) == 10 * M
+    assert (await rights.is_balanced())["ok"]
+
+
+# ── HTTP ──────────────────────────────────────────────────────────────────
+
+
+ADMIN = {"Authorization": "Bearer test-admin"}
+
+
+@pytest.fixture(scope="module")
+async def arena_http(api_base_url) -> AsyncIterator[httpx.AsyncClient]:
+    del api_base_url
+    env = {
+        "FEDERATION_ENABLED": "true",
+        "FEDERATION_RESOURCE_RIGHTS_ENABLED": "true",
+        "FEDERATION_ARENA_ENABLED": "true",
+        "AUTH_IP_MAX_ATTEMPTS_PER_MINUTE": "1000",
+        "FEDERATION_KEK": base64.b64encode(os.urandom(32)).decode(),
+    }
+    async with run_server(env, ".server-arena.log") as base_url:
+        async with httpx.AsyncClient(base_url=base_url, timeout=60) as http:
+            yield http
+
+
+async def test_disabled_routes_answer_404(client):
+    """The default deployment: every new route is closed."""
+    for method, path in (
+        ("GET", "/v1/federation/rights/wallet"),
+        ("POST", "/v1/federation/arena/queue"),
+        ("GET", "/v1/admin/federation/rights/ledger/check"),
+    ):
+        response = await client.request(method, path, headers=ADMIN, json={})
+        assert response.status_code in (401, 404), response.text
+        if response.status_code == 404:
+            assert response.json()["error"]["code"] == "federation_disabled"
+
+
+async def test_resource_rights_and_arena_over_http(arena_http):
+    from tests.test_federation_api import _workspace
+
+    a, b = await _workspace(arena_http, "ha"), await _workspace(arena_http, "hb")
+    fids = []
+    for ws in (a, b):
+        r = await arena_http.post("/v1/federation/enable", headers=ws["owner"])
+        assert r.status_code in (200, 201), r.text
+        fids.append(r.json()["identity"]["federation_id"])
+    specs = []
+    for ws in (a, b):
+        r = await arena_http.post(
+            "/v1/federation/rights/specs",
+            headers=ws["owner"],
+            json={
+                "resource_class": "MOCK_DEMO",
+                "model_family": "mock-small",
+                "allowed_use": "demo",
+                "declared_tokens": 3 * M,
+                "measured_source": "mock",
+            },
+        )
+        assert r.status_code == 201, r.text
+        specs.append(r.json()["spec_id"])
+    # An agent key cannot declare; a float amount is refused at the edge.
+    r = await arena_http.post(
+        "/v1/federation/rights/specs",
+        headers=a["key"],
+        json={
+            "resource_class": "MOCK_DEMO",
+            "model_family": "m",
+            "allowed_use": "u",
+            "declared_tokens": M,
+            "measured_source": "mock",
+        },
+    )
+    assert r.status_code == 403 and r.json()["error"]["details"]["federation_code"] == (
+        "FED_E_APPROVAL_NOT_HUMAN"
+    )
+    r = await arena_http.post(
+        "/v1/federation/rights/vouchers",
+        headers=a["owner"],
+        json={
+            "spec_id": specs[0],
+            "beneficiary": fids[1],
+            "amount": 1.5,
+            "usage_scope": "float amount",
+        },
+    )
+    assert r.status_code == 422
+    wallet = (await arena_http.get("/v1/federation/rights/wallet", headers=a["key"])).json()
+    assert wallet["redeemable"] is False and wallet["capacity"][0]["unreserved_tokens"] == 3 * M
+    stake = 777_777
+    r1 = await arena_http.post(
+        "/v1/federation/arena/queue", headers=a["owner"], json={"spec_id": specs[0], "stake": stake}
+    )
+    r2 = await arena_http.post(
+        "/v1/federation/arena/queue", headers=b["owner"], json={"spec_id": specs[1], "stake": stake}
+    )
+    assert r1.json()["state"] == "WAITING" and r2.json()["state"] == "MATCHED", r2.text
+    match = r2.json()["match"]
+    mid = match["match_id"]
+    for ws in (a, b):
+        r = await arena_http.post(
+            f"/v1/federation/arena/matches/{mid}/authorize",
+            headers=ws["owner"],
+            json={"contract_hash": match["contract_hash"]},
+        )
+        assert r.status_code == 200, r.text
+    seeds = [secrets.token_hex(32), secrets.token_hex(32)]
+    for ws, seed in zip((a, b), seeds, strict=True):
+        r = await arena_http.post(
+            f"/v1/federation/arena/matches/{mid}/commit",
+            headers=ws["owner"],
+            json={"commitment": engine.seed_commitment(seed)},
+        )
+        assert r.status_code == 200, r.text
+    for ws, seed in zip((a, b), seeds, strict=True):
+        r = await arena_http.post(
+            f"/v1/federation/arena/matches/{mid}/reveal", headers=ws["owner"], json={"seed": seed}
+        )
+        assert r.status_code == 200, r.text
+    assert r.json()["state"] == "PLAYING"
+    r = await arena_http.post(f"/v1/federation/arena/matches/{mid}/leave", headers=a["owner"])
+    assert r.json()["state"] == "RESULT_VERIFIED"
+    v = (
+        await arena_http.get(f"/v1/federation/arena/matches/{mid}/verify", headers=b["owner"])
+    ).json()
+    assert v["valid"] is True, v
+    check = await arena_http.get("/v1/admin/federation/rights/ledger/check", headers=ADMIN)
+    assert check.json()["ok"] is True
+    # Nobody else can read a match (404, not 403: it does not exist for them).
+    c = await _workspace(arena_http, "hc")
+    await arena_http.post("/v1/federation/enable", headers=c["owner"])
+    r = await arena_http.get(f"/v1/federation/arena/matches/{mid}", headers=c["owner"])
+    assert r.status_code == 404
+    _ = uuid  # keep the import for readers copying the helper
+
+
+async def _http_players(http, tag: str, *, policy: dict | None = None):
+    from tests.test_federation_api import _workspace
+
+    players = []
+    for name in ("a", "b"):
+        ws = await _workspace(http, f"{tag}{name}")
+        r = await http.post("/v1/federation/enable", headers=ws["owner"])
+        ws["fid"] = r.json()["identity"]["federation_id"]
+        r = await http.post(
+            "/v1/federation/rights/specs",
+            headers=ws["owner"],
+            json={
+                "resource_class": "MOCK_DEMO",
+                "model_family": "mock-large",
+                "allowed_use": "demo",
+                "declared_tokens": 5 * M,
+                "measured_source": "mock",
+            },
+        )
+        ws["spec"] = r.json()["spec_id"]
+        if policy is not None:
+            r = await http.put("/v1/federation/arena/policy", headers=ws["owner"], json=policy)
+            assert r.status_code == 200, r.text
+        players.append(ws)
+    return players
+
+
+async def test_agents_play_through_mcp_within_the_owner_policy(arena_http):
+    from tests.test_federation_api import _mcp
+
+    a, b = await _http_players(arena_http, "mcp")
+    stake = 444_000
+    # Without the owner's policy an agent cannot queue.
+    refused = await _mcp(
+        arena_http,
+        a["key"],
+        "federation",
+        {"action": "arena_queue", "args": {"spec_id": a["spec"], "stake": stake}},
+    )
+    assert refused["error"]["details"]["federation_code"] == "FED_E_APPROVAL_NOT_HUMAN", refused
+    # An agent cannot set the policy; the owner can.
+    r = await arena_http.put(
+        "/v1/federation/arena/policy",
+        headers=a["key"],
+        json={"agents_may_play": True, "max_stake": M, "matches_per_day": 5},
+    )
+    assert r.status_code == 403
+    for ws in (a, b):
+        r = await arena_http.put(
+            "/v1/federation/arena/policy",
+            headers=ws["owner"],
+            json={"agents_may_play": True, "max_stake": stake, "matches_per_day": 5},
+        )
+        assert r.json()["agents_may_play"] is True
+    # Above the owner's stake limit: refused.
+    over = await _mcp(
+        arena_http,
+        a["key"],
+        "federation",
+        {"action": "arena_queue", "args": {"spec_id": a["spec"], "stake": stake + 1000}},
+    )
+    assert "above the stake" in json.dumps(over)
+    first = await _mcp(
+        arena_http,
+        a["key"],
+        "federation",
+        {"action": "arena_queue", "args": {"spec_id": a["spec"], "stake": stake}},
+    )
+    second = await _mcp(
+        arena_http,
+        b["key"],
+        "federation",
+        {"action": "arena_queue", "args": {"spec_id": b["spec"], "stake": stake}},
+    )
+    assert first["state"] == "WAITING" and second["state"] == "MATCHED", second
+    match_id = second["match"]["match_id"]
+    contract = second["match"]["contract_hash"]
+    seeds = {}
+    for ws in (a, b):
+        r = await _mcp(
+            arena_http,
+            ws["key"],
+            "federation",
+            {
+                "action": "arena_authorize",
+                "args": {"match_id": match_id, "contract_hash": contract},
+            },
+        )
+        assert "error" not in r, r
+    for ws in (a, b):
+        seeds[ws["fid"]] = secrets.token_hex(32)
+        await _mcp(
+            arena_http,
+            ws["key"],
+            "federation",
+            {
+                "action": "arena_commit",
+                "args": {
+                    "match_id": match_id,
+                    "commitment": engine.seed_commitment(seeds[ws["fid"]]),
+                },
+            },
+        )
+    for ws in (a, b):
+        await _mcp(
+            arena_http,
+            ws["key"],
+            "federation",
+            {"action": "arena_reveal", "args": {"match_id": match_id, "seed": seeds[ws["fid"]]}},
+        )
+    view = (
+        await arena_http.get(f"/v1/federation/arena/matches/{match_id}", headers=a["key"])
+    ).json()
+    assert view["state"] == "PLAYING", view["state"]
+    assert all(s["agent_play"] for s in view["seats"])
+    # An agent concedes for its seat: the match ends and verifies.
+    await _mcp(
+        arena_http,
+        b["key"],
+        "federation",
+        {"action": "arena_leave", "args": {"match_id": match_id}},
+    )
+    verified = await _mcp(
+        arena_http,
+        a["key"],
+        "federation",
+        {"action": "arena_verify", "args": {"match_id": match_id}},
+    )
+    assert verified["valid"] is True, verified
+
+
+async def test_two_bot_processes_play_a_whole_match(arena_http):
+    """The example bot (scripts/arena_bot.py) end to end, twice in parallel."""
+    import sys
+
+    a, b = await _http_players(
+        arena_http,
+        "bot",
+        policy={"agents_may_play": True, "max_stake": M, "matches_per_day": 5},
+    )
+    base = str(arena_http.base_url).rstrip("/")
+    script = Path(__file__).resolve().parent.parent / "scripts" / "arena_bot.py"
+    procs = [
+        await asyncio.create_subprocess_exec(
+            sys.executable,
+            str(script),
+            "--base",
+            base,
+            "--key",
+            ws["key"]["Authorization"].split()[1],
+            "--spec",
+            ws["spec"],
+            "--stake",
+            "600000",
+            "--mode",
+            mode,
+            "--poll",
+            "0.1",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            env={
+                **os.environ,
+                "HOME": str(Path(os.environ.get("TMPDIR", "/tmp")) / f"bot-{ws['fid'][-6:]}"),
+            },
+        )
+        for ws, mode in ((a, "cash"), (b, "cash"))
+    ]
+    for ws in (a, b):
+        (Path(os.environ.get("TMPDIR", "/tmp")) / f"bot-{ws['fid'][-6:]}").mkdir(exist_ok=True)
+    outputs = await asyncio.wait_for(asyncio.gather(*(p.communicate() for p in procs)), timeout=600)
+    logs = [out[0].decode() for out in outputs]
+    assert all(p.returncode == 0 for p in procs), logs
+    assert all("verified=True" in log for log in logs), logs
+    matches = (await arena_http.get("/v1/federation/arena/matches", headers=a["key"])).json()
+    assert matches["items"][0]["mode"] == "cash"
+
+
+async def test_lobby_record_and_leaderboard(client, admin_headers, arena_on):
+    """The lobby lists table levels with who is waiting; the record and the
+    standings come from settled results and add up."""
+    a, b, sa, sb, mid, match = await _seated(client, admin_headers, "lb", stake=M)
+    await _ready(a, b, mid, match["contract_hash"])
+    await _play_out(a, b, mid)
+    await arena.settle_due()
+    proof = (await arena.get_match(a["id"], mid))["result"]["proof"]
+    ra, rb = await arena.my_record(a["id"]), await arena.my_record(b["id"])
+    assert ra["played"] == rb["played"] == 1
+    assert ra["net"] == -rb["net"] and abs(ra["net"]) == proof["settles_tokens"]
+    assert ra["recent"][0]["match_id"] == mid and ra["recent"][0]["opponent"] == b["fid"]
+    board = {row["fid"]: row for row in (await arena.leaderboard(100))["items"]}
+    assert board[a["fid"]]["net"] == ra["net"] and board[b["fid"]]["net"] == rb["net"]
+
+    waiter, looker = (
+        await _ws(client, admin_headers, "lbw"),
+        await _ws(client, admin_headers, "lbl"),
+    )
+    spec = await _mock_spec(waiter)
+    await _mock_spec(looker)
+    await arena.join_queue(
+        waiter["id"],
+        spec_id=spec["spec_id"],
+        stake=arena.CASH_LEVELS[0],
+        mode="cash",
+        actor=waiter["person"],
+    )
+    seen = await arena.lobby(looker["id"])
+    cash = next(t for t in seen["cash"] if t["stake"] == arena.CASH_LEVELS[0])
+    assert cash["waiting"]["mock-small"] >= 1 and cash["tokens_per_chip"] == 100
+    assert all("prize_pool" in t for t in seen["tournaments"])
+    mine = await arena.lobby(waiter["id"])
+    assert mine["queued"]["mode"] == "cash" and mine["economic_value"] == "none"
+    await arena.leave_queue(waiter["id"], actor=waiter["person"])
+
+
+# ── 6-max tables ──────────────────────────────────────────────────────────
+
+
+async def _ready_all(players, match_id, contract_hash):
+    for ws in players:
+        await arena.authorize(ws["id"], match_id, contract_hash=contract_hash, actor=ws["owner"])
+    seeds = {ws["fid"]: secrets.token_hex(32) for ws in players}
+    for ws in players:
+        await arena.commit_seed(
+            ws["id"],
+            match_id,
+            commitment=engine.seed_commitment(seeds[ws["fid"]]),
+            actor=ws["owner"],
+        )
+    for ws in players:
+        await arena.reveal_seed(ws["id"], match_id, seed=seeds[ws["fid"]], actor=ws["owner"])
+
+
+async def _check_down(players, match_id, until):
+    """Check or call whoever is to act until ``until(view)`` is true."""
+    by_fid = {ws["fid"]: ws for ws in players}
+    for _ in range(300):
+        view = await arena.get_match(players[0]["id"], match_id)
+        if until(view) or view["state"] != "PLAYING":
+            return view
+        seat = view["game"]["hand"]["to_act"]
+        ws = by_fid[view["seats"][seat]["fid"]]
+        mine = await arena.get_match(ws["id"], match_id)
+        legal = {x["type"] for x in mine["game"]["hand"]["legal"]}
+        move = "check" if "check" in legal else "call"
+        await arena.act(
+            ws["id"], match_id, seq=mine["action_seq"], action={"type": move}, actor=ws["owner"]
+        )
+    raise AssertionError("did not get there")
+
+
+async def test_a_six_player_tournament_pays_by_place(client, admin_headers, arena_on):
+    players = [await _ws(client, admin_headers, f"t6{i}") for i in range(6)]
+    specs = [await _mock_spec(ws) for ws in players]
+    stake = 777_000
+    for i, (ws, spec) in enumerate(zip(players, specs, strict=True)):
+        joined = await arena.join_queue(
+            ws["id"], spec_id=spec["spec_id"], stake=stake, seats=6, actor=ws["person"]
+        )
+        assert joined["state"] == ("MATCHED" if i == 5 else "WAITING")  # starts when full
+    match = joined["match"]
+    mid = match["match_id"]
+    assert match["table_size"] == 6 and len(match["seats"]) == 6
+    assert match["payouts_percent"] == [65, 35]
+    order = [next(ws for ws in players if ws["fid"] == s["fid"]) for s in match["seats"]]
+    await _ready_all(order, mid, match["contract_hash"])
+    view = await arena.get_match(order[0]["id"], mid)
+    assert view["state"] == "PLAYING" and len(view["game"]["hand"]["players"]) == 6
+    # Seats 2..5 concede; 0 and 1 play the hand out; then seat 1 concedes.
+    for seat in (2, 3, 4, 5):
+        await arena.leave(order[seat]["id"], mid, actor=order[seat]["owner"])
+    view = await _check_down(order, mid, lambda v: v["game"]["hand_no"] >= 2)
+    assert view["game"]["status"][2:] == ["out"] * 4
+    assert view["game"]["hand"]["players"] == [0, 1]
+    await arena.leave(order[1]["id"], mid, actor=order[1]["owner"])
+    final = await arena.get_match(order[0]["id"], mid)
+    proof = final["result"]["proof"]
+    assert proof["ranking"][:2] == [0, 1] and proof["winner_seat"] == 0
+    pool = 6 * stake
+    first, second = pool * 65 // 100, pool * 35 // 100
+    first += pool - first - second
+    assert proof["nets"][0] == first - stake and proof["nets"][1] == second - stake
+    assert proof["nets"][2:] == [-stake] * 4 and sum(proof["nets"]) == 0
+    check = await arena.verify(mid)
+    assert check["valid"], check["checks"]
+    assert len(check["signatures"]) == 6
+    await arena.settle_due()
+    closed = await arena.get_match(order[0]["id"], mid)
+    assert closed["state"] == "CLOSED"
+    # Four losers pay the two winners: vouchers and obligations per pair.
+    got = [v for v in (await rights.list_vouchers(order[0]["id"]))["held"]]
+    got += [v for v in (await rights.list_vouchers(order[1]["id"]))["held"]]
+    assert sum(v["face_amount"] for v in got) == 4 * stake
+    owed = 0
+    for seat in range(2, 6):
+        owed += len((await arena.list_obligations(order[seat]["id"]))["owed_by_me"])
+    assert owed == len(got)
+    for s in range(2, 6):
+        assert await _unreserved(specs[players.index(order[s])]["spec_id"]) == 10 * M - stake
+    assert (await rights.is_balanced())["ok"]
+    rec = await arena.my_record(order[0]["id"])
+    assert rec["recent"][0]["place"] == 1 and rec["recent"][0]["players"] == 6
+
+
+async def test_a_six_max_cash_table_takes_players_in_play(client, admin_headers, arena_on):
+    a, b, c = [await _ws(client, admin_headers, f"c6{x}") for x in "abc"]
+    sa, sb, sc = [await _mock_spec(ws) for ws in (a, b, c)]
+    stake = 5 * M  # a lobby level no other test uses for 6-max cash
+    await arena.join_queue(
+        a["id"], spec_id=sa["spec_id"], stake=stake, mode="cash", seats=6, actor=a["person"]
+    )
+    joined = await arena.join_queue(
+        b["id"], spec_id=sb["spec_id"], stake=stake, mode="cash", seats=6, actor=b["person"]
+    )
+    match = joined["match"]
+    mid = match["match_id"]
+    assert len([x for x in match["seats"] if x["fid"]]) == 2  # a cash table starts with two
+    assert len(match["seats"]) == 6  # one entry per chair
+    await _ready_all([a, b], mid, match["contract_hash"])
+    lobby = await arena.lobby(c["id"])
+    six = next(t for t in lobby["cash"] if t["seats"] == 6 and t["stake"] == stake)
+    assert six["open_tables"]["mock-small"][0]["free"] == 4
+    # c takes a free seat at the table in play and is dealt in next hand.
+    taken = await arena.join_queue(
+        c["id"], spec_id=sc["spec_id"], stake=stake, mode="cash", seats=6, actor=c["person"]
+    )
+    assert taken["state"] == "MATCHED" and taken["match"]["match_id"] == mid
+    assert (
+        await _code(
+            arena.join_queue(
+                c["id"], spec_id=sc["spec_id"], stake=stake, mode="cash", seats=6, actor=c["person"]
+            )
+        )
+        == "FED_E_MATCH_STATE"
+    )
+    await arena.authorize(c["id"], mid, contract_hash=match["contract_hash"], actor=c["owner"])
+    assert await _unreserved(sc["spec_id"]) == 10 * M - stake
+    view = await _check_down([a, b, c], mid, lambda v: v["game"]["hand_no"] >= 2)
+    assert view["game"]["hand"]["players"] == [0, 1, 2]
+    # Everyone stands up: the table ends and settles by chips.
+    for ws in (a, b, c):
+        await arena.leave(ws["id"], mid, actor=ws["owner"])
+    final = await _check_down([a, b, c], mid, lambda v: v["state"] != "PLAYING")
+    proof = final["result"]["proof"]
+    assert proof["reason"] == "stood_up" and sum(proof["nets"]) == 0
+    assert sum(proof["final_stacks"]) == 3000
+    assert (await arena.verify(mid))["valid"]
+    await arena.settle_due()
+    totals = [await _unreserved(s["spec_id"]) for s in (sa, sb, sc)]
+    held = 0
+    for ws in (a, b, c):
+        held += sum(v["face_amount"] for v in (await rights.list_vouchers(ws["id"]))["held"])
+    assert sum(totals) + held == 30 * M  # nothing made, nothing lost
+    assert (await rights.is_balanced())["ok"]
+
+
+async def test_cash_leavers_settle_at_once_and_chairs_are_reused(client, admin_headers, arena_on):
+    a, b, c = [await _ws(client, admin_headers, f"lv{x}") for x in "abc"]
+    sa, sb, sc = [await _mock_spec(ws) for ws in (a, b, c)]
+    stake = 2 * M  # 2000 tokens a chip
+    await arena.join_queue(
+        a["id"], spec_id=sa["spec_id"], stake=stake, mode="cash", seats=6, actor=a["person"]
+    )
+    match = (
+        await arena.join_queue(
+            b["id"], spec_id=sb["spec_id"], stake=stake, mode="cash", seats=6, actor=b["person"]
+        )
+    )["match"]
+    mid = match["match_id"]
+    await _ready_all([a, b], mid, match["contract_hash"])
+    await arena.join_queue(
+        c["id"], spec_id=sc["spec_id"], stake=stake, mode="cash", seats=6, actor=c["person"]
+    )
+    await arena.authorize(c["id"], mid, contract_hash=match["contract_hash"], actor=c["owner"])
+    await _check_down([a, b, c], mid, lambda v: v["game"]["hand_no"] >= 2)
+    # c stands up during hand 2; when the hand ends c is settled at once.
+    await arena.leave(c["id"], mid, actor=c["owner"])
+    view = await _check_down([a, b, c], mid, lambda v: v["game"]["hand_no"] >= 3)
+    mine = next(o for o in view["occupants"] if o["fid"] == c["fid"])
+    assert mine["departed"] and not mine["here"]
+    stack = mine["departed_stack"]
+    assert mine["returned"] == min(stack, 1000) * 2000
+    assert await _unreserved(sc["spec_id"]) == 10 * M - stake + mine["returned"]
+    # c sits again (a new sitting, possibly the same chair) and plays on.
+    again = await arena.join_queue(
+        c["id"], spec_id=sc["spec_id"], stake=stake, mode="cash", seats=6, actor=c["person"]
+    )
+    assert again["match"]["match_id"] == mid
+    await arena.authorize(c["id"], mid, contract_hash=match["contract_hash"], actor=c["owner"])
+    view = await _check_down([a, b, c], mid, lambda v: v["game"]["hand_no"] >= 4)
+    assert len([o for o in view["occupants"] if o["fid"] == c["fid"]]) == 2
+    assert view["game"]["hand"]["blinds"] == [5, 10]  # cash blinds never rise
+    assert len(view["game"]["hand"]["players"]) == 3
+    for ws in (a, b, c):
+        await arena.leave(ws["id"], mid, actor=ws["owner"])
+    final = await _check_down([a, b, c], mid, lambda v: v["state"] != "PLAYING")
+    proof = final["result"]["proof"]
+    assert sum(proof["nets"]) == 0 and len(proof["seats"]) == 4
+    assert (await arena.verify(mid))["valid"]
+    await arena.settle_due()
+    assert (await arena.get_match(a["id"], mid))["state"] == "CLOSED"
+    totals = [await _unreserved(s["spec_id"]) for s in (sa, sb, sc)]
+    held = 0
+    for ws in (a, b, c):
+        held += sum(v["face_amount"] for v in (await rights.list_vouchers(ws["id"]))["held"])
+    assert sum(totals) + held == 30 * M
+    assert (await rights.is_balanced())["ok"]
+    record = await arena.my_record(c["id"])
+    assert record["recent"][0]["net"] == sum(
+        n for f, n in zip(proof["seats"], proof["nets"], strict=True) if f == c["fid"]
+    )
+
+
+async def test_a_winner_spends_a_voucher_in_one_step(client, admin_headers, arena_on):
+    a, b, sa, sb, mid, match = await _seated(client, admin_headers, "use")
+    await _ready(a, b, mid, match["contract_hash"])
+    final = await _play_out(a, b, mid)
+    await arena.settle_due()
+    winner = final["result"]["proof"]["winner_seat"]
+    w, lo = (a, b) if winner == 0 else (b, a)
+    voucher = (await rights.list_vouchers(w["id"]))["held"][0]
+    task = {
+        "objective": "Summarise three public reports on grid demand.",
+        "acceptance_criteria": ["Cites each report"],
+        "amount": 300_000,
+    }
+    # No connection yet: the bridge refuses, nothing is reserved.
+    assert (
+        await _code(rights.use_voucher(w["id"], voucher["voucher_id"], **task, actor=w["owner"]))
+        == "FED_E_GRANT_UNKNOWN"
+    )
+    assert (
+        await _code(rights.use_voucher(w["id"], voucher["voucher_id"], **task, actor=w["agent"]))
+        == "FED_E_APPROVAL_NOT_HUMAN"
+    )
+    await _connect(w, lo)
+    used = await rights.use_voucher(w["id"], voucher["voucher_id"], **task, actor=w["owner"])
+    terms = used["delegation"]["terms"]
+    assert terms["budget_cap"]["amount"] == 300_000
+    assert terms["model_policy"] == {"mode": "exact", "model_class": "mock-small"}
+    assert used["voucher"]["reserved_amount"] == 300_000
+    # The loser sees the task and can refuse it: a fact for review.
+    theirs = (await delegations.get(lo["id"], used["federation_job_id"]))["delegation"]
+    assert theirs["state"] == "OFFERED"
+    await delegations.act(lo["id"], used["federation_job_id"], "reject", actor=lo["owner"])
+    await rights.settle_reservations()
+    await arena.obligations_advance()
+    review = await arena.admin_obligations()
+    assert any(o["obligor"] == lo["fid"] and o["state"] == "OVERDUE_REVIEW" for o in review)
+
+
+async def test_stats_missions_and_achievements(client, admin_headers, arena_on):
+    a, b, sa, sb, mid, match = await _seated(client, admin_headers, "st")
+    await _ready(a, b, mid, match["contract_hash"])
+    await _play_out(a, b, mid)
+    await arena.settle_due()
+    st = await arena.my_stats(a["id"])
+    assert st["stats"]["hands_played"] >= 1 and st["stats"]["tables_finished"] == 1
+    assert st["stats"]["sng_finished"] == 1
+    unlocked = {x["key"] for x in st["achievements"] if x["unlocked"]}
+    assert {"first_hand", "tournament_player"} <= unlocked
+    assert all(m["target"] > m["progress"] for m in st["missions"])
+    assert st["recent_hands"] and st["sessions"][0]["match_id"] == mid

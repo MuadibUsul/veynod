@@ -4568,6 +4568,484 @@
        "body": [],
        "description": "",
        "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "fid",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/arena/credit/{fid}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Separate delivery counts for a workspace (no score)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "query",
+         "name": "limit",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "path": "/v1/federation/arena/leaderboard",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Standings: wins and net DEMO_M per workspace"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/arena/lobby",
+       "responses": [
+        "200"
+       ],
+       "summary": "Cash tables and tournaments to pick from (no economic value)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/arena/matches",
+       "responses": [
+        "200"
+       ],
+       "summary": "Matches this workspace plays"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "match_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/arena/matches/{match_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "A seat's view: own cards only"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "seq",
+         "required": true,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "name": "type",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "amount",
+         "required": false,
+         "type": "integer | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "match_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/arena/matches/{match_id}/act",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "One action at action number seq"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "contract_hash",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "agent_play",
+         "required": false,
+         "type": "boolean"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "match_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/arena/matches/{match_id}/authorize",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Authorize the contract (an owner)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "commitment",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "match_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/arena/matches/{match_id}/commit",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Publish sha256(seed)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "reason",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "match_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/arena/matches/{match_id}/dispute",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Hold an unsettled result (a person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "match_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/arena/matches/{match_id}/leave",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Abort before play; in play concede (sng) or stand up after this hand (cash)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "seed",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "match_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/arena/matches/{match_id}/reveal",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Reveal the committed seed"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "match_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/arena/matches/{match_id}/verify",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Replay and check a finished match"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/arena/obligations",
+       "responses": [
+        "200"
+       ],
+       "summary": "Delivery obligations owed by or to this workspace"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "obligation_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/arena/obligations/{obligation_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "One obligation, facts and history"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "spec_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "obligation_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/arena/obligations/{obligation_id}/compensate",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Make good with simulated capacity: the restriction lifts (obligor's owner)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "statement",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "obligation_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/arena/obligations/{obligation_id}/statement",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Answer the facts (obligor)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/arena/policy",
+       "responses": [
+        "200"
+       ],
+       "summary": "How far this workspace's agents may play on their own"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "agents_may_play",
+         "required": true,
+         "type": "boolean"
+        },
+        {
+         "description": "",
+         "name": "max_stake",
+         "required": false,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "name": "matches_per_day",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "description": "",
+       "method": "PUT",
+       "parameters": [],
+       "path": "/v1/federation/arena/policy",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Let agents queue, authorize and play within limits (owner)"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "spec_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "Tokens of simulated capacity.",
+         "name": "stake",
+         "required": true,
+         "type": "integer"
+        },
+        {
+         "description": "sng: winner takes the stake. cash: chips are tokens, settled by final stacks; stand up between hands with /leave.",
+         "name": "mode",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "Heads-up (2) or 6-max. A 6-max cash table can be joined in play.",
+         "name": "seats",
+         "required": false,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "name": "unit",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/arena/queue",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Queue for a heads-up match (a person; no economic value)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "DELETE",
+       "parameters": [],
+       "path": "/v1/federation/arena/queue",
+       "responses": [
+        "200"
+       ],
+       "summary": "Leave the queue"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/arena/record",
+       "responses": [
+        "200"
+       ],
+       "summary": "This workspace's record and recent finished matches"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/arena/stats",
+       "responses": [
+        "200"
+       ],
+       "summary": "Hands, pots, missions and achievements of this workspace"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
        "parameters": [],
        "path": "/v1/federation/connections",
        "responses": [
@@ -6267,6 +6745,337 @@
         "422"
        ],
        "summary": "Resolve a handle (ambiguity is reported, never guessed)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/rights/specs",
+       "responses": [
+        "200"
+       ],
+       "summary": "Resources this workspace declared"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "resource_class",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "model_family",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "allowed_use",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "declared_tokens",
+         "required": true,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "name": "measured_source",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "confidence",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "license_basis_ref",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "max_concurrency",
+         "required": false,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "name": "expires_days",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/rights/specs",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Declare a resource (an owner)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "spec_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/rights/specs/{spec_id}/revoke",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "No new vouchers from a resource (owner)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/rights/vouchers",
+       "responses": [
+        "200"
+       ],
+       "summary": "Vouchers this workspace holds or issued"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "spec_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "beneficiary",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "Tokens; 1 DEMO_M = 1,000,000.",
+         "name": "amount",
+         "required": true,
+         "type": "integer"
+        },
+        {
+         "description": "DEMO_M only; anything else is refused.",
+         "name": "unit",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "usage_scope",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "expires_days",
+         "required": false,
+         "type": "integer"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [],
+       "path": "/v1/federation/rights/vouchers",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Grant a simulated right (a person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "voucher_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/rights/vouchers/{voucher_id}",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "One voucher and its reservations"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "federation_job_id",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "amount",
+         "required": true,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "name": "unit",
+         "required": false,
+         "type": "string | null"
+        },
+        {
+         "description": "",
+         "name": "idempotency_key",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "voucher_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/rights/vouchers/{voucher_id}/reserve",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Bind part of a voucher to a delegation sent to its issuer"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "voucher_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/rights/vouchers/{voucher_id}/revoke",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Issuer takes back the unused part"
+      },
+      {
+       "body": [
+        {
+         "description": "",
+         "name": "objective",
+         "required": true,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "acceptance_criteria",
+         "required": true,
+         "type": "string[]"
+        },
+        {
+         "description": "Tokens of the voucher to spend.",
+         "name": "amount",
+         "required": true,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "name": "deadline_hours",
+         "required": false,
+         "type": "integer"
+        },
+        {
+         "description": "",
+         "name": "data_classification",
+         "required": false,
+         "type": "string"
+        },
+        {
+         "description": "",
+         "name": "input_summary",
+         "required": false,
+         "type": "string | null"
+        }
+       ],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "voucher_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/rights/vouchers/{voucher_id}/use",
+       "responses": [
+        "201",
+        "422"
+       ],
+       "summary": "Spend a voucher: send its issuer a task paid from it (a person)"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "POST",
+       "parameters": [
+        {
+         "description": "",
+         "in": "path",
+         "name": "voucher_id",
+         "required": true,
+         "type": "string"
+        }
+       ],
+       "path": "/v1/federation/rights/vouchers/{voucher_id}/waive",
+       "responses": [
+        "200",
+        "422"
+       ],
+       "summary": "Beneficiary gives up the unused part"
+      },
+      {
+       "body": [],
+       "description": "",
+       "method": "GET",
+       "parameters": [],
+       "path": "/v1/federation/rights/wallet",
+       "responses": [
+        "200"
+       ],
+       "summary": "This workspace's DEMO_M position (simulated, no value)"
       },
       {
        "body": [],

@@ -367,6 +367,31 @@ class Settings(BaseSettings):
     # P5 simulated market: demonstration credits (SIM) each workspace gets once.
     federation_sim_allowance: int = Field(default=1000, ge=0, le=1_000_000)
     federation_remote_timeout_seconds: float = Field(default=10.0, gt=0, le=120)
+    # P6 (R1-R3) simulated resource rights and the Agent Poker Arena. Both off
+    # by default and only meaningful while federation_enabled is on. DEMO_M
+    # has no economic value (docs/federation/ICD_P6_RESOURCE_RIGHTS_ARENA.md).
+    federation_resource_rights_enabled: bool = False
+    federation_arena_enabled: bool = False
+    # Simulated capacity (in tokens; 1 DEMO_M = 1,000,000) a workspace may declare.
+    federation_demo_m_allowance_tokens: int = Field(default=20_000_000, ge=0, le=1_000_000_000)
+    federation_arena_setup_minutes: int = Field(default=30, ge=1, le=1440)
+    federation_arena_dispute_minutes: int = Field(default=10, ge=0, le=10080)
+    federation_arena_obligation_days: int = Field(default=7, ge=1, le=90)
+    federation_arena_voucher_days: int = Field(default=30, ge=1, le=365)
+    # Model classes (family + generation) an operator maintains. A resource
+    # spec names one; the arena only matches workspaces staking the same class,
+    # and a voucher only runs on its own class. Comma-separated in the env.
+    federation_model_classes: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: [
+            "mock-small",
+            "mock-large",
+            "claude-opus-5",
+            "claude-sonnet-5",
+            "claude-haiku-5",
+            "gpt-5",
+            "gemini-3",
+        ]
+    )
 
     # ---------------------------------------------------- outbound actions
     outbound_dispatch_interval_seconds: int = Field(default=5, ge=1, le=300)
@@ -500,7 +525,11 @@ class Settings(BaseSettings):
     mcp_allowed_origins: list[str] = Field(default_factory=list)
 
     @field_validator(
-        "cors_origins", "outbound_allowed_hosts", "federation_peer_hosts", mode="before"
+        "cors_origins",
+        "outbound_allowed_hosts",
+        "federation_peer_hosts",
+        "federation_model_classes",
+        mode="before",
     )
     @classmethod
     def _split_origins(cls, value: object) -> object:
