@@ -1976,3 +1976,12 @@ async def state_machine_violations(
 
     return {"mode": get_settings().state_guard,
             "items": await state_machines.violations(session, days)}
+
+
+@router.get("/upkeep", summary="Background upkeep steps: last success, failures in a row, error")
+async def upkeep_status() -> dict:
+    """Each server process runs its own upkeep; this is the one that answered.
+    A step failing three rounds in a row also raises a platform alert."""
+    from app.services import reaper
+
+    return reaper.status()

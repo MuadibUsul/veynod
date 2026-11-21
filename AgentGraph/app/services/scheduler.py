@@ -81,6 +81,8 @@ UNPLACED = {
     "every_host_failed": "Every runner that could take it already failed it twice.",
     "hosts_out_of_quota": "Every runner that could take it is out of quota.",
     "hosts_busy": "Every runner that could take it is busy; it waits for a free slot.",
+    "hosts_not_answering": "The runners that could take it did not answer their last offers; "
+                           "it is offered again after a short wait.",
     "no_reviewer_host": ("No other computer can review it (the one that built it may not), "
                          "so it waits for your review."),
     "no_supervisor_host": "No supervisor computer is online to look after the Loop.",
@@ -418,7 +420,8 @@ async def _repo_bound(session: AsyncSession, task: CollabTask,
 
 
 def _choose(task: CollabTask, candidates: list[dict[str, Any]],
-            failures: dict[str, int], load: dict[str, int]) -> tuple[dict[str, Any] | None, str]:
+            failures: dict[str, int], load: dict[str, int],
+            quiet: dict[str, datetime] | None = None) -> tuple[dict[str, Any] | None, str]:
     """The best host, or the reason there is none."""
     if not candidates:
         return None, "no_host_online"
@@ -433,6 +436,9 @@ def _choose(task: CollabTask, candidates: list[dict[str, Any]],
     pool = [host for host in pool if failures.get(host["host_id"], 0) < FAILS_PER_HOST]
     if not pool:
         return None, "every_host_failed"
+    pool = [host for host in pool if host["host_id"] not in (quiet or {})]
+    if not pool:
+        return None, "hosts_not_answering"
     pool = [host for host in pool
             if (quota_used(host) or 0) < settings.runner_quota_exhausted_percent]
     if not pool:
@@ -449,6 +455,40 @@ def _words(reason: str, task: CollabTask) -> str:
     return UNPLACED[reason].format(
         role=task.required_role or task.assigned_role or "EXECUTOR", namespace=task.namespace,
         repo=task.repo or "", capabilities=", ".join(task.required_capabilities or []))
+
+
+# A computer that does not answer its offers (no receipt in time, or not connected)
+# is offered nothing for a while, longer each time: 5 s, 15 s, 45 s, 135 s, then
+# 5 min. It used to be offered the same work again at every pass, about once a
+# second once changes started passes. "Busy" is an answer and does not count;
+# one offer it takes starts the count again.
+QUIET_REASONS = ("nerve:QOS_TIMEOUT_", "nerve:AGENT_NOT_CONNECTED")
+QUIET_FIRST_S = 5
+QUIET_MAX_S = 300
+
+
+async def _quiet(session: AsyncSession, workspace_id: Any,
+                 now: datetime) -> dict[str, datetime]:
+    """Hosts not to offer work to now, with when they may be offered it again."""
+    rows = (await session.execute(text(
+        "SELECT p.host_id, count(*) AS misses, max(p.ended_at) AS last "
+        "FROM runner_placements p WHERE p.workspace_id = :ws AND p.status = 'moved' "
+        "AND p.host_id IS NOT NULL AND (p.reason LIKE :a OR p.reason LIKE :b) "
+        "AND p.ended_at > NOW() - INTERVAL '30 minutes' "
+        "AND p.created_at > COALESCE((SELECT max(q.created_at) FROM runner_placements q "
+        "  WHERE q.workspace_id = p.workspace_id AND q.host_id = p.host_id "
+        "  AND (q.status IN ('claimed', 'delivered') OR q.started_at IS NOT NULL)), "
+        "  '-infinity'::timestamptz) "
+        "GROUP BY p.host_id"),
+        {"ws": workspace_id, "a": QUIET_REASONS[0] + "%",
+         "b": QUIET_REASONS[1] + "%"})).mappings().all()
+    quiet = {}
+    for row in rows:
+        wait = min(QUIET_MAX_S, QUIET_FIRST_S * 3 ** (int(row["misses"]) - 1))
+        until = row["last"] + timedelta(seconds=wait)
+        if until > now:
+            quiet[row["host_id"]] = until
+    return quiet
 
 
 def _online(hosts: list[dict[str, Any]], now: datetime) -> list[dict[str, Any]]:
@@ -699,6 +739,7 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
     counts = await _reconcile(session, workspace_id, by_id, now, mode)
 
     online = _online(hosts, now)
+    quiet = await _quiet(session, workspace_id, now)
     load = await _load(session, workspace_id, hosts)
     resumed = await _resume_stopped(session, workspace_id, now) if mode == "full" else 0
     resumed += await _reopen_handed_on(session, workspace_id, now) if mode == "full" else 0
@@ -750,7 +791,7 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
             # the project's repository is bound, so do not place it to fail.
             host, reason = None, "no_kernel_binding"
         else:
-            host, reason = _choose(task, online, failures, load)
+            host, reason = _choose(task, online, failures, load, quiet)
         waiting = (await session.execute(text(
             "SELECT * FROM runner_placements WHERE task_id = :t AND step = 'work' "
             "AND status IN ('suggested', 'unplaced')"), {"t": task.id})).mappings().one_or_none()
@@ -795,11 +836,14 @@ async def run_pass(session: AsyncSession, workspace_id: Any) -> dict[str, Any]:
             continue
         await _offer_work(session, task, host, now)
         placed += 1
-    steps = await _place_steps(session, workspace_id, online, load, workspace_mode, now) \
+    # Review, merge and supervise steps are not offered to a quiet computer either.
+    answering = [host for host in online if host["host_id"] not in quiet]
+    steps = await _place_steps(session, workspace_id, answering, load, workspace_mode, now) \
         if workspace_mode == "full" else {}
-    rounds = await _supervise(session, workspace_id, hosts, online, now) \
+    rounds = await _supervise(session, workspace_id, hosts, answering, now) \
         if workspace_mode == "full" else 0
-    await _set_next_pass(session, workspace_id, workspace_mode, now)
+    await _set_next_pass(session, workspace_id, workspace_mode, now,
+                         wake_at=min(quiet.values()) if quiet else None)
     await session.commit()
     # Code tasks the Kernel merged are finished on trust (their own transaction:
     # reading the Kernel's evidence commits).
@@ -963,7 +1007,7 @@ async def _pass(workspace_id: Any, lane: str = "sweep") -> int:
 
 
 async def _next_pass(session: AsyncSession, workspace_id: Any, mode: str | None,
-                     now: datetime) -> datetime:
+                     now: datetime, wake_at: datetime | None = None) -> datetime:
     """When this workspace next needs a pass that no change will ask for.
 
     Changes kick their workspace (``kick``); this covers what only time brings
@@ -971,7 +1015,14 @@ async def _next_pass(session: AsyncSession, workspace_id: Any, mode: str | None,
     report to be checked, a merge to be read from the Kernel): one reaper
     interval. A task that found no computer (quotas reset, failures age out):
     four. Otherwise the idle recheck, never later than the next supervise round.
+    A quiet computer's wait ending (``wake_at``) is never missed either.
     """
+    later = await _next_pass_by_state(session, workspace_id, mode, now)
+    return min(later, wake_at) if wake_at is not None else later
+
+
+async def _next_pass_by_state(session: AsyncSession, workspace_id: Any, mode: str | None,
+                              now: datetime) -> datetime:
     busy = (await session.execute(text(
         "SELECT EXISTS (SELECT 1 FROM runner_placements WHERE workspace_id = :ws "
         "  AND status IN ('offered', 'claimed')) "
@@ -996,11 +1047,12 @@ async def _next_pass(session: AsyncSession, workspace_id: Any, mode: str | None,
 
 
 async def _set_next_pass(session: AsyncSession, workspace_id: Any, mode: str | None,
-                         now: datetime) -> None:
+                         now: datetime, wake_at: datetime | None = None) -> None:
     await session.execute(text(
         "UPDATE runner_hosts SET next_pass_at = :at WHERE workspace_id = :ws "
         "AND status <> 'revoked'"),
-        {"ws": workspace_id, "at": await _next_pass(session, workspace_id, mode, now)})
+        {"ws": workspace_id,
+         "at": await _next_pass(session, workspace_id, mode, now, wake_at)})
 
 
 async def _take_due(limit: int = 500) -> list[Any]:
