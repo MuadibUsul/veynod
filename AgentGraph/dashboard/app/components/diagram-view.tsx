@@ -70,6 +70,7 @@ const UNPLACED_SHORT: Record<string, string> = {
   no_host_with_runtime: "No computer has Claude Code or Codex ready",
   every_host_failed: "Every computer already failed it",
   hosts_out_of_quota: "Computers are out of quota",
+  hosts_not_answering: "Computers did not answer; offered again shortly",
   no_reviewer_host: "No computer can review it",
 };
 

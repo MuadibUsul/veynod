@@ -45,13 +45,14 @@ const UNPLACED_LABEL: Record<string, string> = {
   no_host_with_runtime: "No runner has Claude Code or Codex ready",
   every_host_failed: "Every runner that could take it already failed it",
   hosts_out_of_quota: "Every runner that could take it is out of quota",
+  hosts_not_answering: "The runners that could take it did not answer; offered again shortly",
   no_reviewer_host: "No other computer can review it",
   no_supervisor_host: "No supervisor computer looks after the Loop",
 };
 
 // Reasons a computer fixes: the action goes to the Computers list.
 const NEEDS_A_COMPUTER = new Set(["no_host_online", "no_host_with_runtime", "hosts_out_of_quota",
-  "no_host_for_repo"]);
+  "no_host_for_repo", "hosts_not_answering"]);
 // The overview already lists these under "waits for your review": the person is the reviewer.
 const PERSON_REVIEWS = new Set(["no_reviewer_host"]);
 

@@ -349,3 +349,55 @@ async def test_concurrent_passes_on_one_workspace_do_not_collide(client, monkeyp
     open_rows = [item for item in await _placements(client, ws, key)
                  if item["status"] in ("suggested", "offered", "claimed", "unplaced")]
     assert len(open_rows) <= 1
+
+
+async def _miss(ws: dict, host: dict, seconds_ago: float,
+                reason: str = "nerve:QOS_TIMEOUT_NET_ACK_200MS") -> None:
+    """An earlier offer to this computer that it did not take (or answered busy)."""
+    await _sql(
+        "INSERT INTO runner_placements (workspace_id, host_id, agent_id, mode, status, step, "
+        "reason, created_at, ended_at) VALUES ($1::uuid, $2, $3, 'assign', 'moved', 'work', $4, "
+        "NOW() - make_interval(secs => $5), NOW() - make_interval(secs => $5))",
+        ws["id"], host["host_id"], host["agent_id"], reason, seconds_ago)
+
+
+async def test_a_computer_that_does_not_answer_is_left_alone_for_a_while(client):
+    """It used to be offered the same work again at every pass, about once a second."""
+    ws = await _workspace(client, "full")
+    host = await _host(client, ws, f"qq-{uuid.uuid4().hex[:4]}")
+    await _miss(ws, host, 1.0)  # one miss: nothing for 5 s
+    key = await _task(client, ws)
+    await _schedule(client, ws)
+    assert [(item["status"], item["reason"]) for item in await _placements(client, ws, key)] \
+        == [("unplaced", "hosts_not_answering")]
+    assert (await _task_row(client, ws, key))["assignee"] is None
+    # The wait is over: it is offered the work again.
+    await _sql("UPDATE runner_placements SET created_at = created_at - INTERVAL '6 seconds', "
+               "ended_at = ended_at - INTERVAL '6 seconds' WHERE host_id = $1 "
+               "AND reason LIKE 'nerve:%'", host["host_id"])
+    await _schedule(client, ws)
+    assert (await _task_row(client, ws, key))["assignee"] == host["assignee"]
+
+
+async def test_a_busy_answer_or_a_taken_offer_does_not_make_a_computer_quiet(client):
+    ws = await _workspace(client, "full")
+    busy = await _host(client, ws, f"qb-{uuid.uuid4().hex[:4]}")
+    # "Busy" is an answer.
+    await _miss(ws, busy, 1.0, "nerve:AGENT_WORKER_BUSY")
+    key = await _task(client, ws)
+    await _schedule(client, ws)
+    assert (await _task_row(client, ws, key))["assignee"] == busy["assignee"]
+
+    other = await _workspace(client, "full")
+    back = await _host(client, other, f"qa-{uuid.uuid4().hex[:4]}")
+    # Three misses (a 45 s wait), then an offer it took: the count starts again.
+    for age in (30.0, 20.0, 10.0):
+        await _miss(other, back, age)
+    await _sql(
+        "INSERT INTO runner_placements (workspace_id, host_id, agent_id, mode, status, step, "
+        "created_at, ended_at) VALUES ($1::uuid, $2, $3, 'assign', 'delivered', 'work', "
+        "NOW() - INTERVAL '5 seconds', NOW() - INTERVAL '4 seconds')",
+        other["id"], back["host_id"], back["agent_id"])
+    second = await _task(client, other)
+    await _schedule(client, other)
+    assert (await _task_row(client, other, second))["assignee"] == back["assignee"]
