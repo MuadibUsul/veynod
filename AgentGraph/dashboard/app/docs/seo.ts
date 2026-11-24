@@ -12,7 +12,7 @@ export const OG_IMAGE = {
   url: `${SITE_URL}/og.png`,
   width: 1200,
   height: 630,
-  alt: "Veynod — A shared blackboard for agent teams",
+  alt: "Veynod — Shared Blackboard & MCP Control Plane for AI Agent Teams",
 };
 
 export function docsUrl(slug: string): string {
@@ -77,8 +77,9 @@ export function docsPageJsonLd({
       dateModified: DOCS_LAST_MODIFIED,
       isPartOf: {
         "@type": "WebSite",
-        name: "Veynod Docs",
-        url: DOCS_HOME_URL,
+        "@id": `${SITE_URL}/#website`,
+        name: "Veynod",
+        url: `${SITE_URL}/`,
       },
       // The same entity the home page declares (https://veynod.com/#organization).
       publisher: {

@@ -151,8 +151,8 @@ _TEMPLATE_PATH = Path(__file__).with_name("templates") / "root.html"
 
 SEO_COPY = {
     "en": {
-        "title": "Veynod: the third space for AI agent teams",
-        "description": "Veynod is the third space for AI agent teams: you draw the project as a diagram, the loop dispatches, reviews, merges and deploys, agents work as one colony on one versioned board over MCP and REST, and federation connects your workspace to other teams. You keep the last word.",
+        "title": "Veynod — Shared Blackboard & MCP Control Plane for AI Agent Teams",
+        "description": "Veynod is a runtime-agnostic shared blackboard and Model Context Protocol (MCP) control plane for AI agent teams. Connect Claude Code, Cursor, Codex, or REST clients with versioned memory, task leases, and human approval.",
         "faq_title": "Frequently Asked Questions",
         "faqs": [
             (
@@ -186,8 +186,8 @@ SEO_COPY = {
         ],
     },
     "zh": {
-        "title": "Veynod：AI Agent 团队的第三空间",
-        "description": "Veynod 是 AI Agent 团队的第三空间：你把项目画成图，Loop 负责派发、评审、合并与部署，Agent 在同一块带版本的黑板上结成群落协作，通过 MCP 或 REST 接入，联邦把你的工作空间连到别的队伍。最后一句话留给你。",
+        "title": "Veynod — 面向 AI Agent 团队的共享黑板与 MCP 控制平面",
+        "description": "Veynod 是面向多 Agent 协作、与运行时无关的共享黑板与 Model Context Protocol (MCP) 控制平面。支持 Claude Code、Cursor、Codex 或 REST 客户端接入，提供版本化共享记忆、限时任务租约与人工审批门禁。",
         "faq_title": "常见问题",
         "faqs": [
             (
@@ -478,32 +478,47 @@ def _footer(lang: str, has_console: bool) -> str:
 
 SITE = "https://veynod.com"
 
+DISAMBIGUATING_DESCRIPTION = (
+    "A runtime-agnostic MCP control plane and shared blackboard for AI agent teams, "
+    "distinct from the cloud video creation platform Vyond."
+)
+
+# Verified official profiles only (never add an uncreated URL before it returns 200).
+ORGANIZATION_SAME_AS: tuple[str, ...] = (
+    "https://github.com/veynod/veynod",
+    "https://github.com/MuadibUsul/veynod",
+    "https://www.npmjs.com/package/veynod",
+    "https://glama.ai/mcp/servers/veynod/veynod",
+    "https://mcpservers.org/servers/veynod/veynod",
+    # TODO(sameAs): Add DEV Community organization/profile once live, e.g. "https://dev.to/veynod"
+    # TODO(sameAs): Add X (Twitter) official account once live, e.g. "https://x.com/veynod"
+    # TODO(sameAs): Add LinkedIn company page once live, e.g. "https://www.linkedin.com/company/veynod"
+    # TODO(sameAs): Add Product Hunt / Crunchbase / AlternativeTo / YouTube profiles once live
+)
+
 
 def _json_ld(lang: str, version: str) -> str:
     graph = [
         {
-            "@type": "Organization",
-            "@id": f"{SITE}/#organization",
-            "name": "Veynod",
-            "alternateName": ["veynod", "veynod.com", "io.github.veynod/veynod"],
-            "url": f"{SITE}/",
-            "logo": f"{SITE}/dashboard/icon.png",
-            # Where Veynod is published: one entity, and veynod.com is its home.
-            "sameAs": [
-                "https://github.com/veynod/veynod",
-                "https://github.com/MuadibUsul/veynod",
-                "https://www.npmjs.com/package/veynod",
-                "https://glama.ai/mcp/servers/veynod/veynod",
-                "https://mcpservers.org/servers/veynod/veynod",
-            ],
-        },
-        {
             "@type": "WebSite",
             "@id": f"{SITE}/#website",
             "name": "Veynod",
+            "alternateName": ["Veynod MCP", "veynod.com"],
             "url": f"{SITE}/",
+            "disambiguatingDescription": DISAMBIGUATING_DESCRIPTION,
             "inLanguage": ["en", "zh-Hans"],
             "publisher": {"@id": f"{SITE}/#organization"},
+        },
+        {
+            "@type": "Organization",
+            "@id": f"{SITE}/#organization",
+            "name": "Veynod",
+            "alternateName": ["Veynod MCP", "veynod.com", "io.github.veynod/veynod"],
+            "url": f"{SITE}/",
+            "logo": f"{SITE}/apple-touch-icon.png",
+            "disambiguatingDescription": DISAMBIGUATING_DESCRIPTION,
+            # Where Veynod is published: one entity, and veynod.com is its home.
+            "sameAs": list(ORGANIZATION_SAME_AS),
         },
         {
             "@type": "SoftwareApplication",
@@ -515,9 +530,11 @@ def _json_ld(lang: str, version: str) -> str:
             "author": {"@id": f"{SITE}/#organization"},
             "publisher": {"@id": f"{SITE}/#organization"},
             "applicationCategory": "DeveloperApplication",
-            "operatingSystem": "Cross-platform (CLI, MCP, REST API)",
+            "operatingSystem": "Cross-platform",
             "softwareVersion": version,
             "description": SEO_COPY[lang]["description"],
+            "disambiguatingDescription": DISAMBIGUATING_DESCRIPTION,
+            "sameAs": list(ORGANIZATION_SAME_AS),
             "offers": {
                 "@type": "Offer",
                 "price": "0",

@@ -422,6 +422,10 @@ if dashboard_dir.is_dir():
 # /docs; without a console build the API serves the same content as plain HTML.
 docs_site_dir = dashboard_dir / "docs"
 if docs_site_dir.is_dir():
+    @app.api_route("/docs", methods=["GET", "HEAD"], include_in_schema=False)
+    async def docs_redirect() -> RedirectResponse:
+        return RedirectResponse(url="/docs/", status_code=308)
+
     app.mount("/docs", StaticFiles(directory=str(docs_site_dir), html=True), name="docs")
 else:
     app.include_router(public_docs_router)
@@ -449,6 +453,7 @@ async def robots_txt() -> PlainTextResponse:
         "Allow: /\n"
         "Allow: /zh/\n"
         "Allow: /docs/\n"
+        "Allow: /demo/\n"
         "Allow: /v1/agent-docs\n"
         "Allow: /llms.txt\n"
         "Allow: /llms-full.txt\n"
@@ -480,10 +485,8 @@ async def sitemap_xml() -> Response:
 
     lastmod = _sitemap_lastmod()
     urls = [
-        # /demo/ is a snapshot of a sample workspace: noindex, so it never
-        # outranks the home page for the brand name.
         f"{SEO_SITE_URL}/", f"{SEO_SITE_URL}/zh/",
-        f"{SEO_SITE_URL}/docs/",
+        f"{SEO_SITE_URL}/docs/", f"{SEO_SITE_URL}/demo/",
         f"{SEO_SITE_URL}/v1/agent-docs", f"{SEO_SITE_URL}/llms.txt",
         f"{SEO_SITE_URL}/llms-full.txt",
     ]
@@ -862,9 +865,7 @@ async def demo_page() -> HTMLResponse:
     return HTMLResponse(
         render_demo_page(documents, tasks, workspace_name=settings.demo_workspace_name),
         headers={"Vary": "Accept, Accept-Encoding", "Cache-Control": "public, max-age=60",
-                 "Link": f'<{SEO_SITE_URL}/demo/>; rel="canonical"',
-                 # Followed for its links, never indexed: the home page is the brand's page.
-                 "X-Robots-Tag": "noindex, follow"},
+                 "Link": f'<{SEO_SITE_URL}/demo/>; rel="canonical"'},
     )
 
 

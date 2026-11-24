@@ -57,6 +57,14 @@ def test_human_root_page_keeps_json_shape_and_marks_console_entry():
     assert 'id="raw-response"' in page
     assert 'id="copy-curl"' in page
     assert '<link rel="canonical" href="https://veynod.com/">' in page
+    assert '<link rel="alternate" hreflang="en" href="https://veynod.com/">' in page
+    assert '<link rel="alternate" hreflang="zh" href="https://veynod.com/zh/">' in page
+    assert '<link rel="alternate" hreflang="x-default" href="https://veynod.com/">' in page
+    assert (
+        "<title>Veynod — Shared Blackboard &amp; MCP Control Plane for AI Agent Teams</title>"
+        in page
+    )
+    assert 'property="og:site_name" content="Veynod"' in page
     assert 'property="og:image"' in page
     assert "application/ld+json" in page
     assert '<span class="value">3.2.1</span>' in page
@@ -73,6 +81,8 @@ def test_chinese_page_has_a_physical_route_and_chinese_copy():
     page = render_root_page(descriptor(), lang="zh")
     assert '<html lang="zh-Hans"' in page
     assert '<link rel="canonical" href="https://veynod.com/zh/">' in page
+    assert '<link rel="alternate" hreflang="zh" href="https://veynod.com/zh/">' in page
+    assert "<title>Veynod — 面向 AI Agent 团队的共享黑板与 MCP 控制平面</title>" in page
     assert 'href="/" hreflang="en"' in page
     assert "Agent 的" in page and "胜者团队" in page
     assert "The third space for agents." not in page
@@ -89,6 +99,10 @@ def test_root_structured_data_links_only_existing_brand_profiles():
     match = re.search(r'<script type="application/ld\+json">(.*?)</script>', page)
     assert match is not None
     graph = json.loads(match.group(1))["@graph"]
+    website = next(item for item in graph if item["@type"] == "WebSite")
+    assert website["name"] == "Veynod"
+    assert website["alternateName"] == ["Veynod MCP", "veynod.com"]
+    assert website["url"] == "https://veynod.com/"
     organization = next(item for item in graph if item["@type"] == "Organization")
     # Live profiles only (docs/SEO_ECOSYSTEM_SUBMISSION.md). Added 2026-11-05: the
     # monorepo (public) and the mcpservers.org entry, which ranks for "veynod".
@@ -100,8 +114,15 @@ def test_root_structured_data_links_only_existing_brand_profiles():
         "https://mcpservers.org/servers/veynod/veynod",
     ]
     assert organization["@id"] == "https://veynod.com/#organization"
+    assert organization["logo"] == "https://veynod.com/apple-touch-icon.png"
     software = next(item for item in graph if item["@type"] == "SoftwareApplication")
     assert software["publisher"] == {"@id": "https://veynod.com/#organization"}
+    assert software["applicationCategory"] == "DeveloperApplication"
+    assert software["operatingSystem"] == "Cross-platform"
+    assert "distinct from the cloud video creation platform Vyond" in software[
+        "disambiguatingDescription"
+    ]
+    assert organization["disambiguatingDescription"] == software["disambiguatingDescription"]
 
 
 def test_every_mcp_tool_has_directory_annotations():

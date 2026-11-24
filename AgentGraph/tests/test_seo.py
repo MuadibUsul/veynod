@@ -19,6 +19,7 @@ async def test_robots_and_sitemap_are_public_and_clean(client):
     assert "Allow: /" in robots.text
     assert f"Sitemap: {SITE}/sitemap.xml" in robots.text
     assert "Allow: /v1/agent-docs" in robots.text
+    assert "Allow: /demo/" in robots.text
     for private in ("/dashboard/", "/v1/", "/mcp/", "/api-reference",
                     "/openapi.json", "/healthz", "/readyz"):
         assert f"Disallow: {private}" in robots.text
@@ -30,7 +31,7 @@ async def test_robots_and_sitemap_are_public_and_clean(client):
     root = ET.fromstring(sitemap.text)
     urls = [loc.text for loc in root.findall("sm:url/sm:loc", SITEMAP_NS)]
     assert f"{SITE}/" in urls and f"{SITE}/docs/" in urls
-    for public in ("/zh/", "/v1/agent-docs", "/llms.txt", "/llms-full.txt"):
+    for public in ("/zh/", "/demo/", "/v1/agent-docs", "/llms.txt", "/llms-full.txt"):
         assert f"{SITE}{public}" in urls
     assert f"{SITE}/docs/quickstart/" in urls
     assert f"{SITE}/docs/introduction/" not in urls
@@ -133,13 +134,15 @@ async def test_crawlers_get_the_page_and_the_brand_is_in_its_text(client):
         assert "https://github.com/MuadibUsul/veynod" in html_text
 
 
-async def test_the_demo_is_followed_but_never_indexed(client):
+async def test_the_demo_is_indexable_and_in_sitemap(client):
     demo = await client.get("/demo/")
     assert demo.status_code == 200
-    assert demo.headers["x-robots-tag"] == "noindex, follow"
-    assert '<meta name="robots" content="noindex, follow">' in demo.text
+    assert demo.headers.get("x-robots-tag") is None
+    assert demo.headers["link"] == f'<{SITE}/demo/>; rel="canonical"'
+    assert '<meta name="robots" content="index, follow">' in demo.text
+    assert f'<link rel="canonical" href="{SITE}/demo/">' in demo.text
     sitemap = await client.get("/sitemap.xml")
-    assert f"{SITE}/demo/" not in sitemap.text
+    assert f"{SITE}/demo/" in sitemap.text
 
 
 async def test_docs_pages_have_canonical_header_and_og_image(client):

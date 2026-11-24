@@ -100,8 +100,10 @@ def _render(slug: str, lang: str) -> str:
 
     def nav_item(item: dict[str, Any]) -> str:
         marker = current if item["slug"] == slug else ""
-        return (f'<li><a href="/docs/{_e(item["slug"])}/?lang={lang}"{marker}>'
-                f'{_e(_t(item["title"], lang))}</a></li>')
+        href = "/docs/" if item["slug"] == "introduction" else f'/docs/{_e(item["slug"])}/'
+        if lang != "en":
+            href += f"?lang={lang}"
+        return f'<li><a href="{href}"{marker}>{_e(_t(item["title"], lang))}</a></li>'
 
     nav = "".join(
         f'<li><span class="group">{_e(_t(group["title"], lang))}</span><ul>'
@@ -144,13 +146,15 @@ def _render(slug: str, lang: str) -> str:
                     "dateModified": "2026-10-25",
                     "isPartOf": {
                         "@type": "WebSite",
-                        "name": "Veynod Docs",
-                        "url": f"{base_url}/docs/",
+                        "@id": f"{base_url}/#website",
+                        "name": "Veynod",
+                        "url": f"{base_url}/",
                     },
                     "publisher": {
                         "@type": "Organization",
+                        "@id": f"{base_url}/#organization",
                         "name": "Veynod",
-                        "url": base_url,
+                        "url": f"{base_url}/",
                     },
                 },
                 {
@@ -162,6 +166,8 @@ def _render(slug: str, lang: str) -> str:
         },
         ensure_ascii=False,
     ).replace("</", "<\\/")
+    switch_path = "/docs/" if slug == "introduction" else f"/docs/{_e(slug)}/"
+    switch_href = switch_path if other == "en" else f"{switch_path}?lang={other}"
     return f"""<!doctype html>
 <html lang="{html_lang}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -195,7 +201,7 @@ padding:8px 12px;background:#eef}}@media (max-width:720px){{main{{flex-direction
 </style></head><body>
 <a href="#content">{_e("Skip to content" if lang == "en" else "跳到正文")}</a>
 <header><strong>Veynod Docs</strong>
-<span><a href="/docs/{_e(slug)}/?lang={other}">{switch}</a> ·
+<span><a href="{switch_href}">{switch}</a> ·
 <a href="/dashboard/">{_e("Console" if lang == "en" else "控制台")}</a></span></header>
 <main><nav aria-label="{_e("Documentation" if lang == "en" else "文档导航")}"><ul>{nav}</ul></nav>
 <article id="content"><h1>{_e(title)}</h1><p>{_e(_t(page["summary"], lang))}</p>{body}</article>
@@ -204,7 +210,7 @@ padding:8px 12px;background:#eef}}@media (max-width:720px){{main{{flex-direction
 
 @router.get("/docs")
 async def docs_root() -> RedirectResponse:
-    return RedirectResponse(url="/docs/", status_code=307)
+    return RedirectResponse(url="/docs/", status_code=308)
 
 
 @router.get("/docs/", response_class=HTMLResponse)

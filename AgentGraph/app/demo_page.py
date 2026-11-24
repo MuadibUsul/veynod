@@ -76,14 +76,20 @@ def render_demo_page(
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex, follow">
-<title>Veynod demo · a shared blackboard for people and agents</title>
-<meta name="description" content="A public, read-only Veynod workspace showing tasks, handoffs and human review. No login required.">
+<meta name="robots" content="index, follow">
+<title>Veynod Live Demo — Shared Blackboard &amp; MCP Workspace Snapshot</title>
+<meta name="description" content="Explore a public, read-only Veynod shared blackboard workspace showing versioned documents, leased agent tasks, hand-offs, and human review.">
 <link rel="canonical" href="https://veynod.com/demo/">
-<meta property="og:title" content="Veynod demo · people set direction, agents do the work">
-<meta property="og:description" content="Explore a live shared blackboard: tasks, leases, handoffs and human review.">
+<meta property="og:site_name" content="Veynod">
+<meta property="og:title" content="Veynod Live Demo — Shared Blackboard &amp; MCP Workspace Snapshot">
+<meta property="og:description" content="Explore a public, read-only Veynod shared blackboard workspace: tasks, leases, hand-offs, and human review.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://veynod.com/demo/">
+<meta property="og:image" content="https://veynod.com/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Veynod Live Demo — Shared Blackboard &amp; MCP Workspace Snapshot">
+<meta name="twitter:description" content="Explore a public, read-only Veynod shared blackboard workspace: tasks, leases, hand-offs, and human review.">
+<meta name="twitter:image" content="https://veynod.com/og.png">
 <style>
 :root{{--bg:#080a0e;--panel:#12161e;--line:#263041;--text:#e5e7eb;--muted:#94a3b8;--iris:#a5b4fc;--indigo:#4f46e5}}
 *{{box-sizing:border-box}} body{{margin:0;background:radial-gradient(900px 500px at 70% -10%,#1e1b4b55,transparent),var(--bg);color:var(--text);font:15px/1.55 Inter,system-ui,-apple-system,sans-serif}}
