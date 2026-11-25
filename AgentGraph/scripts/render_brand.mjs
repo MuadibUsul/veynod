@@ -71,7 +71,9 @@ frames.forEach(([size, png], index) => {
   header.writeUInt32LE(offset, entry + 12);
   offset += png.length;
 });
-writeFileSync(join(ROOT, "dashboard/app/favicon.ico"), Buffer.concat([header, ...frames.map(([, png]) => png)]));
+const icoBuffer = Buffer.concat([header, ...frames.map(([, png]) => png)]);
+writeFileSync(join(ROOT, "dashboard/app/favicon.ico"), icoBuffer);
+writeFileSync(join(ROOT, "app/static/favicon.ico"), icoBuffer);
 
 await page.setViewportSize({ width: 1200, height: 630 });
 await page.setContent(og, { waitUntil: "networkidle" });

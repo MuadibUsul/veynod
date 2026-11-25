@@ -82,11 +82,25 @@ settings = get_settings()
 SEO_SITE_URL = "https://veynod.com"
 OG_IMAGE_PATH = Path(__file__).resolve().parent / "static" / "og.png"
 FAVICON_PATH = Path(__file__).resolve().parent / "static" / "favicon.svg"
+FAVICON_ICO_PATH = Path(__file__).resolve().parent / "static" / "favicon.ico"
 APPLE_TOUCH_ICON_PATH = Path(__file__).resolve().parent / "static" / "apple-touch-icon.png"
+
+_PUBLIC_DASHBOARD_ASSETS = (
+    "/dashboard/favicon.ico",
+    "/dashboard/icon.png",
+    "/dashboard/icon.svg",
+    "/dashboard/apple-icon.png",
+)
+
+
+def _is_public_dashboard_asset(path: str) -> bool:
+    return path.startswith("/dashboard/_next/static/") or path in _PUBLIC_DASHBOARD_ASSETS
 
 
 def _is_private_path(path: str) -> bool:
     """Customer, operator and protocol surfaces that must never be indexed."""
+    if _is_public_dashboard_asset(path):
+        return False
     return (
         path == "/dashboard"
         or path.startswith("/dashboard/")
@@ -272,7 +286,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Veynod — Human-in-the-Loop Shared Blackboard",
+    title="Veynod — Shared Blackboard & MCP Control Plane for AI Agent Teams",
     version=settings.app_version,
     description=(
         "A multi-agent shared workspace with TTL task leases, progressive "
@@ -348,15 +362,22 @@ async def security_headers(request: Request, call_next):
         response.headers.setdefault(
             "Cache-Control", "public, max-age=31536000, immutable"
         )
-    elif (
-        path.startswith("/dashboard/") or path == "/dashboard"
-        or path.startswith("/docs/") or path == "/docs"
-    ):
+    elif path in _PUBLIC_DASHBOARD_ASSETS:
+        response.headers.setdefault("Cache-Control", "public, max-age=86400")
+    elif path.startswith("/dashboard/") or path == "/dashboard":
         response.headers.setdefault(
             "Cache-Control", "no-store, max-age=0, must-revalidate"
         )
-    elif path == "/":
-        response.headers.setdefault("Cache-Control", "no-store")
+    elif (
+        path in {"/", "/zh", "/zh/", "/docs"}
+        or path.startswith("/docs/")
+    ):
+        if response.headers.get("content-type", "").startswith("application/json"):
+            response.headers.setdefault("Cache-Control", "no-store")
+        else:
+            response.headers.setdefault(
+                "Cache-Control", "public, max-age=0, must-revalidate"
+            )
     elif path.startswith("/v1/") or path.startswith("/mcp"):
         response.headers.setdefault("Cache-Control", "no-store")
     return response
@@ -457,6 +478,11 @@ async def robots_txt() -> PlainTextResponse:
         "Allow: /v1/agent-docs\n"
         "Allow: /llms.txt\n"
         "Allow: /llms-full.txt\n"
+        "Allow: /dashboard/_next/static/\n"
+        "Allow: /dashboard/favicon.ico\n"
+        "Allow: /dashboard/icon.png\n"
+        "Allow: /dashboard/icon.svg\n"
+        "Allow: /dashboard/apple-icon.png\n"
         "Disallow: /dashboard/\n"
         "Disallow: /s/\n"
         "Disallow: /v1/\n"
@@ -500,12 +526,21 @@ async def sitemap_xml() -> Response:
             if url not in seen:
                 seen.add(url)
                 urls.append(url)
+    home_alternates = (
+        f'<xhtml:link rel="alternate" hreflang="en" href="{SEO_SITE_URL}/"/>'
+        f'<xhtml:link rel="alternate" hreflang="zh" href="{SEO_SITE_URL}/zh/"/>'
+        f'<xhtml:link rel="alternate" hreflang="zh-Hans" href="{SEO_SITE_URL}/zh/"/>'
+        f'<xhtml:link rel="alternate" hreflang="x-default" href="{SEO_SITE_URL}/"/>'
+    )
+    home_pair = {f"{SEO_SITE_URL}/", f"{SEO_SITE_URL}/zh/"}
     body = "\n".join(
         [
             '<?xml version="1.0" encoding="UTF-8"?>',
-            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" '
+            'xmlns:xhtml="http://www.w3.org/1999/xhtml">',
             *[
-                f"<url><loc>{url}</loc><lastmod>{lastmod}</lastmod></url>"
+                f"<url><loc>{url}</loc><lastmod>{lastmod}</lastmod>"
+                f"{home_alternates if url in home_pair else ''}</url>"
                 for url in urls
             ],
             "</urlset>",
@@ -521,7 +556,11 @@ async def sitemap_xml() -> Response:
 
 @app.api_route("/llms.txt", methods=["GET", "HEAD"], include_in_schema=False)
 async def llms_txt() -> PlainTextResponse:
-    return PlainTextResponse(llms_index(settings.app_version), media_type="text/plain")
+    return PlainTextResponse(
+        llms_index(settings.app_version),
+        media_type="text/plain",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
 
 
 @app.api_route("/llms-full.txt", methods=["GET", "HEAD"], include_in_schema=False)
@@ -530,10 +569,11 @@ async def llms_full_txt() -> PlainTextResponse:
     return PlainTextResponse(
         llms_full(settings.app_version) + "\n" + mcp_reference(tools),
         media_type="text/plain",
+        headers={"Cache-Control": "public, max-age=3600"},
     )
 
 
-@app.get("/og.png", include_in_schema=False)
+@app.api_route("/og.png", methods=["GET", "HEAD"], include_in_schema=False)
 async def og_image() -> FileResponse:
     return FileResponse(
         OG_IMAGE_PATH,
@@ -542,7 +582,16 @@ async def og_image() -> FileResponse:
     )
 
 
-@app.get("/favicon.svg", include_in_schema=False)
+@app.api_route("/favicon.ico", methods=["GET", "HEAD"], include_in_schema=False)
+async def favicon_ico() -> FileResponse:
+    return FileResponse(
+        FAVICON_ICO_PATH,
+        media_type="image/x-icon",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@app.api_route("/favicon.svg", methods=["GET", "HEAD"], include_in_schema=False)
 async def favicon() -> FileResponse:
     return FileResponse(
         FAVICON_PATH,
@@ -551,7 +600,7 @@ async def favicon() -> FileResponse:
     )
 
 
-@app.get("/favicon.png", include_in_schema=False)
+@app.api_route("/favicon.png", methods=["GET", "HEAD"], include_in_schema=False)
 async def favicon_png() -> FileResponse:
     return FileResponse(
         APPLE_TOUCH_ICON_PATH,
@@ -560,7 +609,7 @@ async def favicon_png() -> FileResponse:
     )
 
 
-@app.get("/apple-touch-icon.png", include_in_schema=False)
+@app.api_route("/apple-touch-icon.png", methods=["GET", "HEAD"], include_in_schema=False)
 async def apple_touch_icon() -> FileResponse:
     return FileResponse(
         APPLE_TOUCH_ICON_PATH,

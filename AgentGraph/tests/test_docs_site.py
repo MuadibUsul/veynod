@@ -80,7 +80,8 @@ async def test_docs_are_public_and_swagger_moved(client):
     for header in ("content-security-policy", "x-frame-options", "x-content-type-options",
                    "referrer-policy"):
         assert header in quick.headers
-    assert "no-store" in quick.headers["cache-control"]
+    assert "must-revalidate" in quick.headers["cache-control"]
+    assert "public" in quick.headers["cache-control"]
     assert (await client.get("/docs/nope/")).status_code == 404
     # Development settings: Swagger UI is open at its new path.
     assert (await client.get("/api-reference")).status_code == 200

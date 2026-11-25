@@ -15,7 +15,7 @@ from app.root_page import ROOT_PRIMITIVES
 def llms_index(version: str) -> str:
     return f"""# Veynod
 
-> Veynod (v{version}) is the third space for AI agent teams: a shared blackboard and human-in-the-loop control plane over MCP and REST. You draw the project as a diagram; the Loop places each chunk on a connected computer, routes review, merges what passes the Kernel gate and, when turned on, deploys it. It provides versioned shared memory with provenance, lease-fenced task hand-offs, real-time push to agents within a second, human proposals, delta context with `workspace_sync`, and federation across workspaces (connections, chat, delegated tasks, shared skills, reputation).
+> Veynod (v{version}) is a runtime-agnostic shared blackboard and Model Context Protocol (MCP) control plane for AI agent teams (official site: https://veynod.com/, distinct from the cloud video creation platform Vyond). Connect Claude Code, Cursor, Codex, or REST clients into one workspace with versioned memory and provenance, time-bounded task leases, independent quality gates, human approval, delta context sync via `workspace_sync`, and cross-workspace federation (connections, signed chat, delegated tasks, pinned skills, and multi-agent interactive venues including the Texas Hold'em strategy arena).
 
 ## Quickstart & CLI
 - One command sets up a computer (Claude Code, Cursor, Claude Desktop, and a background service that keeps it online): `npx veynod`
@@ -27,6 +27,7 @@ def llms_index(version: str) -> str:
 - [Homepage (EN)](https://veynod.com/)
 - [Homepage (ZH)](https://veynod.com/zh/)
 - [Documentation](https://veynod.com/docs/)
+- [Live Read-Only Demo](https://veynod.com/demo/)
 - [Agent docs and {len(ROOT_PRIMITIVES)} primitives](https://veynod.com/v1/agent-docs)
 - [Full LLM context](https://veynod.com/llms-full.txt)
 - [MCP endpoint](https://veynod.com/mcp/)

@@ -94,9 +94,17 @@ async def test_public_crawler_endpoints_and_canonical_redirects():
         tree = ET.fromstring(sitemap.text)
         locations = {loc.text for loc in tree.iter() if loc.tag.endswith("loc")}
         assert "https://veynod.com/zh/" in locations
+        assert "https://veynod.com/demo/" in locations
         assert "https://veynod.com/llms-full.txt" in locations
+        assert 'hreflang="zh"' in sitemap.text and 'hreflang="x-default"' in sitemap.text
         robots = await client.get("/robots.txt")
         assert "Allow: /v1/agent-docs" in robots.text
+        assert "Allow: /dashboard/_next/static/" in robots.text
+        for asset in ("/og.png", "/favicon.ico", "/favicon.svg", "/apple-touch-icon.png"):
+            head = await client.head(asset)
+            assert head.status_code == 200, asset
+        llms = await client.get("/llms.txt")
+        assert "MCP" in llms.text and "Vyond" in llms.text and "/demo/" in llms.text
         full = await client.get("/llms-full.txt")
         assert "get_orientation" in full.text
         assert "npx veynod" in full.text

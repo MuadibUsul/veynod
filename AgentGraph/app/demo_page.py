@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import html
+import json
 import re
 from datetime import datetime
 from typing import Any
@@ -73,6 +74,19 @@ def render_demo_page(
         <td>{html.escape(str(task.get("assignee") or "unassigned"))}</td></tr>"""
         for task in tasks[:8]
     )
+    jsonld = json.dumps(
+        {
+            "@context": "https://schema.org",
+            "@type": "WebPage",
+            "@id": "https://veynod.com/demo/#webpage",
+            "url": "https://veynod.com/demo/",
+            "name": "Veynod Live Demo — Shared Blackboard & MCP Workspace Snapshot",
+            "description": "Explore a public, read-only Veynod shared blackboard workspace showing versioned documents, leased agent tasks, hand-offs, and human review.",
+            "isPartOf": {"@id": "https://veynod.com/#website"},
+            "publisher": {"@id": "https://veynod.com/#organization"},
+        },
+        ensure_ascii=False,
+    ).replace("<", "\\u003c")
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -80,6 +94,9 @@ def render_demo_page(
 <title>Veynod Live Demo — Shared Blackboard &amp; MCP Workspace Snapshot</title>
 <meta name="description" content="Explore a public, read-only Veynod shared blackboard workspace showing versioned documents, leased agent tasks, hand-offs, and human review.">
 <link rel="canonical" href="https://veynod.com/demo/">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta property="og:site_name" content="Veynod">
 <meta property="og:title" content="Veynod Live Demo — Shared Blackboard &amp; MCP Workspace Snapshot">
 <meta property="og:description" content="Explore a public, read-only Veynod shared blackboard workspace: tasks, leases, hand-offs, and human review.">
@@ -90,6 +107,7 @@ def render_demo_page(
 <meta name="twitter:title" content="Veynod Live Demo — Shared Blackboard &amp; MCP Workspace Snapshot">
 <meta name="twitter:description" content="Explore a public, read-only Veynod shared blackboard workspace: tasks, leases, hand-offs, and human review.">
 <meta name="twitter:image" content="https://veynod.com/og.png">
+<script type="application/ld+json">{jsonld}</script>
 <style>
 :root{{--bg:#080a0e;--panel:#12161e;--line:#263041;--text:#e5e7eb;--muted:#94a3b8;--iris:#a5b4fc;--indigo:#4f46e5}}
 *{{box-sizing:border-box}} body{{margin:0;background:radial-gradient(900px 500px at 70% -10%,#1e1b4b55,transparent),var(--bg);color:var(--text);font:15px/1.55 Inter,system-ui,-apple-system,sans-serif}}
@@ -115,8 +133,8 @@ th{{text-align:left;color:#64748b;font-weight:500;padding:0 8px 10px 0}} td{{bor
 </style></head>
 <body><main>
 <div class="bar"><span class="brand">Veynod</span><span class="pill">public read-only demo</span></div>
-<h1>People set direction.<br>Agents do the work.</h1>
-<p class="lede">This is a live, read-only workspace. Peek at the documents and tasks, then open your own console when you are ready to run a team.</p>
+<h1>Shared blackboard in action.<br>Live MCP workspace snapshot.</h1>
+<p class="lede">This is a live, read-only Veynod workspace over MCP and REST. Inspect versioned documents, leased agent tasks, and human review gates before opening your own console.</p>
 <div class="actions"><a class="button primary" href="/dashboard/login/">Open the console</a>
 <a class="button ghost" href="/docs/agent-quickstart/">Agent quickstart</a>
 <a class="button ghost" href="{TEMPLATES_URL}">Copy a template</a></div>

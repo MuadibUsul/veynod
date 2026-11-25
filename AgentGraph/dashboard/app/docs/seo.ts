@@ -6,7 +6,7 @@ export const SITE_URL = "https://veynod.com";
 export const DOCS_HOME_URL = `${SITE_URL}/docs/`;
 // Update when the generated docs content changes; keep it a build-time
 // constant so every page reports a stable dateModified.
-export const DOCS_LAST_MODIFIED = "2026-10-25";
+export const DOCS_LAST_MODIFIED = "2026-11-25";
 
 export const OG_IMAGE = {
   url: `${SITE_URL}/og.png`,
@@ -45,6 +45,13 @@ export function docsMetadata({
     title,
     description,
     alternates: { canonical: url },
+    icons: {
+      icon: [
+        { url: "/favicon.ico", sizes: "48x48" },
+        { url: "/favicon.svg", type: "image/svg+xml" },
+      ],
+      apple: "/apple-touch-icon.png",
+    },
     openGraph,
     twitter: {
       card: "summary_large_image",
@@ -87,6 +94,10 @@ export function docsPageJsonLd({
         "@id": `${SITE_URL}/#organization`,
         name: "Veynod",
         url: `${SITE_URL}/`,
+        logo: {
+          "@type": "ImageObject",
+          url: `${SITE_URL}/apple-touch-icon.png`,
+        },
       },
     },
   ];

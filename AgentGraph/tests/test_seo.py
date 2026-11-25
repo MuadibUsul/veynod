@@ -20,6 +20,7 @@ async def test_robots_and_sitemap_are_public_and_clean(client):
     assert f"Sitemap: {SITE}/sitemap.xml" in robots.text
     assert "Allow: /v1/agent-docs" in robots.text
     assert "Allow: /demo/" in robots.text
+    assert "Allow: /dashboard/_next/static/" in robots.text
     for private in ("/dashboard/", "/v1/", "/mcp/", "/api-reference",
                     "/openapi.json", "/healthz", "/readyz"):
         assert f"Disallow: {private}" in robots.text
@@ -112,7 +113,8 @@ async def test_crawlers_get_the_page_and_the_brand_is_in_its_text(client):
     assert agent.headers["content-type"].startswith("application/json")
     assert agent.headers["link"] == f'<{SITE}/>; rel="canonical"'
 
-    for path in ("/", "/zh/", "/robots.txt", "/sitemap.xml", "/llms.txt"):
+    for path in ("/", "/zh/", "/demo/", "/robots.txt", "/sitemap.xml", "/llms.txt",
+                 "/og.png", "/favicon.ico", "/favicon.svg", "/apple-touch-icon.png"):
         head = await client.head(path)
         assert head.status_code == 200, path
 

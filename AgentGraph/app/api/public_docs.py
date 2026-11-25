@@ -143,7 +143,7 @@ def _render(slug: str, lang: str) -> str:
                     "description": description,
                     "url": canonical,
                     "mainEntityOfPage": {"@type": "WebPage", "@id": canonical},
-                    "dateModified": "2026-10-25",
+                    "dateModified": "2026-11-25",
                     "isPartOf": {
                         "@type": "WebSite",
                         "@id": f"{base_url}/#website",
@@ -155,6 +155,10 @@ def _render(slug: str, lang: str) -> str:
                         "@id": f"{base_url}/#organization",
                         "name": "Veynod",
                         "url": f"{base_url}/",
+                        "logo": {
+                            "@type": "ImageObject",
+                            "url": f"{base_url}/apple-touch-icon.png",
+                        },
                     },
                 },
                 {
@@ -175,6 +179,9 @@ def _render(slug: str, lang: str) -> str:
 <meta name="description" content="{_e(description)}">
 <meta name="robots" content="index, follow">
 <link rel="canonical" href="{_e(canonical)}">
+<link rel="icon" href="/favicon.ico" sizes="48x48">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="Veynod">
 <meta property="og:title" content="{_e(headline)}">
