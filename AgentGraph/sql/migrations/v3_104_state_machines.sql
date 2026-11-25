@@ -45,6 +45,17 @@ CREATE TABLE IF NOT EXISTS state_transition_violations (
 CREATE INDEX IF NOT EXISTS idx_state_transition_violations_at
     ON state_transition_violations (at);
 
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agentgraph_app') THEN
+        GRANT SELECT ON state_transitions, state_guard TO agentgraph_app;
+        REVOKE INSERT, UPDATE, DELETE ON state_transitions, state_guard FROM agentgraph_app;
+        GRANT SELECT, INSERT ON state_transition_violations TO agentgraph_app;
+        REVOKE UPDATE, DELETE ON state_transition_violations FROM agentgraph_app;
+        GRANT USAGE, SELECT ON SEQUENCE state_transition_violations_id_seq TO agentgraph_app;
+    END IF;
+END $$;
+
 INSERT INTO schema_migrations (version, applied_at)
 VALUES ('v3_104_state_machines', NOW())
 ON CONFLICT (version) DO NOTHING;

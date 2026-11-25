@@ -191,3 +191,55 @@ async def test_the_machines_are_readable_by_any_caller(client) -> None:
     assert missing.status_code == 404 and "task" in missing.json()["error"]["details"]["known"]
     seen = await client.get("/v1/admin/state-machines/violations", headers=ADMIN)
     assert seen.status_code == 200 and seen.json()["mode"] == "enforce"
+
+
+@pytest.mark.integration
+async def test_rls_app_role_can_transition_guarded_runner_hosts(client) -> None:
+    """Regression: under SET LOCAL ROLE agentgraph_app (production RLS_ENABLED=true),
+    pausing, resuming, and revoking a runner_host must pass through trg_state_status
+    without InsufficientPrivilegeError on state_transitions."""
+    created = (await client.post("/v1/admin/workspaces", headers=ADMIN, json={
+        "name": f"sm-rls-{uuid.uuid4().hex[:6]}", "tier": "pro"})).json()
+    ws_id = created["workspace"]["id"]
+    key = {"Authorization": f"Bearer {created['api_key']}"}
+    made = await client.post("/v1/tasks", headers=key, json={
+        "task_key": f"sm-rls-{uuid.uuid4().hex[:8]}", "title": "rls-guarded",
+        "assigned_role": "EXECUTOR", "namespace": "default"})
+    assert made.status_code == 201, made.text
+    task_key = made.json()["task_key"]
+
+    conn = await asyncpg.connect(_db(), server_settings={"application_name": "veynod"})
+    try:
+        assert await conn.fetchval(
+            "SELECT has_table_privilege('agentgraph_app', 'state_transitions', 'SELECT')")
+        assert not await conn.fetchval(
+            "SELECT has_table_privilege('agentgraph_app', 'state_transitions', 'UPDATE')")
+        assert await conn.fetchval(
+            "SELECT has_table_privilege('agentgraph_app', 'state_guard', 'SELECT')")
+        assert not await conn.fetchval(
+            "SELECT has_table_privilege('agentgraph_app', 'state_guard', 'UPDATE')")
+        assert await conn.fetchval(
+            "SELECT has_table_privilege('agentgraph_app', 'state_transition_violations', 'INSERT')")
+        assert not await conn.fetchval(
+            "SELECT has_table_privilege('agentgraph_app', 'state_transition_violations', 'DELETE')")
+
+        tenant_id = await conn.fetchval(
+            "SELECT tenant_id FROM workspaces WHERE id = $1::uuid", ws_id)
+        tx = conn.transaction()
+        await tx.start()
+        await conn.execute("SET LOCAL ROLE agentgraph_app")
+        await conn.execute(
+            "SELECT set_config('app.workspace_id', $1, true), "
+            "set_config('app.tenant_scope', $2, true)", ws_id, tenant_id)
+        await conn.execute(
+            "UPDATE collab_tasks SET status = 'IN_PROGRESS' WHERE task_key = $1", task_key)
+        assert await conn.fetchval(
+            "SELECT status::text FROM collab_tasks WHERE task_key = $1",
+            task_key) == "IN_PROGRESS"
+        with pytest.raises(asyncpg.RaiseError) as refused:
+            await conn.execute(
+                "UPDATE collab_tasks SET status = 'APPROVED' WHERE task_key = $1", task_key)
+        assert "ERR_ILLEGAL_TRANSITION" in str(refused.value)
+        await tx.rollback()
+    finally:
+        await conn.close()

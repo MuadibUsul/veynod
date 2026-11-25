@@ -3,7 +3,11 @@
 -- Refused only for the application's connections (application_name 'veynod');
 -- an undo (veynod.state_override = 'undo') may restore any earlier state.
 -- See app/state_machines.py.
-CREATE OR REPLACE FUNCTION agentgraph_guard_transition() RETURNS TRIGGER AS $$
+CREATE OR REPLACE FUNCTION agentgraph_guard_transition() RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
 DECLARE
     col     TEXT := TG_ARGV[0];
     old_val TEXT := to_jsonb(OLD) ->> TG_ARGV[0];
@@ -41,4 +45,11 @@ BEGIN
     VALUES (TG_TABLE_NAME, col, old_val, new_val, current_setting('application_name', true));
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agentgraph_app') THEN
+        GRANT EXECUTE ON FUNCTION agentgraph_guard_transition() TO agentgraph_app;
+    END IF;
+END $$;
