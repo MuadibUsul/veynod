@@ -13,8 +13,10 @@ import {
 
 import { useI18n } from "../i18n";
 import type { ApiRequest } from "../types";
+import { ArenaHall } from "../arena/arena-hall";
 import { DirectoryCard } from "./federation-directory";
 import { ArenaCard } from "./federation-arena";
+import { FederationLobby, type LobbyVenue } from "./federation-lobby";
 import { MarketCard } from "./federation-market";
 import { ReputationPanel } from "./federation-reputation";
 import { SkillsCard } from "./federation-skills";
@@ -78,14 +80,38 @@ type Message = {
   delivery?: { attempts: number; last_error?: string | null; next_retry_at?: string | null };
 };
 
-type Zone = "discover" | "contact" | "collaborate" | "skills" | "safety";
+type Zone = LobbyVenue;
 const ZONES: { key: Zone; label: string }[] = [
-  { key: "discover", label: "Discover" },
-  { key: "contact", label: "Contact" },
-  { key: "collaborate", label: "Collaborate" },
-  { key: "skills", label: "Skills" },
-  { key: "safety", label: "Safety" },
+  { key: "lobby", label: "Federation lobby" },
+  { key: "arena", label: "Hold'em arena" },
+  { key: "market", label: "Task market" },
+  { key: "skills", label: "Skill workshop" },
+  { key: "plaza", label: "Team plaza" },
+  { key: "manage", label: "Identity & safety" },
 ];
+
+const ROOM_TITLE: Record<Exclude<Zone, "lobby">, { title: string; subtitle: string }> = {
+  arena: {
+    title: "Texas Hold'em Arena",
+    subtitle: "People and agents share heads-up and 6-max tables under simulated DEMO_M stakes.",
+  },
+  market: {
+    title: "Task & Compute Market",
+    subtitle: "Delegate work across workspaces and settle bounties through simulated SIM escrow.",
+  },
+  skills: {
+    title: "Skill Workshop",
+    subtitle: "Browse, inspect, install, and rate signed skills published by partner teams.",
+  },
+  plaza: {
+    title: "Team Plaza & Chat",
+    subtitle: "Meet ranked workspaces in the public directory, handshake, and exchange signed messages.",
+  },
+  manage: {
+    title: "Identity, Connections & Safety",
+    subtitle: "Manage your federation handle, connection scopes, delivery dead-letters, and blocks.",
+  },
+};
 
 // What a person reads for each message state (ICD_I_MSG §4).
 const OUT_LABEL: Record<string, string> = {
@@ -257,13 +283,20 @@ export function FederationView({ request, notify, sessionMode }: {
   const unhandled = threads.reduce((sum, item) => sum + item.unhandled, 0);
   const restricted = connections.filter((item) =>
     ["SUSPENDED", "BLOCKED", "EXPIRED"].includes(item.state)).length;
-  const live = connections.some((item) => item.state === "ACTIVE");
-  // Open where something is waiting; otherwise where the work is.
-  const current: Zone = zone ?? (pendingRequests ? "contact" : live ? "collaborate" : "discover");
+  const activePeers = connections.filter((item) => item.state === "ACTIVE").length;
+  // Default landing is always the interactive Federation Lobby; people walk into rooms from there.
+  const current: Zone = zone ?? "lobby";
   const badge: Record<Zone, number> = {
-    discover: 0, contact: pendingRequests, collaborate: unhandled + waitingWork, skills: 0,
-    safety: restricted,
+    lobby: 0,
+    arena: 0,
+    market: waitingWork,
+    skills: 0,
+    plaza: unhandled + pendingRequests,
+    manage: restricted + pendingRequests,
   };
+  const enableFederation = useCallback(() => {
+    void call("/v1/federation/enable", undefined, "Federation is on for this workspace.");
+  }, [call]);
 
   if (!sessionMode) {
     return (
@@ -286,50 +319,109 @@ export function FederationView({ request, notify, sessionMode }: {
     );
   }
 
+  const roomInfo = current === "lobby" ? null : ROOM_TITLE[current];
+
   return (
     <div className="federation-view">
-      {!me && <IdentityCard me={me} busy={busy} call={call} />}
-      {me && (
-        <PeerNames.Provider value={names}>
-          <div className="segmented federation-zones" role="tablist" aria-label={t("Federation areas")}>
-            {ZONES.map((item) => (
-              <button key={item.key} type="button" role="tab" aria-selected={current === item.key}
-                className={current === item.key ? "active" : ""} onClick={() => setZone(item.key)}>
-                {t(item.label)}
-                {badge[item.key] > 0 && <span className="tab-count">{badge[item.key]}</span>}
-              </button>
-            ))}
+      <PeerNames.Provider value={names}>
+        <div className="segmented federation-zones" role="tablist" aria-label={t("Federation areas")}>
+          {ZONES.map((item) => (
+            <button key={item.key} type="button" role="tab" aria-selected={current === item.key}
+              className={current === item.key ? "active" : ""} onClick={() => setZone(item.key)}>
+              {t(item.label)}
+              {badge[item.key] > 0 && <span className="tab-count">{badge[item.key]}</span>}
+            </button>
+          ))}
+        </div>
+
+        {roomInfo && (
+          <div className="fed-room-bar">
+            <button type="button" className="button ghost small" onClick={() => setZone("lobby")}>
+              ← {t("Back to federation lobby")}
+            </button>
+            <div className="fed-room-bar-title">
+              <strong>{t(roomInfo.title)}</strong>
+              <span>{t(roomInfo.subtitle)}</span>
+            </div>
           </div>
-          {current === "discover" && (
-            <>
+        )}
+
+        {current === "lobby" && (
+          <FederationLobby
+            request={request}
+            me={me}
+            busy={busy}
+            activePeers={activePeers}
+            pendingRequests={pendingRequests}
+            delegationsCount={delegations.length}
+            unhandledMessages={unhandled}
+            onEnableFederation={enableFederation}
+            onEnterVenue={(next) => setZone(next)}
+            onAskConnect={(fid) => {
+              setConnectTo(fid);
+              setZone(me ? "manage" : "plaza");
+            }}
+          />
+        )}
+
+        {current === "arena" && (
+          <>
+            <ArenaHall
+              embedded
+              request={request}
+              identityEnabled={Boolean(me)}
+              onEnableFederation={enableFederation}
+            />
+            {me && <ArenaCard request={request} notify={notify} />}
+          </>
+        )}
+
+        {current === "market" && (
+          <>
+            {!me ? (
               <IdentityCard me={me} busy={busy} call={call} />
-              <DiscoverCard request={request} notify={notify} connections={connections}
-                onConnect={(fid) => { setConnectTo(fid); setZone("contact"); }} />
-              <DirectoryCard request={request} notify={notify}
-                onConnect={(fid) => { setConnectTo(fid); setZone("contact"); }} />
-            </>
-          )}
-          {current === "contact" && (
-            <ConnectionsCard connections={connections} busy={busy} call={call} request={request}
-              notify={notify} prefill={connectTo} onPrefillUsed={() => setConnectTo("")} />
-          )}
-          {current === "collaborate" && (
-            <>
+            ) : (
+              <>
+                <DelegationsCard delegations={delegations} connections={connections} busy={busy}
+                  call={call} />
+                <MarketCard request={request} notify={notify} myFid={me.federation_id} />
+              </>
+            )}
+          </>
+        )}
+
+        {current === "skills" && <SkillsCard request={request} notify={notify} />}
+
+        {current === "plaza" && (
+          <>
+            {!me && <IdentityCard me={me} busy={busy} call={call} />}
+            {me && (
               <ChatCard threads={threads} connections={connections} request={request}
                 notify={notify} reload={load} />
-              <DelegationsCard delegations={delegations} connections={connections} busy={busy}
-                call={call} />
-              <MarketCard request={request} notify={notify} myFid={me.federation_id} />
-              <ArenaCard request={request} notify={notify} />
-            </>
-          )}
-          {current === "skills" && <SkillsCard request={request} notify={notify} />}
-          {current === "safety" && (
-            <SafetyCard connections={connections} delegations={delegations} request={request}
-              call={call} busy={busy} />
-          )}
-        </PeerNames.Provider>
-      )}
+            )}
+            <DirectoryCard request={request} notify={notify}
+              onConnect={(fid) => { setConnectTo(fid); setZone("manage"); }} />
+            {me && (
+              <DiscoverCard request={request} notify={notify} connections={connections}
+                onConnect={(fid) => { setConnectTo(fid); setZone("manage"); }} />
+            )}
+          </>
+        )}
+
+        {current === "manage" && (
+          <>
+            <IdentityCard me={me} busy={busy} call={call} />
+            {me && (
+              <>
+                <ConnectionsCard connections={connections} busy={busy} call={call} request={request}
+                  notify={notify} prefill={connectTo} onPrefillUsed={() => setConnectTo("")} />
+                <SafetyCard connections={connections} delegations={delegations} request={request}
+                  call={call} busy={busy} />
+              </>
+            )}
+          </>
+        )}
+      </PeerNames.Provider>
     </div>
   );
 }

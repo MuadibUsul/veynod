@@ -218,6 +218,14 @@ export default function ConsolePage() {
     } catch {
       // Private windows keep no memory; the sidebar starts open.
     }
+    try {
+      const requested = new URLSearchParams(window.location.search).get("tab");
+      if (requested === "federation" || requested === "loop" || requested === "documents" || requested === "diagram") {
+        setTab(requested);
+      }
+    } catch {
+      // Ignore malformed URLs.
+    }
   }, []);
   function toggleSidebar() {
     setSidebarCollapsed((current) => {

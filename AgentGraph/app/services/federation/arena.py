@@ -2359,16 +2359,20 @@ async def lobby(workspace_id: str) -> dict[str, Any]:
     rules = _rules()
     rules_hash = engine.rules_hash(rules)
     async with async_session_factory() as session:
-        me = await rights.fid_of(session, workspace_id)
+        try:
+            me: str | None = await rights.fid_of(session, workspace_id)
+        except FederationError:
+            me = None
         waiting = (
             (
                 await session.execute(
                     text(
                         "SELECT mode, table_size, stake, model_class, count(*) AS n FROM "
                         "federation_arena_queue WHERE state = 'WAITING' AND rules_hash = :h "
-                        "AND fid <> :f GROUP BY 1, 2, 3, 4"
+                        + ("AND fid <> :f " if me else "")
+                        + "GROUP BY 1, 2, 3, 4"
                     ),
-                    {"h": rules_hash, "f": me},
+                    {"h": rules_hash, **({"f": me} if me else {})},
                 )
             )
             .mappings()
@@ -2401,9 +2405,11 @@ async def lobby(workspace_id: str) -> dict[str, Any]:
             )
             .mappings()
             .first()
+            if me
+            else None
         )
-        restriction = await active_restriction(session, me)
-        policy = await _policy(session, me)
+        restriction = await active_restriction(session, me) if me else None
+        policy = await _policy(session, me or "")
     counts = {
         (r["mode"], int(r["table_size"]), int(r["stake"]), r["model_class"]): int(r["n"])
         for r in waiting

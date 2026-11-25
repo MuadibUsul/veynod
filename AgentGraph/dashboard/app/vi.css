@@ -2693,3 +2693,295 @@ button.timeline-row:disabled {
   margin: 8px 0 0;
   color: var(--danger);
 }
+
+/* Federation Interactive Lobby & Room Navigation */
+.fed-room-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.fed-room-bar-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 12px;
+  min-width: 0;
+}
+
+.fed-room-bar-title strong {
+  font-size: 14px;
+  color: var(--ds-text-primary);
+}
+
+.fed-room-bar-title span {
+  font-size: 12px;
+  color: var(--ds-text-secondary);
+}
+
+.fed-lobby {
+  display: grid;
+  gap: 18px;
+}
+
+.fed-lobby-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 22px 24px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background:
+    radial-gradient(120% 140% at 0% 0%, rgba(25, 195, 166, 0.14), transparent 55%),
+    radial-gradient(100% 130% at 100% 0%, rgba(124, 92, 255, 0.16), transparent 60%),
+    rgba(255, 255, 255, 0.025);
+}
+
+.fed-lobby-hero-copy {
+  max-width: 620px;
+  display: grid;
+  gap: 6px;
+}
+
+.fed-lobby-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ds-text-secondary);
+  letter-spacing: 0.02em;
+}
+
+.fed-lobby-hero-copy h2 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--ds-text-primary);
+}
+
+.fed-lobby-hero-copy p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ds-text-secondary);
+}
+
+.fed-lobby-activate {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  max-width: 340px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.22);
+  font-size: 12px;
+  color: var(--ds-text-secondary);
+}
+
+.fed-lobby-status-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.fed-stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.22);
+  font-size: 12px;
+  color: var(--ds-text-primary);
+}
+
+.fed-venue-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.fed-venue-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.02);
+  transition: border-color 0.18s ease, transform 0.18s ease, background 0.18s ease;
+}
+
+.fed-venue-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.fed-venue-card.accent-emerald {
+  background: linear-gradient(160deg, rgba(25, 195, 166, 0.09) 0%, rgba(255, 255, 255, 0.02) 60%);
+}
+
+.fed-venue-card.accent-indigo {
+  background: linear-gradient(160deg, rgba(124, 92, 255, 0.1) 0%, rgba(255, 255, 255, 0.02) 60%);
+}
+
+.fed-venue-card.accent-amber {
+  background: linear-gradient(160deg, rgba(242, 184, 75, 0.09) 0%, rgba(255, 255, 255, 0.02) 60%);
+}
+
+.fed-venue-card.accent-cyan {
+  background: linear-gradient(160deg, rgba(0, 194, 255, 0.09) 0%, rgba(255, 255, 255, 0.02) 60%);
+}
+
+.fed-venue-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.fed-venue-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.fed-venue-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.fed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ds-text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.fed-badge.live {
+  color: var(--ds-text-primary);
+}
+
+.fed-badge.alert {
+  color: #fdb022;
+  border-color: rgba(253, 176, 34, 0.4);
+}
+
+.fed-venue-card h3 {
+  margin: 2px 0 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--ds-text-primary);
+}
+
+.fed-venue-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ds-text-secondary);
+  flex: 1;
+}
+
+.fed-venue-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 12px;
+  color: var(--ds-text-secondary);
+}
+
+.fed-highlight {
+  color: #47cd89;
+}
+
+.fed-venue-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.fed-upcoming-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.fed-upcoming-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px dashed rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.fed-upcoming-icon {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.fed-upcoming-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.fed-upcoming-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.fed-upcoming-body p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--ds-text-secondary);
+}
+
+.fed-lobby-boards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+}
+
