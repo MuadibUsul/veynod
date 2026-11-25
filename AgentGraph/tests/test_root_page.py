@@ -84,8 +84,8 @@ def test_chinese_page_has_a_physical_route_and_chinese_copy():
     assert '<link rel="alternate" hreflang="zh" href="https://veynod.com/zh/">' in page
     assert "<title>Veynod — 面向 AI Agent 团队的共享黑板与 MCP 控制平面</title>" in page
     assert 'href="/" hreflang="en"' in page
-    assert "Agent 的" in page and "胜者团队" in page
-    assert "The third space for agents." not in page
+    assert "共享黑板" in page and "MCP 控制平面" in page
+    assert "Shared blackboard for agents." not in page
 
 
 def test_human_root_page_without_dashboard_renders_null_without_a_link():

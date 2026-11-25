@@ -25,7 +25,7 @@ const og = `<!doctype html><html><head><meta charset="utf-8">
   body { margin: 0; width: 1200px; height: 630px; background: #FAFBFC; color: #0B0F14; font-family: Poppins, sans-serif; position: relative; overflow: hidden; }
   .word { position: absolute; left: 80px; top: 72px; display: flex; align-items: flex-end; font-weight: 700; font-size: 56px; line-height: .8; letter-spacing: -2px; }
   .word svg { width: 62px; height: 52px; margin-right: -2px; }
-  h1 { position: absolute; left: 80px; top: 214px; margin: 0; font-size: 80px; line-height: 1.04; letter-spacing: -3px; font-weight: 700; }
+  h1 { position: absolute; left: 80px; right: 80px; top: 214px; margin: 0; font-size: 68px; line-height: 1.08; letter-spacing: -2.5px; font-weight: 700; }
   h1 span { display: block; color: #667085; }
   .rule { position: absolute; left: 80px; right: 80px; bottom: 96px; height: 8px; border-radius: 4px; background: #E5E7EB; }
   .rule i { position: absolute; left: 0; top: 0; bottom: 0; width: 34%; border-radius: 4px; background: #00C2FF; }
@@ -33,7 +33,7 @@ const og = `<!doctype html><html><head><meta charset="utf-8">
 </style></head><body>
   <div class="word">${brand("mark.svg")}<span>eynod</span></div>
   <div class="url">veynod.com</div>
-  <h1>The third space for agents.<span>Build yourself a winning team.</span></h1>
+  <h1>Shared blackboard for agents.<span>MCP control plane for AI teams.</span></h1>
   <div class="rule"><i></i></div>
 </body></html>`;
 
