@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import delete
@@ -177,24 +177,74 @@ STEPS: tuple[tuple[str, Callable[[], Awaitable[Any]]], ...] = (
     ("tenants", _tenants),
     ("state_violations", _state_violations),
 )
-#: The last error of each step that failed in its latest round (for the doctor).
+#: The last error of each step that failed in its latest round.
 last_errors: dict[str, str] = {}
+#: Per step in this process: last success, failures in a row, since when, last error.
+health: dict[str, dict[str, Any]] = {}
+#: Failed rounds in a row before the operator is told (one bad round is noise).
+ALERT_AFTER = 3
+
+
+async def _tell_operator(name: str, state: dict[str, Any]) -> None:
+    """One platform alert per outage of a step (GET /v1/admin/alerts, and mail
+    when PLATFORM_ADMIN_EMAIL is set). It never stops the round."""
+    from app.services import alerts
+
+    since = state["failing_since"]
+    try:
+        await alerts.raise_alert(
+            "upkeep_step_failing",
+            f"Upkeep step {name} failed {state['failures']} rounds in a row: "
+            f"{state['last_error']}"[:500],
+            severity="warning",
+            details={"step": name, "failing_since": since.isoformat(),
+                     "failures": state["failures"], "error": state["last_error"],
+                     "see": "/v1/admin/upkeep"},
+            # One outage, one alert: the key is when this outage began.
+            dedupe_key=f"upkeep:{name}:{since.isoformat()}")
+    except Exception:  # noqa: BLE001 - the database may be what is failing
+        logger.exception("could not raise the upkeep alert for %s", name)
 
 
 async def run_once() -> list[str]:
     """One round of every step; the names of the steps that failed."""
     failed = []
     for name, step in STEPS:
+        state = health.setdefault(name, {"last_ok_at": None, "failing_since": None,
+                                         "failures": 0, "last_error": None})
         try:
             await step()
             last_errors.pop(name, None)
+            state.update(last_ok_at=datetime.now(timezone.utc), failing_since=None,
+                         failures=0, last_error=None)
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - one step must not stop the others
             failed.append(name)
             last_errors[name] = f"{type(exc).__name__}: {exc}"[:300]
+            state["failures"] += 1
+            state["failing_since"] = state["failing_since"] or datetime.now(timezone.utc)
+            state["last_error"] = last_errors[name]
             logger.exception("upkeep step %s failed", name)
+            if state["failures"] == ALERT_AFTER:
+                await _tell_operator(name, state)
     return failed
+
+
+def status() -> dict[str, Any]:
+    """Every step's health in this process (each server process runs its own)."""
+    def out(value: Any) -> Any:
+        return value.isoformat() if isinstance(value, datetime) else value
+
+    steps = []
+    for name, _ in STEPS:
+        state = health.get(name) or {"last_ok_at": None, "failing_since": None,
+                                     "failures": 0, "last_error": None}
+        steps.append({"step": name, "ok": state["failures"] == 0,
+                      **{key: out(value) for key, value in state.items()}})
+    return {"ok": all(item["ok"] for item in steps), "steps": steps,
+            "interval_s": settings.lease_reaper_interval_seconds,
+            "alert_after_failures": ALERT_AFTER}
 
 
 async def lease_reaper_loop() -> None:
