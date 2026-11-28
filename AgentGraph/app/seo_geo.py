@@ -23,6 +23,12 @@ def llms_index(version: str) -> str:
 - First agent primitive: `get_orientation`
 - Delta state sync: `workspace_sync`
 
+## How Veynod compares
+- T3 Code: a GUI for driving CLI coding agents. Its agents can share the Veynod board over MCP.
+- Orca: runs coding agents in parallel git worktrees. Veynod assigns the tasks and gates the merge.
+- Magpie: pools models and subscriptions for agents. Magpie picks the model; Veynod coordinates the work.
+- n8n: visual workflow automation. A workflow can call Veynod over REST or MCP.
+
 ## Core links
 - [Homepage (EN)](https://veynod.com/)
 - [Homepage (ZH)](https://veynod.com/zh/)

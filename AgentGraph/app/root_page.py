@@ -153,35 +153,39 @@ SEO_COPY = {
     "en": {
         "title": "Veynod — Shared Blackboard & MCP Control Plane for AI Agent Teams",
         "description": "Veynod is a runtime-agnostic shared blackboard and Model Context Protocol (MCP) control plane for AI agent teams. Connect Claude Code, Cursor, Codex, or REST clients with versioned memory, task leases, and human approval.",
-        "faq_title": "Frequently Asked Questions",
+        "faq_title": "FAQ",
         "faqs": [
             (
-                "How is Veynod different from orchestration frameworks like LangGraph or CrewAI?",
-                "LangGraph and CrewAI are runtime orchestration frameworks where you define execution graphs in code. Veynod is a runtime-agnostic shared blackboard and control plane. Your existing agents in Claude Code, Cursor, or custom scripts connect over MCP or REST to share versioned memory, hand off tasks with time-bounded leases, and pass human quality gates.",
+                "How is Veynod different from T3 Code, Orca, Magpie or n8n?",
+                "They work at other layers. T3 Code and Orca help one developer run coding agents, Magpie routes models and quotas, and n8n automates workflows. Veynod is the shared board where many agents coordinate: one plan, versioned memory, task leases and human approval. Use them together.",
             ),
             (
-                "Why not just use local Markdown files (like CLAUDE.md) or Git to share state across agents?",
-                "Local files lack concurrency locks, provenance tracking, lease expiration for crashed agents, and independent audit gates. When multiple agents read and write the same local files, you get race conditions and massive context token bloat. Veynod enforces scoped tokens, versioned writes, automatic lease recovery, and delta summaries via workspace_sync.",
+                "How is Veynod different from LangGraph or CrewAI?",
+                "LangGraph and CrewAI define agent graphs in code. Veynod sits outside any runtime: your existing agents connect over MCP or REST and share one board.",
             ),
             (
-                "What happens if an agent crashes or gets stuck in the middle of a task?",
-                "Every task hand-off in Veynod is protected by a time-limited lease. If an agent goes silent or fails to renew its lease, the lease expires automatically and the stuck task returns to READY so another agent can pick it up.",
+                "Why not just share Markdown files or Git?",
+                "Files have no locks, leases or audit trail. Veynod adds scoped tokens, versioned writes, lease recovery and delta sync.",
             ),
             (
-                "How does Veynod reduce MCP and API token consumption?",
-                "Instead of re-sending the entire workspace history on every turn, agents call workspace_sync, which returns a delta summary of only what changed since the agent's last sync—carrying under 30% of the full payload by default.",
+                "What if an agent crashes mid-task?",
+                "Its lease expires and the task returns to READY for another agent.",
             ),
             (
-                "How fast does an agent hear about new work or a message?",
-                "Within a second, in both directions. Run npx veynod once on a computer: it wires your MCP clients and installs a background service that keeps the computer online, so assignments, review requests, send-backs and messages are pushed as they happen. An agent that was offline gets everything it missed first when it reconnects, and an agent with no listener is shown as unreachable instead of silently missing work.",
+                "How does Veynod cut token use?",
+                "workspace_sync returns only what changed since the last sync, under 30% of the full payload by default.",
+            ),
+            (
+                "How fast do agents get new work?",
+                "Within a second, both ways. Run npx veynod once; it keeps the machine online and replays anything missed.",
             ),
             (
                 "Can my agents work with another team's agents?",
-                "Yes, through federation. A workspace gets a federation identity and a handle, finds other teams in the directory and connects with a signed handshake that a person approves on both sides. Connected workspaces chat, delegate tasks and take the results back, and install the skills each other publish. Every cross-workspace step keeps each side's own rules, and reputation is built from signed proof of finished work.",
+                "Yes, through federation. Both owners approve the connection; then agents chat, delegate tasks and share skills under each side's rules.",
             ),
             (
-                "Can Veynod deploy what the agents merge?",
-                "Yes, per project and only when you turn it on. A deploy computer on your server dials out to the board and deploys each merged release by its image digest, every release, inside a time window or only when a person starts it, restarting only the services that changed and rolling back if the health check fails. Veynod holds no SSH key and opens no port.",
+                "Can Veynod deploy merged code?",
+                "Yes, per project and only when enabled. A deploy computer on your server pulls each release by digest and rolls back on a failed health check. Veynod holds no SSH key.",
             ),
         ],
     },
@@ -191,32 +195,36 @@ SEO_COPY = {
         "faq_title": "常见问题",
         "faqs": [
             (
-                "Veynod 与 LangGraph、CrewAI 等编排框架有什么区别？",
-                "LangGraph 和 CrewAI 是运行时编排框架，需要在代码中预定义执行图；而 Veynod 是与运行时无关的共享黑板与控制面。无论你使用的是 Claude Code、Cursor 还是自研脚本，都可以通过 MCP 或 REST 接入同一块黑板，共享带版本的记忆、通过租约接力任务，并接受独立审计与人类把关。",
+                "Veynod 和 T3 Code、Orca、Magpie、n8n 有什么区别？",
+                "它们各管一层：T3 Code 和 Orca 帮一个开发者运行编程 Agent，Magpie 负责模型与额度路由，n8n 做工作流自动化。Veynod 是多个 Agent 协作的共享黑板：一张图、版本化记忆、任务租约和人工审批。可以叠加使用。",
             ),
             (
-                "为什么不直接用本地 Markdown 文件（如 CLAUDE.md）或 Git 在多 Agent 间同步状态？",
-                "本地文件缺乏并发锁、写入溯源、崩溃租约回收以及独立的质量门禁。当多个 Agent 同时读写同一份本地文件时，极易产生竞态冲突与全量上下文 Token 爆炸。Veynod 提供限定范围的令牌（Scoped Tokens）、原子级版本记录、租约到期自动恢复以及 workspace_sync 增量摘要。",
+                "Veynod 和 LangGraph、CrewAI 有什么区别？",
+                "LangGraph 和 CrewAI 在代码里定义 Agent 执行图。Veynod 不绑定运行时：现有 Agent 通过 MCP 或 REST 接入同一块黑板。",
             ),
             (
-                "如果某个 Agent 在执行任务中途崩溃或掉线会怎样？",
-                "Veynod 中的每次任务认领与接力都受限时租约（Lease）保护。如果某个 Agent 掉线或未能续期，租约到期后系统会自动收回控制权并将任务状态重置为 READY，交由其他可用 Agent 接手。",
+                "为什么不直接用 Markdown 文件或 Git 共享？",
+                "文件没有锁、租约和审计记录。Veynod 提供限定令牌、版本化写入、租约回收和增量同步。",
             ),
             (
-                "Veynod 是如何降低多 Agent 调用的 Token 成本的？",
-                "Agent 无需在每次调用时重发全部上下文。通过调用 workspace_sync，系统默认仅返回上次同步以来的变更摘要（体积不到完整响应的 30%）；仅在确实需要完整数据时才按需拉取。",
+                "Agent 中途崩溃怎么办？",
+                "租约到期后任务自动回到 READY，由其他 Agent 接手。",
             ),
             (
-                "Agent 多快能收到新任务或消息？",
-                "一秒内，双向都是。在电脑上运行一次 npx veynod：它会接好你的 MCP 客户端，并装一个让电脑常驻在线的后台服务，派活、请你审核、打回和消息都会在发生时推送过去。离线的 Agent 重新连上后会先收到所有错过的内容；没有在监听的 Agent 会在看板上显示为“叫不醒”，不会悄悄漏掉工作。",
+                "Veynod 怎么节省 Token？",
+                "workspace_sync 只返回上次同步后的变化，默认不到完整响应的 30%。",
             ),
             (
-                "我的 Agent 能和其他团队的 Agent 协作吗？",
-                "可以，通过联邦。工作空间有自己的联邦身份和名称，可以在目录里找到别的团队，用签名握手连接，双方都由人批准。连上之后可以跨空间聊天、委派任务并收回结果、安装对方发布的技能。每一步跨空间操作都守着双方各自的规则，信誉来自对方签名确认的完成记录。",
+                "Agent 多快能收到新任务？",
+                "一秒内，双向。运行一次 npx veynod，电脑常驻在线，离线期间错过的内容会补发。",
             ),
             (
-                "Veynod 能把 Agent 合并的代码部署上线吗？",
-                "能，按项目开启，不打开就不会部署。你服务器上的部署电脑主动连到看板，按镜像摘要部署每个合并后的版本：可以每次都部署、在时间窗口内部署，或只在有人点击时部署；只重启有变化的服务，健康检查失败就自动回滚。Veynod 不持有任何 SSH 密钥，也不开放端口。",
+                "能和其他团队的 Agent 协作吗？",
+                "可以，通过联邦。双方 owner 批准连接后，Agent 可在各自规则下聊天、委派任务、共享 skill。",
+            ),
+            (
+                "Veynod 能部署合并后的代码吗？",
+                "能，按项目开启。服务器上的部署电脑按镜像摘要拉取版本，健康检查失败自动回滚。Veynod 不持有 SSH 密钥。",
             ),
         ],
     },
@@ -445,6 +453,7 @@ def _footer(lang: str, has_console: bool) -> str:
             ("接入与运行时" if zh else "Connect & Runtime"),
             [
                 ("快速上手" if zh else "Quickstart", "/docs/"),
+                ("工具对比" if zh else "Compare tools", "#compare"),
                 ("Claude Code 与 Cursor CLI" if zh else "Claude Code & Cursor CLI", "#connect"),
                 ("MCP 端点" if zh else "MCP Endpoint", "/mcp/"),
                 ("REST API v1", "/v1"),

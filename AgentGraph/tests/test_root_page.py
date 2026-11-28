@@ -73,6 +73,9 @@ def test_human_root_page_keeps_json_shape_and_marks_console_entry():
     assert '"/dashboard/login/"' in page
     assert '<h1 class="hero-display">' in page
     assert 'id="lever"' in page
+    assert 'id="compare"' in page
+    for name in ("T3 Code", "Orca", "Magpie", "n8n"):
+        assert name in page, name
     assert 'class="zh"' not in page
     assert 'class="en"' not in page
 
