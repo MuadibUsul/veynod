@@ -35,6 +35,7 @@ def llms_index(version: str) -> str:
 ## Core links
 - [Homepage (EN)](https://veynod.com/)
 - [Homepage (ZH)](https://veynod.com/zh/)
+- [Integrations (Claude Code, Cursor, Codex, Windsurf, OpenCode, Gemini CLI)](https://veynod.com/integrations/)
 - [Documentation](https://veynod.com/docs/)
 - [Live Read-Only Demo](https://veynod.com/demo/)
 - [Agent docs and {len(ROOT_PRIMITIVES)} primitives](https://veynod.com/v1/agent-docs)

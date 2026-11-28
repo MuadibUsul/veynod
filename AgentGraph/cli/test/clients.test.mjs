@@ -18,13 +18,14 @@ const URL_ = "https://veynod.example/mcp/";
 const WANTED = ["Codex", "Gemini CLI", "OpenCode", "MiMo Code", "DevEco Code", "Pi", "Goose", "Cursor CLI",
   "Copilot CLI", "VS Code", "Crush", "DeepSeek Harness", "Command Code", "fx", "omp", "OmO", "Devin",
   "Hermes Agent", "Mister Morph", "Kimi Code", "Muse Code", "Empryo", "MiniMax Code", "Droid", "Grok Build",
-  "ZCode", "OpenHanako", "AtomCode", "Snow CLI", "QwenPaw", "Alma"];
+  "ZCode", "OpenHanako", "AtomCode", "Snow CLI", "QwenPaw", "Alma",
+  "Windsurf", "Cline", "Roo Code", "Zed", "Trae"];
 
 test("every agent on the list is known, each under its own id", () => {
   assert.deepEqual(AGENT_CLIENTS.map((item) => item.name), WANTED);
   assert.equal(new Set(AGENT_CLIENTS.map((item) => item.id)).size, AGENT_CLIENTS.length);
-  // With Claude Code that is the 32.
-  assert.equal(AGENT_CLIENTS.length + 1, 32);
+  // With Claude Code that is 37.
+  assert.equal(AGENT_CLIENTS.length + 1, 37);
   for (const item of AGENT_CLIENTS) {
     assert.ok(item.bins.length || item.dirs.length || item.found, `${item.name} can be found somehow`);
   }
@@ -44,6 +45,8 @@ test("an agent is recognised by its command or by its own settings folder, and o
   for (const item of AGENT_CLIENTS) {
     const one = home();
     if (item.dirs.length) mkdirSync(join(one, ...item.dirs[0].split("/")), { recursive: true });
+    if (item.id === "cline") mkdirSync(join(one, ".config", "Code", "User", "globalStorage", "saoudrizwan.claude-dev"), { recursive: true });
+    if (item.id === "roo-code") mkdirSync(join(one, ".config", "Code", "User", "globalStorage", "rooveterinaryinc.roo-cline"), { recursive: true });
     const seen = detectAgentClients({ home: one, os: "linux", env: {},
       onPath: (bin) => !item.dirs.length && item.bins.includes(bin) });
     assert.ok(seen.includes(item.id), `${item.name} is recognised`);
@@ -80,6 +83,17 @@ test("a wired agent gets Veynod's server in its own file and shape, and keeps wh
   assert.equal(read(".kimi", "mcp.json").mcpServers.veynod.transport, "http");
   wireAgentClient("cursor-cli", URL_, "agt_k", { home: dir });
   assert.deepEqual(read(".cursor", "mcp.json").mcpServers.veynod, { url: URL_, headers: { Authorization: "Bearer agt_k" } });
+  wireAgentClient("windsurf", URL_, "agt_k", { home: dir });
+  assert.deepEqual(read(".codeium", "windsurf", "mcp_config.json").mcpServers.veynod,
+    { serverUrl: URL_, headers: { Authorization: "Bearer agt_k" } });
+  wireAgentClient("cline", URL_, "agt_k", { home: dir, os: "linux", env: {} });
+  assert.equal(read(".config", "Code", "User", "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json").mcpServers.veynod.type, "streamableHttp");
+  wireAgentClient("roo-code", URL_, "agt_k", { home: dir, os: "linux", env: {} });
+  assert.equal(read(".config", "Code", "User", "globalStorage", "rooveterinaryinc.roo-cline", "settings", "mcp_settings.json").mcpServers.veynod.url, URL_);
+  wireAgentClient("zed", URL_, "agt_k", { home: dir });
+  assert.equal(read(".config", "zed", "settings.json").context_servers.veynod.url, URL_);
+  wireAgentClient("trae", URL_, "agt_k", { home: dir });
+  assert.equal(read(".trae", "mcp.json").mcpServers.veynod.url, URL_);
   // A file with comments is not rewritten.
   writeFileSync(join(dir, ".config", "crush", "crush.json"), "{ // mine\n}");
   assert.throws(() => wireAgentClient("crush", URL_, "agt_k", { home: dir }), /not plain JSON/);
@@ -177,4 +191,15 @@ test("a provider's key stays on the computer: the run reads it from the environm
   // The hub hands the choice to its workers.
   assert.deepEqual(workerRunnerOptions({ VEYNOD_RUNNER_OPTIONS: JSON.stringify({ runtime: "claude", provider: "kimi", model: "kimi-k2" }) }),
     { runtime: "claude", provider: "kimi", model: "kimi-k2" });
+});
+
+test("gemini and opencode runtimes invoke their own non-interactive CLIs", async () => {
+  const calls = [];
+  const spawner = async (command, args, opts) => { calls.push({ command, args, env: opts.env }); return { ok: true }; };
+  await adapterFor("gemini", { spawner, model: "gemini-2.5-pro" }).run({ cwd: ".", prompt: "fix bug", env: {} });
+  await adapterFor("opencode", { spawner, model: "anthropic/claude-sonnet" }).run({ cwd: ".", prompt: "add test", env: {} });
+  assert.deepEqual(calls[0].command, "gemini");
+  assert.deepEqual(calls[0].args, ["-p", "fix bug", "--yolo", "-m", "gemini-2.5-pro"]);
+  assert.deepEqual(calls[1].command, "opencode");
+  assert.deepEqual(calls[1].args, ["run", "-m", "anthropic/claude-sonnet", "add test"]);
 });

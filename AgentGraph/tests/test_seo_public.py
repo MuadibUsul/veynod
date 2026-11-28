@@ -198,3 +198,34 @@ async def test_comparison_pages_bilingual_seo_and_cache():
         sitemap = (await client.get("/sitemap.xml")).text
         assert "<loc>https://veynod.com/vs/</loc>" in sitemap
         assert "<loc>https://veynod.com/zh/vs/t3-code/</loc>" in sitemap
+
+
+@pytest.mark.asyncio
+async def test_integration_pages_bilingual_seo_and_cache():
+    from app.integration_pages import INTEGRATIONS
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        for path in ("/integrations/", "/zh/integrations/"):
+            hub = await client.get(path)
+            assert hub.status_code == 200, path
+            reval = await client.get(path, headers={"If-None-Match": hub.headers["etag"]})
+            assert reval.status_code == 304
+        for item in INTEGRATIONS:
+            en_path = f"/integrations/{item.slug}/"
+            zh_path = f"/zh/integrations/{item.slug}/"
+            en = await client.get(en_path)
+            zh = await client.get(zh_path)
+            assert en.status_code == 200 and zh.status_code == 200
+            assert f"https://veynod.com{en_path}" in en.text
+            assert f"https://veynod.com{zh_path}" in en.text
+            assert '"@type": "FAQPage"' in en.text
+            redir = await client.get(f"/integrations/{item.slug}", follow_redirects=False)
+            assert redir.status_code == 308 and redir.headers["location"] == en_path
+        unknown = await client.get("/integrations/nope/", headers={"Accept": "text/html"})
+        assert unknown.status_code == 404
+        assert unknown.headers["content-type"].startswith("text/html")
+        sitemap = (await client.get("/sitemap.xml")).text
+        assert "<loc>https://veynod.com/integrations/</loc>" in sitemap
+        assert "<loc>https://veynod.com/zh/integrations/windsurf/</loc>" in sitemap

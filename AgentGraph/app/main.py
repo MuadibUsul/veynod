@@ -66,6 +66,11 @@ from app.database import apply_schema, check_database, engine
 from app.engine.embeddings import close_embedding_provider, configured_embedding_model
 from app.errors import ApiError, error_body
 from app.events import event_bus
+from app.integration_pages import (
+    INTEGRATIONS,
+    render_integration_page,
+    render_integrations_hub,
+)
 from app.mcp_server.server import create_http_app, mcp
 from app.middleware import RequestContextMiddleware
 from app.protocol_middleware import ProtocolMiddleware
@@ -556,9 +561,16 @@ async def sitemap_xml() -> Response:
 
     lastmod = _sitemap_lastmod()
     # Every page that exists in both languages lists both, each with the pair.
-    pairs: list[tuple[str, str]] = [("/", "/zh/"), ("/docs/", "/zh/docs/"), ("/vs/", "/zh/vs/")]
+    pairs: list[tuple[str, str]] = [
+        ("/", "/zh/"),
+        ("/docs/", "/zh/docs/"),
+        ("/vs/", "/zh/vs/"),
+        ("/integrations/", "/zh/integrations/"),
+    ]
     for item in COMPARISONS:
         pairs.append((f"/vs/{item.slug}/", f"/zh/vs/{item.slug}/"))
+    for item in INTEGRATIONS:
+        pairs.append((f"/integrations/{item.slug}/", f"/zh/integrations/{item.slug}/"))
     for _group_id, _group_title, pages in NAV:
         for slug, _page_title in pages:
             # The docs home renders the introduction; /docs/introduction/ 404s.
@@ -1077,6 +1089,68 @@ async def vs_detail_zh_redirect(slug: str) -> RedirectResponse:
 @app.api_route("/zh/vs/{slug}/", methods=["GET", "HEAD"], include_in_schema=False)
 async def vs_detail_zh(request: Request, slug: str) -> Response:
     return _serve_vs(request, "zh", slug)
+
+
+def _serve_integration(request: Request, lang: str, slug: str | None = None) -> Response:
+    has_console = dashboard_dir.is_dir()
+    key = f"int:{lang}:{slug or 'hub'}:{int(has_console)}"
+    page = _cached_page(key)
+    if page is None:
+        rendered = (
+            render_integrations_hub(lang=lang, has_console=has_console)
+            if slug is None
+            else render_integration_page(slug, lang=lang, has_console=has_console)
+        )
+        if rendered is None:
+            return _not_found_page(request) or HTMLResponse("Not found", status_code=404)
+        page = _store_page(key, rendered)
+    prefix = "/zh/integrations" if lang == "zh" else "/integrations"
+    canonical = f"{SEO_SITE_URL}{prefix}/{slug}/" if slug else f"{SEO_SITE_URL}{prefix}/"
+    return _html_page(
+        request,
+        page,
+        {"Vary": "Accept, Accept-Encoding", "Link": f'<{canonical}>; rel="canonical"'},
+    )
+
+
+@app.api_route("/integrations", methods=["GET", "HEAD"], include_in_schema=False)
+async def integrations_hub_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/integrations/", status_code=308)
+
+
+@app.api_route("/integrations/", methods=["GET", "HEAD"], include_in_schema=False)
+async def integrations_hub_en(request: Request) -> Response:
+    return _serve_integration(request, "en")
+
+
+@app.api_route("/zh/integrations", methods=["GET", "HEAD"], include_in_schema=False)
+async def integrations_hub_zh_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/zh/integrations/", status_code=308)
+
+
+@app.api_route("/zh/integrations/", methods=["GET", "HEAD"], include_in_schema=False)
+async def integrations_hub_zh(request: Request) -> Response:
+    return _serve_integration(request, "zh")
+
+
+@app.api_route("/integrations/{slug}", methods=["GET", "HEAD"], include_in_schema=False)
+async def integration_detail_redirect(slug: str) -> RedirectResponse:
+    return RedirectResponse(url=f"/integrations/{slug}/", status_code=308)
+
+
+@app.api_route("/integrations/{slug}/", methods=["GET", "HEAD"], include_in_schema=False)
+async def integration_detail_en(request: Request, slug: str) -> Response:
+    return _serve_integration(request, "en", slug)
+
+
+@app.api_route("/zh/integrations/{slug}", methods=["GET", "HEAD"], include_in_schema=False)
+async def integration_detail_zh_redirect(slug: str) -> RedirectResponse:
+    return RedirectResponse(url=f"/zh/integrations/{slug}/", status_code=308)
+
+
+@app.api_route("/zh/integrations/{slug}/", methods=["GET", "HEAD"], include_in_schema=False)
+async def integration_detail_zh(request: Request, slug: str) -> Response:
+    return _serve_integration(request, "zh", slug)
 
 
 @app.api_route("/demo", methods=["GET", "HEAD"], include_in_schema=False)

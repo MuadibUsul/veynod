@@ -80,6 +80,29 @@ export const AGENT_CLIENTS = [
   { id: "snow-cli", name: "Snow CLI", bins: ["snow"], dirs: [".snow"] },
   { id: "qwenpaw", name: "QwenPaw", bins: ["qwenpaw", "copaw"], dirs: [".qwenpaw", ".copaw"] },
   { id: "alma", name: "Alma", bins: ["alma"], dirs: [".alma"] },
+  { id: "windsurf", name: "Windsurf", bins: ["windsurf"], dirs: [".codeium/windsurf"],
+    mcp: { file: (home) => join(home, ".codeium", "windsurf", "mcp_config.json"), key: "mcpServers",
+      entry: (url, key) => ({ serverUrl: url, headers: bearer(key) }) } },
+  { id: "cline", name: "Cline", bins: [], dirs: [],
+    found: (home, os, env) => existsSync(join(vscodeUserDir(home, os, env), "globalStorage", "saoudrizwan.claude-dev")),
+    mcp: {
+      file: (home, os, env) => join(vscodeUserDir(home, os, env), "globalStorage", "saoudrizwan.claude-dev", "settings", "cline_mcp_settings.json"),
+      key: "mcpServers",
+      entry: (url, key) => ({ type: "streamableHttp", url, headers: bearer(key), disabled: false }),
+    } },
+  { id: "roo-code", name: "Roo Code", bins: [], dirs: [],
+    found: (home, os, env) => existsSync(join(vscodeUserDir(home, os, env), "globalStorage", "rooveterinaryinc.roo-cline")),
+    mcp: {
+      file: (home, os, env) => join(vscodeUserDir(home, os, env), "globalStorage", "rooveterinaryinc.roo-cline", "settings", "mcp_settings.json"),
+      key: "mcpServers",
+      entry: (url, key) => ({ type: "streamableHttp", url, headers: bearer(key), disabled: false }),
+    } },
+  { id: "zed", name: "Zed", bins: ["zed"], dirs: [".config/zed"],
+    mcp: { file: (home) => config(home, "zed", "settings.json"), key: "context_servers",
+      entry: (url, key) => ({ source: "custom", url, headers: bearer(key) }) } },
+  { id: "trae", name: "Trae", bins: ["trae"], dirs: [".trae"],
+    mcp: { file: (home) => join(home, ".trae", "mcp.json"), key: "mcpServers",
+      entry: (url, key) => ({ url, headers: bearer(key) }) } },
 ];
 
 export const AGENT_CLIENT_IDS = AGENT_CLIENTS.map((item) => item.id);

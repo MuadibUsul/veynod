@@ -46,7 +46,7 @@ repository. `up` and `init` are other names for the same command.
 | `--no-open` | Print the approval link instead of opening a browser. |
 | `--run-tasks` / `--no-run-tasks` | This computer runs board tasks, or only stays online. |
 | `--repo owner/name,...` | Repositories tasks here may work on (added to the ones kept). |
-| `--runtime` | `claude`, `codex` or `custom` (with `--exec CMD`). Default: whichever is installed. |
+| `--runtime` | `claude`, `codex`, `gemini`, `opencode` or `custom` (with `--exec CMD`). Default: whichever is installed. |
 | `--slots N` | Tasks at once (1–64). |
 | `--supervisor` | Runs tasks and also looks after the Loop; one computer is enough. |
 | `--yes` | Ask nothing. |
@@ -249,6 +249,11 @@ settings folder) and gives each one it finds Veynod's MCP server.
 | `crush` | Crush | `~/.config/crush/crush.json` |
 | `kimi-code` | Kimi Code | `~/.kimi/mcp.json` |
 | `droid` | Droid | `~/.factory/mcp.json` |
+| `windsurf` | Windsurf | `~/.codeium/windsurf/mcp_config.json` |
+| `cline` | Cline (VS Code) | `cline_mcp_settings.json` in VS Code globalStorage |
+| `roo-code` | Roo Code (VS Code) | `mcp_settings.json` in VS Code globalStorage |
+| `zed` | Zed | `~/.config/zed/settings.json` (`context_servers`) |
+| `trae` | Trae | `~/.trae/mcp.json` |
 
 The previous file is kept beside the new one as `.bak`. A JSON file with
 comments is not rewritten; the entry is shown instead.

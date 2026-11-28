@@ -29,7 +29,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileS
 import { arch as osArch, homedir, hostname, platform } from "node:os";
 import { join, resolve, sep, win32 } from "node:path";
 
-import { claudeInvocation, codexInvocation } from "./agents.mjs";
+import { claudeInvocation, codexInvocation, geminiInvocation, opencodeInvocation } from "./agents.mjs";
 import { loginEnv, loginRuntimes, signedIn } from "./login.mjs";
 import { providerRun } from "./providers.mjs";
 import { readAgent } from "./usage.mjs";
@@ -41,7 +41,7 @@ export const LEASE_KEEP_MS = 120_000;
 // Placements a host may still work on; any other status means it moved on.
 const OPEN_PLACEMENT = new Set(["offered", "claimed"]);
 const WAKE_ATTEMPTS = 3;
-const RUNTIME_IDS = ["claude", "codex"];
+const RUNTIME_IDS = ["claude", "codex", "gemini", "opencode"];
 const PLACEMENT = /\bplc_[0-9A-Z]{10,}\b/;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -113,13 +113,20 @@ export function chooseRuntime(wanted, runtimes, { fallback = false } = {}) {
   return { runtime: ready[0] };
 }
 
-export const RUNTIME_NAMES = { claude: "Claude Code", codex: "Codex" };
+export const RUNTIME_NAMES = {
+  claude: "Claude Code",
+  codex: "Codex",
+  gemini: "Gemini CLI",
+  opencode: "OpenCode",
+};
 
 /** What to type to install and sign in to a runtime (or both, with none named). */
 export function installSteps(runtime, { platform = process.platform } = {}) {
   const steps = {
     codex: ["Codex:        npm install -g @openai/codex", "              then: codex login"],
     claude: ["Claude Code:  npm install -g @anthropic-ai/claude-code", "              then: claude   (sign in when it asks)"],
+    gemini: ["Gemini CLI:   npm install -g @google/gemini-cli", "              then: gemini   (sign in when it asks)"],
+    opencode: ["OpenCode:     npm install -g opencode-ai", "              then: opencode (configure a provider)"],
   };
   const lines = runtime ? [...steps[runtime]] : [...steps.claude, ...steps.codex];
   lines.push("The desktop apps do not count: the runner starts the command-line tool.");
@@ -564,7 +571,9 @@ export function adapterFor(runtime, { exec = "", spawner = spawnRun, permissionM
       run: ({ cwd, prompt, env }) => spawner(exec, [], { cwd, shell: true, env: { ...env, VEYNOD_PROMPT: prompt } }),
     };
   }
-  if (!RUNTIME_IDS.includes(runtime)) throw new Error(`unknown runtime ${runtime} (claude, codex or custom)`);
+  if (!RUNTIME_IDS.includes(runtime)) {
+    throw new Error(`unknown runtime ${runtime} (claude, codex, gemini, opencode or custom)`);
+  }
   return {
     id: runtime,
     async run({ cwd, prompt, env, pin, configDir, mcpConfig }) {
@@ -582,6 +591,14 @@ export function adapterFor(runtime, { exec = "", spawner = spawnRun, permissionM
         // Codex takes its options before the prompt, which is the last argument.
         const args = [...call.args.slice(0, -1), ...via.args, call.args.at(-1)];
         return spawner(call.command, args, { cwd, env: { ...env, ...call.env } });
+      }
+      if (runtime === "gemini") {
+        const call = geminiInvocation({ prompt, model });
+        return spawner(call.command, call.args, { cwd, env: { ...env, ...call.env } });
+      }
+      if (runtime === "opencode") {
+        const call = opencodeInvocation({ prompt, model });
+        return spawner(call.command, call.args, { cwd, env: { ...env, ...call.env } });
       }
       let file = null;
       if (mounted) {

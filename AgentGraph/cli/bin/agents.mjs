@@ -18,6 +18,8 @@
 export const AGENTS = {
   claude: { id: "claude", name: "Claude Code", command: "claude" },
   codex: { id: "codex", name: "Codex", command: "codex" },
+  gemini: { id: "gemini", name: "Gemini CLI", command: "gemini" },
+  opencode: { id: "opencode", name: "OpenCode", command: "opencode" },
 };
 
 /** A TOML basic string: JSON's escaping is valid TOML for these values. */
@@ -75,6 +77,24 @@ export function claudeInvocation({ prompt, model = "", permissionMode = "bypassP
     command: AGENTS.claude.command,
     args: ["-p", prompt, "--permission-mode", permissionMode, ...(model ? ["--model", model] : []),
       ...(mcpFile ? ["--mcp-config", mcpFile, "--strict-mcp-config"] : [])],
+    env: {},
+  };
+}
+
+/** `gemini -p` for one unattended turn. */
+export function geminiInvocation({ prompt, model = "" }) {
+  return {
+    command: AGENTS.gemini.command,
+    args: ["-p", prompt, "--yolo", ...(model ? ["-m", model] : [])],
+    env: {},
+  };
+}
+
+/** `opencode run` for one unattended turn. */
+export function opencodeInvocation({ prompt, model = "" }) {
+  return {
+    command: AGENTS.opencode.command,
+    args: ["run", ...(model ? ["-m", model] : []), prompt],
     env: {},
   };
 }

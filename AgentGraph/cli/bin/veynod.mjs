@@ -418,8 +418,8 @@ export function parseArgs(argv) {
   if (!Number.isInteger(options.slots) || options.slots < 1 || options.slots > 64) {
     throw new Error("--slots must be a whole number from 1 to 64");
   }
-  if (!["", "claude", "codex", "custom"].includes(options.runtime)) {
-    throw new Error(`unknown runtime ${options.runtime} (claude, codex or custom)`);
+  if (!["", "claude", "codex", "gemini", "opencode", "custom"].includes(options.runtime)) {
+    throw new Error(`unknown runtime ${options.runtime} (claude, codex, gemini, opencode or custom)`);
   }
   if (options.provider) {
     const chosen = providerOf(options.provider);
@@ -466,7 +466,7 @@ ${bold("Options")}
   --run-tasks / --no-run-tasks   Run board tasks here, or only stay online.
   --supervisor            Run board tasks and also look after the Loop (one computer is enough).
   --repo owner/name,...   Repositories tasks on this computer may work on.
-  --runtime claude|codex|custom  --slots N  --name NAME
+  --runtime claude|codex|gemini|opencode|custom  --slots N  --name NAME
   --provider ID --model NAME     The model the agent runs on: ${PROVIDER_IDS.join(", ")}.
                                  The provider's key stays in this computer's environment.
   --client claude-code,cursor,claude-desktop,print

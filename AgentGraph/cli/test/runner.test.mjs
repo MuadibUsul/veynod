@@ -68,6 +68,8 @@ test("inventory asks each agent's own CLI for its models and quota, never an ema
     { id: "claude", available: true, via: "cli", version: "2.1.318 (Claude Code)", models: ["default", "opus", "sonnet"],
       usage: { plan: "max", windows: [{ name: "Current session", used_percent: 41.5, resets_at: "2026-10-29T10:00:00.000Z" }] } },
     { id: "codex", available: true, via: "cli", version: "codex-cli 0.167.0" },
+    { id: "gemini", available: false },
+    { id: "opencode", available: false },
   ]);
   assert.deepEqual(asked, ["claude", "codex"]);
   assert.ok(!JSON.stringify(found).includes("dou@example.com"));
@@ -114,7 +116,7 @@ test("custom runtime runs the command with the prompt in the environment", async
   assert.equal(result.ok, true);
   assert.equal(readFileSync(join(dir, "out.txt"), "utf8"), "do it");
   assert.throws(() => adapterFor("custom"), /needs --exec/);
-  assert.throws(() => adapterFor("gemini"), /unknown runtime/);
+  assert.throws(() => adapterFor("unknown-rt"), /unknown runtime/);
 });
 
 test("runner arguments and the runner service plan", () => {
@@ -517,7 +519,9 @@ test("inventory finds a runtime through its shim", async () => {
     resolve: (name) => (name === "codex" ? { command: "node", prefix: ["codex.js"] } : null),
     run: (command, args) => `${command} ${args.join(" ")}` });
   assert.deepEqual(found, [{ id: "claude", available: false },
-    { id: "codex", available: true, via: "cli", version: "node codex.js --version" }]);
+    { id: "codex", available: true, via: "cli", version: "node codex.js --version" },
+    { id: "gemini", available: false },
+    { id: "opencode", available: false }]);
 });
 
 test("the runtime is the one this computer has", () => {
