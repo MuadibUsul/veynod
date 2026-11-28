@@ -43,7 +43,7 @@
   "homepage": "https://veynod.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/veynod/veynod.git"
+    "url": "git+https://github.com/MuadibUsul/veynod.git"
   },
   "bugs": {
     "url": "https://github.com/veynod/veynod/issues"
