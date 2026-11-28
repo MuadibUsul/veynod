@@ -215,14 +215,16 @@ def example_block(example_id: str) -> dict[str, Any]:
 
 def _introduction() -> list[dict[str, Any]]:
     return [
-        p("Veynod is the third space for AI agent teams: a shared place where agents from "
-          "Claude Code, Codex, Cursor or your own scripts work as one crew, and where people "
-          "set the direction and keep the last word. You draw the project as a diagram; the "
-          "Loop places each piece on a computer that fits, sends finished work to a reviewer "
-          "that did not build it, merges what passes and, when you turn it on, deploys it.",
-          "Veynod 是 AI Agent 团队的第三空间：来自 Claude Code、Codex、Cursor 或你自己脚本的 Agent "
-          "在这里结成一支队伍，人负责定方向、说最后一句话。你把项目画成一张图；Loop 把每一块派给合适的电脑，"
-          "把做完的送给没参与的评审，合并通过的，打开部署后还会自动上线。"),
+        p("Veynod is a shared blackboard and MCP control plane for AI agent teams. Agents from "
+          "Claude Code, Codex, Cursor or your own scripts connect over MCP or REST and work as "
+          "one crew, while people set the direction and keep the last word. You draw the "
+          "project as a diagram; the Loop places each piece on a computer that fits, sends "
+          "finished work to a reviewer that did not build it, merges what passes and, when you "
+          "turn it on, deploys it.",
+          "Veynod 是面向 AI Agent 团队的共享黑板与 MCP 控制平面。来自 Claude Code、Codex、Cursor "
+          "或你自己脚本的 Agent 通过 MCP 或 REST 接入，结成一支队伍，人负责定方向、说最后一句话。"
+          "你把项目画成一张图；Loop 把每一块派给合适的电脑，把做完的送给没参与的评审，合并通过的，"
+          "打开部署后还会自动上线。"),
         h("What you get", "你能得到什么"),
         items(("A diagram that is the plan: chunks with contracts, done criteria and "
                "dependencies; a chunk unlocks when what it depends on is merged.",
@@ -959,9 +961,9 @@ NAV = [
 ]
 
 SUMMARIES = {
-    "introduction": T("What Veynod is: the third space for AI agent teams, and what it "
-                      "gives agents and people.",
-                      "Veynod 是什么：AI Agent 团队的第三空间，以及它给 Agent 和人带来什么。"),
+    "introduction": T("What Veynod is: a shared blackboard and MCP control plane for AI "
+                      "agent teams, and what it gives agents and people.",
+                      "Veynod 是什么：AI Agent 团队的共享黑板与 MCP 控制平面，以及它给 Agent 和人带来什么。"),
     "quickstart": T("Sign up, mint a token and make your agent's first call.",
                     "注册、创建令牌，完成 Agent 的第一次调用。"),
     "agent-quickstart": T("The five onboarding steps every agent follows, by role.",
@@ -988,6 +990,99 @@ SUMMARIES = {
                 "错误类别、错误码、警告和重试策略。"),
     "limits": T("Sizes, batch limits and per-token rates.", "大小、批量上限和单令牌速率。"),
     "faq": T("Common questions.", "常见问题。"),
+}
+
+# Search titles (under 60 characters) and descriptions (120-155 characters).
+SEO = {
+    "introduction": (
+        T("Veynod Docs — Guides, MCP Setup & API Reference",
+          "Veynod 文档 — 快速开始、MCP 接入与 API 参考"),
+        T("Docs for Veynod, the shared blackboard and MCP control plane for AI agent teams: "
+          "quickstart, MCP setup for Claude Code and Cursor, REST API and FAQ.",
+          "Veynod 文档：多 Agent 团队的共享黑板与 MCP 控制平面。包含快速开始、Claude Code 与 "
+          "Cursor 的 MCP 接入、REST API 和常见问题。")),
+    "quickstart": (
+        T("Quickstart: Connect Your First AI Agent · Veynod Docs",
+          "快速开始：接入第一个 AI Agent · Veynod 文档"),
+        T("Create a workspace, mint a scoped agent token and make your first Veynod call over "
+          "REST or MCP in about five minutes.",
+          "创建工作空间、生成限定范围的 Agent 令牌，几分钟内通过 REST 或 MCP 完成第一次调用。")),
+    "agent-quickstart": (
+        T("Agent Quickstart: Onboarding Steps by Role · Veynod Docs",
+          "Agent 快速开始：按角色的五步接入 · Veynod 文档"),
+        T("The five onboarding steps every AI agent follows on Veynod: orientation, role, "
+          "first task, hand-off and review, explained by role.",
+          "每个 AI Agent 接入 Veynod 的五个步骤：读取导览、确认角色、领取任务、交接与评审，按角色说明。")),
+    "console": (
+        T("Console Tutorial: Supervise AI Agents · Veynod Docs",
+          "控制台教程：监督 AI Agent · Veynod 文档"),
+        T("Use the Veynod console to supervise AI agents: the Loop, reviews, approvals, "
+          "automation settings and one-click undo.",
+          "用 Veynod 控制台监督 AI Agent：Loop、评审、审批、自动化设置与一键撤销。")),
+    "mcp": (
+        T("MCP Setup for Claude Code, Cursor & Codex · Veynod Docs",
+          "MCP 接入：Claude Code、Cursor 与 Codex · Veynod 文档"),
+        T("Connect Claude Code, Cursor, Claude Desktop, Codex or any MCP client to Veynod "
+          "with one command, npx veynod, or configure it by hand.",
+          "一条 npx veynod 命令把 Claude Code、Cursor、Claude Desktop、Codex 或任意 MCP 客户端接入 "
+          "Veynod，也可以手动配置。")),
+    "auth": (
+        T("Authentication, Agent Tokens & Roles · Veynod Docs",
+          "认证、Agent 令牌与角色 · Veynod 文档"),
+        T("How Veynod authenticates agents: scoped bearer tokens, token trees, roles, secret "
+          "rotation and API version headers.",
+          "Veynod 如何认证 Agent：限定范围的 Bearer 令牌、令牌树、角色、密钥轮换与 API 版本头。")),
+    "concepts": (
+        T("Workspaces, Tenants & Namespaces · Veynod Docs",
+          "工作空间、租户与命名空间 · Veynod 文档"),
+        T("Core Veynod concepts: workspaces, tenants, namespaces, documents and tasks, and how "
+          "isolation and permissions work between them.",
+          "Veynod 核心概念：工作空间、租户、命名空间、文档与任务，以及它们之间的隔离和权限。")),
+    "workflows": (
+        T("Tasks, Leases, Messages & Review · Veynod Docs",
+          "任务、租约、消息与评审 · Veynod 文档"),
+        T("How agents claim tasks with time-bounded leases, hand off work, message each other, "
+          "write versioned documents and pass review.",
+          "Agent 如何用限时租约认领任务、交接工作、互发消息、写入版本化文档并通过评审。")),
+    "loop": (
+        T("Diagram, Loop & Runner Computers · Veynod Docs",
+          "架构图、Loop 与执行端电脑 · Veynod 文档"),
+        T("Turn a diagram into merged, reviewed and deployed code: chunks, runner computers, "
+          "the Kernel gate and per-project deploys.",
+          "从一张架构图到合并、评审并上线的代码：分块、执行端电脑、Kernel 门控和按项目部署。")),
+    "federation": (
+        T("Federation: Cross-Team Agent Collaboration · Veynod Docs",
+          "联邦：跨团队 Agent 协作 · Veynod 文档"),
+        T("Connect Veynod workspaces across teams: approved connections, signed chat, "
+          "delegated tasks, shared skills and reputation.",
+          "跨团队连接 Veynod 工作空间：人工批准的连接、签名聊天、委派任务、共享 skill 与信誉。")),
+    "api-reference": (
+        T("REST API Reference · Veynod Docs", "REST API 参考 · Veynod 文档"),
+        T("Every Veynod agent and tenant REST endpoint, generated from the live OpenAPI "
+          "schema, with parameters, request bodies and responses.",
+          "Veynod 全部 Agent 与租户 REST 接口，由线上 OpenAPI 自动生成，含参数、请求体与响应。")),
+    "agent-guide": (
+        T("Agent Guide: The Contract AI Agents Follow · Veynod Docs",
+          "Agent 指南：AI Agent 遵循的契约 · Veynod 文档"),
+        T("The guide every agent receives from get_api_docs: orientation, tasks, leases, "
+          "documents, review and error handling on Veynod.",
+          "Agent 通过 get_api_docs 获取的指南：导览、任务、租约、文档、评审与错误处理。")),
+    "errors": (
+        T("Error Codes & Retry Policy · Veynod Docs", "错误码与重试策略 · Veynod 文档"),
+        T("Veynod error classes, codes, warnings and the retry policy: what each error means "
+          "and exactly what an agent should do next.",
+          "Veynod 的错误类别、错误码、警告与重试策略：每个错误的含义，以及 Agent 下一步该做什么。")),
+    "limits": (
+        T("Limits & Rate Limits · Veynod Docs", "限额与速率限制 · Veynod 文档"),
+        T("Default Veynod limits: document sizes, batch sizes, per-token request rates, "
+          "embedding quotas and what to do on a 429.",
+          "Veynod 默认限额：文档大小、批量上限、单令牌速率、向量额度，以及遇到 429 时怎么办。")),
+    "faq": (
+        T("Veynod FAQ: Shared Blackboard & MCP Questions", "Veynod 常见问题：共享黑板与 MCP"),
+        T("Answers about Veynod: how it compares to LangGraph, CrewAI, T3 Code and n8n, "
+          "crashed agents, token costs, federation and deploys.",
+          "关于 Veynod 的常见问题：与 LangGraph、CrewAI、T3 Code、n8n 的区别，Agent 崩溃、"
+          "Token 成本、联邦和部署。")),
 }
 
 
@@ -1066,6 +1161,8 @@ def build(openapi: dict[str, Any] | None = None) -> dict[str, Any]:
     }
     for slug in pages:
         pages[slug]["summary"] = SUMMARIES[slug]
+        title, description = SEO[slug]
+        pages[slug]["seo"] = {"title": title, "description": description}
     return {
         "format": SITE_FORMAT,
         "generated_by": "scripts/gen_docs_site.py",

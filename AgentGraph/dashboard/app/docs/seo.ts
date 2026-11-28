@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
 
-import { site } from "./site";
+import { docsPath, site, type DocsLang } from "./site";
 
 export const SITE_URL = "https://veynod.com";
 export const DOCS_HOME_URL = `${SITE_URL}/docs/`;
 // Update when the generated docs content changes; keep it a build-time
 // constant so every page reports a stable dateModified.
-export const DOCS_LAST_MODIFIED = "2026-11-25";
+export const DOCS_LAST_MODIFIED = "2026-11-28";
 
 export const OG_IMAGE = {
   url: `${SITE_URL}/og.png`,
@@ -15,22 +15,23 @@ export const OG_IMAGE = {
   alt: "Veynod — Shared Blackboard & MCP Control Plane for AI Agent Teams",
 };
 
-export function docsUrl(slug: string): string {
-  return slug === "introduction" ? DOCS_HOME_URL : `${SITE_URL}/docs/${slug}/`;
+export function docsUrl(slug: string, lang: DocsLang = "en"): string {
+  return `${SITE_URL}${docsPath(slug, lang)}`;
 }
 
-export function docsMetadata({
-  title,
-  description,
-  slug,
-  article,
-}: {
-  title: string;
-  description: string;
-  slug: string;
-  article: boolean;
-}): Metadata {
-  const url = docsUrl(slug);
+/** Title and description a search engine shows for a docs page. */
+export function docsSeo(slug: string, lang: DocsLang): { title: string; description: string } {
+  const seo = site.pages[slug]?.seo;
+  return {
+    title: seo?.title[lang] || seo?.title.en || "Veynod Docs",
+    description: seo?.description[lang] || seo?.description.en || "",
+  };
+}
+
+export function docsMetadata({ slug, lang }: { slug: string; lang: DocsLang }): Metadata {
+  const { title, description } = docsSeo(slug, lang);
+  const url = docsUrl(slug, lang);
+  const article = slug !== "introduction";
   const openGraph = {
     type: article ? "article" : "website",
     siteName: "Veynod",
@@ -38,13 +39,22 @@ export function docsMetadata({
     description,
     url,
     images: [OG_IMAGE],
-    locale: "en_US",
+    locale: lang === "zh" ? "zh_CN" : "en_US",
+    alternateLocale: lang === "zh" ? ["en_US"] : ["zh_CN"],
     ...(article ? { modifiedTime: DOCS_LAST_MODIFIED } : {}),
   } as Metadata["openGraph"];
   return {
-    title,
+    title: { absolute: title },
     description,
-    alternates: { canonical: url },
+    alternates: {
+      canonical: url,
+      languages: {
+        en: docsUrl(slug, "en"),
+        zh: docsUrl(slug, "zh"),
+        "zh-Hans": docsUrl(slug, "zh"),
+        "x-default": docsUrl(slug, "en"),
+      },
+    },
     icons: {
       icon: [
         { url: "/favicon.ico", sizes: "48x48" },
@@ -63,16 +73,10 @@ export function docsMetadata({
   };
 }
 
-export function docsPageJsonLd({
-  slug,
-  title,
-  description,
-}: {
-  slug: string;
-  title: string;
-  description: string;
-}) {
-  const url = docsUrl(slug);
+export function docsPageJsonLd({ slug, lang }: { slug: string; lang: DocsLang }) {
+  const url = docsUrl(slug, lang);
+  const { title, description } = docsSeo(slug, lang);
+  const home = docsUrl("introduction", lang);
   const graph: Record<string, unknown>[] = [
     {
       "@type": "TechArticle",
@@ -80,6 +84,7 @@ export function docsPageJsonLd({
       headline: title,
       description,
       url,
+      inLanguage: lang === "zh" ? "zh-Hans" : "en",
       mainEntityOfPage: { "@type": "WebPage", "@id": url },
       dateModified: DOCS_LAST_MODIFIED,
       isPartOf: {
@@ -102,16 +107,12 @@ export function docsPageJsonLd({
     },
   ];
   const breadcrumb = [
-    { "@type": "ListItem", position: 1, name: "Veynod", item: `${SITE_URL}/` },
-    { "@type": "ListItem", position: 2, name: "Docs", item: DOCS_HOME_URL },
+    { "@type": "ListItem", position: 1, name: "Veynod", item: lang === "zh" ? `${SITE_URL}/zh/` : `${SITE_URL}/` },
+    { "@type": "ListItem", position: 2, name: lang === "zh" ? "文档" : "Docs", item: home },
   ];
   if (slug !== "introduction") {
-    breadcrumb.push({
-      "@type": "ListItem",
-      position: 3,
-      name: title,
-      item: url,
-    });
+    const name = site.nav.flatMap((group) => group.pages).find((page) => page.slug === slug)?.title[lang];
+    breadcrumb.push({ "@type": "ListItem", position: 3, name: name || title, item: url });
   }
   graph.push({
     "@type": "BreadcrumbList",
@@ -119,7 +120,7 @@ export function docsPageJsonLd({
     itemListElement: breadcrumb,
   });
   if (slug === "faq") {
-    const questions = faqQuestions();
+    const questions = faqQuestions(lang);
     if (questions.length) {
       graph.push({
         "@type": "FAQPage",
@@ -135,14 +136,14 @@ export function docsPageJsonLd({
   return { "@context": "https://schema.org", "@graph": graph };
 }
 
-function faqQuestions(): Array<{ question: string; answer: string }> {
+function faqQuestions(lang: DocsLang): Array<{ question: string; answer: string }> {
   const blocks = site.pages.faq?.blocks ?? [];
   const questions: Array<{ question: string; answer: string }> = [];
   for (let index = 0; index < blocks.length - 1; index += 1) {
     const question = blocks[index];
     const answer = blocks[index + 1];
     if (question.type === "h" && answer.type === "p") {
-      questions.push({ question: question.text.en, answer: answer.text.en });
+      questions.push({ question: question.text[lang], answer: answer.text[lang] });
     }
   }
   return questions;

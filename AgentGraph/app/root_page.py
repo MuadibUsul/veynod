@@ -152,7 +152,7 @@ _TEMPLATE_PATH = Path(__file__).with_name("templates") / "root.html"
 SEO_COPY = {
     "en": {
         "title": "Veynod — Shared Blackboard & MCP Control Plane for AI Agent Teams",
-        "description": "Veynod is a runtime-agnostic shared blackboard and Model Context Protocol (MCP) control plane for AI agent teams. Connect Claude Code, Cursor, Codex, or REST clients with versioned memory, task leases, and human approval.",
+        "description": "Shared blackboard and MCP control plane for AI agent teams. Connect Claude Code, Cursor and Codex with versioned memory, task leases and human approval.",
         "faq_title": "FAQ",
         "faqs": [
             (
@@ -191,7 +191,7 @@ SEO_COPY = {
     },
     "zh": {
         "title": "Veynod — 面向 AI Agent 团队的共享黑板与 MCP 控制平面",
-        "description": "Veynod 是面向多 Agent 协作、与运行时无关的共享黑板与 Model Context Protocol (MCP) 控制平面。支持 Claude Code、Cursor、Codex 或 REST 客户端接入，提供版本化共享记忆、限时任务租约与人工审批门禁。",
+        "description": "Veynod：多 Agent 团队的共享黑板与 MCP 控制平面。Claude Code、Cursor、Codex 通过 MCP 或 REST 接入，共享版本化记忆、任务租约与人工审批。",
         "faq_title": "常见问题",
         "faqs": [
             (
@@ -419,11 +419,12 @@ def _primitives_section(lang: str) -> str:
         else f"{len(ROOT_PRIMITIVES)} registered MCP primitives organized around the collaboration lifecycle."
     )
     docs = "开发文档" if lang == "zh" else "Developer docs"
+    docs_href = "/zh/docs/" if lang == "zh" else "/docs/"
     reference = "完整原语说明" if lang == "zh" else "Full primitive reference"
     return (
         f'<section class="band rule-top" id="primitives"><div class="wrap">'
         f'<h2>{title}</h2><p class="section-lede">{intro}</p><div class="primitive-list">{"".join(cards)}</div>'
-        f'<div class="section-links"><a href="/v1/agent-docs">{reference} ↗</a><a href="/docs/">{docs} ↗</a></div></div></section>'
+        f'<div class="section-links"><a href="/v1/agent-docs">{reference} ↗</a><a href="{docs_href}">{docs} ↗</a></div></div></section>'
     )
 
 
@@ -452,8 +453,9 @@ def _footer(lang: str, has_console: bool) -> str:
         (
             ("接入与运行时" if zh else "Connect & Runtime"),
             [
-                ("快速上手" if zh else "Quickstart", "/docs/"),
+                ("快速上手" if zh else "Quickstart", "/zh/docs/quickstart/" if zh else "/docs/quickstart/"),
                 ("工具对比" if zh else "Compare tools", "#compare"),
+                ("在线演示" if zh else "Live demo", "/demo/"),
                 ("Claude Code 与 Cursor CLI" if zh else "Claude Code & Cursor CLI", "#connect"),
                 ("MCP 端点" if zh else "MCP Endpoint", "/mcp/"),
                 ("REST API v1", "/v1"),
@@ -471,9 +473,14 @@ def _footer(lang: str, has_console: bool) -> str:
             ],
         ),
         (
-            ("控制台" if zh else "Console"),
+            ("项目" if zh else "Project"),
             ([("打开控制台" if zh else "Open Console", "/dashboard/")] if has_console else [])
-            + [("English" if zh else "中文", "/" if zh else "/zh/")],
+            + [
+                ("GitHub", "https://github.com/veynod/veynod"),
+                ("npm", "https://www.npmjs.com/package/veynod"),
+                ("MCP Registry", "https://registry.modelcontextprotocol.io/v0.1/servers/io.github.veynod%2Fveynod/versions/latest"),
+                ("English" if zh else "中文", "/" if zh else "/zh/"),
+            ],
         ),
     ]
     body = "".join(
@@ -598,6 +605,7 @@ def render_root_page(descriptor: Mapping[str, Any], *, lang: str = "en") -> str:
         "__LANG_HREF__": "/" if lang == "zh" else "/zh/",
         "__SWITCH_HREFLANG__": "en" if lang == "zh" else "zh-Hans",
         "__LANG_LABEL__": "EN" if lang == "zh" else "中文",
+        "__DOCS_HREF__": "/zh/docs/" if lang == "zh" else "/docs/",
         "__JSON_LD__": _json_ld(lang, str(descriptor.get("version", ""))),
         "__PRIMITIVES_SECTION__": _primitives_section(lang),
         "__FAQ_SECTION__": _faq_section(lang),

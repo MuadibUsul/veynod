@@ -13,10 +13,12 @@ import json
 from functools import lru_cache
 from typing import Any
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 router = APIRouter(include_in_schema=False)
+# Chinese docs as plain HTML, for deployments without the Chinese export.
+zh_router = APIRouter(include_in_schema=False)
 
 
 @lru_cache(maxsize=1)
@@ -89,6 +91,11 @@ def _errors(errors: dict[str, Any]) -> str:
             f"<tbody>{rows}</tbody></table>")
 
 
+def _path(slug: str, lang: str) -> str:
+    prefix = "/zh/docs/" if lang == "zh" else "/docs/"
+    return prefix if slug == "introduction" else f"{prefix}{slug}/"
+
+
 def _render(slug: str, lang: str) -> str:
     site = _site()
     page = site["pages"][slug]
@@ -100,10 +107,8 @@ def _render(slug: str, lang: str) -> str:
 
     def nav_item(item: dict[str, Any]) -> str:
         marker = current if item["slug"] == slug else ""
-        href = "/docs/" if item["slug"] == "introduction" else f'/docs/{_e(item["slug"])}/'
-        if lang != "en":
-            href += f"?lang={lang}"
-        return f'<li><a href="{href}"{marker}>{_e(_t(item["title"], lang))}</a></li>'
+        return (f'<li><a href="{_e(_path(item["slug"], lang))}"{marker}>'
+                f'{_e(_t(item["title"], lang))}</a></li>')
 
     nav = "".join(
         f'<li><span class="group">{_e(_t(group["title"], lang))}</span><ul>'
@@ -120,13 +125,15 @@ def _render(slug: str, lang: str) -> str:
     switch = "中文" if lang == "en" else "English"
     html_lang = "zh-CN" if lang == "zh" else "en"
     base_url = site["base_url"]
-    canonical = (f"{base_url}/docs/" if slug == "introduction"
-                 else f"{base_url}/docs/{slug}/")
-    description = _t(page["summary"], "en")
-    headline = f"{title} · Veynod Docs"
+    canonical = f"{base_url}{_path(slug, lang)}"
+    seo = page.get("seo") or {}
+    headline = _t(seo.get("title"), lang) or f"{title} · Veynod Docs"
+    description = _t(seo.get("description"), lang) or _t(page["summary"], lang)
     breadcrumb = [
-        {"@type": "ListItem", "position": 1, "name": "Veynod", "item": f"{base_url}/"},
-        {"@type": "ListItem", "position": 2, "name": "Docs", "item": f"{base_url}/docs/"},
+        {"@type": "ListItem", "position": 1, "name": "Veynod",
+         "item": f"{base_url}/zh/" if lang == "zh" else f"{base_url}/"},
+        {"@type": "ListItem", "position": 2, "name": "文档" if lang == "zh" else "Docs",
+         "item": f"{base_url}{_path('introduction', lang)}"},
     ]
     if slug != "introduction":
         breadcrumb.append(
@@ -139,9 +146,10 @@ def _render(slug: str, lang: str) -> str:
                 {
                     "@type": "TechArticle",
                     "@id": f"{canonical}#article",
-                    "headline": title,
+                    "headline": headline,
                     "description": description,
                     "url": canonical,
+                    "inLanguage": "zh-Hans" if lang == "zh" else "en",
                     "mainEntityOfPage": {"@type": "WebPage", "@id": canonical},
                     "dateModified": "2026-11-25",
                     "isPartOf": {
@@ -170,8 +178,7 @@ def _render(slug: str, lang: str) -> str:
         },
         ensure_ascii=False,
     ).replace("</", "<\\/")
-    switch_path = "/docs/" if slug == "introduction" else f"/docs/{_e(slug)}/"
-    switch_href = switch_path if other == "en" else f"{switch_path}?lang={other}"
+    switch_href = _path(slug, other)
     return f"""<!doctype html>
 <html lang="{html_lang}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -179,6 +186,10 @@ def _render(slug: str, lang: str) -> str:
 <meta name="description" content="{_e(description)}">
 <meta name="robots" content="index, follow">
 <link rel="canonical" href="{_e(canonical)}">
+<link rel="alternate" hreflang="en" href="{_e(base_url + _path(slug, 'en'))}">
+<link rel="alternate" hreflang="zh" href="{_e(base_url + _path(slug, 'zh'))}">
+<link rel="alternate" hreflang="zh-Hans" href="{_e(base_url + _path(slug, 'zh'))}">
+<link rel="alternate" hreflang="x-default" href="{_e(base_url + _path(slug, 'en'))}">
 <link rel="icon" href="/favicon.ico" sizes="48x48">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
@@ -220,16 +231,36 @@ async def docs_root() -> RedirectResponse:
     return RedirectResponse(url="/docs/", status_code=308)
 
 
+def _not_found(lang: str) -> HTMLResponse:
+    home = "/zh/docs/" if lang == "zh" else "/docs/"
+    return HTMLResponse("<!doctype html><title>Not found</title><p>Not found. "
+                        f"<a href=\"{home}\">Docs home</a></p>", status_code=404)
+
+
 @router.get("/docs/", response_class=HTMLResponse)
-async def docs_index(lang: str = Query(default="en", pattern="^(en|zh)$")) -> HTMLResponse:
-    return HTMLResponse(_render("introduction", lang))
+async def docs_index() -> HTMLResponse:
+    return HTMLResponse(_render("introduction", "en"))
 
 
 @router.get("/docs/{slug}/", response_class=HTMLResponse)
-async def docs_page(
-    slug: str, lang: str = Query(default="en", pattern="^(en|zh)$")
-) -> HTMLResponse:
+async def docs_page(slug: str) -> HTMLResponse:
     if slug not in _site()["pages"]:
-        return HTMLResponse("<!doctype html><title>Not found</title><p>Not found. "
-                            "<a href=\"/docs/\">Docs home</a></p>", status_code=404)
-    return HTMLResponse(_render(slug, lang))
+        return _not_found("en")
+    return HTMLResponse(_render(slug, "en"))
+
+
+@zh_router.get("/zh/docs")
+async def zh_docs_root() -> RedirectResponse:
+    return RedirectResponse(url="/zh/docs/", status_code=308)
+
+
+@zh_router.get("/zh/docs/", response_class=HTMLResponse)
+async def zh_docs_index() -> HTMLResponse:
+    return HTMLResponse(_render("introduction", "zh"))
+
+
+@zh_router.get("/zh/docs/{slug}/", response_class=HTMLResponse)
+async def zh_docs_page(slug: str) -> HTMLResponse:
+    if slug not in _site()["pages"]:
+        return _not_found("zh")
+    return HTMLResponse(_render(slug, "zh"))

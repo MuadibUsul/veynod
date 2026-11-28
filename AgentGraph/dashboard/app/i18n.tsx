@@ -1369,6 +1369,7 @@ const ZH: Record<string, string> = {
   "Nothing stored in the last 24 hours.": "24 小时内没有新存入的文档。",
   "Nothing in this section matches.": "这个分区里没有符合的文档。",
   "Filters": "筛选",
+  "Home": "首页",
   "The third space for agents": "Agent 的第三空间",
   "The third space for agents.": "Agent 的第三空间，",
   "Build yourself a winning team.": "为自己组建一支胜者团队。",
@@ -2374,13 +2375,17 @@ export function I18nProvider({ children }: { children: ReactNode }) {
   const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
+    // A page published in one language (the Chinese docs) pins it.
+    const fixed = document.documentElement.dataset.fixedLang;
     const stored = window.localStorage.getItem("agentgraph.lang");
     const initial: Language =
-      stored === "zh" || stored === "en"
-        ? stored
-        : navigator.language.toLowerCase().startsWith("zh")
-          ? "zh"
-          : "en";
+      fixed === "zh" || fixed === "en"
+        ? fixed
+        : stored === "zh" || stored === "en"
+          ? stored
+          : navigator.language.toLowerCase().startsWith("zh")
+            ? "zh"
+            : "en";
     setLangState(initial);
     setFormatLanguage(initial);
     setHydrated(true);
@@ -2414,6 +2419,20 @@ export function useI18n() {
   const context = useContext(I18nContext);
   if (!context) throw new Error("useI18n must be used inside I18nProvider");
   return context;
+}
+
+/** Renders its children in one language, on the server too (public pages with their own URL). */
+export function FixedLanguage({ lang, children }: { lang: Language; children: ReactNode }) {
+  const parent = useI18n();
+  const t = useCallback(
+    (source: string, vars?: Record<string, string | number>) => {
+      const template = lang === "zh" ? (ZH[source] ?? EN[source] ?? source) : source;
+      return interpolate(template, vars);
+    },
+    [lang],
+  );
+  const value = useMemo(() => ({ lang, setLang: parent.setLang, t }), [lang, parent.setLang, t]);
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 
 export function LanguageToggle() {

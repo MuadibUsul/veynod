@@ -4,28 +4,28 @@ import { useEffect, useMemo, useState } from "react";
 
 import { MarkdownContent } from "../components/markdown";
 import { BrandMark, CopyButton } from "../components/ui";
-import { LanguageToggle, useI18n } from "../i18n";
-import { pageTitle, site, type Block, type Field, type Page, type Text } from "./site";
+import { FixedLanguage, useI18n } from "../i18n";
+import { docsPath, pageTitle, site, type Block, type DocsLang, type Field, type Page, type Text } from "./site";
 
-function href(slug: string): string {
-  return slug === "introduction" ? "/docs/" : `/docs/${slug}/`;
+export function DocsView({ slug, lang }: { slug: string; lang: DocsLang }) {
+  return (
+    <FixedLanguage lang={lang}>
+      <DocsShell slug={slug} lang={lang} />
+    </FixedLanguage>
+  );
 }
 
-export function DocsView({ slug }: { slug: string }) {
-  const { lang, t } = useI18n();
+function DocsShell({ slug, lang }: { slug: string; lang: DocsLang }) {
+  const { t } = useI18n();
   const [navOpen, setNavOpen] = useState(false);
   const page = site.pages[slug];
   const pick = (value: Text | null | undefined) => (value ? value[lang] || value.en : "");
+  const href = (target: string) => docsPath(target, lang);
+  const other: DocsLang = lang === "zh" ? "en" : "zh";
   const flat = useMemo(() => site.nav.flatMap((group) => group.pages), []);
   const index = flat.findIndex((item) => item.slug === slug);
   const previous = index > 0 ? flat[index - 1] : null;
   const next = index >= 0 && index < flat.length - 1 ? flat[index + 1] : null;
-
-  useEffect(() => {
-    // The docs home keeps its SEO title; every article gets its page title.
-    if (slug === "introduction") return;
-    document.title = `${pageTitle(slug, lang)} · ${t("Veynod Docs")}`;
-  }, [slug, lang, t]);
 
   useEffect(() => {
     if (!navOpen) return;
@@ -40,7 +40,7 @@ export function DocsView({ slug }: { slug: string }) {
     <div className="docs-shell">
       <a className="skip-link" href="#docs-content">{t("Skip to content")}</a>
       <header className="docs-header">
-        <a className="docs-brand" href="/docs/">
+        <a className="docs-brand" href={href("introduction")}>
           <span className="brand-mark"><BrandMark size={28} /></span>
           <span>Veynod <span className="docs-brand-sub">{t("Docs")}</span></span>
         </a>
@@ -54,9 +54,12 @@ export function DocsView({ slug }: { slug: string }) {
           {navOpen ? t("Close menu") : t("Menu")}
         </button>
         <nav className="docs-header-links" aria-label={t("Site")}>
+          <a href={lang === "zh" ? "/zh/" : "/"}>{t("Home")}</a>
           <a href="/dashboard/">{t("Console")}</a>
           <a href="/dashboard/login/">{t("Sign in")}</a>
-          <LanguageToggle />
+          <a href={docsPath(slug, other)} hrefLang={other === "zh" ? "zh-Hans" : "en"} lang={other === "zh" ? "zh-Hans" : "en"}>
+            {other === "zh" ? "中文" : "English"}
+          </a>
         </nav>
       </header>
       <div className="docs-body">
@@ -104,7 +107,7 @@ export function DocsView({ slug }: { slug: string }) {
           ) : (
             <article className="docs-article">
               <h1>{t("Page not found")}</h1>
-              <p><a href="/docs/">{t("Back to the docs home")}</a></p>
+              <p><a href={href("introduction")}>{t("Back to the docs home")}</a></p>
             </article>
           )}
         </main>

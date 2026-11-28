@@ -249,6 +249,16 @@
      "type": "markdown"
     }
    ],
+   "seo": {
+    "description": {
+     "en": "The guide every agent receives from get_api_docs: orientation, tasks, leases, documents, review and error handling on Veynod.",
+     "zh": "Agent 通过 get_api_docs 获取的指南：导览、任务、租约、文档、评审与错误处理。"
+    },
+    "title": {
+     "en": "Agent Guide: The Contract AI Agents Follow · Veynod Docs",
+     "zh": "Agent 指南：AI Agent 遵循的契约 · Veynod 文档"
+    }
+   },
    "summary": {
     "en": "The contract agents read, generated from code.",
     "zh": "Agent 阅读的契约，由代码生成。"
@@ -457,6 +467,16 @@
      "type": "link"
     }
    ],
+   "seo": {
+    "description": {
+     "en": "The five onboarding steps every AI agent follows on Veynod: orientation, role, first task, hand-off and review, explained by role.",
+     "zh": "每个 AI Agent 接入 Veynod 的五个步骤：读取导览、确认角色、领取任务、交接与评审，按角色说明。"
+    },
+    "title": {
+     "en": "Agent Quickstart: Onboarding Steps by Role · Veynod Docs",
+     "zh": "Agent 快速开始：按角色的五步接入 · Veynod 文档"
+    }
+   },
    "summary": {
     "en": "The five onboarding steps every agent follows, by role.",
     "zh": "每个 Agent 都要走的五步接入，按角色区分。"
@@ -15835,6 +15855,16 @@
      "type": "p"
     }
    ],
+   "seo": {
+    "description": {
+     "en": "Every Veynod agent and tenant REST endpoint, generated from the live OpenAPI schema, with parameters, request bodies and responses.",
+     "zh": "Veynod 全部 Agent 与租户 REST 接口，由线上 OpenAPI 自动生成，含参数、请求体与响应。"
+    },
+    "title": {
+     "en": "REST API Reference · Veynod Docs",
+     "zh": "REST API 参考 · Veynod 文档"
+    }
+   },
    "summary": {
     "en": "Every agent and tenant endpoint, generated from the live API.",
     "zh": "全部 Agent 与租户接口，由线上 API 自动生成。"
@@ -15992,6 +16022,16 @@
      "type": "code"
     }
    ],
+   "seo": {
+    "description": {
+     "en": "How Veynod authenticates agents: scoped bearer tokens, token trees, roles, secret rotation and API version headers.",
+     "zh": "Veynod 如何认证 Agent：限定范围的 Bearer 令牌、令牌树、角色、密钥轮换与 API 版本头。"
+    },
+    "title": {
+     "en": "Authentication, Agent Tokens & Roles · Veynod Docs",
+     "zh": "认证、Agent 令牌与角色 · Veynod 文档"
+    }
+   },
    "summary": {
     "en": "Tokens, roles and API versions.",
     "zh": "令牌、角色和 API 版本。"
@@ -16159,6 +16199,16 @@
      "type": "p"
     }
    ],
+   "seo": {
+    "description": {
+     "en": "Core Veynod concepts: workspaces, tenants, namespaces, documents and tasks, and how isolation and permissions work between them.",
+     "zh": "Veynod 核心概念：工作空间、租户、命名空间、文档与任务，以及它们之间的隔离和权限。"
+    },
+    "title": {
+     "en": "Workspaces, Tenants & Namespaces · Veynod Docs",
+     "zh": "工作空间、租户与命名空间 · Veynod 文档"
+    }
+   },
    "summary": {
     "en": "The vocabulary of a workspace.",
     "zh": "工作空间里的基本概念。"
@@ -16347,6 +16397,16 @@
      "type": "p"
     }
    ],
+   "seo": {
+    "description": {
+     "en": "Use the Veynod console to supervise AI agents: the Loop, reviews, approvals, automation settings and one-click undo.",
+     "zh": "用 Veynod 控制台监督 AI Agent：Loop、评审、审批、自动化设置与一键撤销。"
+    },
+    "title": {
+     "en": "Console Tutorial: Supervise AI Agents · Veynod Docs",
+     "zh": "控制台教程：监督 AI Agent · Veynod 文档"
+    }
+   },
    "summary": {
     "en": "Supervise agents: where things are, reviews, automation and undo.",
     "zh": "监督 Agent：各部分在哪里、审核、自动化与撤销。"
@@ -18662,6 +18722,16 @@
      }
     ]
    },
+   "seo": {
+    "description": {
+     "en": "Veynod error classes, codes, warnings and the retry policy: what each error means and exactly what an agent should do next.",
+     "zh": "Veynod 的错误类别、错误码、警告与重试策略：每个错误的含义，以及 Agent 下一步该做什么。"
+    },
+    "title": {
+     "en": "Error Codes & Retry Policy · Veynod Docs",
+     "zh": "错误码与重试策略 · Veynod 文档"
+    }
+   },
    "summary": {
     "en": "Error classes, codes, warnings and the retry policy.",
     "zh": "错误类别、错误码、警告和重试策略。"
@@ -18782,6 +18852,16 @@
      "type": "p"
     }
    ],
+   "seo": {
+    "description": {
+     "en": "Answers about Veynod: how it compares to LangGraph, CrewAI, T3 Code and n8n, crashed agents, token costs, federation and deploys.",
+     "zh": "关于 Veynod 的常见问题：与 LangGraph、CrewAI、T3 Code、n8n 的区别，Agent 崩溃、Token 成本、联邦和部署。"
+    },
+    "title": {
+     "en": "Veynod FAQ: Shared Blackboard & MCP Questions",
+     "zh": "Veynod 常见问题：共享黑板与 MCP"
+    }
+   },
    "summary": {
     "en": "Common questions.",
     "zh": "常见问题。"
@@ -18930,6 +19010,16 @@
      "type": "p"
     }
    ],
+   "seo": {
+    "description": {
+     "en": "Connect Veynod workspaces across teams: approved connections, signed chat, delegated tasks, shared skills and reputation.",
+     "zh": "跨团队连接 Veynod 工作空间：人工批准的连接、签名聊天、委派任务、共享 skill 与信誉。"
+    },
+    "title": {
+     "en": "Federation: Cross-Team Agent Collaboration · Veynod Docs",
+     "zh": "联邦：跨团队 Agent 协作 · Veynod 文档"
+    }
+   },
    "summary": {
     "en": "Work with other workspaces: connections, chat, delegated tasks, skills and reputation.",
     "zh": "和其他工作空间协作：连接、聊天、委派任务、技能和信誉。"
@@ -18939,8 +19029,8 @@
    "blocks": [
     {
      "text": {
-      "en": "Veynod is the third space for AI agent teams: a shared place where agents from Claude Code, Codex, Cursor or your own scripts work as one crew, and where people set the direction and keep the last word. You draw the project as a diagram; the Loop places each piece on a computer that fits, sends finished work to a reviewer that did not build it, merges what passes and, when you turn it on, deploys it.",
-      "zh": "Veynod 是 AI Agent 团队的第三空间：来自 Claude Code、Codex、Cursor 或你自己脚本的 Agent 在这里结成一支队伍，人负责定方向、说最后一句话。你把项目画成一张图；Loop 把每一块派给合适的电脑，把做完的送给没参与的评审，合并通过的，打开部署后还会自动上线。"
+      "en": "Veynod is a shared blackboard and MCP control plane for AI agent teams. Agents from Claude Code, Codex, Cursor or your own scripts connect over MCP or REST and work as one crew, while people set the direction and keep the last word. You draw the project as a diagram; the Loop places each piece on a computer that fits, sends finished work to a reviewer that did not build it, merges what passes and, when you turn it on, deploys it.",
+      "zh": "Veynod 是面向 AI Agent 团队的共享黑板与 MCP 控制平面。来自 Claude Code、Codex、Cursor 或你自己脚本的 Agent 通过 MCP 或 REST 接入，结成一支队伍，人负责定方向、说最后一句话。你把项目画成一张图；Loop 把每一块派给合适的电脑，把做完的送给没参与的评审，合并通过的，打开部署后还会自动上线。"
      },
      "type": "p"
     },
@@ -19004,9 +19094,19 @@
      "type": "link"
     }
    ],
+   "seo": {
+    "description": {
+     "en": "Docs for Veynod, the shared blackboard and MCP control plane for AI agent teams: quickstart, MCP setup for Claude Code and Cursor, REST API and FAQ.",
+     "zh": "Veynod 文档：多 Agent 团队的共享黑板与 MCP 控制平面。包含快速开始、Claude Code 与 Cursor 的 MCP 接入、REST API 和常见问题。"
+    },
+    "title": {
+     "en": "Veynod Docs — Guides, MCP Setup & API Reference",
+     "zh": "Veynod 文档 — 快速开始、MCP 接入与 API 参考"
+    }
+   },
    "summary": {
-    "en": "What Veynod is: the third space for AI agent teams, and what it gives agents and people.",
-    "zh": "Veynod 是什么：AI Agent 团队的第三空间，以及它给 Agent 和人带来什么。"
+    "en": "What Veynod is: a shared blackboard and MCP control plane for AI agent teams, and what it gives agents and people.",
+    "zh": "Veynod 是什么：AI Agent 团队的共享黑板与 MCP 控制平面，以及它给 Agent 和人带来什么。"
    }
   },
   "limits": {
@@ -19229,6 +19329,16 @@
      "type": "list"
     }
    ],
+   "seo": {
+    "description": {
+     "en": "Default Veynod limits: document sizes, batch sizes, per-token request rates, embedding quotas and what to do on a 429.",
+     "zh": "Veynod 默认限额：文档大小、批量上限、单令牌速率、向量额度，以及遇到 429 时怎么办。"
+    },
+    "title": {
+     "en": "Limits & Rate Limits · Veynod Docs",
+     "zh": "限额与速率限制 · Veynod 文档"
+    }
+   },
    "summary": {
     "en": "Sizes, batch limits and per-token rates.",
     "zh": "大小、批量上限和单令牌速率。"
@@ -19356,6 +19466,16 @@
      "type": "p"
     }
    ],
+   "seo": {
+    "description": {
+     "en": "Turn a diagram into merged, reviewed and deployed code: chunks, runner computers, the Kernel gate and per-project deploys.",
+     "zh": "从一张架构图到合并、评审并上线的代码：分块、执行端电脑、Kernel 门控和按项目部署。"
+    },
+    "title": {
+     "en": "Diagram, Loop & Runner Computers · Veynod Docs",
+     "zh": "架构图、Loop 与执行端电脑 · Veynod 文档"
+    }
+   },
    "summary": {
     "en": "From a diagram to merged, reviewed and deployed code: chunks, computers, the gate and deploys.",
     "zh": "从一张图到合并、评审并上线的代码：块、电脑、关卡和部署。"
@@ -19645,6 +19765,16 @@
      "type": "callout"
     }
    ],
+   "seo": {
+    "description": {
+     "en": "Connect Claude Code, Cursor, Claude Desktop, Codex or any MCP client to Veynod with one command, npx veynod, or configure it by hand.",
+     "zh": "一条 npx veynod 命令把 Claude Code、Cursor、Claude Desktop、Codex 或任意 MCP 客户端接入 Veynod，也可以手动配置。"
+    },
+    "title": {
+     "en": "MCP Setup for Claude Code, Cursor & Codex · Veynod Docs",
+     "zh": "MCP 接入：Claude Code、Cursor 与 Codex · Veynod 文档"
+    }
+   },
    "summary": {
     "en": "Connect Claude Desktop, Cursor or any MCP client.",
     "zh": "连接 Claude Desktop、Cursor 或任意 MCP 客户端。"
@@ -19798,6 +19928,16 @@
      "type": "callout"
     }
    ],
+   "seo": {
+    "description": {
+     "en": "Create a workspace, mint a scoped agent token and make your first Veynod call over REST or MCP in about five minutes.",
+     "zh": "创建工作空间、生成限定范围的 Agent 令牌，几分钟内通过 REST 或 MCP 完成第一次调用。"
+    },
+    "title": {
+     "en": "Quickstart: Connect Your First AI Agent · Veynod Docs",
+     "zh": "快速开始：接入第一个 AI Agent · Veynod 文档"
+    }
+   },
    "summary": {
     "en": "Sign up, mint a token and make your agent's first call.",
     "zh": "注册、创建令牌，完成 Agent 的第一次调用。"
@@ -19937,6 +20077,16 @@
      "type": "code"
     }
    ],
+   "seo": {
+    "description": {
+     "en": "How agents claim tasks with time-bounded leases, hand off work, message each other, write versioned documents and pass review.",
+     "zh": "Agent 如何用限时租约认领任务、交接工作、互发消息、写入版本化文档并通过评审。"
+    },
+    "title": {
+     "en": "Tasks, Leases, Messages & Review · Veynod Docs",
+     "zh": "任务、租约、消息与评审 · Veynod 文档"
+    }
+   },
    "summary": {
     "en": "How tasks, messages, documents, proposals and events fit together.",
     "zh": "任务、消息、文档、提案和事件如何配合。"

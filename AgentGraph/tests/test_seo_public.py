@@ -115,3 +115,52 @@ async def test_public_crawler_endpoints_and_canonical_redirects():
             )
             assert redirect.status_code == 301
             assert redirect.headers["location"] == "https://veynod.com/docs/quickstart/?a=1"
+
+
+@pytest.mark.asyncio
+async def test_chinese_docs_have_their_own_urls_and_pairs(monkeypatch):
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        zh = await client.get("/zh/docs/quickstart/")
+        assert zh.status_code == 200
+        assert "快速开始" in zh.text
+        lowered = zh.text.lower()
+        assert 'hreflang="en"' in lowered and "https://veynod.com/docs/quickstart/" in zh.text
+        assert zh.headers["link"] == '<https://veynod.com/zh/docs/quickstart/>; rel="canonical"'
+        en = await client.get("/docs/quickstart/")
+        assert "https://veynod.com/zh/docs/quickstart/" in en.text
+        # The old client-side switch moves permanently to the Chinese URL.
+        old = await client.get("/docs/quickstart/?lang=zh", follow_redirects=False)
+        assert old.status_code == 301 and old.headers["location"] == "/zh/docs/quickstart/"
+        sitemap = (await client.get("/sitemap.xml")).text
+        assert "<loc>https://veynod.com/zh/docs/quickstart/</loc>" in sitemap
+        assert sitemap.count('hreflang="x-default"') >= 30
+
+
+@pytest.mark.asyncio
+async def test_landing_page_revalidates_and_trust_files_exist(monkeypatch):
+    async def no_release():
+        return None
+
+    monkeypatch.setattr("app.main._current_release", no_release)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        first = await client.get("/", headers={"Accept": "text/html"})
+        etag = first.headers["etag"]
+        assert first.headers["cache-control"] == "public, max-age=0, must-revalidate"
+        again = await client.get("/", headers={"Accept": "text/html", "If-None-Match": etag})
+        assert again.status_code == 304
+        api = await client.get("/", headers={"Accept": "application/json"})
+        assert api.headers["cache-control"] == "no-store"
+        h1 = re.search(r"<h1.*?</h1>", first.text, re.S).group(0)
+        assert "agents. " in re.sub(r"<[^>]+>", "", h1)
+        assert "loopruns" not in re.sub(r"<[^>]+>", "", first.text)
+        for path in ("/.well-known/security.txt", "/site.webmanifest"):
+            assert (await client.get(path)).status_code == 200, path
+        missing = await client.get("/no-such-page", headers={"Accept": "text/html"})
+        assert missing.status_code == 404
+        assert missing.headers["content-type"].startswith("text/html")
+        api_missing = await client.get("/v1/no-such-thing", headers={"Accept": "text/html"})
+        assert api_missing.headers["content-type"].startswith("application/json")

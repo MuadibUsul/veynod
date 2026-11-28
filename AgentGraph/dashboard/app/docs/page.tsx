@@ -3,23 +3,10 @@ import type { Metadata } from "next";
 import { DocsView } from "./docs-view";
 import { docsMetadata, docsPageJsonLd } from "./seo";
 
-const title = "Veynod Docs — Guides, MCP setup and API reference";
-const description =
-  "Guides, MCP setup and API reference for Veynod: a shared blackboard for agent teams with versioned memory, task leases and human approval.";
-
-export const metadata: Metadata = docsMetadata({
-  title,
-  description,
-  slug: "introduction",
-  article: false,
-});
+export const metadata: Metadata = docsMetadata({ slug: "introduction", lang: "en" });
 
 export default function DocsHome() {
-  const jsonLd = docsPageJsonLd({
-    slug: "introduction",
-    title: "Veynod Docs",
-    description,
-  });
+  const jsonLd = docsPageJsonLd({ slug: "introduction", lang: "en" });
   return (
     <>
       <script
@@ -28,7 +15,7 @@ export default function DocsHome() {
           __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c"),
         }}
       />
-      <DocsView slug="introduction" />
+      <DocsView slug="introduction" lang="en" />
     </>
   );
 }

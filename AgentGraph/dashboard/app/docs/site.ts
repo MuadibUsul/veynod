@@ -24,6 +24,7 @@ export type Endpoint = {
 export type ErrorRow = { code: string; http: number; class: string; rule: string; retryable: boolean };
 export type Page = {
   summary: Text;
+  seo: { title: Text; description: Text };
   blocks: Block[];
   api?: Array<{ group: string; endpoints: Endpoint[] }>;
   errors?: {
@@ -45,5 +46,13 @@ export function pageTitle(slug: string, lang: "en" | "zh" = "en"): string {
     for (const page of group.pages) if (page.slug === slug) return page.title[lang];
   }
   return "Veynod";
+}
+
+export type DocsLang = "en" | "zh";
+
+/** Site-relative URL of a docs page in one language. */
+export function docsPath(slug: string, lang: DocsLang = "en"): string {
+  const prefix = lang === "zh" ? "/zh/docs/" : "/docs/";
+  return slug === "introduction" ? prefix : `${prefix}${slug}/`;
 }
 

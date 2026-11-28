@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import logging
 import re
+import time
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -50,6 +52,7 @@ from app.api.org_routes import router as org_router
 from app.api.project_page import router as project_page_router
 from app.api.project_routes import router as project_router
 from app.api.public_docs import router as public_docs_router
+from app.api.public_docs import zh_router as public_docs_zh_router
 from app.api.share_routes import public_router as share_public_router
 from app.api.share_routes import router as share_router
 from app.api.stream_routes import admin_router as admin_stream_router
@@ -335,6 +338,10 @@ async def security_headers(request: Request, call_next):
         if request.url.query:
             target += f"?{request.url.query}"
         return RedirectResponse(target, status_code=301)
+    # Chinese docs used to be a client-side switch (?lang=zh); they have their own URLs now.
+    if request.url.path.startswith("/docs") and request.query_params.get("lang") == "zh":
+        rest = request.url.path.removeprefix("/docs").strip("/")
+        return RedirectResponse(f"/zh/docs/{rest + '/' if rest else ''}", status_code=301)
     response = await call_next(request)
     response.headers.setdefault("Content-Security-Policy", _CSP)
     response.headers.setdefault("X-Frame-Options", "DENY")
@@ -351,12 +358,13 @@ async def security_headers(request: Request, call_next):
     if _is_private_path(path):
         response.headers.setdefault("X-Robots-Tag", "noindex, nofollow")
     elif (
-        (path == "/docs" or path.startswith("/docs/"))
+        (path.startswith("/docs") or path.startswith("/zh/docs"))
         and response.status_code == 200
         and response.headers.get("content-type", "").startswith("text/html")
     ):
-        slug = path.removeprefix("/docs").strip("/")
-        canonical = f"{SEO_SITE_URL}/docs/{slug}/" if slug else f"{SEO_SITE_URL}/docs/"
+        prefix = "/zh/docs/" if path.startswith("/zh/") else "/docs/"
+        slug = path.removeprefix("/zh").removeprefix("/docs").strip("/")
+        canonical = f"{SEO_SITE_URL}{prefix}{slug + '/' if slug else ''}"
         response.headers.setdefault("Link", f'<{canonical}>; rel="canonical"')
     if path.startswith("/dashboard/_next/static/"):
         response.headers.setdefault(
@@ -371,6 +379,7 @@ async def security_headers(request: Request, call_next):
     elif (
         path in {"/", "/zh", "/zh/", "/docs"}
         or path.startswith("/docs/")
+        or path.startswith("/zh/docs")
     ):
         if response.headers.get("content-type", "").startswith("application/json"):
             response.headers.setdefault("Cache-Control", "no-store")
@@ -450,6 +459,41 @@ if docs_site_dir.is_dir():
     app.mount("/docs", StaticFiles(directory=str(docs_site_dir), html=True), name="docs")
 else:
     app.include_router(public_docs_router)
+
+# Chinese docs: the same Next.js pages exported under /zh/docs, served with the
+# document language set, so crawlers index them as Chinese pages.
+zh_docs_dir = dashboard_dir / "zh" / "docs"
+_ZH_DOCS_SLUG = re.compile(r"[a-z0-9-]+")
+_zh_docs_cache: dict[str, str] = {}
+
+
+def _zh_docs_html(target: Path) -> str:
+    key = str(target)
+    if key not in _zh_docs_cache:
+        html = target.read_text(encoding="utf-8")
+        _zh_docs_cache[key] = html.replace(
+            '<html lang="en"', '<html lang="zh-CN" data-fixed-lang="zh"', 1)
+    return _zh_docs_cache[key]
+
+
+if docs_site_dir.is_dir() and zh_docs_dir.is_dir():
+    @app.api_route("/zh/docs", methods=["GET", "HEAD"], include_in_schema=False)
+    async def zh_docs_redirect() -> RedirectResponse:
+        return RedirectResponse(url="/zh/docs/", status_code=308)
+
+    @app.api_route("/zh/docs/{slug:path}", methods=["GET", "HEAD"], include_in_schema=False)
+    async def zh_docs_page(slug: str) -> Response:
+        clean = slug.strip("/")
+        if clean and not _ZH_DOCS_SLUG.fullmatch(clean):
+            raise StarletteHTTPException(status_code=404)
+        target = zh_docs_dir / clean / "index.html" if clean else zh_docs_dir / "index.html"
+        if not target.is_file():
+            raise StarletteHTTPException(status_code=404)
+        if clean and not slug.endswith("/"):
+            return RedirectResponse(url=f"/zh/docs/{clean}/", status_code=308)
+        return HTMLResponse(_zh_docs_html(target))
+else:
+    app.include_router(public_docs_zh_router)
 app.include_router(share_public_router)
 
 
@@ -510,39 +554,37 @@ async def sitemap_xml() -> Response:
     from app.docs_site import NAV
 
     lastmod = _sitemap_lastmod()
-    urls = [
-        f"{SEO_SITE_URL}/", f"{SEO_SITE_URL}/zh/",
-        f"{SEO_SITE_URL}/docs/", f"{SEO_SITE_URL}/demo/",
-        f"{SEO_SITE_URL}/v1/agent-docs", f"{SEO_SITE_URL}/llms.txt",
-        f"{SEO_SITE_URL}/llms-full.txt",
-    ]
-    seen = set(urls)
+    # Every page that exists in both languages lists both, each with the pair.
+    pairs: list[tuple[str, str]] = [("/", "/zh/"), ("/docs/", "/zh/docs/")]
     for _group_id, _group_title, pages in NAV:
         for slug, _page_title in pages:
             # The docs home renders the introduction; /docs/introduction/ 404s.
-            if slug == "introduction":
-                continue
-            url = f"{SEO_SITE_URL}/docs/{slug}/"
-            if url not in seen:
-                seen.add(url)
-                urls.append(url)
-    home_alternates = (
-        f'<xhtml:link rel="alternate" hreflang="en" href="{SEO_SITE_URL}/"/>'
-        f'<xhtml:link rel="alternate" hreflang="zh" href="{SEO_SITE_URL}/zh/"/>'
-        f'<xhtml:link rel="alternate" hreflang="zh-Hans" href="{SEO_SITE_URL}/zh/"/>'
-        f'<xhtml:link rel="alternate" hreflang="x-default" href="{SEO_SITE_URL}/"/>'
-    )
-    home_pair = {f"{SEO_SITE_URL}/", f"{SEO_SITE_URL}/zh/"}
+            if slug != "introduction":
+                pairs.append((f"/docs/{slug}/", f"/zh/docs/{slug}/"))
+    singles = ["/demo/", "/v1/agent-docs", "/llms.txt", "/llms-full.txt"]
+
+    def alternates(en: str, zh: str) -> str:
+        return (
+            f'<xhtml:link rel="alternate" hreflang="en" href="{SEO_SITE_URL}{en}"/>'
+            f'<xhtml:link rel="alternate" hreflang="zh" href="{SEO_SITE_URL}{zh}"/>'
+            f'<xhtml:link rel="alternate" hreflang="zh-Hans" href="{SEO_SITE_URL}{zh}"/>'
+            f'<xhtml:link rel="alternate" hreflang="x-default" href="{SEO_SITE_URL}{en}"/>'
+        )
+
+    entries: list[str] = []
+    for en, zh in pairs:
+        links = alternates(en, zh)
+        for page_path in (en, zh):
+            entries.append(f"<url><loc>{SEO_SITE_URL}{page_path}</loc>"
+                           f"<lastmod>{lastmod}</lastmod>{links}</url>")
+    entries += [f"<url><loc>{SEO_SITE_URL}{page_path}</loc><lastmod>{lastmod}</lastmod></url>"
+                for page_path in singles]
     body = "\n".join(
         [
             '<?xml version="1.0" encoding="UTF-8"?>',
             '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" '
             'xmlns:xhtml="http://www.w3.org/1999/xhtml">',
-            *[
-                f"<url><loc>{url}</loc><lastmod>{lastmod}</lastmod>"
-                f"{home_alternates if url in home_pair else ''}</url>"
-                for url in urls
-            ],
+            *entries,
             "</urlset>",
             "",
         ]
@@ -618,6 +660,76 @@ async def apple_touch_icon() -> FileResponse:
     )
 
 
+@app.api_route("/.well-known/security.txt", methods=["GET", "HEAD"], include_in_schema=False)
+async def security_txt() -> PlainTextResponse:
+    return PlainTextResponse(
+        "Contact: https://github.com/veynod/veynod/security/advisories/new\n"
+        "Expires: 2027-11-28T00:00:00.000Z\n"
+        "Preferred-Languages: en, zh\n"
+        f"Canonical: {SEO_SITE_URL}/.well-known/security.txt\n",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@app.api_route("/site.webmanifest", methods=["GET", "HEAD"], include_in_schema=False)
+async def web_manifest() -> JSONResponse:
+    return JSONResponse(
+        {
+            "name": "Veynod",
+            "short_name": "Veynod",
+            "description": "Shared blackboard and MCP control plane for AI agent teams.",
+            "start_url": "/",
+            "display": "standalone",
+            "background_color": "#0b0f14",
+            "theme_color": "#0b0f14",
+            "icons": [
+                {"src": "/apple-touch-icon.png", "sizes": "180x180", "type": "image/png"},
+                {"src": "/dashboard/icon.png", "sizes": "512x512", "type": "image/png"},
+            ],
+        },
+        media_type="application/manifest+json",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+_NOT_FOUND = {
+    "en": ("Page not found", "This page does not exist or has moved.", "/", "Home",
+           "/docs/", "Docs"),
+    "zh": ("页面不存在", "这个页面不存在，或已经移动。", "/zh/", "首页", "/zh/docs/", "文档"),
+}
+_NOT_FOUND_HTML = (
+    '<!doctype html><html lang="{html_lang}"><head><meta charset="utf-8">'
+    '<meta name="viewport" content="width=device-width, initial-scale=1">'
+    '<meta name="robots" content="noindex"><title>{title} · Veynod</title>'
+    '<link rel="icon" href="/favicon.ico" sizes="48x48">'
+    "<style>body{{margin:0;min-height:100vh;display:grid;place-items:center;"
+    "background:#0b0f14;color:#f2f4f7;font:16px/1.6 Inter,system-ui,-apple-system,"
+    '"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}}'
+    "main{{max-width:28rem;padding:24px;text-align:center}}"
+    "h1{{font-size:28px;font-weight:500;margin:0 0 8px}}p{{color:#8b94a3;margin:0 0 24px}}"
+    "a{{color:#f2f4f7;margin:0 10px}}</style></head><body><main><h1>{title}</h1>"
+    '<p>{body}</p><nav><a href="{home}">{home_label}</a><a href="{docs}">{docs_label}</a>'
+    "</nav></main></body></html>"
+)
+
+
+def _not_found_page(request: Request) -> HTMLResponse | None:
+    """People who follow a broken link get a page, not a JSON error body."""
+    path = request.url.path
+    if "text/html" not in request.headers.get("accept", "") or path.startswith(
+            ("/v1", "/mcp", "/s/", "/.well-known/agentgraph")):
+        return None
+    lang = "zh" if path.startswith("/zh") else "en"
+    title, body, home, home_label, docs, docs_label = _NOT_FOUND[lang]
+    return HTMLResponse(
+        _NOT_FOUND_HTML.format(html_lang="zh-CN" if lang == "zh" else "en", title=title,
+                               body=body, home=home, home_label=home_label, docs=docs,
+                               docs_label=docs_label),
+        status_code=404,
+        headers={"X-Robots-Tag": "noindex", "Cache-Control": "no-store"},
+    )
+
+
 @app.exception_handler(ApiError)
 async def api_error_handler(request: Request, exc: ApiError) -> JSONResponse:
     return JSONResponse(
@@ -654,6 +766,10 @@ async def http_error_handler(
     message = str(exc.detail) if exc.detail else "HTTP error"
     code = "not_found" if exc.status_code == 404 else "http_error"
     headers = getattr(exc, "headers", None) or {}
+    if exc.status_code == 404:
+        page = _not_found_page(request)
+        if page is not None:
+            return page
     return JSONResponse(
         status_code=exc.status_code,
         content=error_body(code, message, exc.status_code, headers=headers),
@@ -783,9 +899,35 @@ def _is_crawler(request: Request) -> bool:
     return bool(_CRAWLER_UA.search(request.headers.get("user-agent", "")))
 
 
-@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
-async def root(request: Request) -> Any:
-    descriptor = {
+# The landing pages only change on deploy: render once, then answer revalidations
+# with 304. A short TTL still picks up a new release record without a restart.
+_page_cache: dict[str, tuple[float, str, str]] = {}
+_PAGE_TTL_SECONDS = 300.0
+
+
+def _cached_page(lang: str) -> tuple[str, str] | None:
+    hit = _page_cache.get(lang)
+    if hit and time.monotonic() - hit[0] < _PAGE_TTL_SECONDS:
+        return hit[1], hit[2]
+    return None
+
+
+def _store_page(lang: str, html: str) -> tuple[str, str]:
+    etag = '"' + hashlib.sha256(html.encode("utf-8")).hexdigest()[:24] + '"'
+    _page_cache[lang] = (time.monotonic(), html, etag)
+    return html, etag
+
+
+def _html_page(request: Request, page: tuple[str, str], headers: dict[str, str]) -> Response:
+    html, etag = page
+    headers = {**headers, "ETag": etag, "Cache-Control": "public, max-age=0, must-revalidate"}
+    if etag in request.headers.get("if-none-match", ""):
+        return Response(status_code=304, headers=headers)
+    return HTMLResponse(html, headers=headers)
+
+
+async def _root_descriptor() -> dict[str, Any]:
+    return {
         "name": settings.app_name,
         "version": settings.app_version,
         "docs": "/docs/",
@@ -802,15 +944,21 @@ async def root(request: Request) -> Any:
         "changelog": {"namespace": "system", "doc_key": "system/changelog"},
         "capabilities": capabilities.describe(app),
     }
-    headers = {"Vary": _ROOT_VARY, "Cache-Control": "no-store",
-               "Link": f'<{SEO_SITE_URL}/>; rel="canonical"'}
+
+
+@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+async def root(request: Request) -> Any:
+    headers = {"Vary": _ROOT_VARY, "Link": f'<{SEO_SITE_URL}/>; rel="canonical"'}
     if not _is_crawler(request) and (
         request.query_params.get("format", "").lower() == "json"
         or _wants_json(request.headers.get("accept", ""))
     ):
+        headers["Cache-Control"] = "no-store"
         headers["X-Robots-Tag"] = "noindex, noarchive"
-        return JSONResponse(descriptor, headers=headers)
-    return HTMLResponse(render_root_page(descriptor, lang="en"), headers=headers)
+        return JSONResponse(await _root_descriptor(), headers=headers)
+    page = _cached_page("en") or _store_page(
+        "en", render_root_page(await _root_descriptor(), lang="en"))
+    return _html_page(request, page, headers)
 
 
 def _wants_json(accept: str) -> bool:
@@ -850,20 +998,20 @@ async def zh_redirect() -> RedirectResponse:
 
 
 @app.api_route("/zh/", methods=["GET", "HEAD"], include_in_schema=False)
-async def root_zh(request: Request) -> HTMLResponse:
+async def root_zh(request: Request) -> Response:
     # The showcase only needs the public descriptor fields; no private state.
-    descriptor = {
-        "name": settings.app_name, "version": settings.app_version,
-        "rest": "/v1", "mcp": "/mcp/" if settings.mcp_enabled else None,
-        "health": "/healthz", "agent_docs": "/v1/agent-docs",
-        "first_call": "get_orientation", "primitives": list(ROOT_PRIMITIVES),
-        "dashboard": "/dashboard/" if dashboard_dir.is_dir() else None,
-    }
-    return HTMLResponse(
-        render_root_page(descriptor, lang="zh"),
-        headers={"Vary": "Accept, Accept-Encoding", "Cache-Control": "no-store",
-                 "Link": f'<{SEO_SITE_URL}/zh/>; rel="canonical"'},
-    )
+    page = _cached_page("zh")
+    if page is None:
+        descriptor = {
+            "name": settings.app_name, "version": settings.app_version,
+            "rest": "/v1", "mcp": "/mcp/" if settings.mcp_enabled else None,
+            "health": "/healthz", "agent_docs": "/v1/agent-docs",
+            "first_call": "get_orientation", "primitives": list(ROOT_PRIMITIVES),
+            "dashboard": "/dashboard/" if dashboard_dir.is_dir() else None,
+        }
+        page = _store_page("zh", render_root_page(descriptor, lang="zh"))
+    return _html_page(request, page, {"Vary": "Accept, Accept-Encoding",
+                                      "Link": f'<{SEO_SITE_URL}/zh/>; rel="canonical"'})
 
 
 @app.api_route("/demo", methods=["GET", "HEAD"], include_in_schema=False)
