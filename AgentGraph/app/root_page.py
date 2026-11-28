@@ -454,7 +454,7 @@ def _footer(lang: str, has_console: bool) -> str:
             ("接入与运行时" if zh else "Connect & Runtime"),
             [
                 ("快速上手" if zh else "Quickstart", "/zh/docs/quickstart/" if zh else "/docs/quickstart/"),
-                ("工具对比" if zh else "Compare tools", "#compare"),
+                ("工具对比" if zh else "Compare tools", "/zh/vs/" if zh else "/vs/"),
                 ("在线演示" if zh else "Live demo", "/demo/"),
                 ("Claude Code 与 Cursor CLI" if zh else "Claude Code & Cursor CLI", "#connect"),
                 ("MCP 端点" if zh else "MCP Endpoint", "/mcp/"),

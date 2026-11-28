@@ -77,6 +77,7 @@ from app.services.reaper import lease_reaper_loop
 from app.services.situation import MetricsMiddleware
 from app.services.webhooks import webhook_delivery_loop
 from app.versioning import BASELINE_VERSION, LATEST_VERSION
+from app.vs_pages import COMPARISONS, render_vs_hub, render_vs_page
 
 settings = get_settings()
 
@@ -555,7 +556,9 @@ async def sitemap_xml() -> Response:
 
     lastmod = _sitemap_lastmod()
     # Every page that exists in both languages lists both, each with the pair.
-    pairs: list[tuple[str, str]] = [("/", "/zh/"), ("/docs/", "/zh/docs/")]
+    pairs: list[tuple[str, str]] = [("/", "/zh/"), ("/docs/", "/zh/docs/"), ("/vs/", "/zh/vs/")]
+    for item in COMPARISONS:
+        pairs.append((f"/vs/{item.slug}/", f"/zh/vs/{item.slug}/"))
     for _group_id, _group_title, pages in NAV:
         for slug, _page_title in pages:
             # The docs home renders the introduction; /docs/introduction/ 404s.
@@ -1012,6 +1015,68 @@ async def root_zh(request: Request) -> Response:
         page = _store_page("zh", render_root_page(descriptor, lang="zh"))
     return _html_page(request, page, {"Vary": "Accept, Accept-Encoding",
                                       "Link": f'<{SEO_SITE_URL}/zh/>; rel="canonical"'})
+
+
+def _serve_vs(request: Request, lang: str, slug: str | None = None) -> Response:
+    has_console = dashboard_dir.is_dir()
+    key = f"vs:{lang}:{slug or 'hub'}:{int(has_console)}"
+    page = _cached_page(key)
+    if page is None:
+        rendered = (
+            render_vs_hub(lang=lang, has_console=has_console)
+            if slug is None
+            else render_vs_page(slug, lang=lang, has_console=has_console)
+        )
+        if rendered is None:
+            return _not_found_page(request) or HTMLResponse("Not found", status_code=404)
+        page = _store_page(key, rendered)
+    prefix = "/zh/vs" if lang == "zh" else "/vs"
+    canonical = f"{SEO_SITE_URL}{prefix}/{slug}/" if slug else f"{SEO_SITE_URL}{prefix}/"
+    return _html_page(
+        request,
+        page,
+        {"Vary": "Accept, Accept-Encoding", "Link": f'<{canonical}>; rel="canonical"'},
+    )
+
+
+@app.api_route("/vs", methods=["GET", "HEAD"], include_in_schema=False)
+async def vs_hub_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/vs/", status_code=308)
+
+
+@app.api_route("/vs/", methods=["GET", "HEAD"], include_in_schema=False)
+async def vs_hub_en(request: Request) -> Response:
+    return _serve_vs(request, "en")
+
+
+@app.api_route("/zh/vs", methods=["GET", "HEAD"], include_in_schema=False)
+async def vs_hub_zh_redirect() -> RedirectResponse:
+    return RedirectResponse(url="/zh/vs/", status_code=308)
+
+
+@app.api_route("/zh/vs/", methods=["GET", "HEAD"], include_in_schema=False)
+async def vs_hub_zh(request: Request) -> Response:
+    return _serve_vs(request, "zh")
+
+
+@app.api_route("/vs/{slug}", methods=["GET", "HEAD"], include_in_schema=False)
+async def vs_detail_redirect(slug: str) -> RedirectResponse:
+    return RedirectResponse(url=f"/vs/{slug}/", status_code=308)
+
+
+@app.api_route("/vs/{slug}/", methods=["GET", "HEAD"], include_in_schema=False)
+async def vs_detail_en(request: Request, slug: str) -> Response:
+    return _serve_vs(request, "en", slug)
+
+
+@app.api_route("/zh/vs/{slug}", methods=["GET", "HEAD"], include_in_schema=False)
+async def vs_detail_zh_redirect(slug: str) -> RedirectResponse:
+    return RedirectResponse(url=f"/zh/vs/{slug}/", status_code=308)
+
+
+@app.api_route("/zh/vs/{slug}/", methods=["GET", "HEAD"], include_in_schema=False)
+async def vs_detail_zh(request: Request, slug: str) -> Response:
+    return _serve_vs(request, "zh", slug)
 
 
 @app.api_route("/demo", methods=["GET", "HEAD"], include_in_schema=False)

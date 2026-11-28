@@ -164,3 +164,37 @@ async def test_landing_page_revalidates_and_trust_files_exist(monkeypatch):
         assert missing.headers["content-type"].startswith("text/html")
         api_missing = await client.get("/v1/no-such-thing", headers={"Accept": "text/html"})
         assert api_missing.headers["content-type"].startswith("application/json")
+
+
+@pytest.mark.asyncio
+async def test_comparison_pages_bilingual_seo_and_cache():
+    from app.vs_pages import COMPARISONS
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        for path in ("/vs/", "/zh/vs/"):
+            hub = await client.get(path)
+            assert hub.status_code == 200, path
+            assert "etag" in hub.headers
+            assert hub.headers["cache-control"] == "public, max-age=0, must-revalidate"
+            reval = await client.get(path, headers={"If-None-Match": hub.headers["etag"]})
+            assert reval.status_code == 304
+        for item in COMPARISONS:
+            en_path = f"/vs/{item.slug}/"
+            zh_path = f"/zh/vs/{item.slug}/"
+            en = await client.get(en_path)
+            zh = await client.get(zh_path)
+            assert en.status_code == 200 and zh.status_code == 200
+            assert f"https://veynod.com{en_path}" in en.text
+            assert f"https://veynod.com{zh_path}" in en.text
+            assert '"@type": "FAQPage"' in en.text and '"@type": "FAQPage"' in zh.text
+            assert "Veynod 对比" in zh.text
+            redir = await client.get(f"/vs/{item.slug}", follow_redirects=False)
+            assert redir.status_code == 308 and redir.headers["location"] == en_path
+        unknown = await client.get("/vs/unknown-tool/", headers={"Accept": "text/html"})
+        assert unknown.status_code == 404
+        assert unknown.headers["content-type"].startswith("text/html")
+        sitemap = (await client.get("/sitemap.xml")).text
+        assert "<loc>https://veynod.com/vs/</loc>" in sitemap
+        assert "<loc>https://veynod.com/zh/vs/t3-code/</loc>" in sitemap

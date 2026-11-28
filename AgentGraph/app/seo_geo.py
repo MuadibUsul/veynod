@@ -24,10 +24,13 @@ def llms_index(version: str) -> str:
 - Delta state sync: `workspace_sync`
 
 ## How Veynod compares
-- T3 Code: a GUI for driving CLI coding agents. Its agents can share the Veynod board over MCP.
-- Orca: runs coding agents in parallel git worktrees. Veynod assigns the tasks and gates the merge.
-- Magpie: pools models and subscriptions for agents. Magpie picks the model; Veynod coordinates the work.
-- n8n: visual workflow automation. A workflow can call Veynod over REST or MCP.
+- [All comparisons](https://veynod.com/vs/)
+- [Veynod vs T3 Code](https://veynod.com/vs/t3-code/): T3 Code is a GUI for driving CLI coding agents; its agents can share the Veynod board over MCP.
+- [Veynod vs Orca](https://veynod.com/vs/orca/): Orca runs coding agents in parallel git worktrees; Veynod assigns the tasks and gates the merge.
+- [Veynod vs Magpie](https://veynod.com/vs/magpie/): Magpie pools models and subscriptions for agents; Magpie picks the model while Veynod coordinates the work.
+- [Veynod vs n8n](https://veynod.com/vs/n8n/): n8n is visual workflow automation; a workflow can call Veynod over REST or MCP.
+- [Veynod vs LangGraph](https://veynod.com/vs/langgraph/): LangGraph is an in-process Python graph SDK; Veynod is a runtime-agnostic MCP control plane.
+- [Veynod vs CrewAI](https://veynod.com/vs/crewai/): CrewAI scripts role-playing crews in Python; Veynod provides a persistent MCP workspace for real coding tools.
 
 ## Core links
 - [Homepage (EN)](https://veynod.com/)

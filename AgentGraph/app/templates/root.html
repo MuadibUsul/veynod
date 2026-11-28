@@ -157,10 +157,10 @@
   .statement { padding: 160px 0 96px; }
   .statement p { margin: 0; font-size: 36px; line-height: 1.25; letter-spacing: -.02em; font-weight: 500; max-width: 18em; }
   html[data-lang="zh"] .statement p { line-height: 1.5; letter-spacing: 0; }
-  .statement .w { color: #3a424e; transition: color .5s var(--ease); }
+  .statement .w { color: var(--text-3); transition: color .5s var(--ease); }
   .statement .w.on { color: var(--text); }
   .contrast { margin-top: 80px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 48px; }
-  .contrast h3 { font-size: 14px; color: var(--text); display: flex; gap: 8px; align-items: center; }
+  .contrast h2 { font-size: 14px; color: var(--text); display: flex; gap: 8px; align-items: center; }
   .contrast ul { list-style: none; margin: 16px 0 0; padding: 0; }
   .contrast li { padding: 12px 0; border-top: 1px solid var(--line); color: var(--text-2); font-size: 16px; }
 
@@ -502,7 +502,7 @@
         <p id="tagline"><span class="en">One board for every agent. One plan. One approval gate.</span><span class="zh">所有 Agent 共用一块黑板、一张图、一道审批门。</span></p>
         <div class="contrast">
           <div class="reveal">
-            <h3><i class="lamp red"></i><span class="en">Agents on their own</span><span class="zh">各自为战的 Agent</span></h3>
+            <h2><i class="lamp red"></i><span class="en">Agents on their own</span><span class="zh">各自为战的 Agent</span></h2>
             <ul>
               <li><span class="en">Separate windows, separate memory.</span><span class="zh">各守窗口，各有记忆。</span></li>
               <li><span class="en">Full context resent on every hand-off.</span><span class="zh">每次交接都重发全量上下文。</span></li>
@@ -510,7 +510,7 @@
             </ul>
           </div>
           <div class="reveal">
-            <h3><i class="lamp green"></i><span class="en">Agents in Veynod</span><span class="zh">接入 Veynod 的 Agent</span></h3>
+            <h2><i class="lamp green"></i><span class="en">Agents in Veynod</span><span class="zh">接入 Veynod 的 Agent</span></h2>
             <ul>
               <li><span class="en">One versioned board over MCP or REST.</span><span class="zh">通过 MCP / REST 共用一块版本化黑板。</span></li>
               <li><span class="en">Leased tasks, independent review.</span><span class="zh">任务带租约，评审相互独立。</span></li>
@@ -689,14 +689,15 @@
           <table>
             <thead><tr><th scope="col"><span class="en">Tool</span><span class="zh">工具</span></th><th scope="col"><span class="en">What it is</span><span class="zh">定位</span></th><th scope="col"><span class="en">With Veynod</span><span class="zh">与 Veynod 搭配</span></th></tr></thead>
             <tbody>
-              <tr><th scope="row">T3 Code</th><td><span class="en">A GUI for driving CLI coding agents.</span><span class="zh">统一驱动 CLI 编程 Agent 的图形界面。</span></td><td><span class="en">Its agents share the Veynod board over MCP.</span><span class="zh">在其中运行的 Agent 通过 MCP 共用 Veynod 黑板。</span></td></tr>
-              <tr><th scope="row">Orca</th><td><span class="en">Runs agents in parallel git worktrees.</span><span class="zh">用 git worktree 并行运行多个 Agent。</span></td><td><span class="en">Veynod assigns the tasks and gates the merge.</span><span class="zh">Veynod 负责派单与合并门禁。</span></td></tr>
-              <tr><th scope="row">Magpie</th><td><span class="en">Pools models and subscriptions for agents.</span><span class="zh">为 Agent 聚合模型与订阅额度的网关。</span></td><td><span class="en">Magpie picks the model; Veynod coordinates the work.</span><span class="zh">Magpie 选模型，Veynod 协调做什么。</span></td></tr>
-              <tr><th scope="row">n8n</th><td><span class="en">Visual workflow automation.</span><span class="zh">可视化工作流自动化。</span></td><td><span class="en">A workflow calls Veynod over REST or MCP.</span><span class="zh">工作流通过 REST 或 MCP 调用 Veynod。</span></td></tr>
-              <tr class="self"><th scope="row">Veynod</th><td><span class="en">Shared blackboard and MCP control plane for agent teams.</span><span class="zh">多 Agent 团队的共享黑板与 MCP 控制平面。</span></td><td><span class="en">Versioned memory, task leases, human approval, federation.</span><span class="zh">版本化记忆、任务租约、人工审批、跨团队联邦。</span></td></tr>
+              <tr><th scope="row"><a href="/vs/t3-code/"><span class="en">T3 Code</span></a><a href="/zh/vs/t3-code/"><span class="zh">T3 Code</span></a></th><td><span class="en">A GUI for driving CLI coding agents.</span><span class="zh">统一驱动 CLI 编程 Agent 的图形界面。</span></td><td><span class="en">Its agents share the Veynod board over MCP.</span><span class="zh">在其中运行的 Agent 通过 MCP 共用 Veynod 黑板。</span></td></tr>
+              <tr><th scope="row"><a href="/vs/orca/"><span class="en">Orca</span></a><a href="/zh/vs/orca/"><span class="zh">Orca</span></a></th><td><span class="en">Runs agents in parallel git worktrees.</span><span class="zh">用 git worktree 并行运行多个 Agent。</span></td><td><span class="en">Veynod assigns the tasks and gates the merge.</span><span class="zh">Veynod 负责派单与合并门禁。</span></td></tr>
+              <tr><th scope="row"><a href="/vs/magpie/"><span class="en">Magpie</span></a><a href="/zh/vs/magpie/"><span class="zh">Magpie</span></a></th><td><span class="en">Pools models and subscriptions for agents.</span><span class="zh">为 Agent 聚合模型与订阅额度的网关。</span></td><td><span class="en">Magpie picks the model; Veynod coordinates the work.</span><span class="zh">Magpie 选模型，Veynod 协调做什么。</span></td></tr>
+              <tr><th scope="row"><a href="/vs/n8n/"><span class="en">n8n</span></a><a href="/zh/vs/n8n/"><span class="zh">n8n</span></a></th><td><span class="en">Visual workflow automation.</span><span class="zh">可视化工作流自动化。</span></td><td><span class="en">A workflow calls Veynod over REST or MCP.</span><span class="zh">工作流通过 REST 或 MCP 调用 Veynod。</span></td></tr>
+              <tr class="self"><th scope="row"><a href="/vs/"><span class="en">Veynod</span></a><a href="/zh/vs/"><span class="zh">Veynod</span></a></th><td><span class="en">Shared blackboard and MCP control plane for agent teams.</span><span class="zh">多 Agent 团队的共享黑板与 MCP 控制平面。</span></td><td><span class="en">Versioned memory, task leases, human approval, federation.</span><span class="zh">版本化记忆、任务租约、人工审批、跨团队联邦。</span></td></tr>
             </tbody>
           </table>
         </div>
+        <p class="section-lede" style="margin-top:18px"><a href="/vs/"><span class="en">See all 6 comparisons (including LangGraph &amp; CrewAI) →</span></a><a href="/zh/vs/"><span class="zh">查看全部 6 个工具对比（含 LangGraph 与 CrewAI）→</span></a></p>
       </div>
     </section>
 
@@ -854,10 +855,14 @@ const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 // Tagline: each word lights as it crosses the middle of the screen.
 const tagline = document.getElementById("tagline");
-const taglineText = tagline.textContent.trim();
+const activeTagline = tagline.querySelector(ZH ? ".zh" : ".en");
+const taglineText = (activeTagline ? activeTagline.textContent : tagline.textContent).trim();
 const parts = ZH ? Array.from(taglineText.replace(/\s+/g, "")) : taglineText.split(/\s+/);
-tagline.setAttribute("aria-label", taglineText);
+const srTagline = document.createElement("span");
+srTagline.className = "sr-only";
+srTagline.textContent = taglineText;
 tagline.innerHTML = parts.map((word) => `<span class="w" aria-hidden="true">${word}</span>`).join(ZH ? "" : " ");
+tagline.prepend(srTagline);
 const words = Array.from(tagline.querySelectorAll(".w"));
 let taglineTicking = false;
 function lightWords() {
@@ -871,7 +876,7 @@ function lightWords() {
 window.addEventListener("scroll", () => {
   if (!taglineTicking) { taglineTicking = true; requestAnimationFrame(lightWords); }
 }, { passive: true });
-lightWords();
+requestAnimationFrame(lightWords);
 
 if ("IntersectionObserver" in window) {
   const seen = new IntersectionObserver((entries) => {
